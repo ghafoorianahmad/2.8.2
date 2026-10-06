@@ -417,7 +417,8 @@ class MainWindow(QMainWindow):
     def attach_service_monitor(self, monitor) -> None:
         """Connect an externally owned ServiceMonitor to this window's top bar."""
         self.service_monitor = monitor
-        self.service_monitor.set_base_url(self.context.store.base_url)
+        self.service_monitor.set_base_url(self.context.store.base_url,
+                                         self.context.store.server_cert_pem)
         self.service_monitor.state_changed.connect(self._on_service_state)
         self.service_monitor.message.connect(self._on_service_message)
         self.service_monitor.failed.connect(self._on_service_error)
@@ -427,7 +428,8 @@ class MainWindow(QMainWindow):
         """Ask the manager to probe, and start the local service if needed."""
         if getattr(self, "service_monitor", None) is None:
             return
-        self.service_monitor.set_base_url(self.context.store.base_url)
+        self.service_monitor.set_base_url(self.context.store.base_url,
+                                         self.context.store.server_cert_pem)
         self.service_monitor.ensure_running_async()
 
     def retry_service(self) -> None:

@@ -92,8 +92,11 @@ class ShopAdminApp(QObject):
         self.api.on_session_invalid = self._session_invalid.emit
 
     # ------------------------------------------------------------------ start
-    def start(self) -> None:
+    def start(self, *, server_setup: bool = False) -> None:
         apply_env_overrides(self.store)
+        if server_setup:
+            self.show_server_setup()
+            return
         self.ensure_service_started()
         if needs_setup(self.store):
             log.info("first run detected; showing the setup wizard")
@@ -121,8 +124,7 @@ class ShopAdminApp(QObject):
             self.service_monitor = ServiceMonitor(base_url)
             self.service_monitor.failed.connect(self._on_service_failure)
             self.service_monitor.failed_soft.connect(self._on_service_slow)
-        else:
-            self.service_monitor.set_base_url(base_url)
+        self.service_monitor.set_base_url(base_url, self.store.server_cert_pem)
         self.service_monitor.ensure_running_async()
 
     def _on_service_failure(self, message: str) -> None:
@@ -149,6 +151,25 @@ class ShopAdminApp(QObject):
         log.info("landing directly on the dashboard as %s", result.principal.username)
         self._signed_in(result, auto=True)
         return True
+
+    # ------------------------------------------------------------ server setup
+    def show_server_setup(self) -> None:
+        """Run on the server computer (as administrator) to install the server."""
+        from .ui.server_setup_wizard import ServerSetupWizard
+
+        self.server_wizard = ServerSetupWizard()
+        self.server_wizard.completed.connect(self._server_setup_done)
+        self.server_wizard.show()
+        _centre(self.server_wizard)
+
+    def _server_setup_done(self, base_url: str, pem: str) -> None:
+        # The certificate comes from the server's own file: no fingerprint
+        # question is needed on this computer.
+        self.store.configure_connection(base_url, pem)
+        self.store.set_setting("wizard_completed", True)
+        self.store.audit("setup", "server_setup", "سرور فروشگاه روی این رایانه راه‌اندازی شد")
+        self._configure_api()
+        self.show_login()
 
     # ------------------------------------------------------------------ wizard
     def show_wizard(self) -> None:
@@ -426,13 +447,75 @@ def _centre(widget) -> None:
     widget.move(frame.topLeft())
 
 
+INSTANCE_MUTEX = "ShopAdminRunning"   # also checked by the installer (AppMutex)
+
+
+def _hold_instance_mutex():
+    """A named mutex so the installer can tell the app is running."""
+    try:
+        import ctypes
+
+        return ctypes.windll.kernel32.CreateMutexW(None, False, INSTANCE_MUTEX)
+    except Exception:  # noqa: BLE001 - non-Windows
+        return None
+
+
+def _instance_server_name() -> str:
+    import getpass
+
+    return f"ShopAdmin-{getpass.getuser()}"
+
+
+def _activate_running_instance() -> bool:
+    """True when another copy is running: it is asked to show itself."""
+    from PySide6.QtNetwork import QLocalSocket
+
+    socket = QLocalSocket()
+    socket.connectToServer(_instance_server_name())
+    if not socket.waitForConnected(500):
+        return False
+    socket.write(b"show")
+    socket.flush()
+    socket.waitForBytesWritten(500)
+    socket.disconnectFromServer()
+    return True
+
+
+def _listen_for_second_instances(controller: "ShopAdminApp"):
+    from PySide6.QtNetwork import QLocalServer
+
+    QLocalServer.removeServer(_instance_server_name())
+    server = QLocalServer()
+    server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
+
+    def on_connection() -> None:
+        connection = server.nextPendingConnection()
+        if connection is not None:
+            connection.disconnectFromServer()
+        controller._open_from_tray("", "")
+
+    server.newConnection.connect(on_connection)
+    server.listen(_instance_server_name())
+    return server
+
+
 def run(argv: list[str] | None = None) -> int:
     """Entry point used by ``run_shopadmin.py`` and the packaged .exe."""
     logger = setup_logging()
     logger.info("Python %s, frozen=%s", sys.version.split()[0], is_frozen())
     _log_credential_backend()
+    args = list(argv if argv is not None else sys.argv)
+    server_setup = "--server-setup" in args
 
-    app = QApplication(argv if argv is not None else sys.argv)
+    if server_setup:
+        from .server_setup import is_admin, relaunch_elevated
+
+        if not is_admin():
+            # Ask Windows for administrator rights (UAC) and let that copy work.
+            relaunch_elevated(["--server-setup"])
+            return 0
+
+    app = QApplication(args)
     app.setApplicationName(APP_NAME)
     app.setApplicationDisplayName("مدیریت فروشگاه")
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -440,9 +523,15 @@ def run(argv: list[str] | None = None) -> int:
     theme.apply_theme(app)
     app.setWindowIcon(theme.app_icon())
 
+    if not server_setup and _activate_running_instance():
+        logger.info("another copy is already running; asked it to show itself")
+        return 0
+    mutex = _hold_instance_mutex()  # noqa: F841 - held for the life of the process
+
     controller = ShopAdminApp(app)
+    instance_server = _listen_for_second_instances(controller)  # noqa: F841
     app.aboutToQuit.connect(controller.shutdown)
-    controller.start()
+    controller.start(server_setup=server_setup)
     return app.exec()
 
 

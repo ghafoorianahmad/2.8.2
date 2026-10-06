@@ -20,10 +20,55 @@ INSTALLER_README = INSTALLER_DIR / "installer_readme.txt"
 REQUIRED_SECTIONS = ("[Setup]", "[Files]", "[Icons]", "[Run]", "[Tasks]", "[UninstallDelete]")
 
 
+def preprocess(text: str, defines: set[str]) -> str:
+    """Resolve the script's #ifdef / #ifndef / #else / #endif blocks.
+
+    One script builds both installers; each is tested as Inno Setup's
+    preprocessor would see it.
+    """
+    out: list[str] = []
+    stack: list[bool] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#ifdef "):
+            stack.append(stripped.split()[1] in defines)
+            continue
+        if stripped.startswith("#ifndef "):
+            stack.append(stripped.split()[1] not in defines)
+            continue
+        if stripped.startswith("#else"):
+            stack[-1] = not stack[-1]
+            continue
+        if stripped.startswith("#endif"):
+            stack.pop()
+            continue
+        if stripped.startswith("#if "):
+            stack.append(False)  # build-time checks: not part of the script body
+            continue
+        if stripped.startswith("#error"):
+            continue
+        if all(stack):
+            out.append(line)
+    assert not stack, "unbalanced #if blocks"
+    return "\n".join(out)
+
+
 @pytest.fixture(scope="module")
-def iss_text() -> str:
+def raw_iss() -> str:
     assert ISS_PATH.is_file(), f"missing {ISS_PATH}"
     return ISS_PATH.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def iss_text(raw_iss) -> str:
+    """The staff-computer installer (ShopAdminSetup.exe)."""
+    return preprocess(raw_iss, set())
+
+
+@pytest.fixture(scope="module")
+def server_iss(raw_iss) -> str:
+    """The server-computer installer (ShopServerSetup.exe)."""
+    return preprocess(raw_iss, {"SERVER"})
 
 
 @pytest.fixture(scope="module")
@@ -149,8 +194,8 @@ def test_iss_registers_an_uninstaller(iss_text):
     assert "{uninstallexe}" in icons, "a Start Menu uninstall shortcut is expected"
 
 
-def test_iss_ships_both_applications(iss_text):
-    files = _section(iss_text, "[Files]")
+def test_iss_ships_both_applications(server_iss):
+    files = _section(server_iss, "[Files]")
     assert "STAGING_DIR" in files, "the staging directory must be the source"
     assert re.search(r"ShopAdmin\\\*", files), "the ShopAdmin build must be included"
     assert re.search(r"ShopSystem\\\*", files), "the ShopSystem service must be included"
@@ -180,7 +225,7 @@ def test_iss_does_not_delete_user_data_on_uninstall(iss_text):
     # must not be mistaken for a deletion rule.
     values = " ".join(
         line.split(":", 1)[1] if ":" in line else ""
-        for line in _lines(body)
+        for line in _lines(body) if not line.startswith(";")
     ).lower()
     for forbidden in ("shopadmin.db", "app.log", "localappdata", "{userappdata}",
                       "shopapi.db", "shopadmin"):
@@ -308,3 +353,68 @@ def test_installer_readme_explains_that_user_data_survives():
     assert "پاک نمی‌شود" in text or "دستی" in text, (
         "the readme must say that %LOCALAPPDATA%\\ShopAdmin is kept"
     )
+
+
+# --------------------------------------------------------------------------
+# the two installers
+# --------------------------------------------------------------------------
+def test_client_installer_has_no_server(iss_text):
+    files = _section(iss_text, "[Files]")
+    assert "ShopSystem" not in files, "staff computers must not get the server"
+    assert "--server-setup" not in iss_text
+    assert "schtasks" not in iss_text.lower()
+
+
+def test_server_installer_identity(server_iss):
+    setup = _section(server_iss, "[Setup]")
+    assert _directives(setup, "OutputBaseFilename") == ["ShopServerSetup"]
+    assert _directives(setup, "PrivilegesRequired") == ["admin"]
+    assert "ShopServer" in _directives(setup, "DefaultDirName")[0]
+    client_id = _directives(_section(preprocess(ISS_PATH.read_text(encoding="utf-8"), set()),
+                                     "[Setup]"), "AppId")[0]
+    assert _directives(setup, "AppId")[0] != client_id, "two separate products"
+
+
+def test_server_installer_never_ships_local_state(server_iss):
+    files = _section(server_iss, "[Files]")
+    line = next(l for l in _lines(files) if "ShopSystem\\*" in l)
+    for pattern in (".env", "*.db", "*.log", "tls\\*"):
+        assert pattern in line, f"{pattern} must be excluded from the server files"
+
+
+def test_server_installer_runs_the_setup_wizard(server_iss):
+    run = _section(server_iss, "[Run]")
+    assert "--server-setup" in run and "postinstall" in run
+    icons = _section(server_iss, "[Icons]")
+    assert "--server-setup" in icons, "a Start Menu entry to re-run the server setup"
+
+
+def test_server_uninstall_removes_task_and_firewall_but_keeps_data(server_iss):
+    body = _section(server_iss, "[UninstallRun]")
+    assert "/Delete /TN" in body and "firewall delete rule" in body
+    assert "RunOnceId" in body
+    values = " ".join(l for l in _lines(_section(server_iss, "[UninstallDelete]"))
+                      if not l.startswith(";")).lower()
+    assert "programdata" not in values, "server data must survive an uninstall"
+
+
+def test_server_checks_odbc_and_stops_the_server_for_upgrades(server_iss):
+    code = server_iss.split("[Code]", 1)[1]
+    assert "ODBC Driver 17 for SQL Server" in code
+    assert "/End /TN" in code and "taskkill" in code
+
+
+def test_both_installers_close_a_running_shopadmin(iss_text, server_iss):
+    for text in (iss_text, server_iss):
+        assert _directives(_section(text, "[Setup]"), "AppMutex") == ["ShopAdminRunning"]
+
+
+def test_build_time_check_for_the_server_exe(raw_iss):
+    assert "#error" in raw_iss and "build_exe.bat" in raw_iss
+    code = raw_iss.split("[Code]", 1)[1]
+    assert "STAGING_DIR" not in code, "the staging folder does not exist on the customer's PC"
+
+
+def test_bat_builds_both_installers(bat_text):
+    assert "/DSERVER" in bat_text
+    assert "ShopServerSetup.exe" in bat_text

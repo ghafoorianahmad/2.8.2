@@ -87,6 +87,12 @@ def test_find_service_executable_in_the_installed_subfolder(tmp_path, monkeypatc
 # --------------------------------------------------------------------------
 # launch behaviour
 # --------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _no_installed_server_task(monkeypatch):
+    """These tests cover the development child process, not the installed task."""
+    monkeypatch.setattr(cp, "server_task_installed", lambda: False)
+
+
 @pytest.fixture
 def sleeper():
     """A long-running, harmless process to stand in for ShopSystem.exe."""
@@ -450,3 +456,18 @@ def _pump(app, rounds: int = 60) -> None:
     QThreadPool.globalInstance().waitForDone(10_000)
     for _ in range(rounds):
         app.processEvents()
+
+
+def test_installed_server_is_never_started_as_a_child(monkeypatch):
+    """With the scheduled task installed, ShopAdmin only asks Windows to run it."""
+    calls = []
+    monkeypatch.setattr(cp, "server_task_installed", lambda: True)
+    monkeypatch.setattr(cp.subprocess, "run", lambda args, **kw: calls.append(args))
+    monkeypatch.setattr(cp.subprocess, "Popen",
+                        lambda *a, **k: pytest.fail("must not spawn a second server"))
+    monkeypatch.setattr(cp.time, "monotonic", iter([0.0, 100.0, 200.0]).__next__)
+    service = ShopSystemService("http://127.0.0.1:59999")
+    result = service.start()
+    assert calls == [["schtasks", "/Run", "/TN", "ShopServer"]]
+    assert result.ok is False and result.transient is True
+    assert "Task Scheduler" in result.message

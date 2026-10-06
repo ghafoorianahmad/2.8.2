@@ -18,6 +18,7 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 
 from ..api_client import ApiError
 from ..auth import AuthError
+from ..server_setup import SetupError
 from ..logging_setup import get_logger
 
 log = get_logger("worker")
@@ -105,6 +106,10 @@ class _Worker(QRunnable):
         except AuthError as exc:
             # Kinds the UI already understands: the server said no, or it is away.
             self.signals.failed.emit(exc.message, "connection" if exc.code == "offline" else "auth_error")
+        except SetupError as exc:
+            if exc.detail:
+                log.warning("server setup step failed: %s", exc.detail)
+            self.signals.failed.emit(exc.message, "setup")
         except Exception as exc:  # noqa: BLE001 - never let a thread die silently
             log.exception("background task failed: %s", type(exc).__name__)
             self.signals.failed.emit(MSG_UNEXPECTED, "unexpected")

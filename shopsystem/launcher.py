@@ -536,12 +536,139 @@ def run_supervisor(args: list[str]) -> int:
 
 
 # --------------------------------------------------------------------------
+# setup helpers (used by the server setup in ShopAdmin, run as administrator)
+# --------------------------------------------------------------------------
+#: init-config JSON field -> .env key
+SETUP_FIELDS = {
+    "db_server": "DB_SERVER",
+    "db_name": "DB_NAME",
+    "db_driver": "DB_DRIVER",
+    "db_trusted": "DB_TRUSTED",
+    "db_user": "DB_USER",
+    "db_password": "DB_PASSWORD",
+    "api_host": "API_HOST",
+    "api_port": "API_PORT",
+    "bank_account_text": "BANK_ACCOUNT_TEXT",
+    "telegram_token": "TELEGRAM_TOKEN",
+    "bale_token": "BALE_TOKEN",
+    "admin_chat_ids": "ADMIN_CHAT_IDS",
+    "proxy_url": "PROXY_URL",
+}
+
+#: Written once, on the first setup. Existing values are never replaced.
+FIRST_RUN_DEFAULTS = {
+    "API_HOST": "0.0.0.0",
+    "API_PORT": "8443",
+    "API_TLS": "true",
+    "SERVICE_KEYS_LOCAL_ONLY": "true",
+    "ACCOUNTING_WRITE_ENABLED": "false",
+    "DB_DRIVER": "ODBC Driver 17 for SQL Server",
+    "DB_ENCRYPT": "no",
+    "PRICE_LEVEL_BOT": "1",
+    "PRICE_LEVEL_SITE": "1",
+    "RESERVE_HOURS": "12",
+    "MAX_ORDER_QTY": "10000",
+    "ALLOW_SHARED_PERSON_CODE": "false",
+    "ACCOUNTING_STATUS_CODE": "6808",
+    "ACCOUNTING_USERCODE": "1",
+    "ACCOUNTING_ANBARCODE": "1",
+    "LOG_LEVEL": "INFO",
+}
+
+
+def _emit(payload: dict) -> None:
+    import json
+
+    print(json.dumps(payload, ensure_ascii=False))
+
+
+def init_config(json_path: Path) -> int:
+    """Create or update ``.env`` from a JSON file, then delete that file.
+
+    The JSON (written by the server setup into the protected data folder)
+    carries the database password, so it never appears on a command line.
+    New API keys are random and are never printed.
+    """
+    import json
+    import secrets
+
+    try:
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+    finally:
+        try:
+            json_path.unlink()
+        except OSError:
+            pass
+
+    from dotenv import dotenv_values
+
+    existing = {k: v for k, v in dotenv_values(Paths.env).items() if v is not None} \
+        if Paths.env.exists() else {}
+    values: dict[str, str] = {}
+    if not existing:
+        values.update(FIRST_RUN_DEFAULTS)
+    for key in ("BOT_API_KEY", "SITE_API_KEY", "ADMIN_API_KEY"):
+        if not existing.get(key):
+            values[key] = secrets.token_urlsafe(32)
+    for field, key in SETUP_FIELDS.items():
+        if field in data and data[field] is not None:
+            value = data[field]
+            if isinstance(value, bool):
+                value = "yes" if value else "no"
+            values[key] = str(value).strip()
+
+    from shopapi_app import control
+
+    control.set_files(env_file=Paths.env)
+    if not Paths.env.exists():
+        Paths.env.write_text("# Shop server configuration - written by the server setup.\n"
+                             "# Keep this folder restricted to Administrators and SYSTEM.\n",
+                             encoding="utf-8")
+    control.write_env_values(values)
+    _emit({"ok": True, "env": str(Paths.env), "created": not existing})
+    return EXIT_OK
+
+
+def check_db() -> int:
+    """Try the accounting connection with the saved settings; print JSON."""
+    if not load_env_file():
+        _emit({"ok": False, "error": "no .env"})
+        return EXIT_NO_CONFIG
+    normalise_configuration_for_db()
+    from shopapi_app.accounting_reader import AccountingReader
+    from shopapi_app.config import Settings
+
+    try:
+        reader = AccountingReader(Settings.from_env())
+        reader.ping()
+        groups = len(reader.list_groups())
+    except Exception as exc:  # noqa: BLE001 - reported to the setup screen
+        message = str(exc).splitlines()[0][:300] if str(exc) else ""
+        _emit({"ok": False, "error": type(exc).__name__, "message": message})
+        return 1
+    _emit({"ok": True, "groups": groups})
+    return EXIT_OK
+
+
+def normalise_configuration_for_db() -> None:
+    for friendly, internal in ALIASES.items():
+        value = os.environ.get(friendly, "").strip()
+        if value and not os.environ.get(internal, "").strip():
+            os.environ[internal] = value
+
+
+# --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     configure_paths(resolve_data_dir(args))
 
+    init_json = _arg_value(args, "--init-config")
+    if init_json:
+        return init_config(Path(init_json))
+    if "--check-db" in args:
+        return check_db()
     if "--fingerprint" in args:
         from server_tls import ensure_certificate
 

@@ -1,70 +1,100 @@
 ; =====================================================================
-;  ShopAdmin  —  Inno Setup script  (Unicode, Persian UI text)
+;  ShopAdmin / ShopServer  —  Inno Setup script  (Unicode, Persian UI text)
 ;
-;  Build it with:   build_installer.bat
-;  or directly:     iscc.exe installer\ShopAdmin.iss
+;  One script, two installers (build_installer.bat compiles both):
+;
+;    iscc ShopAdmin.iss            -> ShopAdminSetup.exe   staff computers:
+;                                     only the management program, no admin
+;                                     rights needed (per-user by default).
+;    iscc /DSERVER ShopAdmin.iss   -> ShopServerSetup.exe  the server computer
+;                                     (where the accounting SQL Server runs):
+;                                     the server + the management program,
+;                                     needs administrator rights, and finishes
+;                                     with the Persian server setup wizard.
 ;
 ;  Layout produced by build_installer.bat (staging folder):
 ;      staging\ShopAdmin\        <- the --onedir PyInstaller build
-;      staging\ShopSystem\       <- the shopapi service build
+;      staging\ShopSystem\       <- the server build (ShopServer only)
 ;      staging\README.txt        <- end-user Persian readme
 ;      staging\installer_readme.txt
 ; =====================================================================
 
 #define MyAppName "ShopAdmin"
 #define MyAppNameFa "مدیریت فروشگاه"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "فروشگاه"
 #define MyAppExeName "ShopAdmin.exe"
 #define MyServiceExeName "ShopSystem.exe"
+#define ServerTask "ShopServer"
 
-; STAGING_DIR is passed by build_installer.bat with /DSTAGING=... ; the default
-; keeps a manual `iscc ShopAdmin.iss` run working from the project root.
+; STAGING_DIR is passed by build_installer.bat with /DSTAGING_DIR=... ; the
+; default keeps a manual `iscc ShopAdmin.iss` run working from the project root.
 #ifndef STAGING_DIR
   #define STAGING_DIR "..\build\installer_staging"
 #endif
 
+; Checked when the installer is BUILT. (Checking at install time would look
+; for the build folder on the customer's computer and always fail.)
+#ifdef SERVER
+  #if !FileExists(STAGING_DIR + "\ShopSystem\" + MyServiceExeName)
+    #error ShopSystem.exe is missing from the staging folder - run shopsystem\build_exe.bat first
+  #endif
+#endif
+
 [Setup]
+#ifdef SERVER
+; A different AppId: the server package is its own product in "Apps & features".
+AppId={{5C9E2B14-7A3D-4F68-B0C1-2D8E6F4A9B37}
+AppName=ShopServer
+AppVerName=سرور فروشگاه {#MyAppVersion}
+UninstallDisplayName=سرور فروشگاه
+OutputBaseFilename=ShopServerSetup
+DefaultDirName={autopf}\ShopServer
+DefaultGroupName=سرور فروشگاه
+; Registering a boot-time task, a firewall rule and a locked data folder all
+; need an administrator.
+PrivilegesRequired=admin
+#else
 ; A stable AppId keeps upgrades in place instead of installing side by side.
 AppId={{8F3A7C21-4B6E-4D52-9A18-6C2E5D9B7F41}
 AppName={#MyAppName}
-AppVersion={#MyAppVersion}
 AppVerName={#MyAppNameFa} {#MyAppVersion}
-AppPublisher={#MyAppPublisher}
-VersionInfoVersion={#MyAppVersion}
-
-; --- per-user by default, per-machine when the user has admin rights -----
-; PrivilegesRequired=lowest + OverridesAllowed=dialog gives the user a choice
-; page ("برای همهٔ کاربران" / "فقط برای من") and defaults to the safe per-user
-; install for a small shop.
-PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+UninstallDisplayName={#MyAppNameFa}
+OutputBaseFilename=ShopAdminSetup
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppNameFa}
+; --- per-user by default, per-machine when the user has admin rights ----
+; PrivilegesRequired=lowest + OverridesAllowed=dialog gives the user a choice
+; page and defaults to the safe per-user install.
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
+#endif
+AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+VersionInfoVersion={#MyAppVersion}
 DisableProgramGroupPage=yes
 AllowNoIcons=yes
 
+; --- a running copy is closed before files are replaced -----------------
+; ShopAdmin holds this named mutex while it runs (it lives in the tray).
+AppMutex=ShopAdminRunning
+CloseApplications=yes
+RestartApplications=no
+
 ; --- output ---------------------------------------------------------------
 OutputDir=..\dist\installer
-OutputBaseFilename=ShopAdminSetup
 Compression=lzma2/max
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
-; The UI itself is in Persian; the built-in wizard dialogs stay in English
-; because Inno Setup has no Persian language file, and every custom string we
-; control is Persian.
+; Inno Setup has no Persian language file: its stock buttons stay English,
+; every message we control is Persian.
 ShowLanguageDialog=no
 
 ; --- uninstall ------------------------------------------------------------
-UninstallDisplayName={#MyAppNameFa}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 CreateUninstallRegKey=yes
-
-; --- Persian text rendering ----------------------------------------------
-; A left-to-right RTL-ish setup: the Persian strings below are short labels,
-; and Inno Setup renders them with the system font.
 DisableWelcomePage=no
 
 [Languages]
@@ -75,26 +105,30 @@ english.CreateDesktopIcon=ایجاد میان‌بر روی میزکار
 english.LaunchAfterInstall=اجرای «مدیریت فروشگاه» پس از نصب
 english.ReadMeFirst=مطالعهٔ «راهنمای نصب» پس از نصب
 english.AdditionalIcons=میان‌برهای بیشتر:
-english.ServiceSection=سرویس فروشگاه (ShopSystem)
-english.InstallServiceTask=نصب سرویس فروشگاه برای اجرای خودکار با ویندوز (نیازمند دسترسی مدیر)
-english.RunAtStartup=اجرای خودکار با ویندوز
+english.ServerSetupNow=راه‌اندازی سرور فروشگاه (پایگاه‌داده، شبکه، مدیر کل)
+english.OdbcMissing=درایور «ODBC Driver 17 for SQL Server» روی این رایانه نصب نیست. سرور بدون آن به حسابداری وصل نمی‌شود. آن را از سایت مایکروسافت نصب کنید (می‌توانید نصب را ادامه دهید و بعداً راه‌اندازی سرور را از منوی شروع اجرا کنید). ادامه می‌دهید؟
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-Name: "readme"; Description: "{cm:ReadMeFirst}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "readme"; Description: "{cm:ReadMeFirst}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+#ifndef SERVER
 Name: "launchapp"; Description: "{cm:LaunchAfterInstall}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+#endif
 
 [Files]
 ; ---- the ShopAdmin desktop application --------------------------------
 Source: "{#STAGING_DIR}\ShopAdmin\*"; DestDir: "{app}"; \
     Flags: ignoreversion recursesubdirs createallsubdirs
 
-; ---- the shopapi service, kept in a sub-folder ------------------------
+#ifdef SERVER
+; ---- the server (API + bots), kept in a sub-folder -----------------------
 ; Local config/state from the developer's build folder must never ship
-; (build_installer.bat also strips them from staging and checks).
+; (build_installer.bat also strips them from staging and checks). The real
+; configuration lives in %ProgramData%\ShopServer, written by the setup wizard.
 Source: "{#STAGING_DIR}\ShopSystem\*"; DestDir: "{app}\ShopSystem"; \
-    Excludes: ".env,*.db,*.db-journal,*.log,*.log.*"; \
+    Excludes: ".env,*.db,*.db-journal,*.log,*.log.*,tls\*"; \
     Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 
 ; ---- documentation ----------------------------------------------------
 Source: "{#STAGING_DIR}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
@@ -106,52 +140,92 @@ Source: "{#STAGING_DIR}\.env.example"; DestDir: "{app}"; Flags: ignoreversion sk
 Name: "{group}\{#MyAppNameFa}"; Filename: "{app}\{#MyAppExeName}"; \
     WorkingDir: "{app}"; Comment: "کنسول مدیریت فروشگاه"
 Name: "{group}\راهنمای نصب"; Filename: "{app}\installer_readme.txt"
+#ifdef SERVER
+Name: "{group}\راه‌اندازی سرور فروشگاه"; Filename: "{app}\{#MyAppExeName}"; \
+    Parameters: "--server-setup"; WorkingDir: "{app}"; Comment: "تنظیم پایگاه‌داده، شبکه و مدیر کل"
+Name: "{group}\حذف سرور فروشگاه"; Filename: "{uninstallexe}"
+#else
 Name: "{group}\حذف {#MyAppNameFa}"; Filename: "{uninstallexe}"
+#endif
 Name: "{autodesktop}\{#MyAppNameFa}"; Filename: "{app}\{#MyAppExeName}"; \
     WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
+#ifdef SERVER
+; The server setup wizard. The installer already runs as administrator, so
+; the wizard inherits that right (no second UAC prompt).
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--server-setup"; \
+    Description: "{cm:ServerSetupNow}"; Flags: nowait postinstall skipifsilent
+#else
+; Optional: start the program right away.
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchAfterInstall}"; \
+    Flags: nowait postinstall skipifsilent; Tasks: launchapp
+#endif
 ; "Read me first" — opened when the user leaves the corresponding task ticked.
 Filename: "{app}\installer_readme.txt"; Description: "{cm:ReadMeFirst}"; \
     Flags: postinstall shellexec skipifsilent; Tasks: readme
 
-; Optional: start the program right away.
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchAfterInstall}"; \
-    Flags: nowait postinstall skipifsilent; Tasks: launchapp
+#ifdef SERVER
+[UninstallRun]
+; Stop and remove what the setup wizard registered. The data folder
+; %ProgramData%\ShopServer (configuration, databases, certificate, logs) is
+; deliberately kept: a reinstall continues with the same data and keys.
+Filename: "{sys}\schtasks.exe"; Parameters: "/End /TN {#ServerTask}"; \
+    Flags: runhidden; RunOnceId: "StopServerTask"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN {#ServerTask} /F"; \
+    Flags: runhidden; RunOnceId: "DeleteServerTask"
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name={#ServerTask}"; \
+    Flags: runhidden; RunOnceId: "DeleteFirewallRule"
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#MyServiceExeName}"; \
+    Flags: runhidden; RunOnceId: "KillServer"
+#endif
 
 [UninstallDelete]
-; Remove the service log and any stray runtime files, but NEVER user data:
-; %LOCALAPPDATA%\ShopAdmin (settings + log) is intentionally left behind so a
-; reinstall keeps the configuration. It is documented in installer_readme.txt.
+; Remove stray runtime files, but NEVER user data: %LOCALAPPDATA%\ShopAdmin
+; (settings + log) and %ProgramData%\ShopServer are intentionally left behind
+; so a reinstall keeps the configuration. Documented in installer_readme.txt.
 Type: files; Name: "{app}\shopapi.log"
 Type: dirifempty; Name: "{app}\ShopSystem"
 
 [Code]
 { ---------------------------------------------------------------------
-  Small helpers so the installer behaves predictably for a non-technical
-  user: it verifies the service folder shipped correctly, and it stops a
-  running ShopAdmin before replacing files.
+  Upgrade safety: the running server and ShopAdmin are stopped before files
+  are replaced (otherwise Windows keeps the .exe locked). The server
+  installer also checks the SQL Server ODBC driver it depends on.
   --------------------------------------------------------------------- }
 
-function ServiceFolderExists(): Boolean;
+procedure RunHidden(const FileName, Params: String);
+var
+  ResultCode: Integer;
 begin
-  Result := DirExists(ExpandConstant('{app}\ShopSystem'));
+  Exec(FileName, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
-procedure InitializeWizard();
+#ifdef SERVER
+function OdbcDriverInstalled(): Boolean;
 begin
-  { Nothing custom to draw: the stock pages plus our Persian task labels. }
+  Result := RegKeyExists(HKLM, 'SOFTWARE\ODBC\ODBCINST.INI\ODBC Driver 17 for SQL Server')
+    or RegKeyExists(HKLM, 'SOFTWARE\ODBC\ODBCINST.INI\ODBC Driver 18 for SQL Server');
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+  if not OdbcDriverInstalled() then
+    Result := MsgBox(CustomMessage('OdbcMissing'), mbConfirmation, MB_YESNO) = IDYES;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
-  if not FileExists(ExpandConstant('{#STAGING_DIR}\ShopSystem\{#MyServiceExeName}')) then
-    Result := 'فایل سرویس فروشگاه (ShopSystem.exe) در بستهٔ نصب پیدا نشد.';
+  { Upgrade: stop the scheduled server so its files can be replaced. The
+    setup wizard (or the next boot) starts it again. }
+  RunHidden(ExpandConstant('{sys}\schtasks.exe'), '/End /TN {#ServerTask}');
+  RunHidden(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyServiceExeName}');
 end;
-
-{ Ask Windows to close a running instance so an upgrade can replace the exe. }
-function InitializeSetup(): Boolean;
+#else
+function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  Result := True;
+  Result := '';
 end;
+#endif

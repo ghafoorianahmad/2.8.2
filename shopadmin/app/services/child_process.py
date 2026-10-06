@@ -61,6 +61,27 @@ MSG_START_EXITED = (
 MSG_START_TIMEOUT = (
     "سرویس فروشگاه در زمان مورد انتظار آماده نشد. چند لحظه صبر کنید و دوباره تلاش کنید."
 )
+#: The installed server runs as a Windows scheduled task; ShopAdmin never starts
+#: a second copy of it, it can only ask Windows to run that task.
+MSG_TASK_NOT_RUNNING = (
+    "سرور فروشگاه روی این رایانه به‌صورت سرویس ویندوز نصب است ولی پاسخ نمی‌دهد. "
+    "رایانه را یک‌بار دوباره راه‌اندازی کنید یا از مدیر سیستم بخواهید وظیفهٔ «ShopServer» "
+    "را در Task Scheduler اجرا کند."
+)
+SERVER_TASK_NAME = "ShopServer"
+
+
+def server_task_installed() -> bool:
+    """True when the server setup registered the boot-time scheduled task."""
+    if os.name != "nt":
+        return False
+    try:
+        result = subprocess.run(["schtasks", "/Query", "/TN", SERVER_TASK_NAME],
+                                capture_output=True, timeout=10,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 class ServiceState(str, Enum):
@@ -139,9 +160,11 @@ def find_service_executable() -> Optional[Path]:
 class ShopSystemService:
     """Owns the lifecycle of the local shopapi process."""
 
-    def __init__(self, base_url: str = "", timeout: float = 12.0) -> None:
+    def __init__(self, base_url: str = "", timeout: float = 12.0,
+                 server_cert_pem: str = "") -> None:
         self.base_url = base_url
         self.timeout = timeout
+        self.server_cert_pem = server_cert_pem
         self._process: Optional[subprocess.Popen] = None
         self._job = JobObject()
         self._log_handle = None
@@ -159,7 +182,8 @@ class ShopSystemService:
         """Quick health probe; never raises."""
         if not self.base_url:
             return False
-        probe = ShopApiClient(self.base_url, "", timeout=timeout)
+        probe = ShopApiClient(self.base_url, "", timeout=timeout,
+                              server_cert_pem=self.server_cert_pem)
         try:
             probe.health()
             return True
@@ -191,6 +215,19 @@ class ShopSystemService:
         if self.is_reachable():
             progress("the service is already answering; nothing to start")
             return LaunchResult(ok=True, launched=False)
+
+        if self.base_url.startswith("https://") or server_task_installed():
+            # Installed server: Windows owns it. Ask the task to run (works when
+            # this account may), never start a private second copy.
+            progress("the server is installed as a scheduled task; asking Windows to run it")
+            subprocess.run(["schtasks", "/Run", "/TN", SERVER_TASK_NAME], capture_output=True,
+                           timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if self.is_reachable(timeout=2.0):
+                    return LaunchResult(ok=True, launched=False)
+                time.sleep(1.5)
+            return LaunchResult(ok=False, message=MSG_TASK_NOT_RUNNING, transient=True)
 
         executable = find_service_executable()
         if executable is None:
@@ -319,8 +356,10 @@ class ServiceMonitor(QObject):
     def started_by_us(self) -> bool:
         return self._service.started_by_us
 
-    def set_base_url(self, base_url: str) -> None:
+    def set_base_url(self, base_url: str, server_cert_pem: str | None = None) -> None:
         self._service.base_url = base_url
+        if server_cert_pem is not None:
+            self._service.server_cert_pem = server_cert_pem
 
     def is_local(self) -> bool:
         return is_local_address(self._service.base_url)
