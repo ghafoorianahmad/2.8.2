@@ -101,7 +101,12 @@ _(بعد از بررسی کامل، کاربر کارهای تکمیلی را م
   - ShopAdmin `--server-setup` (خودکار UAC): `server_setup.py` + `ui/server_setup_wizard.py` — icacls با SID (SYSTEM + Administrators)، task XML (Boot، SYSTEM یا حساب ویندوز با گذرواژه، RestartOnFailure)، فایروال `localsubnet` + `private,domain`، شروع، انتظار HTTPS، pin گواهی از فایل محلی، bootstrap مدیر کل.
   - ShopAdmin: نمونهٔ واحد (QLocalServer؛ اجرای دوباره پنجرهٔ قبلی را نشان می‌دهد) + mutex برای نصب‌کننده. وقتی سرور به‌صورت task نصب است، ShopAdmin هرگز نسخهٔ دوم سرور را اجرا نمی‌کند (فقط `schtasks /Run`).
   - **آزمون نصب واقعی روی ویندوز انجام نشده** (ساخت task/فایروال/پوشهٔ ProgramData روی این رایانه = تغییر سیستمی؛ با اجازهٔ کاربر در 2.6).
-- [ ] 2.5 بازطراحی UI.
+- [ ] 2.5 بازطراحی UI. ← شروع شد:
+  - [x] `scripts/render_screens.py` با API جدید بازنویسی شد (۱۵ تصویر، شامل صفحهٔ سرور و ویزارد سرور).
+  - [x] باگ مهم: دکمه‌های Primary (ورود، ادامه، آزمایش اتصال) در پنجرهٔ ورود و هر دو ویزارد متن سفید روی زمینهٔ روشن داشتند (setStyleSheet بدون selector روی پنجره) → محدود به `QWidget#WindowRoot`.
+  - [ ] بازطراحی واقعی: نوار کناری تیره با badge رنگی، صفحهٔ ورود دو ستونه، کارت‌ها با سایه، نمودار سفارش‌های ۷ روز اخیر در داشبورد (palette باید `scripts/contrast_audit.py` / تست‌های AA را پاس کند).
+  - [ ] `scripts/e2e_check.py` و `e2e_app_live.py` هنوز API قدیمی دارند.
+  - نکته: `widgets.py:388` (overlay) هم background بدون selector دارد — بررسی شود.
 - [ ] 2.6 تست سرتاسری روی نسخهٔ محلی `hesab5 t`.
 
 ### ۲-قدیم. نصب‌کننده (از `shopadmin/CLAUDE.md`)

@@ -29,13 +29,26 @@ from app.ui.context import AppContext  # noqa: E402
 from app.ui.login_window import LoginWindow  # noqa: E402
 from app.ui.main_window import MainWindow  # noqa: E402
 from app.ui.wizard import SetupWizard  # noqa: E402
-from tests.conftest import FakeShopApi  # noqa: E402
+from tests.conftest import OWNER_PASSWORD, OWNER_TOKEN, FakeShopApi  # noqa: E402
 
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "docs" / "screens"
 
-# Must match FakeShopApi's expected key, otherwise every call returns 401.
 FAKE_BASE_URL = "http://shopapi.test"
-FAKE_API_KEY = "admin-key"
+
+
+def new_fake() -> FakeShopApi:
+    """A fake server with the owner account and a few staff members."""
+    fake = FakeShopApi()
+    fake.add_staff("owner", OWNER_PASSWORD, "super_admin", "مالک فروشگاه")
+    fake.issue_token("owner", OWNER_TOKEN)
+    fake.add_staff("sara", OWNER_PASSWORD, "admin", "سارا احمدی")
+    fake.add_staff("reza", OWNER_PASSWORD, "operator", "رضا کریمی", must_change=True)
+    fake.add_staff("naz", OWNER_PASSWORD, "viewer", "ناز مرادی")["locked"] = True
+    return fake
+
+
+def client_for(fake: FakeShopApi, token: str = OWNER_TOKEN) -> ShopApiClient:
+    return ShopApiClient(FAKE_BASE_URL, token, transport=httpx.MockTransport(fake.handler))
 
 
 def seed(fake: FakeShopApi) -> None:
@@ -96,16 +109,14 @@ def build_context(tmp: Path, write_enabled: bool = False, opened: list | None = 
     store = Store(tmp / "render.db")
     if opened is not None:
         opened.append(store)
-    store.configure_connection(FAKE_BASE_URL, FAKE_API_KEY)
+    store.configure_connection(FAKE_BASE_URL)
     store.set_setting("wizard_completed", True)
-    auth = AuthService(store)
-    principal = auth.create_first_super_admin("owner", "مالک فروشگاه", "Secret123")
-    fake = FakeShopApi(FAKE_API_KEY)
+    fake = new_fake()
     seed(fake)
     fake.write_enabled = write_enabled
-    client = ShopApiClient(
-        FAKE_BASE_URL, FAKE_API_KEY, transport=httpx.MockTransport(fake.handler)
-    )
+    client = client_for(fake)
+    auth = AuthService(store, client)
+    principal = auth.authenticate("owner", OWNER_PASSWORD).principal
     context = AppContext(store=store, auth=auth, api=client, principal=principal)
     context.apply_system_info(
         SystemInfo(accounting_write_enabled=write_enabled, reachable=True)
@@ -138,15 +149,19 @@ def render_all(app: QApplication, tmp: Path, opened: list) -> int:
     # ---- first-run wizard -------------------------------------------------
     store = Store(tmp / "wizard.db")
     opened.append(store)
-    wizard = SetupWizard(store, AuthService(store))
+    wizard = SetupWizard(store, AuthService(store, ShopApiClient()))
     wizard.resize(880, 720)
     wizard.show()
     settle(app, 5)
     grab(wizard, OUT / "01-wizard-step1.png")
     wizard._step = 1
     wizard._update_step()
-    wizard.base_url_input.setText("http://127.0.0.1:8000")
-    wizard.api_key_input.setText("admin-key-value")
+    wizard.base_url_input.setText("https://192.168.1.10:8443")
+    wizard.fingerprint_label.setText("9D17 05D8 EE81 CACC")
+    wizard.fingerprint_full.setText(":".join(["9D", "17", "05", "D8"] * 8))
+    wizard.cert_box.setVisible(True)
+    wizard._show_connection_result("ارتباط با سرور فروشگاه برقرار شد.", ok=True,
+                                   detail="پس از پایان، با نام کاربری و گذرواژهٔ خود وارد شوید.")
     settle(app, 5)
     grab(wizard, OUT / "02-wizard-connection.png")
     wizard._step = 2
@@ -160,11 +175,9 @@ def render_all(app: QApplication, tmp: Path, opened: list) -> int:
     # ---- login ------------------------------------------------------------
     login_store = Store(tmp / "login.db")
     opened.append(login_store)
-    login_store.configure_connection(FAKE_BASE_URL, FAKE_API_KEY)
+    login_store.configure_connection(FAKE_BASE_URL)
     login_store.set_setting("wizard_completed", True)
-    login_auth = AuthService(login_store)
-    login_auth.create_first_super_admin("owner", "مالک فروشگاه", "Secret123")
-    login = LoginWindow(login_store, login_auth)
+    login = LoginWindow(login_store, AuthService(login_store, client_for(new_fake(), "")))
     login.resize(720, 660)
     login.show()
     settle(app, 5)
@@ -184,7 +197,8 @@ def render_all(app: QApplication, tmp: Path, opened: list) -> int:
         ("products", "08-products.png", 40),
         ("reports", "09-reports.png", 120),
         ("settings", "10-settings.png", 20),
-        ("users", "11-users.png", 20),
+        ("users", "11-users.png", 40),
+        ("server", "14-server.png", 60),
     ):
         window.navigate(key)
         settle(app, rounds)
@@ -209,6 +223,25 @@ def render_all(app: QApplication, tmp: Path, opened: list) -> int:
     settle(app, 40)
     grab(approve, OUT / "13-customer-approve.png")
     approve.close()
+
+    # ---- server setup wizard (first page) ---------------------------------
+    from app import server_setup as setup_module
+    from app.ui.server_setup_wizard import ServerSetupWizard
+
+    setup_module.is_admin = lambda: True
+    setup_module.odbc_driver_installed = lambda driver=None: True
+    setup_module.network_is_public = lambda: False
+    server_wizard = ServerSetupWizard()
+    server_wizard.resize(900, 760)
+    server_wizard.show()
+    settle(app, 20)
+    server_wizard._step = 1
+    server_wizard._update()
+    server_wizard.db_name.setText("hesab5")
+    server_wizard.db_user.setText("shopbot")
+    settle(app, 5)
+    grab(server_wizard, OUT / "15-server-setup.png")
+    server_wizard.close()
 
     window.close()
     return 0

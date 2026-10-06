@@ -128,7 +128,10 @@ class LoginWindow(QWidget):
         root.addWidget(card, 0, Qt.AlignmentFlag.AlignHCenter)
         root.addStretch(1)
 
-        self.setStyleSheet(f"background: {theme.BACKGROUND};")
+        # Scoped to this window only: an unscoped "background" would also paint
+        # every child, overriding the white-on-blue primary buttons.
+        self.setObjectName("WindowRoot")
+        self.setStyleSheet(f"QWidget#WindowRoot {{ background: {theme.BACKGROUND}; }}")
 
         self.username_input.returnPressed.connect(self._submit)
         self.password_input.returnPressed.connect(self._submit)

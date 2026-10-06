@@ -45,7 +45,10 @@ class SetupWizard(QWidget):
         self.setWindowTitle("تنظیمات اولیهٔ مدیریت فروشگاه")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setMinimumSize(720, 620)
-        self.setStyleSheet(f"background: {theme.BACKGROUND};")
+        # Scoped to this window only: an unscoped "background" would also paint
+        # every child, overriding the white-on-blue primary buttons.
+        self.setObjectName("WindowRoot")
+        self.setStyleSheet(f"QWidget#WindowRoot {{ background: {theme.BACKGROUND}; }}")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 24)

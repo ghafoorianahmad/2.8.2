@@ -63,7 +63,10 @@ class ServerSetupWizard(QWidget):
         self.setWindowTitle("راه‌اندازی سرور فروشگاه")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setMinimumSize(780, 660)
-        self.setStyleSheet(f"background: {theme.BACKGROUND};")
+        # Scoped to this window only: an unscoped "background" would also paint
+        # every child, overriding the white-on-blue primary buttons.
+        self.setObjectName("WindowRoot")
+        self.setStyleSheet(f"QWidget#WindowRoot {{ background: {theme.BACKGROUND}; }}")
         self.toasts = widgets.ToastHost(self)
         self._db_ok = False
         self._result: tuple[str, str] | None = None
