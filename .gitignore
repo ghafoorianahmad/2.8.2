@@ -42,3 +42,6 @@ desktop.ini
 .DS_Store
 .idea/
 .vscode/
+
+# build_exe.bat rescue folder (holds .env during a rebuild)
+.rebuild_keep/

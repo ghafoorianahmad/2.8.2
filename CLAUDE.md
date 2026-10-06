@@ -47,8 +47,8 @@ build_all.bat        # (ریشه) بیلد کامل به ترتیب درست: Sh
 
 - تست‌ها: shopapi ۵۵ ✓، shopbots ۴۸ ✓، shopadmin ۳۲۳ ✓ (بدون اخطار).
 - **ثبت در حسابداری:** خاموش (`ACCOUNTING_WRITE_ENABLED=false`)؛ کد وضعیت `6808` در `TabaghehBandi` تأیید نشده — باید DBA در production تأیید کند.
-- **نشت `.env`:** راه بسته شد (`build_installer.bat` بعد از کپی، `.env`/`*.db`/`*.log` را از staging پاک می‌کند و اگر چیزی ماند متوقف می‌شود؛ `.iss` هم `Excludes` دارد). ولی `shopadmin/dist/installer/ShopAdminSetup.exe` موجود (2026-10-05) هنوز نسخهٔ آلوده است — **به کسی نده** تا با `build_all.bat` از نو ساخته شود.
-- `shopsystem/dist/ShopSystem/.env` تنظیمات تست توسعه‌دهنده است و عمداً کنار exe می‌ماند (build_exe آن را حفظ می‌کند)؛ فقط نباید وارد installer شود.
+- **نشت `.env`:** راه بسته شد (`build_installer.bat` بعد از کپی، `.env`/`*.db`/`*.log` را از staging پاک می‌کند و اگر چیزی ماند متوقف می‌شود؛ `.iss` هم `Excludes` دارد). `ShopAdminSetup.exe` در 2026-10-07 از نو ساخته شد (نسخهٔ آلودهٔ 2026-10-05 جایگزین شد؛ اگر کپی‌ای از آن جای دیگری هست، دور بریز).
+- `.env` کنار `shopsystem/dist/ShopSystem/ShopSystem.exe` (تنظیمات تست توسعه‌دهنده) عمداً آنجا می‌ماند و rebuild حفظش می‌کند؛ فقط نباید وارد installer شود.
 
 ## کارهای پیش رو (backlog)
 
@@ -61,10 +61,12 @@ _(بعد از بررسی کامل، کاربر کارهای تکمیلی را م
 - [x] فایل‌های `.spec`: نیازی به ویرایش نیست؛ هر بیلد آن‌ها را با مسیر جدید بازمی‌سازد (در git نیستند).
 - [x] مسیرهای قدیمی در `shopapi/README.md`, `shopbots/README.md`, `shopsystem/NOTES.md` و `E:\DSH-Workspace\CLAUDE.md`.
 - [x] `build_all.bat` (ریشه)؛ `SHOP_NOPAUSE` در `build_installer.bat` برای اجرای زنجیره‌ای.
-- [x] باگ `build_exe.bat`: `%OUT%shopapi.db` بدون `\` ← دیتابیس/لاگ در rebuild حفظ نمی‌شد.
+- [x] دو باگ `build_exe.bat`: (۱) `%OUT%shopapi.db` بدون `\`؛ (۲) نجات `.env`/db/log **بعد** از PyInstaller انجام می‌شد که پوشه را پاک کرده بود ← حالا قبل از آن در `shopsystem/.rebuild_keep/` و در صورت شکست بیلد هم برگردانده می‌شود (تست‌شده).
+- [x] `build_all.bat` اجرا شد (2026-10-07 00:24): همهٔ تست‌ها سبز، `ShopAdminSetup.exe` تازه (۴۸MB) بدون `.env`/db/log در staging.
+- [ ] **`.env` تست توسعه کنار `shopsystem/dist/ShopSystem/ShopSystem.exe` در همین بیلد اول (باگ ۲) پاک شد.** یک نسخه در سطل بازیافت هست (`shopadmin\.installtest\ShopSystem\.env`)؛ بازگرداندن با تأیید کاربر. تنظیمات اصلی توسعه در `shopapi/.env` سالم است.
 - [x] نصب آزمایشی ثبت‌شده در ویندوز (`.installtest`، منوی Start) با uninstaller خودش حذف شد؛ فایل‌های موقت به سطل بازیافت.
 - [x] `qt_api` از `shopadmin/pytest.ini` (pytest-qt نصب نیست و تست‌ها از آن استفاده نمی‌کنند).
-- [ ] اجرای واقعی `build_all.bat` و نصب `ShopAdminSetup.exe` تازه (چند دقیقه طول می‌کشد؛ Inno Setup لازم است).
+- [ ] نصب و اجرای آزمایشی `ShopAdminSetup.exe` تازه.
 - [ ] (اختیاری) بازسازی venvها در مسیر جدید تا `pip.exe`/`pytest.exe` هم کار کنند.
 
 ### ۲. نصب‌کننده (از `shopadmin/CLAUDE.md`)

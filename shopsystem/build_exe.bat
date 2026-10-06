@@ -58,6 +58,23 @@ xcopy /e /i /q /y "%WS%\shopapi\app" "%SRC%\shopapi_app\" >nul
 xcopy /e /i /q /y "%WS%\shopbots\app" "%SRC%\shopbots_app\" >nul
 for /d /r "%SRC%" %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
 
+rem The user's real configuration must survive a rebuild: PyInstaller
+rem (--noconfirm) wipes the output folder, so rescue .env, the databases
+rem and the log BEFORE it runs. KEEP is outside build\ and dist\.
+set "OUT=%PKG%\dist\ShopSystem"
+if /i "%MODE%"=="onefile" set "OUT=%PKG%\dist"
+set "KEEP=%PKG%\.rebuild_keep"
+if exist "%KEEP%" (
+    echo [ERROR] %KEEP% already exists - a previous build was interrupted.
+    echo         Copy its files back into %OUT% by hand, delete it, then rebuild.
+    exit /b 1
+)
+mkdir "%KEEP%"
+if exist "%OUT%\.env" copy /y "%OUT%\.env" "%KEEP%\.env" >nul
+if exist "%OUT%\shopapi.db" copy /y "%OUT%\shopapi.db" "%KEEP%\shopapi.db" >nul
+if exist "%OUT%\shopbots.db" copy /y "%OUT%\shopbots.db" "%KEEP%\shopbots.db" >nul
+if exist "%OUT%\app.log" copy /y "%OUT%\app.log" "%KEEP%\app.log" >nul
+
 rem ------------------------------------------------------------------
 echo [3/6] Running PyInstaller (%MODE%) - this takes a few minutes ...
 "%PY%" -m PyInstaller ^
@@ -105,19 +122,7 @@ if errorlevel 1 goto :buildfail
 
 rem ------------------------------------------------------------------
 echo [4/6] Copying .env.example and README.txt next to the executable ...
-set "OUT=%PKG%\dist\ShopSystem"
-if /i "%MODE%"=="onefile" set "OUT=%PKG%\dist"
 if not exist "%OUT%" mkdir "%OUT%"
-
-rem The user's real configuration must survive a rebuild: PyInstaller wipes
-rem the output folder, so rescue .env (and the databases/logs) first.
-set "KEEP=%PKG%\build\_keep"
-if exist "%KEEP%" rmdir /s /q "%KEEP%"
-mkdir "%KEEP%" 2>nul
-if exist "%OUT%\.env" copy /y "%OUT%\.env" "%KEEP%\.env" >nul
-if exist "%OUT%\shopapi.db" copy /y "%OUT%\shopapi.db" "%KEEP%\shopapi.db" >nul
-if exist "%OUT%\shopbots.db" copy /y "%OUT%\shopbots.db" "%KEEP%\shopbots.db" >nul
-if exist "%OUT%\app.log" copy /y "%OUT%\app.log" "%KEEP%\app.log" >nul
 
 copy /y "%PKG%\.env.example" "%OUT%\.env.example" >nul
 copy /y "%PKG%\README.txt" "%OUT%\README.txt" >nul
@@ -160,4 +165,7 @@ exit /b 1
 :buildfail
 echo.
 echo [ERROR] PyInstaller failed. See the messages above and NOTES.md.
+if not exist "%OUT%" mkdir "%OUT%"
+for %%F in (.env shopapi.db shopbots.db app.log) do if exist "%KEEP%\%%F" copy /y "%KEEP%\%%F" "%OUT%\%%F" >nul
+rmdir /s /q "%KEEP%" 2>nul
 exit /b 1
