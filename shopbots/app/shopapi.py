@@ -62,7 +62,13 @@ class ShopApiClient:
 
     async def _http(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._settings.http_timeout)
+            verify: object = True
+            if self._settings.shopapi_ca_file:
+                import ssl
+
+                # Trust exactly the server's own self-signed certificate.
+                verify = ssl.create_default_context(cafile=self._settings.shopapi_ca_file)
+            self._client = httpx.AsyncClient(timeout=self._settings.http_timeout, verify=verify)
         return self._client
 
     @staticmethod

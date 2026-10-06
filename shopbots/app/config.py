@@ -50,6 +50,8 @@ def _env_list(key: str) -> tuple[str, ...]:
 class Settings:
     # --- shopapi ---
     shopapi_base_url: str = "http://127.0.0.1:8000"
+    #: The server's own certificate when the API runs over HTTPS (pinned).
+    shopapi_ca_file: str = ""
     bot_api_key: str = ""
     admin_api_key: str = ""
 
@@ -79,6 +81,7 @@ class Settings:
         _load_dotenv()
         return cls(
             shopapi_base_url=_env("SHOPAPI_BASE_URL", cls.shopapi_base_url),
+            shopapi_ca_file=_env("SHOPAPI_CA_FILE", ""),
             bot_api_key=_env("BOT_API_KEY", ""),
             admin_api_key=_env("ADMIN_API_KEY", ""),
             bale_token=_env("BALE_TOKEN", ""),

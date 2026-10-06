@@ -84,6 +84,15 @@ class AccountingReader:
         return ",".join("?" for _ in values)
 
     # ---- public ----
+    def ping(self) -> bool:
+        """Cheapest possible proof that the accounting database answers."""
+        conn = self.connection()
+        try:
+            conn.execute("SELECT 1").fetchone()
+        finally:
+            conn.close()
+        return True
+
     def list_groups(self) -> list[dict]:
         db = self._db()
         conn = self.connection()

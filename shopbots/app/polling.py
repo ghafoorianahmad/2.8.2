@@ -9,6 +9,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
+from . import health
 from .config import Settings
 from .engine import BotEngine, _safe_error
 from .platforms import PlatformAdapter
@@ -38,26 +39,33 @@ async def poll_platform(
         logger.info("platform=%s started dry_run=true", platform)
         return
     logger.info("platform=%s started", platform)
+    health.mark_started(platform)
     backoff = 1.0
-    while not stop_event.is_set():
-        try:
-            offset = store.get_last_update_id(platform) + 1
-            updates = await adapter.get_updates(offset=offset, timeout=settings.poll_timeout)
-            backoff = 1.0
-            if not updates:
-                # Always yield, even when the server answered immediately.
-                await sleep(IDLE_POLL_SLEEP)
-                continue
-            for update in updates:
-                if stop_event.is_set():
-                    break
-                await engine.handle_update(platform, update)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning("platform=%s poll_error=%s", platform, _safe_error(exc))
-            await sleep(backoff)
-            backoff = min(backoff * 2, MAX_BACKOFF)
+    try:
+        while not stop_event.is_set():
+            try:
+                offset = store.get_last_update_id(platform) + 1
+                updates = await adapter.get_updates(offset=offset, timeout=settings.poll_timeout)
+                backoff = 1.0
+                health.mark_ok(platform)
+                if not updates:
+                    # Always yield, even when the server answered immediately.
+                    await sleep(IDLE_POLL_SLEEP)
+                    continue
+                for update in updates:
+                    if stop_event.is_set():
+                        break
+                    await engine.handle_update(platform, update)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                error = _safe_error(exc)
+                logger.warning("platform=%s poll_error=%s", platform, error)
+                health.mark_error(platform, error)
+                await sleep(backoff)
+                backoff = min(backoff * 2, MAX_BACKOFF)
+    finally:
+        health.mark_stopped(platform)
     logger.info("platform=%s stopped", platform)
 
 

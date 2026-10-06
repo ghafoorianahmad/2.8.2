@@ -29,6 +29,11 @@ class FakeReader:
     def list_groups(self):
         return self.groups
 
+    def ping(self):
+        if getattr(self, "down", False):
+            raise RuntimeError("accounting down")
+        return True
+
     def list_products(self, *, q=None, group=None, in_stock=True, page=1, page_size=20,
                       level=3, our_reservations=None):
         our = our_reservations or {}
