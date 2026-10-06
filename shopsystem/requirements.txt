@@ -5,6 +5,7 @@ pydantic
 pyodbc
 python-dotenv
 httpx
+cryptography   # the server's self-signed TLS certificate
 
 # Build-time only
 pyinstaller

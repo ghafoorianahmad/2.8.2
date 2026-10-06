@@ -105,6 +105,8 @@ echo [3/6] Running PyInstaller (%MODE%) - this takes a few minutes ...
     --hidden-import uvicorn.lifespan.on ^
     --hidden-import uvicorn.lifespan.off ^
     --hidden-import dotenv ^
+    --hidden-import server_tls ^
+    --collect-submodules cryptography ^
     --hidden-import sqlite3 ^
     --hidden-import pyodbc ^
     --hidden-import httpx ^
