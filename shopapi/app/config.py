@@ -89,6 +89,16 @@ class Settings:
     bot_api_key: str = ""
     site_api_key: str = ""
     admin_api_key: str = ""
+    #: BOT/ADMIN keys are accepted only from this machine (the bots run in the
+    #: same process). LAN clients sign in as staff instead. SITE key is exempt
+    #: (a future site relay calls from outside).
+    service_keys_local_only: bool = True
+
+    # --- Staff sign-in ---
+    staff_session_hours: int = 12
+    staff_remember_days: int = 7
+    login_max_attempts: int = 5
+    login_lock_minutes: int = 15
 
     # --- Own DB ---
     sqlite_path: str = str(BASE_DIR / "shopapi.db")
@@ -127,6 +137,11 @@ class Settings:
             bot_api_key=_env("BOT_API_KEY", ""),
             site_api_key=_env("SITE_API_KEY", ""),
             admin_api_key=_env("ADMIN_API_KEY", ""),
+            service_keys_local_only=_env_bool("SERVICE_KEYS_LOCAL_ONLY", True),
+            staff_session_hours=_env_int("STAFF_SESSION_HOURS", 12),
+            staff_remember_days=_env_int("STAFF_REMEMBER_DAYS", 7),
+            login_max_attempts=_env_int("LOGIN_MAX_ATTEMPTS", 5),
+            login_lock_minutes=_env_int("LOGIN_LOCK_MINUTES", 15),
             sqlite_path=_env("SQLITE_PATH", str(BASE_DIR / "shopapi.db")),
         )
 
@@ -147,7 +162,8 @@ class Settings:
         return ";".join(parts) + ";"
 
     def price_level_for(self, channel: str) -> int:
-        return self.price_level_bot if channel == "bot" else self.price_level_site
+        # Staff browse the catalogue at the bot price level (what customers see).
+        return self.price_level_bot if channel in ("bot", "staff") else self.price_level_site
 
     def write_allowed(self) -> bool:
         allowed = {h.lower() for h in self.accounting_allowed_hosts}

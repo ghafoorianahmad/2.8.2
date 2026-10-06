@@ -94,3 +94,68 @@ class ApproveUserIn(BaseModel):
 
 class RejectIn(BaseModel):
     reason: Optional[str] = None
+
+
+# ---- staff accounts / sign-in ----
+StaffRole = Literal["super_admin", "admin", "operator", "viewer"]
+
+
+class LoginIn(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
+    remember: bool = False
+    client: str = Field("", max_length=100)
+
+
+class StaffOut(BaseModel):
+    id: int
+    username: str
+    full_name: str
+    role: str
+    active: bool
+    must_change_password: bool
+    locked: bool = False
+    created_at: str
+    last_login_at: Optional[str] = None
+
+
+class LoginOut(BaseModel):
+    token: str
+    expires_at: str
+    user: StaffOut
+    permissions: list[str]
+
+
+class MeOut(BaseModel):
+    user: StaffOut
+    permissions: list[str]
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=1, max_length=128)
+
+
+class StaffCreate(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    full_name: str = Field("", max_length=100)
+    role: StaffRole
+    password: str = Field(min_length=1, max_length=128)
+    must_change_password: bool = True
+
+
+class StaffUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, max_length=100)
+    role: Optional[StaffRole] = None
+    active: Optional[bool] = None
+
+
+class PasswordResetIn(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+    must_change_password: bool = True
+
+
+class BootstrapIn(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    full_name: str = Field("", max_length=100)
+    password: str = Field(min_length=1, max_length=128)

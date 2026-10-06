@@ -117,6 +117,8 @@ def settings():
         admin_api_key="admin-key",
         sqlite_path=":memory:",
         bank_account_text="pay to account 123",
+        # TestClient connects as host "testclient"; loopback rules have own tests.
+        service_keys_local_only=False,
     )
 
 
@@ -137,6 +139,9 @@ def writer():
 
 @pytest.fixture
 def client(settings, db, reader, writer):
+    from app.routers.auth import login_limiter
+
+    login_limiter.reset()
     app = create_app()
     app.dependency_overrides[deps.get_settings] = lambda: settings
     app.dependency_overrides[deps.get_db] = lambda: db

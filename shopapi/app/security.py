@@ -1,65 +1,26 @@
-"""API-key authentication, text normalization and masking."""
+"""Authentication: API keys (service/channels) and staff sessions."""
 from __future__ import annotations
 
 import hmac
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 
-from fastapi import Depends, HTTPException, Security, status
-from fastapi.security import APIKeyHeader
+from fastapi import Depends, HTTPException, Request, Security, status
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
+from . import deps
 from .config import Settings, get_settings
+from .db_own import OwnDB
+from .text import mask_name, mask_phone, normalize_fa  # noqa: F401 (re-export)
+from .staff import ROLE_SERVICE, has_permission, hash_token
+from .util import now_utc
 
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
+BEARER = HTTPBearer(auto_error=False)
 
-# Arabic yeh/kaf and Arabic-Indic + Persian digits -> Persian yeh/kaf + ASCII digits.
-_FA_TRANS = str.maketrans(
-    {
-        "ي": "ی",
-        "ك": "ک",
-        "٠": "0",
-        "١": "1",
-        "٢": "2",
-        "٣": "3",
-        "٤": "4",
-        "٥": "5",
-        "٦": "6",
-        "٧": "7",
-        "٨": "8",
-        "٩": "9",
-        "۰": "0",
-        "۱": "1",
-        "۲": "2",
-        "۳": "3",
-        "۴": "4",
-        "۵": "5",
-        "۶": "6",
-        "۷": "7",
-        "۸": "8",
-        "۹": "9",
-    }
-)
-
-
-def normalize_fa(text: str | None) -> str:
-    """Normalize Persian/Arabic text for search and phone comparison only."""
-    if text is None:
-        return ""
-    return str(text).translate(_FA_TRANS).strip()
-
-
-def mask_phone(phone: str | None) -> str:
-    p = normalize_fa(phone or "")
-    if not p:
-        return "****"
-    if len(p) < 4:
-        return "*" * len(p)
-    return p[:2] + "*" * (len(p) - 4) + p[-2:]
-
-
-def mask_name(name: str | None) -> str:
-    if not name:
-        return ""
-    return name[0] + "*" * (len(name) - 1)
-
+LOCAL_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+#: last_seen_at is refreshed at most this often (avoids a write per request).
+_TOUCH_INTERVAL = timedelta(seconds=60)
 
 def _role_for_key(settings: Settings, api_key: str) -> str | None:
     """Resolve an API key to a role using constant-time comparison.
@@ -82,20 +43,126 @@ def _role_for_key(settings: Settings, api_key: str) -> str | None:
     return matched
 
 
-def get_api_identity(
-    api_key: str | None = Security(API_KEY_HEADER),
-    settings: Settings = Depends(get_settings),
-) -> str:
-    """Resolve the X-API-Key header to a role: bot, site or admin."""
-    if not api_key:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing X-API-Key header")
+def is_local_request(request: Request) -> bool:
+    client = request.client
+    return client is not None and client.host in LOCAL_HOSTS
+
+
+def _resolve_key(request: Request, settings: Settings, api_key: str) -> str:
     role = _role_for_key(settings, api_key)
     if role is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid API key")
+    if role in ("bot", "admin") and settings.service_keys_local_only and not is_local_request(request):
+        # The bot/admin keys live only on the server; from the LAN they are as
+        # good as a leaked secret, so they are refused even when correct.
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key not accepted from this address")
     return role
 
 
-def require_admin(role: str = Depends(get_api_identity)) -> str:
-    if role != "admin":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin key required")
-    return role
+def get_api_identity(
+    request: Request,
+    api_key: str | None = Security(API_KEY_HEADER),
+    settings: Settings = Depends(get_settings),
+) -> str:
+    """Resolve the X-API-Key header to a channel role: bot, site or admin."""
+    if not api_key:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing X-API-Key header")
+    return _resolve_key(request, settings, api_key)
+
+
+@dataclass(frozen=True)
+class Identity:
+    """Who is calling: a staff member (bearer session) or the server service key."""
+
+    kind: str          # "staff" | "service" | "channel"
+    role: str          # staff role, "service", or the channel ("bot"/"site")
+    username: str
+    user_id: int | None = None
+    token_hash: str | None = None
+    must_change_password: bool = False
+
+    def can(self, permission: str) -> bool:
+        return has_permission(self.role, permission)
+
+    @property
+    def actor(self) -> str:
+        return self.username
+
+
+def _parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _staff_identity(db: OwnDB, token: str) -> Identity:
+    token_hash = hash_token(token)
+    session = db.get_session(token_hash)
+    unauthorized = HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired or invalid")
+    if session is None:
+        raise unauthorized
+    now = now_utc()
+    expires = _parse_ts(session["expires_at"])
+    if expires is None or expires <= now:
+        db.delete_session(token_hash)
+        raise unauthorized
+    user = db.get_staff(session["user_id"])
+    if user is None or not user["active"]:
+        db.delete_session(token_hash)
+        raise unauthorized
+    last_seen = _parse_ts(session["last_seen_at"])
+    if last_seen is None or now - last_seen > _TOUCH_INTERVAL:
+        db.touch_session(token_hash)
+    return Identity(
+        kind="staff", role=user["role"], username=user["username"], user_id=user["id"],
+        token_hash=token_hash, must_change_password=bool(user["must_change_password"]),
+    )
+
+
+def get_identity(
+    request: Request,
+    api_key: str | None = Security(API_KEY_HEADER),
+    bearer: HTTPAuthorizationCredentials | None = Security(BEARER),
+    settings: Settings = Depends(get_settings),
+    db: OwnDB = Depends(deps.get_db),
+) -> Identity:
+    """Staff bearer session, or an API key (service / channel)."""
+    if bearer is not None and bearer.credentials:
+        return _staff_identity(db, bearer.credentials)
+    if api_key:
+        role = _resolve_key(request, settings, api_key)
+        if role == "admin":
+            return Identity(kind="service", role=ROLE_SERVICE, username="service")
+        return Identity(kind="channel", role=role, username=role)
+    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign-in required")
+
+
+def get_staff_identity(identity: Identity = Depends(get_identity)) -> Identity:
+    if identity.kind != "staff":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign-in required")
+    return identity
+
+
+def require_permission(permission: str):
+    """Dependency factory: the caller must hold ``permission`` (server-side check)."""
+
+    def _check(identity: Identity = Depends(get_identity)) -> Identity:
+        if identity.must_change_password:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Password change required")
+        if not identity.can(permission):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this account")
+        return identity
+
+    return _check
+
+
+def get_catalog_channel(identity: Identity = Depends(get_identity)) -> str:
+    """Product/group reads: any channel key, the service key, or a signed-in staff member."""
+    if identity.kind == "staff":
+        return "staff"
+    if identity.kind == "service":
+        return "admin"
+    return identity.role

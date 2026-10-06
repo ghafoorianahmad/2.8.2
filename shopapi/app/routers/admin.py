@@ -1,4 +1,9 @@
-"""Admin endpoints (admin API key required)."""
+"""Admin endpoints.
+
+Callers: signed-in staff (bearer session; role checked per endpoint) or the
+server-local service key used by the bots. Every action is audited with the
+acting account's username.
+"""
 from __future__ import annotations
 
 from typing import Optional
@@ -11,13 +16,22 @@ from ..accounting_writer import AccountingWriter
 from ..config import Settings
 from ..db_own import OwnDB
 from ..schemas import ApproveUserIn, OrderOut, PersonMatch, RejectIn, UserOut
-from ..security import require_admin
+from ..security import Identity, require_permission
+from ..staff import P_CUSTOMERS_DECIDE, P_ORDERS_EXPIRE, P_PAYMENTS_DECIDE, P_VIEW
 
-router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
+router = APIRouter(prefix="/admin")
+
+CAN_VIEW = Depends(require_permission(P_VIEW))
+CAN_DECIDE_CUSTOMERS = Depends(require_permission(P_CUSTOMERS_DECIDE))
+CAN_DECIDE_PAYMENTS = Depends(require_permission(P_PAYMENTS_DECIDE))
+CAN_EXPIRE = Depends(require_permission(P_ORDERS_EXPIRE))
 
 
 @router.get("/system-info")
-def system_info(settings: Settings = Depends(deps.get_settings)) -> dict:
+def system_info(
+    settings: Settings = Depends(deps.get_settings),
+    _: Identity = CAN_VIEW,
+) -> dict:
     """Read-only operational flags for admin clients (e.g. the desktop console).
 
     Exposes whether real accounting writes are enabled so a client can warn its
@@ -40,6 +54,7 @@ def system_info(settings: Settings = Depends(deps.get_settings)) -> dict:
 def list_users(
     status_filter: Optional[str] = Query(None, alias="status"),
     db: OwnDB = Depends(deps.get_db),
+    _: Identity = CAN_VIEW,
 ) -> list[UserOut]:
     return [UserOut(**u) for u in db.list_users(status_filter)]
 
@@ -48,6 +63,7 @@ def list_users(
 def match_person(
     mobile: str = Query(...),
     reader: AccountingReader = Depends(deps.get_reader),
+    _: Identity = CAN_DECIDE_CUSTOMERS,
 ) -> PersonMatch:
     match = reader.find_person_by_mobile(mobile)
     if match is None:
@@ -62,6 +78,7 @@ def approve_user(
     reader: AccountingReader = Depends(deps.get_reader),
     db: OwnDB = Depends(deps.get_db),
     settings: Settings = Depends(deps.get_settings),
+    who: Identity = CAN_DECIDE_CUSTOMERS,
 ) -> UserOut:
     with db.reservation_guard():
         user = db.get_user_by_id(user_id)
@@ -80,7 +97,8 @@ def approve_user(
                     f"person_code {payload.person_code} is already linked to another user",
                 )
         user = db.set_user_approved(user_id, payload.person_code)
-    db.audit("admin", "user_approve", f"user id={user_id} person_code={payload.person_code}")
+    db.audit(who.actor, "user_approve", f"user id={user_id} person_code={payload.person_code}")
+    db.add_event("customer_approved", user_id, who.actor)
     return UserOut(**user)
 
 
@@ -89,13 +107,15 @@ def reject_user(
     user_id: int,
     payload: Optional[RejectIn] = None,
     db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_DECIDE_CUSTOMERS,
 ) -> UserOut:
     user = db.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     user = db.set_user_status(user_id, "rejected")
     reason = (payload.reason if payload and payload.reason else "")[:200]
-    db.audit("admin", "user_reject", f"user id={user_id} reason={reason}")
+    db.audit(who.actor, "user_reject", f"user id={user_id} reason={reason}")
+    db.add_event("customer_rejected", user_id, who.actor)
     return UserOut(**user)
 
 
@@ -103,6 +123,7 @@ def reject_user(
 def list_orders(
     status_filter: str = Query("receipt_uploaded", alias="status"),
     db: OwnDB = Depends(deps.get_db),
+    _: Identity = CAN_VIEW,
 ) -> list[OrderOut]:
     return [OrderOut(**o) for o in db.list_orders(status_filter)]
 
@@ -113,6 +134,7 @@ def approve_payment(
     reader: AccountingReader = Depends(deps.get_reader),
     writer: AccountingWriter = Depends(deps.get_writer),
     db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_DECIDE_PAYMENTS,
 ) -> OrderOut:
     # Serialize the re-check + write so concurrent approvals cannot write the
     # same order twice or oversell.
@@ -153,14 +175,15 @@ def approve_payment(
             order = db.set_order_status(order_id, "written", result.accounting_order_no)
             db.set_payment_decided(order_id, "approved")
             db.audit(
-                "admin",
+                who.actor,
                 "approve_payment",
                 f"order id={order_id} accounting_order_no={result.accounting_order_no} "
                 f"committed={result.committed} idempotent={result.idempotent}",
             )
+            db.add_event("payment_approved", order_id, who.actor)
         else:
             db.audit(
-                "admin",
+                who.actor,
                 "approve_payment_dry_run",
                 f"order id={order_id} would_be_codlp={result.accounting_order_no}",
             )
@@ -173,6 +196,7 @@ def reject_payment(
     order_id: int,
     payload: Optional[RejectIn] = None,
     db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_DECIDE_PAYMENTS,
 ) -> OrderOut:
     order = db.get_order(order_id)
     if order is None:
@@ -184,12 +208,34 @@ def reject_payment(
     db.set_payment_decided(order_id, "rejected")
     order = db.set_order_status(order_id, "rejected")
     reason = (payload.reason if payload and payload.reason else "")[:200]
-    db.audit("admin", "reject_payment", f"order id={order_id} reason={reason}")
+    db.audit(who.actor, "reject_payment", f"order id={order_id} reason={reason}")
+    db.add_event("payment_rejected", order_id, who.actor)
     return OrderOut(**order)
 
 
 @router.post("/orders/expire")
-def expire_orders(db: OwnDB = Depends(deps.get_db)) -> dict:
+def expire_orders(db: OwnDB = Depends(deps.get_db), who: Identity = CAN_EXPIRE) -> dict:
     expired = db.expire_awaiting_orders()
-    db.audit("admin", "expire_orders", f"expired={expired}")
+    db.audit(who.actor, "expire_orders", f"expired={expired}")
     return {"expired": expired}
+
+
+@router.get("/events")
+def list_events(
+    after: Optional[int] = Query(None, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: OwnDB = Depends(deps.get_db),
+    _: Identity = CAN_VIEW,
+) -> dict:
+    """Notification feed for staff clients.
+
+    Without ``after`` only the current position is returned, so a client that
+    just started does not replay the whole history as fresh notifications.
+    """
+    if after is None:
+        return {"last_id": db.last_event_id(), "items": []}
+    items = db.list_events(after, limit)
+    # A position beyond the newest event (e.g. the server database was
+    # replaced) resyncs the client instead of silencing it forever.
+    last_id = items[-1]["id"] if items else min(after, db.last_event_id())
+    return {"last_id": last_id, "items": items}

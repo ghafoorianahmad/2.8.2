@@ -20,7 +20,7 @@ from ..schemas import (
     UserOut,
     UserRegister,
 )
-from ..security import get_api_identity
+from ..security import get_api_identity, get_catalog_channel
 from ..util import now_utc, round_half_up
 
 router = APIRouter()
@@ -34,7 +34,7 @@ def health() -> dict:
 @router.get("/groups", response_model=list[GroupOut])
 def groups(
     reader: AccountingReader = Depends(deps.get_reader),
-    _: str = Depends(get_api_identity),
+    _: str = Depends(get_catalog_channel),
 ) -> list[GroupOut]:
     return [GroupOut(**g) for g in reader.list_groups()]
 
@@ -46,7 +46,7 @@ def products(
     in_stock: bool = Query(True),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    role: str = Depends(get_api_identity),
+    role: str = Depends(get_catalog_channel),
     reader: AccountingReader = Depends(deps.get_reader),
     db: OwnDB = Depends(deps.get_db),
     settings: Settings = Depends(deps.get_settings),
@@ -70,8 +70,11 @@ def register(
     db: OwnDB = Depends(deps.get_db),
     role: str = Depends(get_api_identity),
 ) -> UserOut:
+    is_new = db.get_user_by_platform(payload.platform, payload.chat_id) is None
     row = db.register_user(payload.platform, payload.chat_id, payload.name, payload.phone)
     db.audit(role, "register", f"user id={row['id']}")
+    if is_new:
+        db.add_event("customer_registered", row["id"], role)
     return UserOut(**row)
 
 
@@ -157,6 +160,7 @@ def create_order(
             [(it.kala_code, it.name, it.qty, it.unit_price) for it in items_out],
         )
     db.audit(role, "order_create", f"order id={order['id']}")
+    db.add_event("order_created", order["id"], role)
     return OrderOut(**order, payment_instructions=settings.bank_account_text or None)
 
 
@@ -189,6 +193,7 @@ def upload_receipt(
         db.add_payment(order_id, payload.receipt_ref, "submitted")
         order = db.set_order_status(order_id, "receipt_uploaded")
     db.audit(role, "receipt_upload", f"order id={order_id}")
+    db.add_event("receipt_uploaded", order_id, role)
     return OrderOut(**order)
 
 

@@ -14,7 +14,7 @@ from typing import Optional
 import pyodbc
 
 from .config import Settings
-from .security import normalize_fa
+from .text import normalize_fa
 from .util import quote_identifier
 
 # Price levels -> Kala sale-price columns. Geya/Geyk/Geym are NOT sale prices.

@@ -124,11 +124,30 @@ Invoke-RestMethod http://127.0.0.1:8000/groups -Headers @{ "X-API-Key" = "dev-bo
 
 ## Authentication
 
-Every endpoint requires an `X-API-Key` header. Keys come from `.env`:
+Two kinds of callers:
 
-- `BOT_API_KEY` → role `bot` (price level `PRICE_LEVEL_BOT`)
-- `SITE_API_KEY` → role `site` (price level `PRICE_LEVEL_SITE`)
-- `ADMIN_API_KEY` → role `admin` (admin endpoints)
+1. **Channel / service keys** (`X-API-Key`, from `.env`):
+   - `BOT_API_KEY` → role `bot` (price level `PRICE_LEVEL_BOT`)
+   - `SITE_API_KEY` → role `site` (price level `PRICE_LEVEL_SITE`)
+   - `ADMIN_API_KEY` → the **service** identity used by the bots for in-chat
+     approvals. It can run shop workflows but cannot manage staff or the server.
+   - With `SERVICE_KEYS_LOCAL_ONLY=true` (default) the bot and admin keys are
+     refused unless the request comes from the server itself (loopback).
+2. **Staff** (ShopAdmin): `POST /auth/login` with username + password →
+   `Authorization: Bearer <token>`. Roles are enforced **on the server**:
+
+   | role | view | approve/reject customers & payments, expire | manage staff, audit log |
+   | --- | --- | --- | --- |
+   | `viewer`, `operator` | ✓ | | |
+   | `admin` | ✓ | ✓ | |
+   | `super_admin` | ✓ | ✓ | ✓ |
+
+   Passwords: scrypt (stdlib), ≥ 8 chars with letters and digits. Only a SHA-256
+   of each session token is stored. 5 wrong passwords → 15-minute lock; ≤ 20
+   login attempts per address per 5 minutes. Changing a role, disabling an
+   account or resetting/changing a password signs that account out elsewhere.
+   The first super admin is created with `POST /auth/bootstrap` (service key,
+   i.e. only on the server, and only while no staff account exists).
 
 ## Endpoints
 
@@ -151,6 +170,17 @@ Every endpoint requires an `X-API-Key` header. Keys come from `.env`:
 | POST | `/admin/orders/{id}/approve-payment` | re-checks availability, writes (dry-run default) |
 | POST | `/admin/orders/{id}/reject-payment` | admin |
 | POST | `/admin/orders/expire` | expires `awaiting_payment` orders past `reserve_until` |
+| GET | `/admin/events?after=` | notification feed (`customer_registered`, `order_created`, `receipt_uploaded`, decisions); no `after` → current position only |
+| GET | `/auth/status` | public: `{bootstrap_required}` |
+| POST | `/auth/bootstrap` | first super admin (service key only) |
+| POST | `/auth/login` / `/auth/logout` | staff session |
+| GET | `/auth/me` | current staff account + permissions |
+| POST | `/auth/change-password` | own password |
+| GET/POST | `/admin/staff` | list / create staff (super_admin) |
+| PATCH | `/admin/staff/{id}` | name, role, active (last super admin protected) |
+| POST | `/admin/staff/{id}/password` · `/unlock` | reset password / clear lock |
+| DELETE | `/admin/staff/{id}` | delete (not yourself, not the last super admin) |
+| GET | `/admin/audit` | audit log (super_admin) |
 
 ## Configuration
 
