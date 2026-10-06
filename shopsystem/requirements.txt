@@ -1,0 +1,11 @@
+# Runtime dependencies of shopapi + shopbots (bundled into the executable)
+fastapi
+uvicorn
+pydantic
+pyodbc
+python-dotenv
+httpx
+
+# Build-time only
+pyinstaller
+pytest

@@ -1,0 +1,447 @@
+"""صفحهٔ تنظیمات — اتصال به shopapi، بازه‌ها، گذرواژهٔ خود و مشاهدهٔ لاگ.
+
+این مقادیر فقط در پایگاه‌دادهٔ محلی همین برنامه ذخیره می‌شوند و هرگز به shopapi
+فرستاده نمی‌شوند.
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import (
+    QFormLayout,
+    QHBoxLayout,
+    QLineEdit,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ...auth import AuthError
+from ...logging_setup import get_logger, mask_secret
+from ...paths import APP_VERSION, data_dir, db_path, log_path
+from ...permissions import (
+    SETTINGS_CHANGE_OWN_PASSWORD,
+    SETTINGS_EDIT_CONNECTION,
+    SETTINGS_EDIT_GENERAL,
+    SETTINGS_VIEW_LOG,
+)
+from ...persian import format_shamsi, to_persian_digits
+from ...statuses import role_fa
+from .. import theme, widgets
+from ..async_utils import run_async
+from ..base_page import BasePage
+
+log = get_logger("settings")
+
+
+class SettingsPage(BasePage):
+    title = "تنظیمات"
+    subtitle = "پیکربندی اتصال، بازه‌های به‌روزرسانی و حساب کاربری"
+
+    def build_body(self) -> None:
+        from PySide6.QtWidgets import QScrollArea
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.setSpacing(16)
+
+        layout.addWidget(self._build_connection_panel())
+        layout.addWidget(self._build_general_panel())
+        layout.addWidget(self._build_password_panel())
+        layout.addWidget(self._build_about_panel())
+        layout.addStretch(1)
+
+        scroll.setWidget(container)
+        self.body.addWidget(scroll, 1)
+
+        self._reload_values()
+
+    def load(self) -> None:
+        """Settings live in the local database, so this only re-reads them."""
+        self._reload_values()
+
+    # ------------------------------------------------------------------ panels
+    def _build_connection_panel(self) -> QWidget:
+        panel = widgets.Panel("اتصال به سرور فروشگاه (shopapi)")
+
+        self.base_url_input = QLineEdit()
+        self.base_url_input.setPlaceholderText("http://127.0.0.1:8000")
+        self.base_url_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+
+        self.api_key_input = QLineEdit()
+        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.api_key_input.setPlaceholderText("کلید مدیریت (ADMIN_API_KEY)")
+
+        self.reveal_button = QPushButton()
+        self.reveal_button.setObjectName("Ghost")
+        self.reveal_button.setCheckable(True)
+        self.reveal_button.setIcon(theme.icon("eye", 18, theme.TEXT_MUTED))
+        self.reveal_button.setFixedWidth(40)
+        self.reveal_button.toggled.connect(self._toggle_reveal)
+
+        key_row = QHBoxLayout()
+        key_row.setSpacing(6)
+        key_row.addWidget(self.api_key_input, 1)
+        key_row.addWidget(self.reveal_button)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setHorizontalSpacing(18)
+        form.setVerticalSpacing(12)
+        form.addRow(widgets.label("آدرس سرور:"), self.base_url_input)
+        form.addRow(widgets.label("کلید API:"), key_row)
+        panel.body.addLayout(form)
+
+        self.connection_hint = widgets.label("", name="Muted", wrap=True)
+        panel.body.addWidget(self.connection_hint)
+
+        if not self.context.can(SETTINGS_EDIT_CONNECTION):
+            # Only the Super Admin may change the connection settings.
+            self.base_url_input.setEnabled(False)
+            self.api_key_input.setEnabled(False)
+            self.connection_hint.setText(
+                "تغییر آدرس سرور و کلید API فقط توسط «مدیر کل» امکان‌پذیر است."
+            )
+        else:
+            self.connection_hint.setText(
+                "کلید API فقط در همین رایانه و در پایگاه‌دادهٔ محلی ذخیره می‌شود."
+            )
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+        self.test_button = widgets.button(
+            "آزمایش اتصال", icon_name="wifi", variant="primary", on_click=self._test_connection
+        )
+        self.save_connection_button = widgets.button(
+            "ذخیرهٔ تنظیمات اتصال", icon_name="save", on_click=self._save_connection
+        )
+        self.info_button = widgets.button(
+            "اطلاعات سرور", icon_name="server", on_click=self._show_server_info
+        )
+        self.save_connection_button.setEnabled(self.context.can(SETTINGS_EDIT_CONNECTION))
+        buttons.addWidget(self.test_button)
+        buttons.addWidget(self.save_connection_button)
+        buttons.addWidget(self.info_button)
+        buttons.addStretch(1)
+        panel.body.addLayout(buttons)
+
+        self.connection_status = widgets.label("", wrap=True)
+        panel.body.addWidget(self.connection_status)
+        return panel
+
+    def _build_general_panel(self) -> QWidget:
+        panel = widgets.Panel("بازه‌های زمانی")
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setHorizontalSpacing(18)
+        form.setVerticalSpacing(12)
+
+        self.refresh_spin = QSpinBox()
+        self.refresh_spin.setRange(0, 3600)
+        self.refresh_spin.setSuffix(" ثانیه")
+        self.refresh_spin.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.refresh_spin.setSpecialValueText("خاموش")
+
+        self.timeout_spin = QSpinBox()
+        self.timeout_spin.setRange(1, 480)
+        self.timeout_spin.setSuffix(" دقیقه")
+        self.timeout_spin.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+
+        form.addRow(widgets.label("به‌روزرسانی خودکار:"), self.refresh_spin)
+        form.addRow(widgets.label("پایان خودکار نشست:"), self.timeout_spin)
+        panel.body.addLayout(form)
+
+        hint = widgets.label(
+            "برای خاموش کردن به‌روزرسانی خودکار، مقدار صفر بگذارید. "
+            "پس از پایان زمان نشست، برای ادامه باید دوباره وارد شوید.",
+            name="Muted", wrap=True,
+        )
+        panel.body.addWidget(hint)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.save_general_button = widgets.button(
+            "ذخیره", icon_name="save", variant="primary", on_click=self._save_general
+        )
+        self.save_general_button.setEnabled(self.context.can(SETTINGS_EDIT_GENERAL))
+        if not self.context.can(SETTINGS_EDIT_GENERAL):
+            hint.setText(hint.text() + " (تغییر این مقادیر برای نقش شما مجاز نیست.)")
+        buttons.addWidget(self.save_general_button)
+        panel.body.addLayout(buttons)
+        return panel
+
+    def _build_password_panel(self) -> QWidget:
+        panel = widgets.Panel("تغییر گذرواژهٔ من")
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setHorizontalSpacing(18)
+        form.setVerticalSpacing(12)
+
+        self.current_password = _password_field("گذرواژهٔ فعلی")
+        self.new_password = _password_field("گذرواژهٔ جدید")
+        self.confirm_password = _password_field("تکرار گذرواژهٔ جدید")
+
+        form.addRow(widgets.label("گذرواژهٔ فعلی:"), self.current_password)
+        form.addRow(widgets.label("گذرواژهٔ جدید:"), self.new_password)
+        form.addRow(widgets.label("تکرار گذرواژهٔ جدید:"), self.confirm_password)
+        panel.body.addLayout(form)
+
+        self.password_message = widgets.label("", wrap=True)
+        self.password_message.setVisible(False)
+        panel.body.addWidget(self.password_message)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.change_password_button = widgets.button(
+            "تغییر گذرواژه", icon_name="key", variant="primary", on_click=self._change_password
+        )
+        self.change_password_button.setEnabled(self.context.can(SETTINGS_CHANGE_OWN_PASSWORD))
+        buttons.addWidget(self.change_password_button)
+        panel.body.addLayout(buttons)
+        return panel
+
+    def _build_about_panel(self) -> QWidget:
+        panel = widgets.Panel("دربارهٔ برنامه و پرونده‌ها")
+
+        self.about_label = widgets.label("", name="Muted", wrap=True)
+        panel.body.addWidget(self.about_label)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+        self.open_log_button = widgets.button(
+            "مشاهده لاگ", icon_name="file", on_click=self._open_log
+        )
+        self.open_log_button.setEnabled(self.context.can(SETTINGS_VIEW_LOG))
+        self.open_data_button = widgets.button(
+            "پوشهٔ داده‌های برنامه", icon_name="folder", on_click=self._open_data_folder
+        )
+        buttons.addWidget(self.open_log_button)
+        buttons.addWidget(self.open_data_button)
+        buttons.addStretch(1)
+        panel.body.addLayout(buttons)
+
+        if not self.context.can(SETTINGS_VIEW_LOG):
+            self.open_log_button.setToolTip("نقش شما اجازهٔ مشاهدهٔ لاگ را ندارد")
+        return panel
+
+    # ------------------------------------------------------------------ values
+    def _reload_values(self) -> None:
+        self.base_url_input.setText(self.context.store.base_url)
+        self.api_key_input.setText(self.context.store.api_key)
+        self.refresh_spin.setValue(self.context.auto_refresh_seconds)
+        self.timeout_spin.setValue(self.context.session_timeout_minutes)
+
+        self.about_label.setText(
+            "نسخهٔ برنامه: " + to_persian_digits(APP_VERSION)
+            + "\n" + "کاربر جاری: " + (self.context.display_name or "—")
+            + " (" + role_fa(self.context.role) + ")"
+            + "\n" + "پروندهٔ تنظیمات محلی: " + str(db_path())
+            + "\n" + "پروندهٔ لاگ: " + str(log_path())
+        )
+        if self.context.connection_ok:
+            self._set_status(
+                "ارتباط با سرور فروشگاه برقرار است.", theme.SUCCESS_DARK
+            )
+            self._apply_system_info()
+        elif not self.base_url_input.text():
+            self._set_status("آدرس سرور فروشگاه تنظیم نشده است.", theme.WARNING)
+        else:
+            self._set_status("ارتباط با سرور فروشگاه بررسی نشده است.", theme.TEXT_MUTED)
+
+    def _apply_system_info(self) -> None:
+        info = self.context.system_info
+        if not self.context.connection_ok:
+            return
+        if not info.write_mode_known:
+            # Older shopapi build: /admin/system-info is missing, so the app
+            # cannot know whether writes are real. Say so plainly.
+            self._set_status(
+                "ارتباط با سرور فروشگاه برقرار است، اما وضعیت ثبت در حسابداری "
+                "از این نسخهٔ سرویس خوانده نشد.",
+                theme.WARNING_TEXT,
+            )
+            self.connection_hint.setText(
+                "برای نمایش وضعیت ثبت در حسابداری، سرویس فروشگاه را با نسخهٔ "
+                "به‌روز («ShopSystem.exe») دوباره بسازید."
+            )
+            return
+        mode = "فعال (ثبت واقعی در حسابداری)" if info.accounting_write_enabled \
+            else "غیرفعال (حالت آزمایشی — بدون ثبت واقعی)"
+        self._set_status(
+            f"ارتباط با سرور فروشگاه برقرار است. ثبت در حسابداری: {mode}",
+            theme.SUCCESS_DARK if info.accounting_write_enabled else theme.WARNING_TEXT,
+        )
+        if info.reachable:
+            self.connection_hint.setText(
+                f"سطح قیمت ربات: {to_persian_digits(info.price_level_bot)} — "
+                f"سطح قیمت سایت: {to_persian_digits(info.price_level_site)} — "
+                f"مهلت پرداخت: {to_persian_digits(info.reserve_hours)} ساعت"
+            )
+
+    def _set_status(self, text: str, color: str) -> None:
+        self.connection_status.setText(text)
+        self.connection_status.setStyleSheet(f"color: {color};")
+
+    def _toggle_reveal(self, revealed: bool) -> None:
+        self.api_key_input.setEchoMode(
+            QLineEdit.EchoMode.Normal if revealed else QLineEdit.EchoMode.Password
+        )
+        self.reveal_button.setIcon(theme.icon(
+            "eye_off" if revealed else "eye", 18, theme.TEXT_MUTED
+        ))
+        self.reveal_button.setToolTip("پنهان کردن کلید" if revealed else "نمایش کلید")
+
+    # ------------------------------------------------------------------ actions
+    def _test_connection(self) -> None:
+        self.test_button.setEnabled(False)
+        self.test_button.setText("در حال آزمایش…")
+        base_url = self.base_url_input.text().strip()
+        api_key = self.api_key_input.text().strip()
+        if not base_url:
+            self.test_button.setEnabled(True)
+            self.test_button.setText("آزمایش اتصال")
+            widgets.error(self, "آزمایش اتصال", "آدرس سرور فروشگاه را وارد کنید.")
+            return
+
+        from ...api_client import ShopApiClient
+
+        probe = ShopApiClient(base_url, api_key, timeout=10)
+
+        def work():
+            try:
+                return probe.test_connection()
+            finally:
+                probe.close()
+
+        def ok(info) -> None:
+            self.context.api.configure(base_url, api_key)
+            self.context.apply_system_info(info)
+            self._apply_system_info()
+            self.context.store.set_setting("shopapi_base_url", base_url)
+            self.notify_success("ارتباط با سرور فروشگاه با موفقیت برقرار شد")
+            if not info.accounting_write_enabled:
+                self.notify_warning(
+                    "حالت آزمایشی — سفارش‌ها واقعاً در حسابداری ثبت نمی‌شوند"
+                )
+
+        def fail(message: str, kind: str) -> None:
+            self.context.mark_offline()
+            self._set_status(message, theme.DANGER)
+            widgets.error(self, "آزمایش اتصال ناموفق بود", message)
+
+        def done() -> None:
+            self.test_button.setEnabled(True)
+            self.test_button.setText("آزمایش اتصال")
+
+        run_async(work, on_success=ok, on_error=fail, on_done=done)
+
+    def _show_server_info(self) -> None:
+        if not self.context.connection_ok:
+            widgets.error(self, "اطلاعات سرور",
+                          "ابتدا با دکمهٔ «آزمایش اتصال» ارتباط را برقرار کنید.")
+            return
+        info = self.context.system_info
+        lines = [
+            f"ثبت در حسابداری: {'فعال' if info.accounting_write_enabled else 'غیرفعال (حالت آزمایشی)'}",
+            f"سطح قیمت ربات: {to_persian_digits(info.price_level_bot)}",
+            f"سطح قیمت سایت: {to_persian_digits(info.price_level_site)}",
+            f"مهلت پرداخت: {to_persian_digits(info.reserve_hours)} ساعت",
+            f"حداکثر تعداد هر قلم: {to_persian_digits(info.max_order_qty)}",
+            "اجازهٔ کد شخص مشترک: " + ("بله" if info.allow_shared_person_code else "خیر"),
+        ]
+        if info.bank_account_text:
+            lines.append(f"متن حساب بانکی: {info.bank_account_text}")
+        widgets.info(self, "اطلاعات سرور فروشگاه", "\n".join(lines))
+
+    def _save_connection(self) -> None:
+        if not self.context.can(SETTINGS_EDIT_CONNECTION):
+            widgets.error(self, "دسترسی غیرمجاز",
+                          "تغییر تنظیمات اتصال فقط توسط «مدیر کل» امکان‌پذیر است.")
+            return
+        base_url = self.base_url_input.text().strip()
+        if not base_url.startswith(("http://", "https://")):
+            widgets.error(self, "آدرس نامعتبر",
+                          "آدرس سرور باید با http:// یا https:// شروع شود.")
+            return
+        api_key = self.api_key_input.text().strip()
+        self.context.store.configure_connection(base_url, api_key)
+        self.context.api.configure(base_url, api_key)
+        self.context.audit("settings_connection", f"base_url={base_url}")
+        self.notify_success("تنظیمات اتصال ذخیره شد")
+        log.info("connection settings updated: %s key=%s", base_url, mask_secret(api_key))
+
+    def _save_general(self) -> None:
+        if not self.context.can(SETTINGS_EDIT_GENERAL):
+            widgets.error(self, "دسترسی غیرمجاز", "تغییر این تنظیمات برای نقش شما مجاز نیست.")
+            return
+        self.context.store.set_setting("auto_refresh_seconds", int(self.refresh_spin.value()))
+        self.context.store.set_setting("session_timeout_minutes", int(self.timeout_spin.value()))
+        self.context.audit("settings_general", "بازه‌های زمانی به‌روزرسانی شد")
+        self.notify_success("تنظیمات ذخیره شد")
+        window = self.window()
+        if hasattr(window, "apply_settings_changed"):
+            window.apply_settings_changed()
+
+    def _change_password(self) -> None:
+        try:
+            self.context.auth.change_own_password(
+                self.context.principal.user_id,
+                self.current_password.text(),
+                self.new_password.text(),
+                self.confirm_password.text(),
+            )
+        except AuthError as exc:
+            self._show_password_message(exc.message, ok=False)
+            return
+        self._show_password_message("گذرواژه با موفقیت تغییر کرد.", ok=True)
+        for field in (self.current_password, self.new_password, self.confirm_password):
+            field.clear()
+        self.notify_success("گذرواژه با موفقیت تغییر کرد")
+
+    def _show_password_message(self, text: str, *, ok: bool) -> None:
+        self.password_message.setText(text)
+        self.password_message.setStyleSheet(
+            f"color: {theme.SUCCESS_DARK if ok else theme.DANGER};"
+        )
+        self.password_message.setVisible(True)
+
+    def _open_log(self) -> None:
+        path = log_path()
+        if not path.exists():
+            widgets.info(self, "مشاهده لاگ",
+                         "هنوز فایل لاگی ساخته نشده است.")
+            return
+        _open_path(path)
+
+    def _open_data_folder(self) -> None:
+        _open_path(data_dir(), folder=True)
+
+
+def _password_field(placeholder: str) -> QLineEdit:
+    field = QLineEdit()
+    field.setEchoMode(QLineEdit.EchoMode.Password)
+    field.setPlaceholderText(placeholder)
+    field.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+    return field
+
+
+def _open_path(path: Path, folder: bool = False) -> bool:
+    """Open a file or folder with the OS default handler."""
+    try:
+        if folder:
+            os.startfile(str(path))  # noqa: S606 - Windows shell open
+        else:
+            os.startfile(str(path))  # noqa: S606
+        return True
+    except (OSError, AttributeError):
+        return QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))

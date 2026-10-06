@@ -1,0 +1,1 @@
+"""shopbots application package."""

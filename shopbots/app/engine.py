@@ -1,0 +1,1068 @@
+"""Shared conversation engine: routing, customer flow, admin flow.
+
+The engine is platform agnostic — it only talks to a PlatformAdapter and to the
+shopapi client. Prices always come from shopapi; a user can never supply one.
+
+Privacy: this module never logs names, phones or message text. Log lines are
+produced only by `utils.log_event` (platform, update id, event type).
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from . import texts
+from .config import Settings
+from .platforms import BotApiError, PlatformAdapter, contact_keyboard, inline_keyboard, reply_keyboard
+from .ratelimit import RateLimiter
+from .shopapi import ShopApiClient, ShopApiError, ShopApiUnavailable, format_admin_error
+from .store import Store
+from .utils import (
+    fmt_num,
+    log_event,
+    mask_phone,
+    normalize_digits,
+    normalize_mobile,
+    parse_int,
+    shorten,
+)
+
+# --- conversation states ----------------------------------------------------
+STATE_NONE = ""
+STATE_AWAIT_NAME = "await_name"
+STATE_AWAIT_PHONE = "await_phone"
+STATE_AWAIT_SEARCH = "await_search"
+STATE_AWAIT_RECEIPT = "await_receipt"
+STATE_ADMIN_PERSON_CODE = "admin_person_code"
+
+# --- callback payloads ------------------------------------------------------
+# "action" or "action:int[:int]"; every action has a fixed argument count.
+CALLBACK_ARG_COUNTS: dict[str, int] = {
+    "menu": 0,
+    "groups": 0,
+    "cart": 0,
+    "orders": 0,
+    "contact": 0,
+    "search": 0,
+    "cclear": 0,
+    "checkout": 0,
+    "grp": 1,
+    "prod": 1,
+    "cinc": 1,
+    "cdec": 1,
+    "cdel": 1,
+    "addu": 1,
+    "adru": 1,
+    "adap": 1,
+    "adrp": 1,
+    "pg": 2,
+    "qty": 2,
+    "add": 2,
+    "adsug": 2,
+}
+ADMIN_ACTIONS = frozenset({"addu", "adru", "adap", "adrp", "adsug"})
+MAX_CALLBACK_LEN = 64
+MAX_CALLBACK_ARG = 1_000_000_000
+MAX_QTY = 1000
+
+
+def parse_callback(data: Any) -> tuple[str, list[int]] | None:
+    """Validate a callback payload; return (action, [int args]) or None."""
+    if not isinstance(data, str) or not data or len(data) > MAX_CALLBACK_LEN:
+        return None
+    parts = data.split(":")
+    action = parts[0]
+    expected = CALLBACK_ARG_COUNTS.get(action)
+    if expected is None:
+        return None
+    raw_args = parts[1:]
+    if len(raw_args) != expected:
+        return None
+    args: list[int] = []
+    for raw in raw_args:
+        if not raw.isdigit():
+            return None
+        value = int(raw)
+        if value < 0 or value > MAX_CALLBACK_ARG:
+            return None
+        args.append(value)
+    return action, args
+
+
+def _safe_error(exc: BaseException) -> str:
+    """A log-safe error description (never a URL, which would embed a token)."""
+    if isinstance(exc, (BotApiError, ShopApiError)):
+        return f"{type(exc).__name__}:{exc}"
+    return type(exc).__name__
+
+
+class BotEngine:
+    def __init__(
+        self,
+        settings: Settings,
+        store: Store,
+        api: ShopApiClient,
+        adapters: dict[str, PlatformAdapter],
+        *,
+        rate_limiter: RateLimiter | None = None,
+        logger: logging.Logger | None = None,
+    ):
+        self.settings = settings
+        self.store = store
+        self.api = api
+        self.adapters = adapters
+        self.rate_limiter = rate_limiter or RateLimiter(
+            settings.rate_limit_messages, settings.rate_limit_window
+        )
+        self.logger = logger or logging.getLogger("shopbots.engine")
+
+    # ================= update entry point =================================
+    async def handle_update(self, platform: str, update: dict) -> bool:
+        """Process one update at most once. Returns True when it was handled."""
+        adapter = self.adapters.get(platform)
+        if adapter is None or not isinstance(update, dict):
+            return False
+        update_id = parse_int(str(update.get("update_id", "")), minimum=0)
+        if update_id is None:
+            return False
+        if not self.store.is_new_update(platform, update_id):
+            return False
+
+        event = self._parse_update(update)
+        if event is None:
+            log_event(self.logger, platform, update_id, "ignored")
+            self.store.set_last_update_id(platform, update_id)
+            return False
+
+        log_event(self.logger, platform, update_id, event["type"])
+        try:
+            if event.get("chat_type") not in (None, "private"):
+                log_event(self.logger, platform, update_id, "non_private_ignored")
+                return False
+            chat_id = str(event["chat_id"])
+            if not self.rate_limiter.allow(platform, chat_id):
+                await self._send_text(adapter, chat_id, texts.RATE_LIMITED)
+                return False
+            if event["type"] == "message":
+                await self._handle_message(adapter, platform, chat_id, event)
+            else:
+                await self._handle_callback(adapter, platform, chat_id, event)
+            return True
+        except ShopApiUnavailable:
+            await self._send_text(adapter, str(event["chat_id"]), texts.SERVICE_UNAVAILABLE)
+            return True
+        except ShopApiError as exc:
+            await self._send_text(adapter, str(event["chat_id"]), exc.message_fa)
+            return True
+        except Exception as exc:  # one bad update must not stop the poller
+            self.logger.warning(
+                "platform=%s update_id=%s error=%s", platform, update_id, _safe_error(exc)
+            )
+            return False
+        finally:
+            self.store.set_last_update_id(platform, update_id)
+
+    @staticmethod
+    def _parse_update(update: dict) -> dict | None:
+        if isinstance(update.get("message"), dict):
+            message = update["message"]
+            chat = message.get("chat") or {}
+            if chat.get("id") is None:
+                return None
+            return {
+                "type": "message",
+                "chat_id": chat.get("id"),
+                "chat_type": chat.get("type"),
+                "message_id": message.get("message_id"),
+                "text": message.get("text") or message.get("caption"),
+                "contact": message.get("contact"),
+                "photo": message.get("photo"),
+            }
+        if isinstance(update.get("callback_query"), dict):
+            callback = update["callback_query"]
+            message = callback.get("message") or {}
+            chat = message.get("chat") or {}
+            if chat.get("id") is None:
+                return None
+            return {
+                "type": "callback",
+                "chat_id": chat.get("id"),
+                "chat_type": chat.get("type"),
+                "message_id": message.get("message_id"),
+                "callback_id": callback.get("id"),
+                "data": callback.get("data"),
+            }
+        return None
+
+    # ================= messaging helpers ==================================
+    def _markup(self, adapter: PlatformAdapter, rows) -> dict | None:
+        if not rows:
+            return None
+        if adapter.supports_inline_keyboard:
+            return inline_keyboard(rows)
+        if adapter.supports_reply_keyboard:
+            return reply_keyboard(rows)
+        return None
+
+    @staticmethod
+    def _with_labels(data: dict, rows) -> dict:
+        labels = dict(data.get("labels") or {})
+        for row in rows or []:
+            for label, callback_data in row:
+                labels[label] = callback_data
+        merged = dict(data)
+        merged["labels"] = labels
+        return merged
+
+    def _flatten(self, text: str, markup: dict | None, rows) -> str:
+        if markup is not None or not rows:
+            return text
+        flat = [label for row in rows for label, _ in row]
+        return text + "\n\n" + "\n".join(f"• {label}" for label in flat)
+
+    async def _send_text(
+        self, adapter: PlatformAdapter, chat_id, text: str, reply_markup: dict | None = None
+    ):
+        try:
+            return await adapter.send_text(chat_id, text, reply_markup)
+        except BotApiError as exc:
+            self.logger.warning("platform=%s send_failed=%s", adapter.platform, exc.method)
+            return None
+
+    async def _edit_text(
+        self,
+        adapter: PlatformAdapter,
+        chat_id,
+        message_id,
+        text: str,
+        reply_markup: dict | None = None,
+    ):
+        if message_id is None:
+            return await self._send_text(adapter, chat_id, text, reply_markup)
+        try:
+            return await adapter.edit_text(chat_id, message_id, text, reply_markup)
+        except BotApiError as exc:
+            self.logger.warning("platform=%s edit_failed=%s", adapter.platform, exc.method)
+            return await self._send_text(adapter, chat_id, text, reply_markup)
+
+    async def _answer_callback(
+        self, adapter: PlatformAdapter, callback_id, text: str | None = None,
+        show_alert: bool = False,
+    ) -> None:
+        if not callback_id:
+            return
+        try:
+            await adapter.answer_callback(callback_id, text, show_alert)
+        except BotApiError as exc:
+            self.logger.warning("platform=%s answer_failed=%s", adapter.platform, exc.method)
+
+    async def _send_options(
+        self,
+        adapter: PlatformAdapter,
+        platform: str,
+        chat_id,
+        text: str,
+        rows,
+        *,
+        state: str | None = None,
+        data: dict | None = None,
+        edit_message_id=None,
+    ):
+        current_state, current_data = self.store.get_conversation(platform, chat_id)
+        merged = self._with_labels(data if data is not None else current_data, rows)
+        self.store.set_conversation(
+            platform, chat_id, state if state is not None else current_state, merged
+        )
+        markup = self._markup(adapter, rows)
+        body = self._flatten(text, markup, rows)
+        if edit_message_id is not None:
+            return await self._edit_text(adapter, chat_id, edit_message_id, body, markup)
+        return await self._send_text(adapter, chat_id, body, markup)
+
+    # ================= message routing ====================================
+    async def _handle_message(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, event: dict
+    ) -> None:
+        raw_text = event.get("text") or ""
+        if len(raw_text) > self.settings.max_input_len:
+            await self._send_text(adapter, chat_id, texts.TEXT_TOO_LONG)
+            return
+        text = shorten(normalize_digits(raw_text), self.settings.max_input_len)
+        contact = event.get("contact")
+        photo = event.get("photo")
+        state, data = self.store.get_conversation(platform, chat_id)
+
+        is_admin = self.settings.is_admin_chat(platform, chat_id)
+
+        # admin commands and the admin person-code prompt come first
+        if text.startswith("/") and is_admin:
+            if await self._maybe_admin_command(adapter, platform, chat_id, text):
+                return
+        if state == STATE_ADMIN_PERSON_CODE and is_admin:
+            await self._admin_person_code(adapter, platform, chat_id, text, data)
+            return
+
+        # registration states (the user may not exist in shopapi yet)
+        if state == STATE_AWAIT_NAME:
+            await self._registration_name(adapter, platform, chat_id, text)
+            return
+        if state == STATE_AWAIT_PHONE:
+            await self._registration_phone(adapter, platform, chat_id, text, contact)
+            return
+
+        if text.startswith("/start"):
+            self.store.clear_conversation(platform, chat_id)
+            await self._customer_entry(adapter, platform, chat_id)
+            return
+
+        # text-only platforms: a typed button label acts as a callback
+        label_cb = (data.get("labels") or {}).get(text) if isinstance(data.get("labels"), dict) else None
+        if label_cb:
+            await self._dispatch_callback(adapter, platform, chat_id, None, None, label_cb)
+            return
+
+        user = await self.api.get_user(platform, chat_id)
+        if user is None:
+            await self._begin_registration(adapter, platform, chat_id)
+            return
+        status = user.get("status")
+        if status == "pending":
+            await self._send_text(adapter, chat_id, texts.STILL_PENDING)
+            return
+        if status == "rejected":
+            await self._send_text(adapter, chat_id, texts.REJECTED_USER)
+            return
+
+        if state == STATE_AWAIT_SEARCH and text:
+            self.store.clear_conversation(platform, chat_id)
+            await self._show_products(adapter, platform, chat_id, q=text, group=None, page=1)
+            return
+        if state == STATE_AWAIT_RECEIPT:
+            if photo:
+                await self._save_receipt(adapter, platform, chat_id, photo, data)
+            else:
+                await self._send_text(adapter, chat_id, texts.RECEIPT_EXPECTED_PHOTO)
+            return
+        if photo:
+            await self._send_text(adapter, chat_id, texts.ASK_RECEIPT)
+            return
+
+        # any other text: back to the main menu
+        await self._show_main_menu(adapter, platform, chat_id)
+
+    async def _customer_entry(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str
+    ) -> None:
+        user = await self.api.get_user(platform, chat_id)
+        if user is None:
+            await self._begin_registration(adapter, platform, chat_id)
+            return
+        status = user.get("status")
+        if status == "pending":
+            await self._send_text(adapter, chat_id, texts.STILL_PENDING)
+            return
+        if status == "rejected":
+            await self._send_text(adapter, chat_id, texts.REJECTED_USER)
+            return
+        await self._show_main_menu(adapter, platform, chat_id)
+
+    # ================= registration =======================================
+    async def _begin_registration(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str
+    ) -> None:
+        self.store.set_conversation(platform, chat_id, STATE_AWAIT_NAME, {})
+        await self._send_text(adapter, chat_id, texts.ASK_NAME)
+
+    async def _registration_name(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, text: str
+    ) -> None:
+        name = (text or "").strip()
+        if len(name) < 2 or len(name) > self.settings.max_name_len or name.startswith("/"):
+            await self._send_text(adapter, chat_id, texts.NAME_INVALID)
+            return
+        self.store.set_conversation(platform, chat_id, STATE_AWAIT_PHONE, {"name": name})
+        if adapter.supports_contact_button:
+            await self._send_text(
+                adapter,
+                chat_id,
+                texts.ASK_PHONE_WITH_BUTTON,
+                contact_keyboard(texts.BTN_SHARE_CONTACT),
+            )
+        else:
+            await self._send_text(adapter, chat_id, texts.ASK_PHONE)
+
+    async def _registration_phone(
+        self,
+        adapter: PlatformAdapter,
+        platform: str,
+        chat_id: str,
+        text: str,
+        contact: dict | None,
+    ) -> None:
+        phone = ""
+        if isinstance(contact, dict) and contact.get("phone_number"):
+            phone = normalize_mobile(contact.get("phone_number"))
+        if not phone:
+            phone = normalize_mobile(text)
+        if not phone:
+            await self._send_text(adapter, chat_id, texts.PHONE_INVALID)
+            return
+        _state, data = self.store.get_conversation(platform, chat_id)
+        name = str(data.get("name") or "").strip() or "مشتری"
+        await self.api.register_user(platform, chat_id, name, phone)
+        self.store.clear_conversation(platform, chat_id)
+        await self._send_text(adapter, chat_id, texts.REGISTERED_PENDING)
+
+    # ================= customer screens ===================================
+    def _main_menu_rows(self):
+        return [
+            [(texts.BTN_GROUPS, "groups"), (texts.BTN_SEARCH, "search")],
+            [(texts.BTN_CART, "cart"), (texts.BTN_ORDERS, "orders")],
+            [(texts.BTN_CONTACT, "contact")],
+        ]
+
+    async def _show_main_menu(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str
+    ) -> None:
+        await self._send_options(
+            adapter, platform, chat_id, texts.MAIN_MENU, self._main_menu_rows(),
+            state=STATE_NONE, data={},
+        )
+
+    async def _show_groups(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
+        groups = await self.api.get_groups()
+        if not groups:
+            await self._send_options(
+                adapter, platform, chat_id, texts.NO_GROUPS, [[(texts.BTN_MENU, "menu")]],
+                state=STATE_NONE, data={},
+            )
+            return
+        rows = [[(str(g.get("name") or ""), f"grp:{g.get('code')}")] for g in groups]
+        rows.append([(texts.BTN_MENU, "menu")])
+        await self._send_options(
+            adapter, platform, chat_id, texts.GROUPS_TITLE, rows, state=STATE_NONE, data={}
+        )
+
+    async def _show_products(
+        self,
+        adapter: PlatformAdapter,
+        platform: str,
+        chat_id: str,
+        *,
+        q: str | None = None,
+        group: int | None = None,
+        page: int = 1,
+        edit_message_id=None,
+    ) -> None:
+        page = max(1, int(page or 1))
+        page_size = max(1, int(self.settings.product_page_size))
+        result = await self.api.get_products(q=q, group=group, page=page, page_size=page_size)
+        items = [it for it in (result.get("items") or []) if isinstance(it, dict)]
+        total = int(result.get("total") or 0)
+        pages = max(1, (total + page_size - 1) // page_size)
+
+        cache: dict[str, dict] = {}
+        rows: list = []
+        if not items:
+            body = texts.NO_PRODUCTS
+        else:
+            lines = [texts.PRODUCTS_TITLE.format(page=page, pages=pages)]
+            for it in items:
+                code = it.get("code")
+                name = str(it.get("name") or "")
+                price = it.get("unit_price") or 0
+                available = it.get("available_qty") or 0
+                cache[str(code)] = {
+                    "name": name,
+                    "price": float(price),
+                    "qty": float(available),
+                }
+                lines.append(
+                    f"• {name} — {fmt_num(price)} تومان — موجودی {fmt_num(available)}"
+                )
+                rows.append([(shorten(name, 40) or str(code), f"prod:{code}")])
+            nav = []
+            group_arg = int(group) if group is not None else 0
+            if page > 1:
+                nav.append((texts.BTN_PREV, f"pg:{group_arg}:{page - 1}"))
+            if page < pages:
+                nav.append((texts.BTN_NEXT, f"pg:{group_arg}:{page + 1}"))
+            if nav:
+                rows.append(nav)
+            body = "\n".join(lines)
+        rows.append([(texts.BTN_MENU, "menu")])
+        await self._send_options(
+            adapter, platform, chat_id, body, rows,
+            state=STATE_NONE, data={"pcache": cache}, edit_message_id=edit_message_id,
+        )
+
+    async def _show_product(
+        self,
+        adapter: PlatformAdapter,
+        platform: str,
+        chat_id: str,
+        code: int,
+        qty: int,
+        edit_message_id=None,
+    ) -> None:
+        _state, data = self.store.get_conversation(platform, chat_id)
+        product = (data.get("pcache") or {}).get(str(code))
+        if not product:
+            await self._send_text(adapter, chat_id, texts.NO_PRODUCTS)
+            return
+        qty = max(1, min(int(qty or 1), MAX_QTY))
+        body = texts.PRODUCT_DETAIL.format(
+            name=product["name"], price=fmt_num(product["price"]), qty=fmt_num(qty)
+        )
+        rows = [
+            [
+                (texts.BTN_MINUS, f"qty:{code}:{max(1, qty - 1)}"),
+                (texts.BTN_PLUS, f"qty:{code}:{qty + 1}"),
+            ],
+            [(f"{texts.BTN_ADD} ({fmt_num(qty)})", f"add:{code}:{qty}")],
+            [(texts.BTN_MENU, "menu")],
+        ]
+        await self._send_options(
+            adapter, platform, chat_id, body, rows,
+            state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+        )
+
+    async def _add_to_cart(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int, qty: int,
+        callback_id=None,
+    ) -> None:
+        _state, data = self.store.get_conversation(platform, chat_id)
+        product = (data.get("pcache") or {}).get(str(code))
+        if not product:
+            await self._answer_callback(adapter, callback_id, texts.BAD_CALLBACK)
+            return
+        if product["qty"] <= 0:
+            await self._answer_callback(adapter, callback_id, texts.OUT_OF_STOCK)
+            return
+        qty = max(1, min(int(qty or 1), MAX_QTY))
+        self.store.cart_add(platform, chat_id, code, product["name"], qty, product["price"])
+        await self._answer_callback(adapter, callback_id, texts.QTY_ADDED)
+        await self._show_cart(adapter, platform, chat_id)
+
+    async def _show_cart(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
+        items = self.store.cart_list(platform, chat_id)
+        if not items:
+            await self._send_options(
+                adapter, platform, chat_id, texts.CART_EMPTY, [[(texts.BTN_MENU, "menu")]],
+                state=STATE_NONE, data={},
+            )
+            return
+        lines = [texts.CART_TITLE]
+        rows = []
+        total = 0.0
+        for item in items:
+            code = item["kala_code"]
+            lines.append(
+                texts.CART_LINE.format(
+                    name=item["name"], qty=fmt_num(item["qty"]), price=fmt_num(item["unit_price"])
+                )
+            )
+            total += float(item["qty"]) * float(item["unit_price"])
+            rows.append(
+                [
+                    (texts.BTN_MINUS, f"cdec:{code}"),
+                    (texts.BTN_PLUS, f"cinc:{code}"),
+                    (texts.BTN_REMOVE, f"cdel:{code}"),
+                ]
+            )
+        lines.append(texts.CART_TOTAL.format(total=fmt_num(total)))
+        rows.append([(texts.BTN_CHECKOUT, "checkout")])
+        rows.append([(texts.BTN_CLEAR_CART, "cclear"), (texts.BTN_MENU, "menu")])
+        await self._send_options(
+            adapter, platform, chat_id, "\n".join(lines), rows, state=STATE_NONE, data={}
+        )
+
+    async def _cart_change(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int, delta: float,
+        callback_id=None,
+    ) -> None:
+        items = {int(it["kala_code"]): it for it in self.store.cart_list(platform, chat_id)}
+        item = items.get(int(code))
+        if item is None:
+            await self._answer_callback(adapter, callback_id, texts.BAD_CALLBACK)
+            return
+        new_qty = float(item["qty"]) + float(delta)
+        if new_qty <= 0:
+            self.store.cart_remove(platform, chat_id, int(code))
+        else:
+            self.store.cart_set_qty(platform, chat_id, int(code), min(new_qty, MAX_QTY))
+        await self._answer_callback(adapter, callback_id)
+        await self._show_cart(adapter, platform, chat_id)
+
+    async def _cart_remove(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int, callback_id=None
+    ) -> None:
+        self.store.cart_remove(platform, chat_id, int(code))
+        await self._answer_callback(adapter, callback_id, texts.CART_REMOVED)
+        await self._show_cart(adapter, platform, chat_id)
+
+    async def _checkout(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
+        items = self.store.cart_list(platform, chat_id)
+        if not items:
+            await self._send_text(adapter, chat_id, texts.CART_EMPTY)
+            return
+        payload = [
+            {"kala_code": int(it["kala_code"]), "qty": float(it["qty"])} for it in items
+        ]
+        order = await self.api.create_order(platform, chat_id, payload)
+        if not order:
+            await self._send_text(adapter, chat_id, texts.SERVICE_UNAVAILABLE)
+            return
+        self.store.cart_clear(platform, chat_id)
+        order_id = order.get("id")
+        parts = [
+            texts.CHECKOUT_OK.format(order_id=order_id, total=fmt_num(order.get("total")))
+        ]
+        instructions = str(order.get("payment_instructions") or "").strip()
+        if instructions:
+            parts.append(instructions)
+        parts.append(texts.ASK_RECEIPT)
+        self.store.set_conversation(
+            platform, chat_id, STATE_AWAIT_RECEIPT, {"order_id": order_id}
+        )
+        await self._send_text(adapter, chat_id, "\n\n".join(parts))
+
+    async def _save_receipt(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, photo, data: dict
+    ) -> None:
+        order_id = (data or {}).get("order_id")
+        file_ref = None
+        if isinstance(photo, list) and photo:
+            last = photo[-1]
+            if isinstance(last, dict):
+                file_ref = last.get("file_id")
+        if not order_id:
+            await self._send_text(adapter, chat_id, texts.NO_ORDER_FOR_RECEIPT)
+            return
+        if not file_ref:
+            await self._send_text(adapter, chat_id, texts.RECEIPT_EXPECTED_PHOTO)
+            return
+        await self.api.upload_receipt(int(order_id), str(file_ref), platform, chat_id)
+        self.store.save_receipt(int(order_id), platform, chat_id, str(file_ref))
+        self.store.clear_conversation(platform, chat_id)
+        await self._send_text(adapter, chat_id, texts.RECEIPT_RECEIVED)
+
+    async def _show_orders(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
+        orders = await self.api.list_user_orders(platform, chat_id)
+        if not orders:
+            await self._send_options(
+                adapter, platform, chat_id, texts.ORDERS_EMPTY, [[(texts.BTN_MENU, "menu")]],
+                state=STATE_NONE, data={},
+            )
+            return
+        lines = [texts.ORDERS_TITLE]
+        for order in orders[:10]:
+            status = texts.ORDER_STATUS_FA.get(
+                str(order.get("status") or ""), str(order.get("status") or "")
+            )
+            lines.append(
+                texts.ORDER_LINE.format(
+                    order_id=order.get("id"), status=status, total=fmt_num(order.get("total"))
+                )
+            )
+        await self._send_options(
+            adapter, platform, chat_id, "\n".join(lines), [[(texts.BTN_MENU, "menu")]],
+            state=STATE_NONE, data={},
+        )
+
+    async def _ask_search(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
+        self.store.set_conversation(platform, chat_id, STATE_AWAIT_SEARCH, {})
+        await self._send_text(
+            adapter, chat_id, texts.ASK_SEARCH, reply_markup=self._markup(
+                adapter, [[(texts.BTN_MENU, "menu")]]
+            )
+        )
+
+    # ================= callback routing ===================================
+    async def _handle_callback(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, event: dict
+    ) -> None:
+        await self._dispatch_callback(
+            adapter, platform, chat_id,
+            event.get("message_id"), event.get("callback_id"), event.get("data"),
+        )
+
+    async def _dispatch_callback(
+        self,
+        adapter: PlatformAdapter,
+        platform: str,
+        chat_id: str,
+        message_id,
+        callback_id,
+        raw_data,
+    ) -> None:
+        parsed = parse_callback(raw_data)
+        if parsed is None:
+            await self._answer_callback(adapter, callback_id, texts.BAD_CALLBACK, True)
+            return
+        action, args = parsed
+
+        if action in ADMIN_ACTIONS:
+            if not self.settings.is_admin_chat(platform, chat_id):
+                await self._answer_callback(adapter, callback_id, texts.ADMIN_ONLY, True)
+                return
+            await self._handle_admin_callback(
+                adapter, platform, chat_id, message_id, callback_id, action, args
+            )
+            return
+
+        user = await self.api.get_user(platform, chat_id)
+        if user is None:
+            await self._answer_callback(adapter, callback_id)
+            await self._begin_registration(adapter, platform, chat_id)
+            return
+        if user.get("status") != "approved":
+            await self._answer_callback(adapter, callback_id, texts.STILL_PENDING)
+            return
+
+        if action == "menu":
+            await self._answer_callback(adapter, callback_id)
+            await self._show_main_menu(adapter, platform, chat_id)
+        elif action == "groups":
+            await self._answer_callback(adapter, callback_id)
+            await self._show_groups(adapter, platform, chat_id)
+        elif action == "grp":
+            await self._answer_callback(adapter, callback_id)
+            await self._show_products(
+                adapter, platform, chat_id, group=args[0], page=1,
+                edit_message_id=message_id,
+            )
+        elif action == "pg":
+            await self._answer_callback(adapter, callback_id)
+            await self._show_products(
+                adapter, platform, chat_id, group=args[0] or None, page=args[1],
+                edit_message_id=message_id,
+            )
+        elif action == "prod":
+            await self._answer_callback(adapter, callback_id)
+            await self._show_product(
+                adapter, platform, chat_id, args[0], 1, edit_message_id=message_id
+            )
+        elif action == "qty":
+            await self._answer_callback(adapter, callback_id)
+            await self._show_product(
+                adapter, platform, chat_id, args[0], args[1], edit_message_id=message_id
+            )
+        elif action == "add":
+            await self._add_to_cart(
+                adapter, platform, chat_id, args[0], args[1], callback_id
+            )
+        elif action == "cart":
+            await self._answer_callback(adapter, callback_id)
+            await self._show_cart(adapter, platform, chat_id)
+        elif action == "cinc":
+            await self._cart_change(adapter, platform, chat_id, args[0], 1, callback_id)
+        elif action == "cdec":
+            await self._cart_change(adapter, platform, chat_id, args[0], -1, callback_id)
+        elif action == "cdel":
+            await self._cart_remove(adapter, platform, chat_id, args[0], callback_id)
+        elif action == "cclear":
+            self.store.cart_clear(platform, chat_id)
+            await self._answer_callback(adapter, callback_id)
+            await self._show_cart(adapter, platform, chat_id)
+        elif action == "checkout":
+            await self._answer_callback(adapter, callback_id)
+            await self._checkout(adapter, platform, chat_id)
+        elif action == "orders":
+            await self._answer_callback(adapter, callback_id)
+            await self._show_orders(adapter, platform, chat_id)
+        elif action == "contact":
+            await self._answer_callback(adapter, callback_id)
+            await self._send_text(adapter, chat_id, texts.CONTACT_SHOP)
+        elif action == "search":
+            await self._answer_callback(adapter, callback_id)
+            await self._ask_search(adapter, platform, chat_id)
+        else:  # pragma: no cover - parse_callback already restricts actions
+            await self._answer_callback(adapter, callback_id, texts.BAD_CALLBACK)
+
+    # ================= admin flow =========================================
+    async def admin_sweep(self) -> dict:
+        """Announce new pending users and new receipts to the admin chats."""
+        platforms = tuple(self.adapters.keys())
+        if not self.settings.admin_targets(platforms):
+            return {"users": 0, "orders": 0}
+        announced = {"users": 0, "orders": 0}
+
+        try:
+            users = await self.api.admin_list_users("pending")
+        except ShopApiError:
+            users = []
+        for user in users:
+            user_id = user.get("id") if isinstance(user, dict) else None
+            if user_id is None or self.store.is_announced("user", int(user_id)):
+                continue
+            await self._announce_user(user)
+            self.store.mark_announced(
+                "user", int(user_id), str(user.get("platform") or ""), user.get("chat_id") or ""
+            )
+            announced["users"] += 1
+
+        try:
+            orders = await self.api.admin_list_orders("receipt_uploaded")
+        except ShopApiError:
+            orders = []
+        for order in orders:
+            order_id = order.get("id") if isinstance(order, dict) else None
+            if order_id is None or self.store.is_announced("order", int(order_id)):
+                continue
+            await self._announce_order(order)
+            receipt = self.store.get_receipt(int(order_id)) or {}
+            self.store.mark_announced(
+                "order", int(order_id), str(receipt.get("platform") or ""),
+                receipt.get("chat_id") or "",
+            )
+            announced["orders"] += 1
+
+        return announced
+
+    async def _broadcast_admin(
+        self, text: str, rows, photo_ref: str | None = None, photo_platform: str | None = None
+    ) -> None:
+        platforms = tuple(self.adapters.keys())
+        for platform, chat_id in self.settings.admin_targets(platforms):
+            adapter = self.adapters.get(platform)
+            if adapter is None:
+                continue
+            markup = self._markup(adapter, rows)
+            if rows:
+                current_state, current_data = self.store.get_conversation(platform, chat_id)
+                self.store.set_conversation(
+                    platform, chat_id, current_state, self._with_labels(current_data, rows)
+                )
+            body = self._flatten(text, markup, rows)
+            sent = None
+            if photo_ref and (photo_platform is None or photo_platform == platform):
+                try:
+                    sent = await adapter.send_photo(
+                        chat_id, photo_ref, caption=body, reply_markup=markup
+                    )
+                except BotApiError:
+                    sent = None
+            if sent is None:
+                await self._send_text(adapter, chat_id, body, markup)
+
+    async def _announce_user(self, user: dict) -> None:
+        user_id = user.get("id")
+        phone = str(user.get("phone") or "")
+        body = texts.NEW_USER_NOTICE.format(
+            platform=user.get("platform") or "",
+            name=user.get("name") or "",
+            phone=mask_phone(phone),
+        )
+        rows = []
+        match = None
+        if phone:
+            try:
+                match = await self.api.admin_match_person(phone)
+            except ShopApiError:
+                match = None
+        if isinstance(match, dict) and match.get("code") is not None:
+            body += "\n" + texts.NEW_USER_SUGGESTION.format(person_code=match["code"])
+            rows.append(
+                [
+                    (
+                        f"{texts.BTN_USE_SUGGESTED} ({match['code']})",
+                        f"adsug:{user_id}:{match['code']}",
+                    )
+                ]
+            )
+        rows.append(
+            [(texts.BTN_APPROVE, f"addu:{user_id}"), (texts.BTN_REJECT, f"adru:{user_id}")]
+        )
+        await self._broadcast_admin(body, rows)
+
+    async def _announce_order(self, order: dict) -> None:
+        order_id = order.get("id")
+        items = [it for it in (order.get("items") or []) if isinstance(it, dict)]
+        items_text = (
+            "\n".join(f"• {it.get('name')} × {fmt_num(it.get('qty'))}" for it in items) or "—"
+        )
+        body = texts.NEW_RECEIPT_NOTICE.format(
+            order_id=order_id, total=fmt_num(order.get("total")), items=items_text
+        )
+        rows = [
+            [
+                (texts.BTN_PAY_APPROVE, f"adap:{order_id}"),
+                (texts.BTN_PAY_REJECT, f"adrp:{order_id}"),
+            ]
+        ]
+        receipt = self.store.get_receipt(int(order_id)) if order_id is not None else None
+        photo_ref = (receipt or {}).get("file_ref")
+        photo_platform = (receipt or {}).get("platform")
+        await self._broadcast_admin(body, rows, photo_ref=photo_ref, photo_platform=photo_platform)
+
+    async def _maybe_admin_command(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, text: str
+    ) -> bool:
+        parts = text.split()
+        if not parts:
+            return False
+        command = parts[0].lower().lstrip("/")
+        if command == "pending":
+            await self._admin_pending(adapter, platform, chat_id)
+            return True
+        if command == "order" and len(parts) >= 2:
+            order_id = parse_int(parts[1], minimum=1)
+            if order_id is None:
+                await self._send_text(adapter, chat_id, texts.BAD_INPUT)
+                return True
+            await self._admin_order_status(adapter, platform, chat_id, order_id)
+            return True
+        return False
+
+    async def _admin_pending(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str
+    ) -> None:
+        try:
+            users = await self.api.admin_list_users("pending")
+            orders = await self.api.admin_list_orders("receipt_uploaded")
+        except ShopApiError as exc:
+            await self._send_text(adapter, chat_id, format_admin_error(exc))
+            return
+        lines = [texts.ADMIN_PENDING_SUMMARY.format(users=len(users), orders=len(orders))]
+        if not users and not orders:
+            lines.append(texts.NOTHING_PENDING)
+        for user in users:
+            lines.append(f"• کاربر {user.get('id')} — {user.get('platform')}")
+        for order in orders:
+            lines.append(f"• سفارش {order.get('id')}")
+        await self._send_text(adapter, chat_id, "\n".join(lines))
+
+    async def _admin_order_status(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, order_id: int
+    ) -> None:
+        order = await self.api.get_order(order_id)
+        if not order:
+            await self._send_text(adapter, chat_id, texts.ADMIN_UNKNOWN_ORDER.format(order_id=order_id))
+            return
+        status = texts.ORDER_STATUS_FA.get(
+            str(order.get("status") or ""), str(order.get("status") or "")
+        )
+        await self._send_text(
+            adapter,
+            chat_id,
+            texts.ADMIN_ORDER_STATUS.format(
+                order_id=order.get("id"), status=status, total=fmt_num(order.get("total"))
+            ),
+        )
+
+    async def _admin_person_code(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, text: str, data: dict
+    ) -> None:
+        user_id = (data or {}).get("user_id")
+        code = parse_int(text, minimum=1, maximum=MAX_CALLBACK_ARG)
+        if user_id is None or code is None:
+            await self._send_text(adapter, chat_id, texts.ADMIN_ASK_PERSON_CODE)
+            return
+        await self._approve_user(adapter, platform, chat_id, int(user_id), code, None)
+
+    async def _handle_admin_callback(
+        self,
+        adapter: PlatformAdapter,
+        platform: str,
+        chat_id: str,
+        message_id,
+        callback_id,
+        action: str,
+        args: list[int],
+    ) -> None:
+        if action == "addu":
+            self.store.set_conversation(
+                platform, chat_id, STATE_ADMIN_PERSON_CODE, {"user_id": args[0]}
+            )
+            await self._answer_callback(adapter, callback_id)
+            await self._send_text(adapter, chat_id, texts.ADMIN_ASK_PERSON_CODE)
+            return
+        if action == "adsug":
+            await self._approve_user(adapter, platform, chat_id, args[0], args[1], callback_id)
+            return
+        if action == "adru":
+            await self._reject_user(adapter, platform, chat_id, args[0], callback_id)
+            return
+        if action == "adap":
+            await self._approve_payment(adapter, platform, chat_id, args[0], callback_id)
+            return
+        if action == "adrp":
+            await self._reject_payment(adapter, platform, chat_id, args[0], callback_id)
+            return
+
+    async def _notify_customer(self, notice: dict | None, text: str) -> None:
+        if not notice:
+            return
+        adapter = self.adapters.get(str(notice.get("platform") or ""))
+        chat_id = notice.get("chat_id")
+        if adapter is None or not chat_id:
+            return
+        await self._send_text(adapter, chat_id, text)
+
+    async def _approve_user(
+        self,
+        adapter: PlatformAdapter,
+        platform: str,
+        chat_id: str,
+        user_id: int,
+        person_code: int,
+        callback_id,
+    ) -> None:
+        notice = self.store.get_notice("user", int(user_id))
+        try:
+            await self.api.admin_approve_user(int(user_id), int(person_code))
+        except ShopApiError as exc:
+            message = format_admin_error(exc)
+            await self._answer_callback(adapter, callback_id, message, True)
+            if not callback_id:
+                await self._send_text(adapter, chat_id, message)
+            return
+        self.store.clear_conversation(platform, chat_id)
+        await self._answer_callback(adapter, callback_id, texts.ADMIN_USER_APPROVED)
+        await self._send_text(adapter, chat_id, texts.ADMIN_USER_APPROVED)
+        await self._notify_customer(notice, texts.APPROVED_BY_ADMIN)
+
+    async def _reject_user(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, user_id: int, callback_id
+    ) -> None:
+        notice = self.store.get_notice("user", int(user_id))
+        try:
+            await self.api.admin_reject_user(int(user_id))
+        except ShopApiError as exc:
+            message = format_admin_error(exc)
+            await self._answer_callback(adapter, callback_id, message, True)
+            return
+        await self._answer_callback(adapter, callback_id, texts.ADMIN_USER_REJECTED)
+        await self._send_text(adapter, chat_id, texts.ADMIN_USER_REJECTED)
+        await self._notify_customer(notice, texts.REJECTED_BY_ADMIN)
+
+    async def _approve_payment(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, order_id: int, callback_id
+    ) -> None:
+        notice = self.store.get_notice("order", int(order_id))
+        try:
+            await self.api.admin_approve_payment(int(order_id))
+        except ShopApiError as exc:
+            message = format_admin_error(exc)
+            await self._answer_callback(adapter, callback_id, message, True)
+            await self._send_text(adapter, chat_id, message)
+            return
+        await self._answer_callback(adapter, callback_id, texts.ADMIN_PAYMENT_APPROVED)
+        await self._send_text(adapter, chat_id, texts.ADMIN_PAYMENT_APPROVED)
+        await self._notify_customer(notice, texts.PAYMENT_APPROVED)
+
+    async def _reject_payment(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, order_id: int, callback_id
+    ) -> None:
+        notice = self.store.get_notice("order", int(order_id))
+        try:
+            await self.api.admin_reject_payment(int(order_id))
+        except ShopApiError as exc:
+            message = format_admin_error(exc)
+            await self._answer_callback(adapter, callback_id, message, True)
+            await self._send_text(adapter, chat_id, message)
+            return
+        await self._answer_callback(adapter, callback_id, texts.ADMIN_PAYMENT_REJECTED)
+        await self._send_text(adapter, chat_id, texts.ADMIN_PAYMENT_REJECTED)
+        await self._notify_customer(notice, texts.PAYMENT_REJECTED)

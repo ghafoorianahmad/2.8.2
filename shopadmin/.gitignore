@@ -1,0 +1,35 @@
+# --- secrets and local data: never commit these -----------------------
+.env
+*.env
+!*.env.example
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+app.log
+app.log.*
+data/
+
+# --- python ------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- build output ------------------------------------------------------
+build/
+dist/
+*.spec.bak
+.wheels/
+
+# --- OS / editor -------------------------------------------------------
+Thumbs.db
+desktop.ini
+.DS_Store
+.idea/
+.vscode/

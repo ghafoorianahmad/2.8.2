@@ -1,0 +1,121 @@
+"""Entry point: run the Bale bot and the Telegram bot in one process.
+
+    python -m app.main            # run both bots (whichever tokens are set)
+    python -m app.main --dry-run  # start both adapters, no network calls
+    python -m app.main --check    # print a token-free configuration summary
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+
+from .config import Settings
+from .engine import BotEngine
+from .logging_setup import configure_logging, silence_noisy_loggers
+from .platforms import BaleAdapter, PlatformAdapter, TelegramAdapter
+from .polling import admin_sweep_loop, poll_platform
+from .shopapi import ShopApiClient
+from .store import Store
+
+logger = logging.getLogger("shopbots")
+
+# Applied at import time: httpx logs request URLs at INFO and those URLs contain
+# the bot token, so they must never be emitted (see logging_setup).
+silence_noisy_loggers()
+
+
+def build_adapters(settings: Settings) -> dict[str, PlatformAdapter]:
+    """One adapter per configured platform. Only the base URL and flags differ."""
+    adapters: dict[str, PlatformAdapter] = {}
+    timeout = settings.poll_timeout + 10
+    if settings.bale_token:
+        adapters["bale"] = BaleAdapter(
+            token=settings.bale_token, api_base=settings.bale_api_base, timeout=timeout
+        )
+    if settings.telegram_token:
+        adapters["telegram"] = TelegramAdapter(
+            token=settings.telegram_token,
+            api_base=settings.telegram_api_base,
+            timeout=timeout,
+            proxy_url=settings.proxy_for("telegram"),
+        )
+    return adapters
+
+
+async def run(
+    settings: Settings,
+    *,
+    dry_run: bool = False,
+    stop_event: asyncio.Event | None = None,
+    sleep=asyncio.sleep,
+    adapters: dict[str, PlatformAdapter] | None = None,
+    store: Store | None = None,
+    api: ShopApiClient | None = None,
+) -> dict:
+    store = store if store is not None else Store(settings.sqlite_path)
+    api = api if api is not None else ShopApiClient(settings)
+    adapters = adapters if adapters is not None else build_adapters(settings)
+    engine = BotEngine(settings, store, api, adapters)
+    stop = stop_event if stop_event is not None else asyncio.Event()
+
+    tasks = [
+        asyncio.create_task(
+            poll_platform(
+                platform=platform,
+                adapter=adapter,
+                engine=engine,
+                store=store,
+                settings=settings,
+                stop_event=stop,
+                dry_run=dry_run,
+                sleep=sleep,
+            )
+        )
+        for platform, adapter in adapters.items()
+    ]
+    if not dry_run and adapters:
+        tasks.append(
+            asyncio.create_task(
+                admin_sweep_loop(
+                    engine=engine, settings=settings, stop_event=stop, sleep=sleep
+                )
+            )
+        )
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        stop.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return {"platforms": sorted(adapters), "dry_run": dry_run}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="shopbots", description="Bale + Telegram bots for shopapi")
+    parser.add_argument("--dry-run", action="store_true", help="start adapters without network calls")
+    parser.add_argument("--check", action="store_true", help="validate configuration and exit")
+    parser.add_argument("--log-level", default="INFO")
+    args = parser.parse_args(argv)
+
+    configure_logging(args.log_level)
+    settings = Settings.from_env()
+
+    if args.check:
+        platforms = ",".join(settings.enabled_platforms()) or "none"
+        print(f"shopapi={settings.shopapi_base_url}")
+        print(f"platforms={platforms}")
+        print(f"admin_chats={len(settings.admin_entries())}")
+        return 0
+
+    if not settings.enabled_platforms():
+        print("No bot token configured. Set BALE_TOKEN and/or TELEGRAM_TOKEN (see .env.example).")
+        return 2
+
+    asyncio.run(run(settings, dry_run=args.dry_run))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

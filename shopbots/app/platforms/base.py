@@ -1,0 +1,234 @@
+"""PlatformAdapter interface and the shared Bot API HTTP implementation.
+
+Privacy: errors raised here never contain the request URL (which embeds the bot
+token) — only the method name and a short description.
+"""
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any, Iterable, Sequence
+
+import httpx
+
+# A row of buttons: every button is (label, callback_data).
+ButtonRow = Sequence[tuple[str, str]]
+InlineButtonRow = list[list[dict]]
+Update = dict[str, Any]
+
+
+class BotApiError(Exception):
+    """A Bot API call failed. The message is safe to log (no token, no URL)."""
+
+    def __init__(self, method: str, description: str):
+        super().__init__(f"{method}: {description}")
+        self.method = method
+        self.description = description
+
+
+class PlatformAdapter(ABC):
+    platform: str = ""
+    supports_inline_keyboard: bool = True
+    supports_reply_keyboard: bool = True
+    supports_contact_button: bool = True
+
+    @abstractmethod
+    async def get_updates(
+        self, offset: int | None = None, timeout: int = 25, limit: int = 100
+    ) -> list[Update]: ...
+
+    @abstractmethod
+    async def send_text(
+        self, chat_id: str | int, text: str, reply_markup: dict | None = None
+    ) -> dict | None: ...
+
+    @abstractmethod
+    async def send_photo(
+        self,
+        chat_id: str | int,
+        photo: str,
+        caption: str | None = None,
+        reply_markup: dict | None = None,
+    ) -> dict | None: ...
+
+    @abstractmethod
+    async def edit_text(
+        self,
+        chat_id: str | int,
+        message_id: int,
+        text: str,
+        reply_markup: dict | None = None,
+    ) -> dict | None: ...
+
+    @abstractmethod
+    async def answer_callback(
+        self, callback_query_id: str, text: str | None = None, show_alert: bool = False
+    ) -> None: ...
+
+    @abstractmethod
+    async def download_file_ref(self, file_ref: str) -> bytes | None: ...
+
+    async def aclose(self) -> None:
+        return None
+
+
+# ---- reply markup builders -------------------------------------------------
+def inline_keyboard(rows: Iterable[ButtonRow]) -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": label, "callback_data": data} for label, data in row] for row in rows
+        ]
+    }
+
+
+def reply_keyboard(
+    rows: Iterable[ButtonRow], one_time: bool = True, resize: bool = True
+) -> dict:
+    return {
+        "keyboard": [[{"text": label} for label, _ in row] for row in rows],
+        "one_time_keyboard": one_time,
+        "resize_keyboard": resize,
+    }
+
+
+def contact_keyboard(label: str) -> dict:
+    return {
+        "keyboard": [[{"text": label, "request_contact": True}]],
+        "one_time_keyboard": True,
+        "resize_keyboard": True,
+    }
+
+
+def remove_keyboard() -> dict:
+    return {"remove_keyboard": True}
+
+
+class HttpBotAdapter(PlatformAdapter):
+    """Bot API over HTTPS with httpx (no bot framework)."""
+
+    def __init__(
+        self,
+        token: str,
+        api_base: str,
+        client: httpx.AsyncClient | None = None,
+        timeout: float = 40.0,
+        platform: str | None = None,
+    ):
+        if platform:
+            self.platform = platform
+        self._token = token or ""
+        self._api_base = (api_base or "").rstrip("/")
+        self._client = client
+        self._owns_client = client is None
+        self._timeout = timeout
+
+    # ---- HTTP plumbing ---------------------------------------------------
+    def _url(self, method: str) -> str:
+        # Never expose this string: it contains the token.
+        return f"{self._api_base}/bot{self._token}/{method}"
+
+    async def _http(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self._timeout)
+            self._owns_client = True
+        return self._client
+
+    async def _call(self, method: str, payload: dict | None = None) -> Any:
+        client = await self._http()
+        try:
+            response = await client.post(self._url(method), json=payload or {})
+        except httpx.HTTPError:
+            # `from None` keeps the original (URL-bearing) exception out of the traceback.
+            raise BotApiError(method, "network error") from None
+        if response.status_code >= 400:
+            raise BotApiError(method, f"HTTP {response.status_code}")
+        try:
+            data = response.json()
+        except ValueError:
+            raise BotApiError(method, "invalid JSON response") from None
+        if not isinstance(data, dict) or not data.get("ok", False):
+            description = ""
+            if isinstance(data, dict):
+                description = str(data.get("description", "unknown error"))
+            raise BotApiError(method, description or "unknown error")
+        return data.get("result")
+
+    # ---- PlatformAdapter -------------------------------------------------
+    async def get_updates(
+        self, offset: int | None = None, timeout: int = 25, limit: int = 100
+    ) -> list[Update]:
+        payload: dict[str, Any] = {
+            "timeout": int(timeout),
+            "limit": int(limit),
+            "allowed_updates": ["message", "callback_query"],
+        }
+        if offset is not None:
+            payload["offset"] = int(offset)
+        result = await self._call("getUpdates", payload)
+        return list(result or [])
+
+    async def send_text(
+        self, chat_id: str | int, text: str, reply_markup: dict | None = None
+    ) -> dict | None:
+        payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        return await self._call("sendMessage", payload)
+
+    async def send_photo(
+        self,
+        chat_id: str | int,
+        photo: str,
+        caption: str | None = None,
+        reply_markup: dict | None = None,
+    ) -> dict | None:
+        payload: dict[str, Any] = {"chat_id": chat_id, "photo": photo}
+        if caption:
+            payload["caption"] = caption
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        return await self._call("sendPhoto", payload)
+
+    async def edit_text(
+        self,
+        chat_id: str | int,
+        message_id: int,
+        text: str,
+        reply_markup: dict | None = None,
+    ) -> dict | None:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": int(message_id),
+            "text": text,
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        return await self._call("editMessageText", payload)
+
+    async def answer_callback(
+        self, callback_query_id: str, text: str | None = None, show_alert: bool = False
+    ) -> None:
+        payload: dict[str, Any] = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+        if show_alert:
+            payload["show_alert"] = True
+        await self._call("answerCallbackQuery", payload)
+
+    async def download_file_ref(self, file_ref: str) -> bytes | None:
+        result = await self._call("getFile", {"file_id": file_ref})
+        file_path = (result or {}).get("file_path") if isinstance(result, dict) else None
+        if not file_path:
+            return None
+        client = await self._http()
+        try:
+            response = await client.get(f"{self._api_base}/file/bot{self._token}/{file_path}")
+        except httpx.HTTPError:
+            raise BotApiError("getFile", "network error") from None
+        if response.status_code >= 400:
+            raise BotApiError("getFile", f"HTTP {response.status_code}")
+        return response.content
+
+    async def aclose(self) -> None:
+        if self._client is not None and self._owns_client:
+            await self._client.aclose()
+            self._client = None
