@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..auth import MAX_FAILED_ATTEMPTS
+from ..logging_setup import get_logger
 from ..paths import APP_VERSION
 from ..persian import to_persian_digits
 from ..permissions import (
@@ -53,10 +53,20 @@ NAV_ITEMS = (
 
 BANNER_TEXT = "حالت آزمایشی — سفارش‌ها واقعاً در حسابداری ثبت نمی‌شوند"
 
+log = get_logger("main_window")
+
+#: Which unread notification kinds belong to which sidebar entry.
+BADGE_KINDS = {
+    "customers": ("customer_registered",),
+    "orders": ("order_created", "receipt_uploaded"),
+}
+
 
 class MainWindow(QMainWindow):
     logout_requested = Signal()
     session_expired = Signal()
+    #: The ✕ was pressed; the controller decides between tray and quit.
+    close_requested = Signal()
 
     def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -64,7 +74,10 @@ class MainWindow(QMainWindow):
         self.toasts = widgets.ToastHost(self)
         self._pages: dict[str, QWidget] = {}
         self._nav_buttons: dict[str, QPushButton] = {}
+        self._nav_texts: dict[str, str] = {}
         self._current_key = ""
+        #: False: closing hides to the tray (decided by the controller).
+        self.allow_close = context.notifier is None
 
         self.setWindowTitle(f"مدیریت فروشگاه — {context.display_name}")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -140,6 +153,7 @@ class MainWindow(QMainWindow):
         for key, text, icon_name, permission in NAV_ITEMS:
             if not self.context.can(permission):
                 continue
+            self._nav_texts[key] = text
             button = QPushButton(f"  {text}")
             button.setObjectName("NavButton")
             button.setCheckable(True)
@@ -319,6 +333,8 @@ class MainWindow(QMainWindow):
         self.page_title_label.setText(getattr(page, "title", ""))
         if filter_key and hasattr(page, "set_filter"):
             page.set_filter(filter_key)
+        if key in BADGE_KINDS:
+            self.context.mark_seen(*BADGE_KINDS[key])
         if hasattr(page, "ensure_loaded"):
             page.ensure_loaded()
         self._refresh_header()
@@ -451,6 +467,39 @@ class MainWindow(QMainWindow):
         self.context.connection_changed.connect(lambda _ok: self._refresh_header())
         self.context.system_info_changed.connect(lambda _info: self._update_banner())
         self.context.data_changed.connect(self._on_data_changed)
+        notifier = self.context.notifier
+        if notifier is not None:
+            notifier.counts_changed.connect(self._update_badges)
+            self._update_badges(dict(notifier.unread))
+        self.context.server_events.connect(self._on_server_events)
+
+    def _update_badges(self, unread: dict) -> None:
+        """Show «(۳)» next to a sidebar entry with unseen items."""
+        for key, kinds in BADGE_KINDS.items():
+            button = self._nav_buttons.get(key)
+            if button is None:
+                continue
+            count = sum(int(unread.get(k, 0)) for k in kinds)
+            text = self._nav_texts.get(key, "")
+            button.setText(f"  {text}  ({to_persian_digits(count)})" if count else f"  {text}")
+            button.setProperty("hasBadge", bool(count))
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def _on_server_events(self, events: list) -> None:
+        """Something happened on the server: refresh what is on screen now."""
+        page = self.current_page()
+        key = self._current_key
+        if key in BADGE_KINDS and self.isVisible() and self.isActiveWindow():
+            self.context.mark_seen(*BADGE_KINDS[key])
+        if page is not None and hasattr(page, "refresh") and self.isVisible():
+            page.refresh()
+        from ..notifications import notice_for
+
+        for event in events:
+            notice = notice_for(event)
+            if notice is not None:
+                self.toasts.show(f"{notice.title}: {notice.body}", "info", 5000)
 
     def _on_data_changed(self) -> None:
         for key, page in self._pages.items():
@@ -549,6 +598,10 @@ class MainWindow(QMainWindow):
         self.toasts._reposition()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        if not self.allow_close:
+            event.ignore()
+            self.close_requested.emit()
+            return
         self._inactivity.stop()
         self._clock.stop()
         super().closeEvent(event)

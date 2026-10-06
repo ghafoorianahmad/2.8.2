@@ -458,3 +458,13 @@ def stylesheet(family: str | None = None) -> str:
 def make_rtl(widget: QWidget) -> QWidget:
     widget.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     return widget
+
+
+def app_icon() -> QIcon:
+    """The application icon (window title bar and system tray)."""
+    from ..paths import assets_dir
+
+    path = assets_dir() / "shopadmin.ico"
+    if path.exists():
+        return QIcon(str(path))
+    return icon("products", 32, PRIMARY)

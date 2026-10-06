@@ -1,4 +1,4 @@
-"""Application controller: startup order, wizard, login, session and logout."""
+"""Application controller: startup order, wizard, sign-in, notifications, lock."""
 from __future__ import annotations
 
 import os
@@ -6,9 +6,9 @@ import sys
 from typing import Optional
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
-from .api_client import ShopApiClient
+from .api_client import MSG_SESSION_EXPIRED, ShopApiClient
 from .auth import AuthService
 from .logging_setup import get_logger, setup_logging
 from .paths import APP_NAME, data_dir, is_frozen
@@ -21,8 +21,9 @@ from .ui.wizard import SetupWizard, needs_setup
 
 log = get_logger("main")
 
-SESSION_EXPIRED_MESSAGE = (
-    "به دلیل عدم فعالیت، نشست شما به پایان رسید. لطفاً دوباره وارد شوید."
+SESSION_LOCKED_MESSAGE = (
+    "به دلیل عدم فعالیت، برنامه قفل شد. برای ادامه گذرواژه را دوباره وارد کنید. "
+    "اعلان‌های فروشگاه در این مدت همچنان نمایش داده می‌شوند."
 )
 
 
@@ -33,11 +34,12 @@ def prefer_fusion_style(app: QApplication) -> None:
 
 
 def apply_env_overrides(store: Store) -> None:
-    """A ``.env`` next to the .exe may pre-seed the connection settings.
+    """A ``.env`` next to the .exe may pre-seed the server address.
 
     Precedence: an explicit environment variable wins over a value already saved
     in the local database, so an administrator can point a machine at another
-    server without opening the UI.
+    server without opening the UI. No secret is ever read from here: clients
+    sign in with their own username and password.
     """
     from dotenv import load_dotenv
 
@@ -50,11 +52,8 @@ def apply_env_overrides(store: Store) -> None:
             break
 
     base_url = os.getenv("SHOPADMIN_BASE_URL", "").strip()
-    api_key = os.getenv("SHOPADMIN_API_KEY", "").strip()
     if base_url:
         store.set_setting("shopapi_base_url", base_url.rstrip("/"))
-    if api_key:
-        store.set_setting("shopapi_api_key", api_key)
     timeout = os.getenv("SHOPADMIN_SESSION_TIMEOUT_MINUTES", "").strip()
     if timeout.isdigit():
         store.set_setting("session_timeout_minutes", int(timeout))
@@ -66,43 +65,48 @@ def apply_env_overrides(store: Store) -> None:
 class ShopAdminApp(QObject):
     """Owns the window lifecycle so nothing is garbage-collected mid-flight."""
 
+    #: Emitted from any thread when the server rejects our session.
+    _session_invalid = Signal()
+
     def __init__(self, app: QApplication) -> None:
         super().__init__()
         self.app = app
         self.store = Store()
-        self.auth = AuthService(self.store)
         self.api = ShopApiClient()
+        self.auth = AuthService(self.store, self.api)
         self.context: Optional[AppContext] = None
         self.login_window: Optional[LoginWindow] = None
         self.main_window: Optional[MainWindow] = None
         self.wizard: Optional[SetupWizard] = None
+        self.watcher = None
+        self.notifier = None
         #: Owned here (not by the window) so it always survives long enough to
         #: be cleaned up on quit, even if the main window is already gone.
         self.service_monitor = None
         self._logging_out = False
+        self._locked = False
+        self._quitting = False
+        # The API client may report a dead session from a worker thread; a
+        # queued signal brings that back to the GUI thread.
+        self._session_invalid.connect(self._on_session_invalid, Qt.ConnectionType.QueuedConnection)
+        self.api.on_session_invalid = self._session_invalid.emit
 
     # ------------------------------------------------------------------ start
     def start(self) -> None:
         apply_env_overrides(self.store)
-        # Start the local service FIRST, before the wizard or the login window:
-        # on a first run this means the owner's "آزمایش اتصال" in the wizard
-        # already succeeds, instead of failing because nothing is listening yet.
         self.ensure_service_started()
-        if needs_setup(self.store, self.auth):
+        if needs_setup(self.store):
             log.info("first run detected; showing the setup wizard")
             self.show_wizard()
             return
+        self.api.configure(self.store.base_url)
         if self._try_auto_login():
             return
         self.show_login()
 
     # -------------------------------------------------------------- service
     def ensure_service_started(self) -> None:
-        """Probe the shopapi address and start ShopSystem.exe if it is local.
-
-        Runs BEFORE the login window so that by the time the user is looking at
-        a form, the service is already coming up.
-        """
+        """Probe the shopapi address and start ShopSystem.exe if it is local."""
         from .services.child_process import ServiceMonitor
 
         base_url = self.store.base_url
@@ -117,9 +121,6 @@ class ShopAdminApp(QObject):
         self.service_monitor.ensure_running_async()
 
     def _on_service_failure(self, message: str) -> None:
-        """Show a failed auto-start clearly, without blocking the app."""
-        from .ui import widgets
-
         parent = self.main_window or self.login_window or self.wizard
         log.warning("service start reported a problem: %s", message)
         try:
@@ -128,30 +129,20 @@ class ShopAdminApp(QObject):
             log.warning("could not show the service error dialog: %s", type(exc).__name__)
 
     def _on_service_slow(self, message: str) -> None:
-        """The service is starting but slow: inform, never block with a dialog."""
         log.warning("service is slow to become ready: %s", message)
 
     # -------------------------------------------------------------- auto login
     def _try_auto_login(self) -> bool:
-        """Sign in from the saved token, skipping the login window entirely.
-
-        Returns True when the user landed on the dashboard. Any failure simply
-        falls through to the normal login window — the user never sees an error
-        for a stale token.
-        """
         if not self.store.get_setting("remember_me", False):
             return False
         if not self.auth.has_saved_session():
             return False
-
         result = self.auth.try_auto_login()
         if result is None:
             log.info("auto login was not possible; showing the login window")
             return False
-
-        principal = result.principal
-        log.info("landing directly on the dashboard as %s", principal.username)
-        self._open_main_window(principal, auto=True)
+        log.info("landing directly on the dashboard as %s", result.principal.username)
+        self._signed_in(result, auto=True)
         return True
 
     # ------------------------------------------------------------------ wizard
@@ -166,61 +157,215 @@ class ShopAdminApp(QObject):
             self.wizard.close()
             self.wizard = None
         log.info("setup wizard finished")
-        # The address may have changed in the wizard; make sure the monitor is
-        # pointed at the final value (the service is already running by now).
         self.ensure_service_started()
+        self.api.configure(self.store.base_url)
         self.show_login()
 
     # ------------------------------------------------------------------ login
-    def show_login(self) -> None:
-        self.api.configure(self.store.base_url, self.store.api_key)
-        self.login_window = LoginWindow(self.store, self.auth)
-        self.login_window.logged_in.connect(self._on_logged_in)
+    def show_login(self, message: str = "") -> None:
+        self.api.configure(self.store.base_url)
+        if self.login_window is None:
+            self.login_window = LoginWindow(self.store, self.auth)
+            self.login_window.logged_in.connect(self._on_logged_in)
+        else:
+            self.login_window.reset()
+        if message:
+            self.login_window.show_message(message)
         self.login_window.show()
+        self.login_window.raise_()
+        self.login_window.activateWindow()
         _centre(self.login_window)
 
-    def _on_logged_in(self, principal) -> None:
+    def _on_logged_in(self, result) -> None:
         if self.login_window is not None:
             self.login_window.close()
             self.login_window = None
-        self._open_main_window(principal, auto=False)
+        self._signed_in(result, auto=False)
+
+    def _signed_in(self, result, *, auto: bool) -> None:
+        """A server session exists: force a password change if asked, then open."""
+        if result.must_change_password:
+            from .ui.password_dialog import ForcedPasswordChangeDialog
+
+            dialog = ForcedPasswordChangeDialog(self.auth)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                self.auth.logout()
+                self.show_login()
+                return
+        principal = result.principal
+
+        if self._locked and self.main_window is not None and self.context is not None:
+            if self.context.principal and self.context.principal.user_id == principal.user_id:
+                self._unlock()
+                return
+            # Somebody else signed in at the lock screen: close the old session.
+            self._close_session(end_server_session=False)
+
+        self._open_main_window(principal, auto=auto)
 
     def _open_main_window(self, principal, *, auto: bool = False) -> None:
-        """Create and show the main window for a signed-in principal."""
-        self.api.configure(self.store.base_url, self.store.api_key)
         self.context = AppContext(
             store=self.store,
             auth=self.auth,
             api=self.api,
             principal=principal,
         )
+        self._start_notifications()
+        self.context.notifier = self.notifier
         self.main_window = MainWindow(self.context)
-        # Hand the controller-owned monitor to the window's top bar (the window
-        # would otherwise create its own, unused, instance).
         self.main_window.attach_service_monitor(self.service_monitor)
         self.main_window.logout_requested.connect(self.logout)
-        self.main_window.session_expired.connect(self._session_expired)
+        self.main_window.session_expired.connect(self._lock)
+        self.main_window.close_requested.connect(self._on_main_close)
         self.main_window.show()
         _centre(self.main_window)
         self.main_window.reset_activity()
-        # Make sure the local shopapi service is up, then probe it. The service
-        # check runs first so the very first data request already succeeds.
         QTimer.singleShot(50, self.main_window.ensure_service_running)
         QTimer.singleShot(700, self.main_window.check_connection_async)
         log.info("session started for role=%s (auto=%s)", principal.role, auto)
 
         if auto:
-            # Small reassurance that nobody typed a password.
             QTimer.singleShot(
                 400,
-                lambda: self.main_window.toasts.show_success(
+                lambda: self.main_window and self.main_window.toasts.show_success(
                     f"ورود با کاربر {principal.full_name or principal.username}"
                 ),
             )
 
+    # ------------------------------------------------------------ notifications
+    def _start_notifications(self) -> None:
+        from .notifications import EventWatcher, TrayNotifier
+
+        if self.notifier is None:
+            self.notifier = TrayNotifier(self.store, self)
+            self.notifier.open_requested.connect(self._open_from_tray)
+            self.notifier.quit_requested.connect(self.quit_application)
+        # Keep running in the tray when the window is closed, if a tray exists.
+        self.app.setQuitOnLastWindowClosed(self.notifier.tray is None)
+
+        if self.watcher is not None:
+            self.watcher.stop()
+        interval = self.store.get_int_setting("event_poll_seconds", 15, minimum=5, maximum=600)
+        self.watcher = EventWatcher(self.store.base_url, self.api.token,
+                                    interval_seconds=interval, parent=self)
+        self.watcher.events_arrived.connect(self._on_server_events)
+        self.watcher.session_lost.connect(self._on_session_invalid)
+        self.watcher.start()
+
+    def _stop_notifications(self) -> None:
+        if self.watcher is not None:
+            self.watcher.stop()
+            self.watcher.client.close()
+            self.watcher = None
+
+    def _on_server_events(self, events: list) -> None:
+        if self.notifier is not None:
+            self.notifier.handle_events(events)
+        if self.context is not None:
+            self.context.server_events.emit(events)
+            self.context.data_changed.emit()
+
+    def _open_from_tray(self, page: str, filter_key: str) -> None:
+        if self._locked or self.main_window is None:
+            if self.login_window is not None:
+                self.login_window.show()
+                self.login_window.raise_()
+                self.login_window.activateWindow()
+            return
+        self.main_window.showNormal()
+        self.main_window.raise_()
+        self.main_window.activateWindow()
+        if page:
+            self.main_window.navigate(page, filter_key)
+
+    def _on_main_close(self) -> None:
+        """Window closed with the ✕: stay in the tray, or quit when there is none."""
+        if self.notifier is not None and self.notifier.tray is not None \
+                and self.store.get_setting("close_to_tray", True):
+            self.main_window.hide()
+            self.notifier.tray.showMessage(
+                "مدیریت فروشگاه",
+                "برنامه در کنار ساعت ویندوز فعال ماند تا اعلان‌ها را دریافت کنید. "
+                "برای خروج کامل از منوی همان آیکون استفاده کنید.",
+            )
+            return
+        self.quit_application()
+
+    # ------------------------------------------------------------------ lock
+    def _lock(self) -> None:
+        """Inactivity: hide the data, keep the server session for notifications."""
+        if self._locked or self.main_window is None:
+            return
+        log.info("locking after inactivity")
+        self._locked = True
+        self.main_window.hide()
+        username = self.context.principal.username if self.context and self.context.principal else ""
+        self.show_login(SESSION_LOCKED_MESSAGE)
+        if self.login_window is not None and username:
+            self.login_window.prefill_username(username)
+
+    def _unlock(self) -> None:
+        """Same user signed in again: keep the window, swap to the new session."""
+        old_token = self.watcher.client.token if self.watcher is not None else ""
+        self._locked = False
+        if self.watcher is not None:
+            self.watcher.set_token(self.api.token)
+            if not self.watcher.running:
+                self.watcher.start()
+        if old_token and old_token != self.api.token:
+            _logout_token(self.store.base_url, old_token)
+        self.main_window.showNormal()
+        self.main_window.raise_()
+        self.main_window.reset_activity()
+        log.info("unlocked")
+
     # ------------------------------------------------------------------ session
+    def _on_session_invalid(self) -> None:
+        """The server no longer accepts our token (expired, revoked, role changed)."""
+        if self._quitting or self.context is None:
+            return
+        log.info("server session ended; returning to the login window")
+        self._close_session(end_server_session=False)
+        self.auth.forget_remembered()
+        self.show_login(MSG_SESSION_EXPIRED)
+
+    def _close_session(self, *, end_server_session: bool) -> None:
+        self._stop_notifications()
+        if end_server_session:
+            self.auth.logout()
+        if self.main_window is not None:
+            self.main_window.allow_close = True
+            self.main_window.close()
+            self.main_window = None
+        self.context = None
+        self._locked = False
+
+    def logout(self, message: str = "") -> None:
+        if self._logging_out:
+            return
+        self._logging_out = True
+        try:
+            if self.context is not None and self.context.principal is not None:
+                self.store.audit(self.context.principal.username, "logout", "خروج از برنامه")
+            self._close_session(end_server_session=True)
+            self.show_login(message)
+        finally:
+            self._logging_out = False
+
+    def quit_application(self) -> None:
+        self._quitting = True
+        self._stop_notifications()
+        if self.notifier is not None:
+            self.notifier.hide()
+        if self.main_window is not None:
+            self.main_window.allow_close = True
+        self.app.quit()
+
     def shutdown(self) -> None:
         """Stop the local shopapi service we started. Safe to call twice."""
+        self._stop_notifications()
+        if self.notifier is not None:
+            self.notifier.hide()
         monitor = self.service_monitor
         if monitor is None:
             return
@@ -231,39 +376,22 @@ class ShopAdminApp(QObject):
         except Exception as exc:  # noqa: BLE001 - shutdown must never raise
             log.exception("error during service shutdown: %s", type(exc).__name__)
 
-    def _session_expired(self) -> None:
-        log.info("session expired after inactivity")
-        if self.main_window is not None:
-            widgets.info(self.main_window, "پایان نشست", SESSION_EXPIRED_MESSAGE, kind="warning")
-        self.logout(message=SESSION_EXPIRED_MESSAGE)
 
-    def logout(self, message: str = "") -> None:
-        if self._logging_out:
-            return
-        self._logging_out = True
+def _logout_token(base_url: str, token: str) -> None:
+    """End an old server session in the background (best effort)."""
+    from .ui.async_utils import run_async
+
+    def work() -> None:
+        client = ShopApiClient(base_url, token, timeout=5)
         try:
-            if self.context is not None and self.context.principal is not None:
-                self.store.audit(
-                    self.context.principal.username, "logout", "خروج از برنامه"
-                )
-            if self.main_window is not None:
-                self.main_window.close()
-                self.main_window = None
-            self.context = None
-            self.show_login()
-            if message and self.login_window is not None:
-                self.login_window._fail(message)
-                self.login_window.saved_box.setVisible(False)
+            client.logout()
         finally:
-            self._logging_out = False
+            client.close()
+
+    run_async(work)
 
 
 def _log_credential_backend() -> None:
-    """Record where «مرا به خاطر بسپار» will store its token.
-
-    Logged at startup so a support call can tell in one line whether the Windows
-    Credential Manager is being used, or the obfuscated fallback file.
-    """
     try:
         from .credentials import backend_name, keyring_available
 
@@ -279,7 +407,6 @@ def _log_credential_backend() -> None:
 
 
 def _centre(widget) -> None:
-    """Place a window in the middle of the primary screen."""
     screen = QApplication.primaryScreen()
     if screen is None:
         return
@@ -301,10 +428,9 @@ def run(argv: list[str] | None = None) -> int:
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     prefer_fusion_style(app)
     theme.apply_theme(app)
+    app.setWindowIcon(theme.app_icon())
 
     controller = ShopAdminApp(app)
-    # Stop the ShopSystem.exe we started when the application quits, however it
-    # quits (window closed, logout+exit, or a fatal error).
     app.aboutToQuit.connect(controller.shutdown)
     controller.start()
     return app.exec()

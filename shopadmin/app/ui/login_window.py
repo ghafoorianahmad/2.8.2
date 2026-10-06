@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
 )
 
 from ..auth import MAX_FAILED_ATTEMPTS, AuthError, AuthService
-from ..credentials import clear_remembered
 from ..logging_setup import get_logger
 from ..paths import APP_VERSION
 from ..persian import to_english_digits, to_persian_digits
@@ -27,7 +26,7 @@ log = get_logger("login")
 class LoginWindow(QWidget):
     """Username + password login with an optional remember-me token."""
 
-    logged_in = Signal(object)   # Principal
+    logged_in = Signal(object)   # LoginResult
     cancelled = Signal()
 
     def __init__(self, store: Store, auth: AuthService, parent: QWidget | None = None) -> None:
@@ -144,19 +143,26 @@ class LoginWindow(QWidget):
         shown. If we are here, that failed (revoked token, disabled account…),
         so the least we can do is fill in the name the user used last time.
         """
-        user_id = self.auth.remembered_user_id()
-        if user_id is None:
+        username = self.auth.remembered_username()
+        if not username:
             return
-        row = self.store.get_admin_user(user_id)
-        if row is None:
-            return
-        self.username_input.setText(str(row["username"]))
+        self.username_input.setText(username)
         self.remember_check.setChecked(True)
         self.saved_label.setText(
-            f"آخرین کاربر این دستگاه: «{row['full_name']}». گذرواژه را وارد کنید."
+            f"آخرین کاربر این دستگاه: «{username}». گذرواژه را وارد کنید."
         )
         self.saved_box.setVisible(True)
         self.password_input.setFocus()
+
+    def prefill_username(self, username: str) -> None:
+        """Lock screen: the same person usually comes back."""
+        self.username_input.setText(username)
+        self.password_input.setFocus()
+
+    def show_message(self, message: str) -> None:
+        """Explain why the login window is showing (session ended, locked…)."""
+        self.saved_box.setVisible(False)
+        self._fail(message)
 
     # ------------------------------------------------------------------ login
     def _fail(self, message: str, detail: str = "") -> None:
@@ -177,16 +183,18 @@ class LoginWindow(QWidget):
         self.login_button.setEnabled(False)
         self.login_button.setText("در حال بررسی…")
 
+        remember = self.remember_check.isChecked()
+
         def work():
-            return self.auth.authenticate(username, password)
+            return self.auth.authenticate(username, password, remember=remember)
 
         def ok(result) -> None:
-            self._on_success(username, password, result)
+            self._on_success(result)
 
         def fail(message: str, _kind: str) -> None:
             self._attempts += 1
             detail = ""
-            if self._attempts >= 2 and "قفل" not in message:
+            if _kind == "auth_error" and self._attempts >= 2 and "قفل" not in message                     and "گذرواژه نادرست" in message:
                 remaining = max(0, MAX_FAILED_ATTEMPTS - self._attempts)
                 detail = f"تعداد تلاش‌های باقی‌مانده تا قفل شدن حساب: {to_persian_digits(remaining)}"
             self._fail(message, detail)
@@ -198,29 +206,27 @@ class LoginWindow(QWidget):
 
         run_async(work, on_success=ok, on_error=fail, on_done=done)
 
-    def _on_success(self, username: str, password: str, result) -> None:
+    def _on_success(self, result) -> None:
         self._attempts = 0
         remember = self.remember_check.isChecked()
         self.store.set_setting("remember_me", remember)
         principal = result.principal
 
         if remember:
-            backend = self.auth.remember_user(principal.user_id)
+            backend = self.auth.remember_user(principal.username)
             if backend == "keyring":
                 log.info("remember-me enabled (OS keyring)")
             elif backend == "file":
                 log.warning("remember-me enabled using the local obfuscated file")
             else:
                 log.error("remember-me could not be stored; login will be required again")
-                clear_remembered(principal.username)
                 self.store.set_setting("remember_me", False)
         else:
             # Unticking the box revokes the saved login immediately.
-            clear_remembered(principal.username)
             self.auth.forget_remembered()
 
         self.password_input.clear()
-        self.logged_in.emit(principal)
+        self.logged_in.emit(result)
 
     def reset(self) -> None:
         """Called after a logout so the form is clean."""

@@ -1,6 +1,7 @@
-"""صفحهٔ کاربران سیستم — مدیریت کاربران داخلی همین برنامه (فقط مدیر کل).
+"""صفحهٔ کاربران سیستم — حساب کارکنان فروشگاه روی سرور (فقط مدیر کل).
 
-این کاربران کارکنان فروشگاه هستند و هیچ ارتباطی با مشتریان shopapi ندارند.
+حساب‌ها، نقش‌ها و گذرواژه‌ها روی سرور نگه داشته و همان‌جا کنترل می‌شوند؛ این
+صفحه فقط آن‌ها را از طریق API مدیریت می‌کند. این کاربران با مشتریان فرق دارند.
 """
 from __future__ import annotations
 
@@ -18,15 +19,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...auth import (
-    MSG_CANNOT_DELETE_SELF,
-    AuthError,
-    validate_password_strength,
-)
+from ...auth import MIN_PASSWORD_LENGTH, validate_password_strength
 from ...permissions import USERS_MANAGE, USERS_VIEW
 from ...persian import format_shamsi, normalize_fa, to_persian_digits
 from ...statuses import ALL_ROLES, ROLE_DESCRIPTION_FA, ROLE_SUPER_ADMIN, role_fa
 from .. import theme, widgets
+from ..async_utils import run_async
 from ..base_page import BasePage
 
 HEADERS = ("نام کاربری", "نام و نام خانوادگی", "نقش", "وضعیت", "آخرین ورود", "تاریخ ایجاد", "عملیات")
@@ -34,7 +32,7 @@ HEADERS = ("نام کاربری", "نام و نام خانوادگی", "نقش",
 
 class UsersPage(BasePage):
     title = "کاربران سیستم"
-    subtitle = "کاربران داخلی این برنامه (کارکنان فروشگاه) — فقط مدیر کل"
+    subtitle = "حساب کارکنان فروشگاه روی سرور — فقط مدیر کل"
 
     def build_body(self) -> None:
         if not self.context.can(USERS_VIEW):
@@ -54,10 +52,11 @@ class UsersPage(BasePage):
         bar.addWidget(self.add_button)
         self.body.addLayout(bar)
 
-        panel = widgets.Panel("فهرست کاربران داخلی")
+        panel = widgets.Panel("فهرست کارکنان")
         panel.body.addWidget(widgets.label(
-            "این کاربران فقط به همین برنامهٔ دسکتاپ دسترسی دارند و با مشتریان فروشگاه "
-            "کاملاً جدا هستند.",
+            "هر کارمند با این حساب از هر رایانهٔ فروشگاه وارد برنامه می‌شود. دسترسی‌ها "
+            "روی سرور کنترل می‌شوند؛ تغییر نقش، غیرفعال کردن یا تغییر گذرواژه، کاربر را "
+            "فوراً از همهٔ رایانه‌ها خارج می‌کند.",
             name="Muted", wrap=True,
         ))
         self.table = widgets.DataTable(HEADERS)
@@ -74,7 +73,10 @@ class UsersPage(BasePage):
     def load(self) -> None:
         if not self.context.can(USERS_VIEW):
             return
-        self._users = self.context.store.list_admin_users()
+        self.run(self.context.auth.list_users, on_success=self._loaded)
+
+    def _loaded(self, users: list) -> None:
+        self._users = list(users or [])
         self._render()
 
     def _render(self) -> None:
@@ -97,11 +99,7 @@ class UsersPage(BasePage):
                 self.table.set_widget(row, 2, widgets.pill_cell(
                     _role_pill(str(user.get("role")))
                 ))
-                active = bool(int(user.get("is_active") or 0))
-                self.table.set_widget(row, 3, widgets.pill_cell(
-                    widgets.StatusPill("فعال" if active else "غیرفعال",
-                                       "approved" if active else "rejected")
-                ))
+                self.table.set_widget(row, 3, widgets.pill_cell(_state_pill(user)))
                 self.table.set_cell(
                     row, 4,
                     format_shamsi(user.get("last_login_at")) if user.get("last_login_at") else "—",
@@ -112,7 +110,7 @@ class UsersPage(BasePage):
             self.table.setUpdatesEnabled(True)
         self.table._refresh_states()
 
-        active_count = sum(1 for u in self._users if int(u.get("is_active") or 0))
+        active_count = sum(1 for u in self._users if u.get("active"))
         self.summary.setText(
             f"{to_persian_digits(len(users))} کاربر نمایش داده شد — "
             f"{to_persian_digits(active_count)} کاربر فعال از "
@@ -146,7 +144,13 @@ class UsersPage(BasePage):
         reset.setEnabled(can_manage)
         layout.addWidget(reset)
 
-        active = bool(int(user.get("is_active") or 0))
+        if user.get("locked"):
+            unlock = widgets.button("رفع قفل", icon_name="key",
+                                    on_click=lambda u=user: self._unlock(u))
+            unlock.setEnabled(can_manage)
+            layout.addWidget(unlock)
+
+        active = bool(user.get("active"))
         toggle = widgets.button(
             "غیرفعال" if active else "فعال‌سازی",
             variant="ghost",
@@ -191,20 +195,28 @@ class UsersPage(BasePage):
         dialog = ResetPasswordDialog(self, str(user.get("username") or ""))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        try:
-            self.context.auth.reset_password(
-                int(user["id"]), dialog.new_password,
-                actor=self.context.principal.username,
-            )
-        except AuthError as exc:
-            widgets.error(self, "تغییر گذرواژه انجام نشد", exc.message)
+        user_id, password = int(user["id"]), dialog.new_password
+        self.run(
+            lambda: self.context.auth.reset_password(user_id, password),
+            on_success=lambda _r: (self.notify_success(
+                "گذرواژهٔ موقت تعیین شد؛ کاربر در ورود بعدی باید آن را عوض کند"), self.load()),
+            on_error=lambda m, _k: widgets.error(self, "تغییر گذرواژه انجام نشد", m),
+        )
+
+    def _unlock(self, user: dict) -> None:
+        if not self._manage_allowed():
             return
-        self.notify_success("گذرواژهٔ کاربر با موفقیت تغییر کرد")
+        user_id = int(user["id"])
+        self.run(
+            lambda: self.context.auth.unlock_user(user_id),
+            on_success=lambda _r: (self.notify_success("قفل حساب برداشته شد"), self.load()),
+            on_error=lambda m, _k: widgets.error(self, "رفع قفل انجام نشد", m),
+        )
 
     def _toggle_active(self, user: dict) -> None:
         if not self._manage_allowed():
             return
-        active = bool(int(user.get("is_active") or 0))
+        active = bool(user.get("active"))
         name = str(user.get("username") or "")
         if not widgets.confirm(
             self,
@@ -214,17 +226,13 @@ class UsersPage(BasePage):
             kind="warning" if active else "question",
         ):
             return
-        try:
-            self.context.auth.update_user(
-                int(user["id"]), is_active=not active,
-                actor=self.context.principal.username,
-                actor_id=self.context.principal.user_id,
-            )
-        except AuthError as exc:
-            widgets.error(self, "تغییر وضعیت انجام نشد", exc.message)
-            return
-        self.notify_success("وضعیت کاربر تغییر کرد")
-        self.load()
+        user_id, actor_id = int(user["id"]), self.context.principal.user_id
+        self.run(
+            lambda: self.context.auth.update_user(user_id, is_active=not active,
+                                                  actor_id=actor_id),
+            on_success=lambda _r: (self.notify_success("وضعیت کاربر تغییر کرد"), self.load()),
+            on_error=lambda m, _k: widgets.error(self, "تغییر وضعیت انجام نشد", m),
+        )
 
     def _delete_user(self, user: dict) -> None:
         if not self._manage_allowed():
@@ -237,16 +245,12 @@ class UsersPage(BasePage):
             detail="برای جلوگیری از حذف تصادفی، عملیات فقط پس از تأیید انجام می‌شود.",
         ):
             return
-        try:
-            self.context.auth.delete_user(
-                int(user["id"]), actor=self.context.principal.username,
-                actor_id=self.context.principal.user_id,
-            )
-        except AuthError as exc:
-            widgets.error(self, "حذف کاربر انجام نشد", exc.message)
-            return
-        self.notify_success("کاربر حذف شد")
-        self.load()
+        user_id = int(user["id"])
+        self.run(
+            lambda: self.context.auth.delete_user(user_id),
+            on_success=lambda _r: (self.notify_success("کاربر حذف شد"), self.load()),
+            on_error=lambda m, _k: widgets.error(self, "حذف کاربر انجام نشد", m),
+        )
 
     def _manage_allowed(self) -> bool:
         if self.context.can(USERS_MANAGE):
@@ -279,6 +283,16 @@ def _role_pill(role: str) -> widgets.StatusPill:
     return pill
 
 
+def _state_pill(user: dict) -> widgets.StatusPill:
+    if not user.get("active"):
+        return widgets.StatusPill("غیرفعال", "rejected")
+    if user.get("locked"):
+        return widgets.StatusPill("قفل موقت", "expired")
+    if user.get("must_change_password"):
+        return widgets.StatusPill("گذرواژهٔ موقت", "awaiting_payment")
+    return widgets.StatusPill("فعال", "approved")
+
+
 def _forbidden_panel() -> QWidget:
     panel = widgets.Panel()
     panel.body.addWidget(widgets.label("دسترسی غیرمجاز", size=14, bold=True))
@@ -293,7 +307,7 @@ def _forbidden_panel() -> QWidget:
 # dialogs
 # --------------------------------------------------------------------------
 class UserFormDialog(QDialog):
-    """ساخت یا ویرایش یک کاربر داخلی."""
+    """ساخت یا ویرایش حساب یک کارمند روی سرور."""
 
     def __init__(self, context, user: Optional[dict], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -310,10 +324,11 @@ class UserFormDialog(QDialog):
         root.setContentsMargins(24, 20, 24, 20)
         root.setSpacing(14)
         root.addWidget(widgets.label(
-            "ویرایش کاربر داخلی" if self.editing else "ساخت کاربر داخلی", size=14, bold=True
+            "ویرایش حساب کارمند" if self.editing else "حساب کارمند جدید", size=14, bold=True
         ))
         root.addWidget(widgets.label(
-            "این کاربر به برنامهٔ دسکتاپ دسترسی پیدا می‌کند، نه به حساب مشتریان.",
+            "این حساب روی سرور فروشگاه ساخته می‌شود و کارمند با آن از هر رایانه‌ای وارد "
+            "برنامهٔ مدیریت می‌شود (نه حساب مشتری).",
             name="Muted", wrap=True,
         ))
 
@@ -349,7 +364,8 @@ class UserFormDialog(QDialog):
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-        self.password_input.setPlaceholderText("حداقل ۶ نویسه")
+        self.password_input.setPlaceholderText(
+            f"حداقل {to_persian_digits(MIN_PASSWORD_LENGTH)} نویسه، حرف و عدد")
         self.confirm_input = QLineEdit()
         self.confirm_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.confirm_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
@@ -359,8 +375,13 @@ class UserFormDialog(QDialog):
             form.addRow(widgets.label("تکرار گذرواژه:"), self.confirm_input)
 
         self.active_check = QCheckBox("این کاربر فعال باشد")
-        self.active_check.setChecked(bool(int(user.get("is_active") or 1)) if self.editing else True)
+        self.active_check.setChecked(bool(user.get("active", True)) if self.editing else True)
         form.addRow(widgets.label("وضعیت:"), self.active_check)
+
+        self.must_change_check = QCheckBox("در اولین ورود، گذرواژه را خودش عوض کند (توصیه می‌شود)")
+        self.must_change_check.setChecked(True)
+        if not self.editing:
+            form.addRow(widgets.label(""), self.must_change_check)
 
         root.addLayout(form)
 
@@ -373,6 +394,7 @@ class UserFormDialog(QDialog):
         save = widgets.button(
             "ذخیره", variant="primary", icon_name="save", on_click=self._submit
         )
+        self.save_button = save
         cancel = widgets.button("انصراف", on_click=self.reject)
         buttons.addWidget(save)
         buttons.addWidget(cancel)
@@ -389,45 +411,55 @@ class UserFormDialog(QDialog):
         self.error_label.setVisible(True)
 
     def _submit(self) -> None:
+        if not self.save_button.isEnabled():
+            return
         auth = self.context.auth
         role = str(self.role_combo.currentData())
         full_name = self.full_name_input.text().strip()
-        actor = self.context.principal.username
+        active = self.active_check.isChecked()
+        actor_id = self.context.principal.user_id
 
-        try:
-            if self.editing:
-                auth.update_user(
-                    int(self.user["id"]),
-                    full_name=full_name,
-                    role=role,
-                    is_active=self.active_check.isChecked(),
-                    actor=actor,
-                    actor_id=self.context.principal.user_id,
-                )
-                self.result_username = str(self.user.get("username") or "")
-            else:
-                username = self.username_input.text().strip()
-                password = self.password_input.text()
-                if password != self.confirm_input.text():
-                    self._fail("تکرار گذرواژه با گذرواژهٔ جدید یکسان نیست.")
-                    return
-                problem = validate_password_strength(password)
-                if problem:
-                    self._fail(problem)
-                    return
-                created = auth.create_user(
-                    username, full_name, password, role,
-                    is_active=self.active_check.isChecked(), actor=actor,
-                )
-                self.result_username = created.username
-        except AuthError as exc:
-            self._fail(exc.message)
-            return
-        self.accept()
+        if self.editing:
+            user_id = int(self.user["id"])
+            self.result_username = str(self.user.get("username") or "")
+
+            def work():
+                return auth.update_user(user_id, full_name=full_name, role=role,
+                                        is_active=active, actor_id=actor_id)
+        else:
+            username = self.username_input.text().strip()
+            password = self.password_input.text()
+            if password != self.confirm_input.text():
+                self._fail("تکرار گذرواژه با گذرواژهٔ جدید یکسان نیست.")
+                return
+            problem = validate_password_strength(password)
+            if problem:
+                self._fail(problem)
+                return
+            must_change = self.must_change_check.isChecked()
+
+            def work():
+                created = auth.create_user(username, full_name, password, role,
+                                           must_change_password=must_change)
+                if not active:
+                    auth.update_user(created.user_id, is_active=False)
+                return created
+
+        def ok(result) -> None:
+            if not self.editing:
+                self.result_username = result.username
+            self.accept()
+
+        def done() -> None:
+            self.save_button.setEnabled(True)
+
+        self.error_label.setVisible(False)
+        self.save_button.setEnabled(False)
+        run_async(work, on_success=ok, on_error=lambda m, _k: self._fail(m), on_done=done)
 
 
 class ResetPasswordDialog(QDialog):
-    """تعیین گذرواژهٔ جدید برای یک کاربر داخلی توسط مدیر کل."""
+    """تعیین گذرواژهٔ موقت برای یک کارمند توسط مدیر کل."""
 
     def __init__(self, parent: QWidget | None, username: str) -> None:
         super().__init__(parent)
@@ -441,7 +473,8 @@ class ResetPasswordDialog(QDialog):
         root.setSpacing(14)
         root.addWidget(widgets.label("تغییر گذرواژهٔ کاربر", size=14, bold=True))
         root.addWidget(widgets.label(
-            f"گذرواژهٔ جدید برای کاربر «{username}» را تعیین کنید.", wrap=True
+            f"یک گذرواژهٔ موقت برای «{username}» تعیین کنید. او در ورود بعدی باید آن را "
+            "عوض کند و از همهٔ رایانه‌ها خارج می‌شود.", wrap=True
         ))
 
         form = QFormLayout()

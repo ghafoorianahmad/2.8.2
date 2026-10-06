@@ -1,7 +1,7 @@
-"""صفحهٔ تنظیمات — اتصال به shopapi، بازه‌ها، گذرواژهٔ خود و مشاهدهٔ لاگ.
+"""صفحهٔ تنظیمات — آدرس سرور، بازه‌ها، اعلان‌ها، گذرواژهٔ خود و مشاهدهٔ لاگ.
 
-این مقادیر فقط در پایگاه‌دادهٔ محلی همین برنامه ذخیره می‌شوند و هرگز به shopapi
-فرستاده نمی‌شوند.
+آدرس سرور و ترجیحات اعلان فقط روی همین رایانه ذخیره می‌شوند. گذرواژه روی
+سرور تغییر می‌کند. هیچ کلید یا رمزی روی این رایانه نگه داشته نمی‌شود.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
@@ -21,8 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...auth import AuthError
-from ...logging_setup import get_logger, mask_secret
+from ...logging_setup import get_logger
 from ...paths import APP_VERSION, data_dir, db_path, log_path
 from ...permissions import (
     SETTINGS_CHANGE_OWN_PASSWORD,
@@ -41,7 +41,7 @@ log = get_logger("settings")
 
 class SettingsPage(BasePage):
     title = "تنظیمات"
-    subtitle = "پیکربندی اتصال، بازه‌های به‌روزرسانی و حساب کاربری"
+    subtitle = "آدرس سرور، اعلان‌ها، بازه‌های به‌روزرسانی و حساب کاربری"
 
     def build_body(self) -> None:
         from PySide6.QtWidgets import QScrollArea
@@ -56,6 +56,7 @@ class SettingsPage(BasePage):
 
         layout.addWidget(self._build_connection_panel())
         layout.addWidget(self._build_general_panel())
+        layout.addWidget(self._build_notifications_panel())
         layout.addWidget(self._build_password_panel())
         layout.addWidget(self._build_about_panel())
         layout.addStretch(1)
@@ -71,50 +72,32 @@ class SettingsPage(BasePage):
 
     # ------------------------------------------------------------------ panels
     def _build_connection_panel(self) -> QWidget:
-        panel = widgets.Panel("اتصال به سرور فروشگاه (shopapi)")
+        panel = widgets.Panel("اتصال به سرور فروشگاه")
 
         self.base_url_input = QLineEdit()
-        self.base_url_input.setPlaceholderText("http://127.0.0.1:8000")
+        self.base_url_input.setPlaceholderText("http://192.168.1.10:8000")
         self.base_url_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-
-        self.api_key_input = QLineEdit()
-        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-        self.api_key_input.setPlaceholderText("کلید مدیریت (ADMIN_API_KEY)")
-
-        self.reveal_button = QPushButton()
-        self.reveal_button.setObjectName("Ghost")
-        self.reveal_button.setCheckable(True)
-        self.reveal_button.setIcon(theme.icon("eye", 18, theme.TEXT_MUTED))
-        self.reveal_button.setFixedWidth(40)
-        self.reveal_button.toggled.connect(self._toggle_reveal)
-
-        key_row = QHBoxLayout()
-        key_row.setSpacing(6)
-        key_row.addWidget(self.api_key_input, 1)
-        key_row.addWidget(self.reveal_button)
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
         form.addRow(widgets.label("آدرس سرور:"), self.base_url_input)
-        form.addRow(widgets.label("کلید API:"), key_row)
         panel.body.addLayout(form)
 
         self.connection_hint = widgets.label("", name="Muted", wrap=True)
         panel.body.addWidget(self.connection_hint)
 
         if not self.context.can(SETTINGS_EDIT_CONNECTION):
-            # Only the Super Admin may change the connection settings.
+            # Only the Super Admin may point this computer at another server.
             self.base_url_input.setEnabled(False)
-            self.api_key_input.setEnabled(False)
             self.connection_hint.setText(
-                "تغییر آدرس سرور و کلید API فقط توسط «مدیر کل» امکان‌پذیر است."
+                "تغییر آدرس سرور فقط توسط «مدیر کل» امکان‌پذیر است."
             )
         else:
             self.connection_hint.setText(
-                "کلید API فقط در همین رایانه و در پایگاه‌دادهٔ محلی ذخیره می‌شود."
+                "پس از تغییر آدرس، باید دوباره وارد شوید. هیچ کلید یا رمزی روی این "
+                "رایانه ذخیره نمی‌شود."
             )
 
         buttons = QHBoxLayout()
@@ -180,6 +163,32 @@ class SettingsPage(BasePage):
         panel.body.addLayout(buttons)
         return panel
 
+    def _build_notifications_panel(self) -> QWidget:
+        panel = widgets.Panel("اعلان‌ها (همین رایانه)")
+        self.notify_desktop_check = QCheckBox("نمایش اعلان ویندوز برای مشتری، سفارش و فیش جدید")
+        self.notify_sound_check = QCheckBox("پخش صدای اعلان")
+        self.close_to_tray_check = QCheckBox(
+            "با بستن پنجره، برنامه کنار ساعت ویندوز فعال بماند تا اعلان‌ها برسد")
+        for check in (self.notify_desktop_check, self.notify_sound_check,
+                      self.close_to_tray_check):
+            panel.body.addWidget(check)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.poll_spin = QSpinBox()
+        self.poll_spin.setRange(5, 600)
+        self.poll_spin.setSuffix(" ثانیه")
+        self.poll_spin.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        form.addRow(widgets.label("بررسی موارد جدید هر:"), self.poll_spin)
+        panel.body.addLayout(form)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(widgets.button("ذخیره", icon_name="save", variant="primary",
+                                         on_click=self._save_notifications))
+        panel.body.addLayout(buttons)
+        return panel
+
     def _build_password_panel(self) -> QWidget:
         panel = widgets.Panel("تغییر گذرواژهٔ من")
         form = QFormLayout()
@@ -236,8 +245,13 @@ class SettingsPage(BasePage):
 
     # ------------------------------------------------------------------ values
     def _reload_values(self) -> None:
-        self.base_url_input.setText(self.context.store.base_url)
-        self.api_key_input.setText(self.context.store.api_key)
+        store = self.context.store
+        self.base_url_input.setText(store.base_url)
+        self.notify_desktop_check.setChecked(bool(store.get_setting("notify_desktop", True)))
+        self.notify_sound_check.setChecked(bool(store.get_setting("notify_sound", True)))
+        self.close_to_tray_check.setChecked(bool(store.get_setting("close_to_tray", True)))
+        self.poll_spin.setValue(store.get_int_setting("event_poll_seconds", 15, minimum=5,
+                                                      maximum=600))
         self.refresh_spin.setValue(self.context.auto_refresh_seconds)
         self.timeout_spin.setValue(self.context.session_timeout_minutes)
 
@@ -292,21 +306,11 @@ class SettingsPage(BasePage):
         self.connection_status.setText(text)
         self.connection_status.setStyleSheet(f"color: {color};")
 
-    def _toggle_reveal(self, revealed: bool) -> None:
-        self.api_key_input.setEchoMode(
-            QLineEdit.EchoMode.Normal if revealed else QLineEdit.EchoMode.Password
-        )
-        self.reveal_button.setIcon(theme.icon(
-            "eye_off" if revealed else "eye", 18, theme.TEXT_MUTED
-        ))
-        self.reveal_button.setToolTip("پنهان کردن کلید" if revealed else "نمایش کلید")
-
     # ------------------------------------------------------------------ actions
     def _test_connection(self) -> None:
         self.test_button.setEnabled(False)
         self.test_button.setText("در حال آزمایش…")
-        base_url = self.base_url_input.text().strip()
-        api_key = self.api_key_input.text().strip()
+        base_url = self.base_url_input.text().strip().rstrip("/")
         if not base_url:
             self.test_button.setEnabled(True)
             self.test_button.setText("آزمایش اتصال")
@@ -315,27 +319,34 @@ class SettingsPage(BasePage):
 
         from ...api_client import ShopApiClient
 
-        probe = ShopApiClient(base_url, api_key, timeout=10)
+        same_server = base_url == self.context.store.base_url
 
         def work():
+            if same_server:
+                # Our own session also proves the account still works.
+                return self.context.api.test_connection()
+            probe = ShopApiClient(base_url, timeout=10)
             try:
-                return probe.test_connection()
+                return probe.probe_server()
             finally:
                 probe.close()
 
-        def ok(info) -> None:
-            self.context.api.configure(base_url, api_key)
-            self.context.apply_system_info(info)
-            self._apply_system_info()
-            self.context.store.set_setting("shopapi_base_url", base_url)
-            self.notify_success("ارتباط با سرور فروشگاه با موفقیت برقرار شد")
-            if not info.accounting_write_enabled:
-                self.notify_warning(
-                    "حالت آزمایشی — سفارش‌ها واقعاً در حسابداری ثبت نمی‌شوند"
-                )
+        def ok(result) -> None:
+            if same_server:
+                self.context.apply_system_info(result)
+                self._apply_system_info()
+                self.notify_success("ارتباط با سرور فروشگاه با موفقیت برقرار شد")
+                if not result.accounting_write_enabled:
+                    self.notify_warning(
+                        "حالت آزمایشی — سفارش‌ها واقعاً در حسابداری ثبت نمی‌شوند"
+                    )
+            else:
+                self._set_status("سرور در این آدرس پاسخ داد. برای استفاده، آدرس را ذخیره "
+                                 "کنید و دوباره وارد شوید.", theme.SUCCESS_DARK)
 
         def fail(message: str, kind: str) -> None:
-            self.context.mark_offline()
+            if same_server:
+                self.context.mark_offline()
             self._set_status(message, theme.DANGER)
             widgets.error(self, "آزمایش اتصال ناموفق بود", message)
 
@@ -373,12 +384,27 @@ class SettingsPage(BasePage):
             widgets.error(self, "آدرس نامعتبر",
                           "آدرس سرور باید با http:// یا https:// شروع شود.")
             return
-        api_key = self.api_key_input.text().strip()
-        self.context.store.configure_connection(base_url, api_key)
-        self.context.api.configure(base_url, api_key)
+        base_url = base_url.rstrip("/")
+        if base_url == self.context.store.base_url:
+            self.notify_success("آدرس سرور تغییری نکرد")
+            return
+        if not widgets.confirm(
+            self, "تغییر آدرس سرور",
+            "پس از تغییر آدرس، از حساب خارج می‌شوید و باید روی سرور جدید وارد شوید. ادامه می‌دهید؟",
+            confirm_text="تغییر و خروج", cancel_text="انصراف",
+        ):
+            return
         self.context.audit("settings_connection", f"base_url={base_url}")
-        self.notify_success("تنظیمات اتصال ذخیره شد")
-        log.info("connection settings updated: %s key=%s", base_url, mask_secret(api_key))
+        log.info("server address changed to %s", base_url)
+        # Saved first; the API client still points at the OLD server, so the
+        # logout below ends the session there before the login window switches
+        # to the new address.
+        self.context.store.configure_connection(base_url)
+        window = self.window()
+        if hasattr(window, "logout_requested"):
+            window.logout_requested.emit()
+        else:
+            self.context.api.configure(base_url)
 
     def _save_general(self) -> None:
         if not self.context.can(SETTINGS_EDIT_GENERAL):
@@ -392,21 +418,37 @@ class SettingsPage(BasePage):
         if hasattr(window, "apply_settings_changed"):
             window.apply_settings_changed()
 
+    def _save_notifications(self) -> None:
+        store = self.context.store
+        store.set_setting("notify_desktop", self.notify_desktop_check.isChecked())
+        store.set_setting("notify_sound", self.notify_sound_check.isChecked())
+        store.set_setting("close_to_tray", self.close_to_tray_check.isChecked())
+        store.set_setting("event_poll_seconds", int(self.poll_spin.value()))
+        self.notify_success("تنظیمات اعلان ذخیره شد")
+
     def _change_password(self) -> None:
-        try:
-            self.context.auth.change_own_password(
-                self.context.principal.user_id,
-                self.current_password.text(),
-                self.new_password.text(),
-                self.confirm_password.text(),
-            )
-        except AuthError as exc:
-            self._show_password_message(exc.message, ok=False)
-            return
-        self._show_password_message("گذرواژه با موفقیت تغییر کرد.", ok=True)
-        for field in (self.current_password, self.new_password, self.confirm_password):
-            field.clear()
-        self.notify_success("گذرواژه با موفقیت تغییر کرد")
+        current = self.current_password.text()
+        new = self.new_password.text()
+        confirm = self.confirm_password.text()
+        self.change_password_button.setEnabled(False)
+
+        def work() -> None:
+            self.context.auth.change_own_password(current, new, confirm)
+
+        def ok(_result) -> None:
+            self._show_password_message(
+                "گذرواژه با موفقیت تغییر کرد. نشست‌های دیگر شما روی سایر رایانه‌ها بسته شد.",
+                ok=True)
+            for field in (self.current_password, self.new_password, self.confirm_password):
+                field.clear()
+            self.notify_success("گذرواژه با موفقیت تغییر کرد")
+
+        def done() -> None:
+            self.change_password_button.setEnabled(self.context.can(SETTINGS_CHANGE_OWN_PASSWORD))
+
+        run_async(work, on_success=ok,
+                  on_error=lambda m, _k: self._show_password_message(m, ok=False),
+                  on_done=done)
 
     def _show_password_message(self, text: str, *, ok: bool) -> None:
         self.password_message.setText(text)

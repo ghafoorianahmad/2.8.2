@@ -8,6 +8,7 @@ from app.api_client import (
     MSG_CONNECTION_FAILED,
     MSG_FORBIDDEN,
     MSG_INVALID_KEY,
+    MSG_SESSION_EXPIRED,
     MSG_NOT_FOUND,
     MSG_SERVER_ERROR,
     MSG_TIMEOUT,
@@ -29,9 +30,67 @@ def test_health_needs_no_key(fake_api):
         client.close()
 
 
-def test_api_key_is_sent_in_the_x_api_key_header(api, fake_api):
+def test_session_token_is_sent_as_a_bearer_header(api, fake_api):
     api.list_customers()
     assert ("GET", "/admin/users") in fake_api.requests
+    headers = fake_api.headers_seen[-1]
+    assert headers["authorization"] == "Bearer owner-token"
+    assert "x-api-key" not in headers
+
+
+def test_no_api_key_is_ever_sent_by_a_staff_client(api, fake_api):
+    api.health()
+    api.list_customers()
+    api.list_products()
+    assert all("x-api-key" not in h for h in fake_api.headers_seen)
+
+
+def test_login_keeps_the_token_and_logout_drops_it(fake_api):
+    client = ShopApiClient("http://x.test", transport=httpx.MockTransport(fake_api.handler))
+    try:
+        payload = client.login("owner", "Secret123", remember=True, client_name="PC-1")
+        assert client.token == payload["token"]
+        assert fake_api.login_bodies[-1] == {"username": "owner", "password": "Secret123",
+                                             "remember": True, "client": "PC-1"}
+        assert "authorization" not in fake_api.headers_seen[-1]
+        assert client.me()["user"]["username"] == "owner"
+        client.logout()
+        assert client.token == ""
+        assert payload["token"] not in fake_api.tokens
+    finally:
+        client.close()
+
+
+def test_bootstrap_sends_the_service_key_only_there(fake_api):
+    fake_api.staff.clear()
+    client = ShopApiClient("http://x.test", transport=httpx.MockTransport(fake_api.handler))
+    try:
+        assert client.auth_status() == {"bootstrap_required": True}
+        client.bootstrap("service-key", "boss", "رئیس", "Secret123")
+        assert fake_api.headers_seen[-1]["x-api-key"] == "service-key"
+        assert client.token == ""  # bootstrap does not sign in
+    finally:
+        client.close()
+
+
+def test_events_feed(fake_api, api):
+    first = api.events()
+    assert first == {"last_id": 0, "items": []}
+    fake_api.add_event("customer_registered", 7)
+    later = api.events(after=first["last_id"])
+    assert [e["kind"] for e in later["items"]] == ["customer_registered"]
+    assert later["last_id"] == 1
+
+
+def test_staff_endpoints(fake_api, api):
+    created = api.create_staff("clerk", "کارمند", "operator", "Secret123")
+    assert created["must_change_password"] is True
+    api.update_staff(created["id"], role="admin")
+    api.reset_staff_password(created["id"], "Other1234")
+    api.unlock_staff(created["id"])
+    assert {r["username"] for r in api.list_staff()} == {"owner", "clerk"}
+    api.delete_staff(created["id"])
+    assert {r["username"] for r in api.list_staff()} == {"owner"}
 
 
 def test_missing_base_url_raises_persian_error():
@@ -46,7 +105,7 @@ def test_missing_base_url_raises_persian_error():
 
 def test_trailing_slash_in_base_url_is_tolerated(fake_api):
     client = ShopApiClient(
-        "http://x.test/", "admin-key", transport=httpx.MockTransport(fake_api.handler)
+        "http://x.test/", "owner-token", transport=httpx.MockTransport(fake_api.handler)
     )
     try:
         assert client.list_customers() == []
@@ -57,7 +116,7 @@ def test_trailing_slash_in_base_url_is_tolerated(fake_api):
 # ---- error handling -------------------------------------------------------
 def test_connection_error_is_reported_in_persian(fake_api):
     fake_api.offline = True
-    client = ShopApiClient("http://x.test", "admin-key", transport=httpx.MockTransport(fake_api.handler))
+    client = ShopApiClient("http://x.test", "owner-token", transport=httpx.MockTransport(fake_api.handler))
     try:
         with pytest.raises(ApiConnectionError) as exc:
             client.list_customers()
@@ -71,7 +130,7 @@ def test_timeout_is_reported_in_persian(fake_api):
     def slow(request):
         raise httpx.ReadTimeout("too slow", request=request)
 
-    client = ShopApiClient("http://x.test", "admin-key", transport=httpx.MockTransport(slow))
+    client = ShopApiClient("http://x.test", "owner-token", transport=httpx.MockTransport(slow))
     try:
         with pytest.raises(ApiError) as exc:
             client.list_customers()
@@ -81,18 +140,18 @@ def test_timeout_is_reported_in_persian(fake_api):
         client.close()
 
 
-def test_invalid_api_key_raises_auth_error(fake_api):
-    client = ShopApiClient("http://x.test", "wrong-key", transport=httpx.MockTransport(fake_api.handler))
+def test_invalid_session_raises_auth_error(fake_api):
+    client = ShopApiClient("http://x.test", "wrong-token", transport=httpx.MockTransport(fake_api.handler))
     try:
         with pytest.raises(ApiAuthError) as exc:
             client.list_customers()
         assert exc.value.status_code == 401
-        assert exc.value.message == MSG_INVALID_KEY
+        assert exc.value.message == MSG_SESSION_EXPIRED
     finally:
         client.close()
 
 
-def test_missing_api_key_raises_auth_error(fake_api):
+def test_missing_session_raises_auth_error(fake_api):
     client = ShopApiClient("http://x.test", "", transport=httpx.MockTransport(fake_api.handler))
     try:
         with pytest.raises(ApiAuthError):
@@ -101,10 +160,10 @@ def test_missing_api_key_raises_auth_error(fake_api):
         client.close()
 
 
-def test_403_uses_the_admin_key_message(fake_api):
+def test_403_uses_the_permission_message(fake_api):
     fake_api.force_status = 403
-    fake_api.force_detail = "Admin key required"
-    client = ShopApiClient("http://x.test", "admin-key", transport=httpx.MockTransport(fake_api.handler))
+    fake_api.force_detail = "Not permitted for this account"
+    client = ShopApiClient("http://x.test", "owner-token", transport=httpx.MockTransport(fake_api.handler))
     try:
         with pytest.raises(ApiAuthError) as exc:
             client.list_customers()
@@ -116,7 +175,7 @@ def test_403_uses_the_admin_key_message(fake_api):
 def test_503_is_explained_as_accounting_unavailable(fake_api):
     fake_api.force_status = 503
     fake_api.force_detail = "Accounting database unavailable"
-    client = ShopApiClient("http://x.test", "admin-key", transport=httpx.MockTransport(fake_api.handler))
+    client = ShopApiClient("http://x.test", "owner-token", transport=httpx.MockTransport(fake_api.handler))
     try:
         with pytest.raises(ApiError) as exc:
             client.list_products()
@@ -128,7 +187,7 @@ def test_503_is_explained_as_accounting_unavailable(fake_api):
 def test_insufficient_stock_message_is_persian(fake_api):
     fake_api.force_status = 409
     fake_api.force_detail = "Insufficient stock for product 101"
-    client = ShopApiClient("http://x.test", "admin-key", transport=httpx.MockTransport(fake_api.handler))
+    client = ShopApiClient("http://x.test", "owner-token", transport=httpx.MockTransport(fake_api.handler))
     try:
         with pytest.raises(ApiError) as exc:
             client.approve_payment(1)
@@ -144,7 +203,7 @@ def test_non_json_error_body_does_not_crash(fake_api):
     def html_error(request):
         return httpx.Response(500, text="<html>boom</html>", request=request)
 
-    client = ShopApiClient("http://x.test", "admin-key", transport=httpx.MockTransport(html_error))
+    client = ShopApiClient("http://x.test", "owner-token", transport=httpx.MockTransport(html_error))
     try:
         with pytest.raises(ApiError) as exc:
             client.list_orders()
@@ -163,7 +222,7 @@ def test_invalid_json_on_success_is_a_decode_error(fake_api):
     def bad_json(request):
         return httpx.Response(200, text="not json", request=request)
 
-    client = ShopApiClient("http://x.test", "admin-key", transport=httpx.MockTransport(bad_json))
+    client = ShopApiClient("http://x.test", "owner-token", transport=httpx.MockTransport(bad_json))
     try:
         with pytest.raises(ApiError) as exc:
             client.list_customers()
@@ -187,6 +246,20 @@ def test_invalid_json_on_success_is_a_decode_error(fake_api):
         ("Accounting database unavailable", "حسابداری"),
         ("Invalid API key", MSG_INVALID_KEY),
         ("Admin key required", MSG_FORBIDDEN),
+        ("Not permitted for this account", MSG_FORBIDDEN),
+        ("Invalid username or password", "نادرست"),
+        ("Account temporarily locked", "قفل"),
+        ("Account disabled", "غیرفعال"),
+        ("Too many login attempts", "بیش از حد"),
+        ("Session expired or invalid", "نشست"),
+        ("Password change required", "تغییر دهید"),
+        ("Username already exists", "قبلاً"),
+        ("Password must be at least 8 characters", "۸"),
+        ("Password must contain letters and digits", "حرف و هم عدد"),
+        ("Cannot remove the last super admin", "مدیر کل"),
+        ("Cannot delete your own account", "خودتان"),
+        ("Current password is wrong", "فعلی"),
+        ("API key not accepted from this address", "سرور"),
     ],
 )
 def test_known_shopapi_errors_are_translated(detail, expected_fragment):
@@ -339,7 +412,7 @@ def test_system_info_missing_endpoint_degrades_gracefully(fake_api):
     """An older shopapi build (404) must not break the connection check."""
     fake_api.force_status = 404
     fake_api.force_detail = "Not Found"
-    client = ShopApiClient("http://x.test", "admin-key",
+    client = ShopApiClient("http://x.test", "owner-token",
                            transport=httpx.MockTransport(fake_api.handler))
     try:
         info = client.system_info()
@@ -359,7 +432,7 @@ def test_test_connection_survives_a_missing_system_info_endpoint(fake_api):
             return httpx.Response(404, json={"detail": "Not Found"}, request=request)
         return fake_api.handler(request)
 
-    client = ShopApiClient("http://x.test", "admin-key",
+    client = ShopApiClient("http://x.test", "owner-token",
                            transport=httpx.MockTransport(handler))
     try:
         info = client.test_connection()  # must not raise
@@ -386,12 +459,15 @@ def test_test_connection_raises_when_offline(fake_api, api):
 
 
 def test_configure_swaps_the_connection_target(fake_api):
-    client = ShopApiClient("http://old.test", "old-key", transport=httpx.MockTransport(fake_api.handler))
+    client = ShopApiClient("http://old.test", "owner-token",
+                           transport=httpx.MockTransport(fake_api.handler))
     try:
-        client.configure("http://new.test/", "admin-key")
+        client.configure("http://new.test/")
         assert client.base_url == "http://new.test"
-        assert client.api_key == "admin-key"
+        assert client.token == "owner-token"  # kept unless a new one is given
         assert client.list_customers() == []
+        client.configure("http://new.test/", "")
+        assert client.token == ""
     finally:
         client.close()
 
@@ -399,10 +475,10 @@ def test_configure_swaps_the_connection_target(fake_api):
 def test_no_secret_leaks_into_logs(fake_api, caplog):
     import logging
 
-    client = ShopApiClient("http://x.test", "admin-key", transport=httpx.MockTransport(fake_api.handler))
+    client = ShopApiClient("http://x.test", "owner-token", transport=httpx.MockTransport(fake_api.handler))
     try:
         with caplog.at_level(logging.DEBUG, logger="shopadmin"):
             client.list_customers()
-        assert "admin-key" not in caplog.text
+        assert "owner-token" not in caplog.text
     finally:
         client.close()

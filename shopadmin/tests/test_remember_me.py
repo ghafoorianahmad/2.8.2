@@ -1,22 +1,18 @@
-"""Regression tests for «مرا به خاطر بسپار» (persistent auto-login).
-
-Issue 1: the owner ticked "remember me", closed the app, and was asked for the
-password again. These tests pin the behaviour down:
+"""«مرا به خاطر بسپار»: the server's long-lived session token, kept safely.
 
 * the saved login survives an application restart,
-* it does NOT expire with time,
-* logging out (or unticking the box) revokes it,
-* the password is never stored anywhere,
-* a failure in the saved state falls back to the login window, never to an error.
+* the server decides whether it is still valid (expired / revoked → login window),
+* logging out or unticking the box ends it,
+* the password is never stored anywhere, and the token never in clear text,
+* an unreachable server keeps the saved login for next time.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
 import pytest
 
-from app.auth import NO_EXPIRY, AuthService, hash_password
+from app.auth import AuthService
 from app.credentials import (
+    DPAPI_PREFIX,
     backend_name,
     clear_token,
     decode_fallback,
@@ -27,256 +23,168 @@ from app.credentials import (
 )
 from app.store import Store
 
-
-@pytest.fixture
-def vault(tmp_path, monkeypatch):
-    """Point the token file fallback at a temp directory and disable keyring."""
-    import app.credentials as credentials
-
-    monkeypatch.setattr(credentials, "keyring_available", lambda: False)
-    monkeypatch.setattr(credentials, "data_dir", lambda: tmp_path)
-    return credentials
+from .conftest import OWNER_PASSWORD, make_client
 
 
 @pytest.fixture
-def session(tmp_path, vault):
-    """A store + auth pair wired to the isolated token vault."""
+def session(tmp_path, fake_api):
+    """Store + auth signed in with «remember me», like a real login."""
     store = Store(tmp_path / "session.db")
-    store.configure_connection("http://127.0.0.1:8000", "key")
+    store.configure_connection("http://shopapi.test")
     store.set_setting("wizard_completed", True)
-    auth = AuthService(store)
-    auth.create_first_super_admin("owner", "مالک فروشگاه", "Secret123")
+    client = make_client(fake_api, token="")
+    auth = AuthService(store, client)
+    auth.authenticate("owner", OWNER_PASSWORD, remember=True)
     yield store, auth
+    client.close()
     store.close()
 
 
-# --------------------------------------------------------------------------
-# the token that is saved
-# --------------------------------------------------------------------------
-def test_remember_user_stores_a_token_and_no_password(session):
-    store, auth = session
-    backend = auth.remember_user(1)
-    assert backend == "file"  # keyring disabled by the fixture
-
-    token = load_token("owner")
-    assert token and len(token) > 20
-
-    # The database must contain only a hash, never the token or the password.
-    row = store.get_session_token(1)
-    assert row is not None
-    assert token not in row["token_hash"]
-    assert "Secret123" not in str(row)
-    assert store.get_remembered_user()["username"] == "owner"
-
-
-def test_stored_token_file_is_never_plain_text(session, vault):
-    _store, auth = session
-    auth.remember_user(1)
-    token = load_token("owner")
-    raw = (vault.data_dir() / "remembered.token").read_text(encoding="utf-8")
-    assert token not in raw, "the token must never be written in clear text"
-    assert "Secret123" not in raw
-
-
-def test_password_is_hashed_and_not_recoverable(session):
-    store, _auth = session
-    row = store.get_admin_user_by_username("owner")
-    assert row["password_hash"].startswith("$2")
-    assert "Secret123" not in row["password_hash"]
-
-
-# --------------------------------------------------------------------------
-# persistence across a restart
-# --------------------------------------------------------------------------
-def test_auto_login_survives_a_restart(session):
-    """Simulate closing and reopening the app: new Store and new AuthService."""
-    store, auth = session
-    auth.remember_user(1)
-
-    # ---- "restart" ----
+def reopen(store, fake_api) -> tuple[Store, AuthService]:
+    """Simulate closing and reopening the app: new Store, client and service."""
     reopened = Store(store.path)
-    reopened_auth = AuthService(reopened)
+    return reopened, AuthService(reopened, make_client(fake_api, token=""))
+
+
+def test_remember_flag_is_sent_to_the_server(session, fake_api):
+    assert fake_api.login_bodies[-1]["remember"] is True
+
+
+def test_remember_user_stores_the_session_token_only(session, tmp_path):
+    store, auth = session
+    assert auth.remember_user("owner") == "file"  # keyring disabled by conftest
+    assert load_token("owner") == auth.api.token
+    assert store.get_remembered_user()["username"] == "owner"
+    dump = "\n".join(str(row) for row in store._all("SELECT * FROM remembered_user"))
+    assert OWNER_PASSWORD not in dump and auth.api.token not in dump
+
+
+def test_token_file_is_encrypted(session, tmp_path):
+    _store, auth = session
+    auth.remember_user("owner")
+    raw = (tmp_path / "data" / "remembered.token").read_text(encoding="utf-8")
+    assert auth.api.token not in raw
+    assert OWNER_PASSWORD not in raw
+
+
+def test_auto_login_survives_a_restart(session, fake_api):
+    store, auth = session
+    auth.remember_user("owner")
+    reopened, reopened_auth = reopen(store, fake_api)
     try:
         result = reopened_auth.try_auto_login()
-        assert result is not None, "the saved login was not restored"
+        assert result is not None
         assert result.principal.username == "owner"
         assert result.principal.role == "super_admin"
+        assert reopened_auth.api.token == auth.api.token
     finally:
+        reopened_auth.api.close()
         reopened.close()
 
 
-def test_has_saved_session_reports_readiness(session):
+def test_has_saved_session(session):
     _store, auth = session
     assert auth.has_saved_session() is False
-    auth.remember_user(1)
+    auth.remember_user("owner")
     assert auth.has_saved_session() is True
 
 
-def test_auto_login_returns_none_when_nothing_was_saved(store, super_admin):
-    assert AuthService(store).try_auto_login() is None
+def test_nothing_saved_means_no_auto_login(auth):
+    assert auth.try_auto_login() is None
 
 
-# --------------------------------------------------------------------------
-# it must NOT expire
-# --------------------------------------------------------------------------
-def test_token_never_expires_by_default(session):
+def test_server_revoked_session_is_forgotten(session, fake_api):
     store, auth = session
-    auth.remember_user(1)
-    assert store.get_session_token(1)["expires_at"] == NO_EXPIRY
-
-
-def test_auto_login_still_works_a_year_later(session, monkeypatch):
-    """Mock the clock forward well past the old 7-day limit."""
-    store, auth = session
-    auth.remember_user(1)
-
-    import app.auth as auth_module
-
-    real_datetime = auth_module.datetime
-
-    class FarFutureDatetime(real_datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return real_datetime.now(tz) + timedelta(days=3650)
-
-    monkeypatch.setattr(auth_module, "datetime", FarFutureDatetime)
-    reopened = Store(store.path)
-    reopened_auth = AuthService(reopened)
-    try:
-        # Pin the patched module onto the new service's module too.
-        result = reopened_auth.try_auto_login()
-        assert result is not None, "a remembered session must not expire with time"
-        assert result.principal.username == "owner"
-    finally:
-        reopened.close()
-
-
-def test_an_explicitly_dated_token_does_expire(session):
-    """The ``days=`` argument still allows a temporary session (used in tests)."""
-    store, auth = session
-    token = auth.create_remember_token(1, days=7)
-    assert store.get_session_token(1)["expires_at"] != NO_EXPIRY
-
-    past = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(timespec="seconds")
-    store.save_session_token(1, store.get_session_token(1)["token_hash"], past)
-
-    from app.auth import AuthError
-
-    with pytest.raises(AuthError):
-        auth.authenticate_with_token(1, token)
-
-
-# --------------------------------------------------------------------------
-# revoking
-# --------------------------------------------------------------------------
-def test_logout_revokes_the_saved_login(session, vault):
-    store, auth = session
-    auth.remember_user(1)
-    assert load_token("owner")
-
-    # This is exactly what ShopAdminApp.logout() does.
-    clear_token("owner")
-    auth.forget_remembered()
-
+    auth.remember_user("owner")
+    fake_api.tokens.clear()  # expired / password changed / role changed
+    assert auth.try_auto_login() is None
     assert load_token("owner") is None
     assert store.get_remembered_user() is None
-    assert store.get_session_token(1) is None
-    assert AuthService(store).try_auto_login() is None
 
 
-def test_unticking_remember_me_revokes_the_login(session, vault):
+def test_disabled_account_cannot_auto_login(session, fake_api):
+    _store, auth = session
+    auth.remember_user("owner")
+    fake_api.find_staff("owner")["active"] = False
+    assert auth.try_auto_login() is None
+    assert load_token("owner") is None
+
+
+def test_unreachable_server_keeps_the_saved_login(session, fake_api):
+    _store, auth = session
+    auth.remember_user("owner")
+    fake_api.offline = True
+    assert auth.try_auto_login() is None
+    assert load_token("owner") is not None, "an offline server must not wipe the login"
+    fake_api.offline = False
+    assert auth.try_auto_login() is not None
+
+
+def test_logout_revokes_the_saved_login_and_the_server_session(session, fake_api):
     store, auth = session
-    auth.remember_user(1)
-    # Unticking on a later login clears both stores.
-    clear_token("owner")
+    auth.remember_user("owner")
+    token = auth.api.token
+    auth.logout()
+    assert load_token("owner") is None
+    assert store.get_remembered_user() is None
+    assert token not in fake_api.tokens
+    assert auth.try_auto_login() is None
+
+
+def test_unticking_remember_me_forgets(session):
+    _store, auth = session
+    auth.remember_user("owner")
     auth.forget_remembered()
     assert auth.has_saved_session() is False
 
 
-def test_deleting_the_token_breaks_auto_login_without_an_error(session, vault):
+def test_deleted_token_falls_back_to_the_login_window(session):
     store, auth = session
-    auth.remember_user(1)
+    auth.remember_user("owner")
     clear_token("owner")  # e.g. the user cleared Credential Manager
-
-    result = auth.try_auto_login()
-    assert result is None
-    assert store.get_remembered_user() is None, "stale state must be cleaned up"
-
-
-def test_disabled_account_cannot_auto_login(session, vault):
-    store, auth = session
-    auth.remember_user(1)
-    store.update_admin_user(1, is_active=False)
-
     assert auth.try_auto_login() is None
-    assert load_token("owner") is None
+    assert store.get_remembered_user() is None
 
 
-def test_tampered_token_hash_is_rejected(session, vault):
-    store, auth = session
-    auth.remember_user(1)
-    with store._cursor() as cursor:
-        cursor.execute("UPDATE remembered_sessions SET token_hash='deadbeef' WHERE user_id=1")
-
-    assert auth.try_auto_login() is None
+def test_remember_without_a_session_stores_nothing(auth):
+    assert auth.remember_user("owner") == "none"
+    assert auth.has_saved_session() is False
 
 
-# --------------------------------------------------------------------------
-# the lockout behaviour must be unchanged
-# --------------------------------------------------------------------------
-def test_lockout_still_applies(session):
-    _store, auth = session
-    auth.create_user("staff", "کارمند", "Secret123", "operator")
-    from app.auth import MAX_FAILED_ATTEMPTS, AuthError
-
-    for _ in range(MAX_FAILED_ATTEMPTS - 1):
-        with pytest.raises(AuthError) as exc:
-            auth.authenticate("staff", "wrong")
-        assert exc.value.code == "invalid_credentials"
-    with pytest.raises(AuthError) as exc:
-        auth.authenticate("staff", "wrong")
-    assert exc.value.code == "user_locked"
-
-
-# --------------------------------------------------------------------------
-# storage plumbing
-# --------------------------------------------------------------------------
-def test_obfuscation_roundtrip_is_not_plain_text():
+# ---- storage plumbing ----------------------------------------------------------
+def test_fallback_encoding_roundtrip_is_not_plain_text():
     secret = "a-very-secret-token-value"
     encoded = encode_fallback(secret)
     assert secret not in encoded
     assert decode_fallback(encoded) == secret
 
 
-def test_fallback_is_username_scoped(session, vault):
-    _store, auth = session
-    auth.remember_user(1)
-    assert load_token("owner") is not None
-    # A different username must not pick up the token.
+def test_fallback_uses_dpapi_on_windows():
+    import sys
+
+    if sys.platform != "win32":
+        pytest.skip("DPAPI is Windows-only")
+    assert encode_fallback("x").startswith(DPAPI_PREFIX)
+
+
+def test_fallback_is_username_scoped():
+    assert save_token("owner", "tok-1") == "file"
+    assert load_token("owner") == "tok-1"
     assert load_token("someone-else") is None
+    clear_token("owner")
+    assert load_token("owner") is None
 
 
-def test_save_and_clear_token_roundtrip(tmp_path, monkeypatch, vault):
-    assert save_token("user1", "tok") == "file"
-    assert load_token("user1") == "tok"
-    clear_token("user1")
-    assert load_token("user1") is None
-
-
-def test_backend_name_is_reported(vault):
+def test_backend_name_is_reported():
     assert isinstance(backend_name(), str)
-    # The `vault` fixture disables the keyring, so the module-level helper that
-    # the *production* code calls must report False.
     import app.credentials as credentials
 
-    assert credentials.keyring_available() is False
+    assert credentials.keyring_available() is False  # disabled by conftest
 
 
-def test_keyring_round_trip_when_available():
-    """If a real keyring exists on this machine, it must actually work.
-
-    Skipped when there is no usable backend (e.g. a headless CI machine).
-    """
+def test_keyring_round_trip_when_available(monkeypatch):
+    """If a real keyring exists on this machine, it must actually work."""
+    monkeypatch.undo()
     if not keyring_available():
         pytest.skip("no usable OS keyring on this machine")
     ok = save_token("__probe_test__", "probe-value")
@@ -287,63 +195,25 @@ def test_keyring_round_trip_when_available():
         clear_token("__probe_test__")
 
 
-# --------------------------------------------------------------------------
-# the startup decision: skip the login window
-# --------------------------------------------------------------------------
-def test_startup_should_skip_the_login_window(session):
-    """The controller's condition for going straight to the dashboard."""
+# ---- the startup decision --------------------------------------------------------
+def test_startup_skips_the_login_window_when_opted_in(session, fake_api):
     store, auth = session
     store.set_setting("remember_me", True)
-    assert auth.remember_user(1) in ("file", "keyring")
-
-    # This mirrors ShopAdminApp._try_auto_login().
-    opted_in = bool(store.get_setting("remember_me", False))
-    can_restore = auth.has_saved_session()
-    result = auth.try_auto_login() if (opted_in and can_restore) else None
-
-    assert opted_in is True
-    assert can_restore is True
-    assert result is not None
-    assert result.principal.username == "owner"
-
-
-def test_startup_does_not_auto_login_without_the_setting(session):
-    """A saved token alone is not enough: the user must have opted in."""
-    store, auth = session
-    auth.remember_user(1)
-    store.set_setting("remember_me", False)
-
-    opted_in = bool(store.get_setting("remember_me", False))
-    assert opted_in is False
-    # The controller therefore shows the login window.
-    assert (auth.try_auto_login() if opted_in else None) is None
-
-
-def test_startup_does_not_auto_login_when_the_token_is_gone(session, vault):
-    store, auth = session
-    store.set_setting("remember_me", True)
-    auth.remember_user(1)
-    clear_token("owner")
-
-    assert auth.has_saved_session() is False
-    assert auth.try_auto_login() is None
-
-
-def test_auto_login_walks_through_a_restart_without_the_password(session):
-    """End-to-end: opt in, 'restart', land signed in — never typing a password."""
-    store, auth = session
-    store.set_setting("remember_me", True)
-    auth.remember_user(1)
-
-    # ---- "close the app, reopen it" ----
-    reopened = Store(store.path)
-    reopened_auth = AuthService(reopened)
+    auth.remember_user("owner")
+    reopened, reopened_auth = reopen(store, fake_api)
     try:
-        opened = reopened.get_setting("remember_me", False)
-        assert opened is True
-        result = reopened_auth.try_auto_login()
-        assert result is not None
-        assert result.principal.user_id == 1
-        assert result.principal.role == "super_admin"
+        # Mirrors ShopAdminApp._try_auto_login().
+        opted_in = bool(reopened.get_setting("remember_me", False))
+        result = (reopened_auth.try_auto_login()
+                  if opted_in and reopened_auth.has_saved_session() else None)
+        assert result is not None and result.principal.username == "owner"
     finally:
+        reopened_auth.api.close()
         reopened.close()
+
+
+def test_startup_needs_the_setting(session):
+    store, auth = session
+    auth.remember_user("owner")
+    store.set_setting("remember_me", False)
+    assert bool(store.get_setting("remember_me", False)) is False

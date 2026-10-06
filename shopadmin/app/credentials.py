@@ -107,11 +107,62 @@ def _deobfuscate(value: str) -> Optional[str]:
         return None
 
 
+DPAPI_PREFIX = "dpapi:"
+
+
+def _dpapi(data: bytes, protect: bool) -> Optional[bytes]:
+    """Windows DPAPI: encryption bound to the signed-in Windows user.
+
+    Another Windows account (or a copy of the file on another computer) cannot
+    decrypt it. Returns ``None`` where DPAPI does not exist.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except ImportError:  # pragma: no cover
+        return None
+    if not hasattr(ctypes, "windll"):
+        return None
+
+    class Blob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    crypt32 = ctypes.windll.crypt32
+    kernel32 = ctypes.windll.kernel32
+    buffer = ctypes.create_string_buffer(data, len(data))
+    blob_in = Blob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char)))
+    blob_out = Blob()
+    CRYPTPROTECT_UI_FORBIDDEN = 0x01
+    func = crypt32.CryptProtectData if protect else crypt32.CryptUnprotectData
+    ok = func(ctypes.byref(blob_in), None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN,
+              ctypes.byref(blob_out))
+    if not ok:
+        return None
+    try:
+        return ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    finally:
+        kernel32.LocalFree(blob_out.pbData)
+
+
 def encode_fallback(secret: str) -> str:
+    """DPAPI-encrypted where available; obfuscated only as a last resort."""
+    protected = _dpapi(secret.encode("utf-8"), protect=True)
+    if protected is not None:
+        return DPAPI_PREFIX + base64.urlsafe_b64encode(protected).decode("ascii")
     return _obfuscate(secret)
 
 
 def decode_fallback(value: str) -> Optional[str]:
+    if value.startswith(DPAPI_PREFIX):
+        try:
+            raw = base64.urlsafe_b64decode(value[len(DPAPI_PREFIX):].encode("ascii"))
+        except Exception:
+            return None
+        plain = _dpapi(raw, protect=False)
+        try:
+            return plain.decode("utf-8") if plain is not None else None
+        except UnicodeDecodeError:
+            return None
     return _deobfuscate(value)
 
 
@@ -121,7 +172,7 @@ def _write_fallback(username: str, token: str) -> bool:
         path.parent.mkdir(parents=True, exist_ok=True)
         # "<username>\n<obfuscated token>" so the file is self-describing.
         path.write_text(
-            f"{username}\n{_obfuscate(token)}\n", encoding="utf-8"
+            f"{username}\n{encode_fallback(token)}\n", encoding="utf-8"
         )
         try:  # best effort: keep it to the current user on Windows
             import os
@@ -150,7 +201,7 @@ def _read_fallback(username: str) -> Optional[str]:
     stored_username, encoded = lines[0].strip(), lines[1].strip()
     if stored_username.lower() != str(username).strip().lower():
         return None
-    return _deobfuscate(encoded)
+    return decode_fallback(encoded)
 
 
 def _clear_fallback() -> None:

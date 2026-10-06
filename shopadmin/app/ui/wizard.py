@@ -1,6 +1,8 @@
 """تنظیمات اولیه — ویزارد نخستین اجرا.
 
-سه گام: خوش‌آمد، اتصال به shopapi، و ساخت نخستین «مدیر کل».
+گام‌ها: خوش‌آمد، اتصال به سرور فروشگاه، و — فقط وقتی سرور تازه است — ساخت
+نخستین «مدیر کل» روی سرور. کاربران و گذرواژه‌ها روی سرور نگه داشته می‌شوند،
+نه روی این رایانه.
 """
 from __future__ import annotations
 
@@ -15,8 +17,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..api_client import ShopApiClient, SystemInfo
-from ..auth import AuthError, AuthService, validate_password_strength
+from ..api_client import ShopApiClient
+from ..auth import MIN_PASSWORD_LENGTH, AuthService, validate_password_strength
 from ..logging_setup import get_logger
 from ..paths import APP_VERSION, data_dir, db_path
 from ..persian import to_persian_digits
@@ -26,7 +28,7 @@ from .async_utils import run_async
 
 log = get_logger("wizard")
 
-STEP_TITLES = ("خوش آمدید", "اتصال به سرور فروشگاه", "ساخت مدیر کل")
+STEP_TITLES = ("خوش آمدید", "اتصال به سرور فروشگاه", "مدیر کل سرور (فقط بار اول)")
 
 
 class SetupWizard(QWidget):
@@ -98,6 +100,7 @@ class SetupWizard(QWidget):
         root.addLayout(nav)
 
         self._step = 0
+        self.bootstrap_required = False
         self._update_step()
 
     # ------------------------------------------------------------------ steps
@@ -112,16 +115,18 @@ class SetupWizard(QWidget):
             "به برنامهٔ مدیریت فروشگاه خوش آمدید.", size=13, bold=True
         ))
         panel.body.addWidget(widgets.label(
-            "این برنامهٔ دسکتاپ برای مدیر و کارکنان فروشگاه است و از طریق سرویس "
-            "«shopapi» به اطلاعات فروشگاه دسترسی پیدا می‌کند. این برنامه هرگز به‌طور "
-            "مستقیم به پایگاه‌دادهٔ حسابداری وصل نمی‌شود.",
+            "این برنامه برای مدیر و کارکنان فروشگاه است و فقط از طریق «سرور فروشگاه» "
+            "به اطلاعات دسترسی دارد؛ هرگز مستقیم به پایگاه‌دادهٔ حسابداری وصل نمی‌شود. "
+            "هر کارمند با نام کاربری و گذرواژهٔ خودش وارد می‌شود و دسترسی‌ها روی سرور "
+            "کنترل می‌شود.",
             wrap=True,
         ))
         panel.body.addWidget(widgets.hline())
         for text in (
-            "آدرس سرور فروشگاه را وارد می‌کنید.",
-            "کلید مدیریت (ADMIN_API_KEY) را وارد می‌کنید.",
-            "نخستین کاربر «مدیر کل» را برای خودتان می‌سازید.",
+            "آدرس سرور فروشگاه را وارد و اتصال را آزمایش می‌کنید.",
+            "اگر سرور تازه راه‌اندازی شده باشد، نخستین «مدیر کل» را روی آن می‌سازید "
+            "(این کار فقط روی خود رایانهٔ سرور ممکن است).",
+            "سپس با نام کاربری و گذرواژهٔ خود وارد می‌شوید.",
         ):
             row = QHBoxLayout()
             icon = QLabel()
@@ -149,7 +154,8 @@ class SetupWizard(QWidget):
 
         panel = widgets.Panel("گام ۲ — اتصال به سرور فروشگاه")
         panel.body.addWidget(widgets.label(
-            "این اطلاعات را از فایل .env سرویس shopapi بردارید.", name="Muted", wrap=True
+            "نشانی رایانهٔ سرور فروشگاه در شبکه. نمونه: http://192.168.1.10:8000",
+            name="Muted", wrap=True,
         ))
 
         panel.body.addWidget(widgets.label("آدرس سرور فروشگاه"))
@@ -160,14 +166,6 @@ class SetupWizard(QWidget):
         self.base_url_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.base_url_input.setMinimumHeight(42)
         panel.body.addWidget(self.base_url_input)
-
-        panel.body.addWidget(widgets.label("کلید مدیریت (ADMIN_API_KEY)"))
-        self.api_key_input = QLineEdit()
-        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key_input.setPlaceholderText("کلید مدیریت را وارد کنید")
-        self.api_key_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-        self.api_key_input.setMinimumHeight(42)
-        panel.body.addWidget(self.api_key_input)
 
         test_row = QHBoxLayout()
         self.test_button = widgets.button(
@@ -190,12 +188,21 @@ class SetupWizard(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
 
-        panel = widgets.Panel("گام ۳ — ساخت نخستین کاربر «مدیر کل»")
+        panel = widgets.Panel("گام ۳ — ساخت نخستین «مدیر کل» روی سرور")
         panel.body.addWidget(widgets.label(
-            "این کاربر، مدیر فروشگاه است و می‌تواند بعداً کاربران دیگر کارکنان را بسازد. "
-            "این کاربران فقط به همین برنامه دسترسی دارند و با مشتریان فروشگاه تفاوت دارند.",
+            "سرور هنوز هیچ کاربری ندارد. این کاربر مدیر فروشگاه است و بعداً حساب "
+            "کارکنان را می‌سازد. این کار فقط روی خود رایانهٔ سرور و با «کلید سرویس» "
+            "(مقدار ADMIN_API_KEY در تنظیمات سرور) ممکن است؛ این کلید روی این رایانه "
+            "ذخیره نمی‌شود.",
             name="Muted", wrap=True,
         ))
+
+        panel.body.addWidget(widgets.label("کلید سرویس سرور (ADMIN_API_KEY)"))
+        self.service_key_input = QLineEdit()
+        self.service_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.service_key_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.service_key_input.setMinimumHeight(42)
+        panel.body.addWidget(self.service_key_input)
 
         panel.body.addWidget(widgets.label("نام و نام خانوادگی"))
         self.full_name_input = QLineEdit()
@@ -210,7 +217,8 @@ class SetupWizard(QWidget):
         self.new_username_input.setMinimumHeight(42)
         panel.body.addWidget(self.new_username_input)
 
-        panel.body.addWidget(widgets.label("گذرواژه (حداقل ۶ نویسه)"))
+        panel.body.addWidget(widgets.label(
+            f"گذرواژه (حداقل {to_persian_digits(MIN_PASSWORD_LENGTH)} نویسه، حرف و عدد)"))
         self.new_password_input = QLineEdit()
         self.new_password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.new_password_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
@@ -267,15 +275,9 @@ class SetupWizard(QWidget):
             self.base_url_input.setFocus()
             return
         if self._step == 1:
-            if not self._valid_base_url():
-                return
-            # Saving requires a key; a wrong key is caught by the real test.
-            self.store.configure_connection(
-                self.base_url_input.text().strip(), self.api_key_input.text().strip()
-            )
-            self._step = 2
-            self._update_step()
-            self.full_name_input.setFocus()
+            # The server is asked before moving on: it decides whether a first
+            # super admin is still needed.
+            self._test_connection(advance=True)
             return
         self._finish()
 
@@ -286,10 +288,14 @@ class SetupWizard(QWidget):
                 "آدرس سرور باید با http:// یا https:// شروع شود.", ok=False
             )
             return False
-        if not self.api_key_input.text().strip():
-            self._show_connection_result("کلید مدیریت (ADMIN_API_KEY) را وارد کنید.", ok=False)
-            return False
         return True
+
+    def _complete(self) -> None:
+        self.store.configure_connection(self.base_url_input.text().strip())
+        self.store.set_setting("wizard_completed", True)
+        self.store.audit("setup", "setup", "تنظیمات اولیهٔ برنامه انجام شد")
+        log.info("first-run wizard completed")
+        self.finished.emit()
 
     # ------------------------------------------------------------------ test
     def _show_connection_result(self, message: str, *, ok: bool, detail: str = "") -> None:
@@ -299,38 +305,45 @@ class SetupWizard(QWidget):
         )
         self.connection_result.setVisible(True)
 
-    def _test_connection(self) -> None:
+    def _test_connection(self, advance: bool = False) -> None:
         if not self._valid_base_url():
             return
         base_url = self.base_url_input.text().strip()
-        api_key = self.api_key_input.text().strip()
         self.test_button.setEnabled(False)
+        self.next_button.setEnabled(False)
         self.test_button.setText("در حال آزمایش…")
         self._show_connection_result("در حال برقراری ارتباط با سرور فروشگاه…", ok=True)
 
-        probe = ShopApiClient(base_url, api_key, timeout=10)
+        probe = ShopApiClient(base_url, timeout=10)
 
-        def work() -> SystemInfo:
+        def work() -> dict:
             try:
-                return probe.test_connection()
+                return probe.probe_server()
             finally:
                 probe.close()
 
-        def ok(info: SystemInfo) -> None:
-            detail = (
-                "ثبت در حسابداری فعال است."
-                if info.accounting_write_enabled
-                else "هشدار: حالت آزمایشی فعال است؛ سفارش‌ها در حسابداری ثبت نمی‌شوند."
-            )
-            self._show_connection_result(
-                "ارتباط با موفقیت برقرار شد. کلید مدیریت معتبر است.", ok=True, detail=detail
-            )
+        def ok(status: dict) -> None:
+            self.bootstrap_required = bool(status.get("bootstrap_required"))
+            detail = ("سرور هنوز مدیر کل ندارد؛ در گام بعد آن را می‌سازید."
+                      if self.bootstrap_required else
+                      "پس از پایان، با نام کاربری و گذرواژهٔ خود وارد شوید.")
+            self._show_connection_result("ارتباط با سرور فروشگاه برقرار شد.", ok=True,
+                                         detail=detail)
+            if advance:
+                self.store.configure_connection(base_url)
+                if self.bootstrap_required:
+                    self._step = 2
+                    self._update_step()
+                    self.service_key_input.setFocus()
+                else:
+                    self._complete()
 
         def fail(message: str, _kind: str) -> None:
             self._show_connection_result(message, ok=False)
 
         def done() -> None:
             self.test_button.setEnabled(True)
+            self.next_button.setEnabled(True)
             self.test_button.setText("آزمایش اتصال")
 
         run_async(work, on_success=ok, on_error=fail, on_done=done)
@@ -355,25 +368,31 @@ class SetupWizard(QWidget):
             self._admin_error(problem)
             return
 
-        self.store.configure_connection(
-            self.base_url_input.text().strip(), self.api_key_input.text().strip()
-        )
-        try:
-            principal = self.auth.create_first_super_admin(username, full_name, password)
-        except AuthError as exc:
-            self._admin_error(exc.message)
+        service_key = self.service_key_input.text().strip()
+        if not service_key:
+            self._admin_error("کلید سرویس سرور را وارد کنید.")
             return
 
-        self.store.set_setting("wizard_completed", True)
-        self.store.audit(principal.username, "setup", "تنظیمات اولیهٔ برنامه انجام شد")
-        log.info("first-run wizard completed for admin user id=%s", principal.user_id)
-        self.finished.emit()
+        self.next_button.setEnabled(False)
+        self.admin_error.setVisible(False)
+
+        def work():
+            return self.auth.create_first_super_admin(service_key, username, full_name, password)
+
+        def ok(_principal) -> None:
+            self.service_key_input.clear()
+            self._complete()
+
+        def done() -> None:
+            self.next_button.setEnabled(True)
+
+        run_async(work, on_success=ok, on_error=lambda m, _k: self._admin_error(m), on_done=done)
 
     def _admin_error(self, message: str) -> None:
         self.admin_error.setText(message)
         self.admin_error.setVisible(True)
 
 
-def needs_setup(store: Store, auth: AuthService) -> bool:
-    """True when the wizard must run: no connection config or no admin user."""
-    return not store.is_configured() or auth.needs_first_super_admin
+def needs_setup(store: Store) -> bool:
+    """True when the wizard must run: this computer has no server address yet."""
+    return not store.is_configured()

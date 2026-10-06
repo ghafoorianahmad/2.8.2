@@ -1,9 +1,12 @@
-"""Tests for the local SQLite store (internal admin users, settings, audit)."""
+"""Tests for the local SQLite store (settings, remembered username, local audit).
+
+Staff accounts are NOT stored locally any more; that is asserted here too.
+"""
 from __future__ import annotations
 
-import pytest
+import sqlite3
 
-from app.store import SECRET_SETTING_KEYS, Store
+from app.store import Store
 
 
 def test_schema_is_created_on_a_fresh_file(tmp_path):
@@ -11,13 +14,45 @@ def test_schema_is_created_on_a_fresh_file(tmp_path):
     store = Store(path)
     try:
         assert path.exists()
-        assert store.count_admin_users() == 0
         # Defaults must be present so the wizard and settings page have values.
         assert store.get_setting("shopapi_base_url").startswith("http")
         assert store.get_setting("wizard_completed") is False
         assert store.get_int_setting("session_timeout_minutes", 30) == 30
+        assert store.get_setting("notify_desktop") is True
     finally:
         store.close()
+
+
+def test_no_local_account_tables(store):
+    tables = {r["name"] for r in store._all("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "admin_users" not in tables
+    assert "remembered_sessions" not in tables
+
+
+def test_legacy_accounts_and_api_key_are_removed_on_open(tmp_path):
+    """An older version kept staff hashes and the shared admin key on every PC."""
+    path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE admin_users (id INTEGER PRIMARY KEY, username TEXT, password_hash TEXT);"
+        "INSERT INTO admin_users VALUES (1, 'owner', '$2b$12$hash');"
+        "CREATE TABLE remembered_sessions (user_id INTEGER PRIMARY KEY, token_hash TEXT);"
+        "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);"
+        "INSERT INTO settings VALUES ('shopapi_api_key', '\"old-admin-key\"', 'x');"
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(path)
+    try:
+        tables = {r["name"] for r in store._all("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "admin_users" not in tables and "remembered_sessions" not in tables
+        assert store.get_setting("shopapi_api_key") is None
+    finally:
+        store.close()
+    # VACUUM rewrites the file, so the old values are not left in free pages.
+    raw = path.read_bytes()
+    assert b"old-admin-key" not in raw and b"$2b$12$hash" not in raw
 
 
 def test_settings_roundtrip_and_types(store):
@@ -42,103 +77,32 @@ def test_get_int_setting_clamps_values(store):
 
 
 def test_configure_connection_trims_trailing_slash(store):
-    store.configure_connection("http://127.0.0.1:8000/", "  secret-key  ")
+    store.configure_connection("http://127.0.0.1:8000/")
     assert store.base_url == "http://127.0.0.1:8000"
-    assert store.api_key == "secret-key"
 
 
 def test_is_configured_requires_wizard_completion(store):
     assert store.is_configured() is False
-    store.configure_connection("http://127.0.0.1:8000", "k")
+    store.configure_connection("http://127.0.0.1:8000")
     assert store.is_configured() is False
     store.set_setting("wizard_completed", True)
     assert store.is_configured() is True
 
 
-def test_api_key_is_not_logged_in_plain_text(store, caplog):
-    import logging
-
-    with caplog.at_level(logging.INFO, logger="shopadmin"):
-        store.set_setting("shopapi_api_key", "super-secret-value")
-    assert "super-secret-value" not in caplog.text
-    assert "chars" in caplog.text
-
-
-def test_audit_redacts_the_api_key(store):
-    store.set_setting("shopapi_api_key", "super-secret-value")
-    store.audit("owner", "test", "key is super-secret-value for sure")
+def test_audit_trail(store):
+    store.audit("owner", "test", "something happened")
     rows = store.list_audit()
-    assert rows
-    assert "super-secret-value" not in rows[0]["detail"]
-    assert "<secret>" in rows[0]["detail"]
+    assert rows and rows[0]["action"] == "test"
 
 
-def test_admin_user_crud(store):
-    user = store.create_admin_user("operator1", "اپراتور یک", "hash", "operator")
-    assert user["username"] == "operator1"
-    assert user["is_active"] == 1
-    assert store.count_admin_users() == 1
-
-    updated = store.update_admin_user(user["id"], full_name="نام تازه")
-    assert updated["full_name"] == "نام تازه"
-
-    store.update_admin_user(user["id"], is_active=False)
-    assert store.get_admin_user(user["id"])["is_active"] == 0
-
-    store.delete_admin_user(user["id"])
-    assert store.count_admin_users() == 0
-
-
-def test_username_lookup_is_case_insensitive(store):
-    store.create_admin_user("Owner", "مالک", "hash", "super_admin")
-    assert store.get_admin_user_by_username("owner") is not None
-    assert store.get_admin_user_by_username("OWNER") is not None
-    assert store.get_admin_user_by_username("nobody") is None
-
-
-def test_duplicate_username_is_rejected_by_the_database(store):
-    import sqlite3
-
-    store.create_admin_user("dup", "یک", "hash", "operator")
-    with pytest.raises(sqlite3.IntegrityError):
-        store.create_admin_user("dup", "دو", "hash", "operator")
-
-
-def test_failed_attempt_locking_flow(store):
-    user = store.create_admin_user("locked", "قفل", "hash", "operator")
-    for _ in range(5):
-        store.register_failed_attempt(user["id"], max_attempts=5, lock_minutes=15)
-    after = store.get_admin_user(user["id"])
-    assert after["failed_attempts"] == 5
-    assert after["locked_until"] is not None
-    store.clear_failed_attempts(user["id"])
-    cleared = store.get_admin_user(user["id"])
-    assert cleared["failed_attempts"] == 0
-    assert cleared["locked_until"] is None
-    assert cleared["last_login_at"] is not None
-
-
-def test_remembered_user_is_single_row(store):
-    store.save_remembered_user("owner", "token-1")
-    store.save_remembered_user("owner2", "token-2")
+def test_remembered_user_is_single_row_and_holds_no_token(store):
+    store.save_remembered_user("owner")
+    store.save_remembered_user("owner2")
     remembered = store.get_remembered_user()
     assert remembered["username"] == "owner2"
+    assert "token" not in remembered
     store.clear_remembered_user()
     assert store.get_remembered_user() is None
-
-
-def test_count_active_super_admins(store):
-    first = store.create_admin_user("a", "الف", "hash", "super_admin")
-    store.create_admin_user("b", "ب", "hash", "super_admin")
-    store.create_admin_user("c", "ج", "hash", "viewer")
-    assert store.count_active_super_admins() == 2
-    assert store.count_active_super_admins(exclude_user_id=first["id"]) == 1
-    store.update_admin_user(first["id"], is_active=False)
-    assert store.count_active_super_admins() == 1
-
-
-def test_secret_settings_are_declared():
-    assert "shopapi_api_key" in SECRET_SETTING_KEYS
 
 
 def test_in_memory_store_works():

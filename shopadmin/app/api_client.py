@@ -3,6 +3,10 @@
 This is the ONLY way this desktop app talks to the shop's data. It never opens a
 SQL Server connection and never touches shopapi's SQLite file.
 
+Staff sign in with a username and password; the server returns a session token
+that is sent as ``Authorization: Bearer``. No shared API key lives on a client:
+roles and permissions are enforced by the server.
+
 Every failure is turned into an :class:`ApiError` carrying a Persian message so
 the UI can show it verbatim, with no English text and no stack traces.
 """
@@ -10,7 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 
@@ -20,6 +24,7 @@ from .persian import to_persian_digits
 log = get_logger("api")
 
 DEFAULT_TIMEOUT = 15.0
+#: Used only for the one-time server bootstrap, on the server machine itself.
 API_KEY_HEADER = "X-API-Key"
 
 # --- order statuses accepted by GET /admin/orders -------------------------
@@ -36,8 +41,14 @@ CUSTOMER_STATUSES = ("pending", "approved", "rejected")
 
 MSG_CONNECTION_FAILED = "ارتباط با سرور فروشگاه برقرار نشد. آدرس سرور و اجرای سرویس را بررسی کنید."
 MSG_TIMEOUT = "پاسخی از سرور فروشگاه دریافت نشد (زمان انتظار به پایان رسید)."
-MSG_INVALID_KEY = "کلید API نامعتبر است. مقدار ADMIN_API_KEY را در تنظیمات بررسی کنید."
-MSG_FORBIDDEN = "کلید API فعلی دسترسی مدیریتی ندارد. کلید مدیر (ADMIN_API_KEY) لازم است."
+MSG_INVALID_KEY = "کلید سرویس نامعتبر است."
+MSG_FORBIDDEN = "حساب کاربری شما اجازهٔ انجام این کار را ندارد."
+MSG_SESSION_EXPIRED = "نشست شما به پایان رسیده است. لطفاً دوباره وارد شوید."
+MSG_BAD_CREDENTIALS = "نام کاربری یا گذرواژه نادرست است."
+MSG_LOCKED = "حساب کاربری به دلیل تلاش‌های ناموفق موقتاً قفل شده است. کمی بعد دوباره تلاش کنید."
+MSG_DISABLED = "این حساب کاربری غیرفعال شده است. با مدیر کل تماس بگیرید."
+MSG_TOO_MANY = "تعداد تلاش‌های ورود از این رایانه بیش از حد مجاز است. چند دقیقه بعد دوباره تلاش کنید."
+MSG_MUST_CHANGE = "ابتدا باید گذرواژهٔ خود را تغییر دهید."
 MSG_NOT_FOUND = "موردی با این شناسه در سرور فروشگاه یافت نشد."
 MSG_SERVER_ERROR = "خطای داخلی سرور فروشگاه رخ داد. لطفاً بعداً تلاش کنید."
 MSG_UNAVAILABLE = "سرور فروشگاه در دسترس نیست یا سرویس حسابداری پاسخ نمی‌دهد."
@@ -69,9 +80,35 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"accounting database unavailable", re.I),
      "سرویس حسابداری در دسترس نیست. اتصال سرور فروشگاه به حسابداری را بررسی کنید."),
     (re.compile(r"own database unavailable", re.I), "پایگاه‌دادهٔ سرور فروشگاه در دسترس نیست."),
-    (re.compile(r"missing x-api-key header", re.I), MSG_INVALID_KEY),
+    # ---- sign-in and staff accounts ----
+    (re.compile(r"invalid username or password", re.I), MSG_BAD_CREDENTIALS),
+    (re.compile(r"account temporarily locked", re.I), MSG_LOCKED),
+    (re.compile(r"account disabled", re.I), MSG_DISABLED),
+    (re.compile(r"too many login attempts", re.I), MSG_TOO_MANY),
+    (re.compile(r"session expired or invalid|sign-in required|missing x-api-key", re.I),
+     MSG_SESSION_EXPIRED),
+    (re.compile(r"password change required", re.I), MSG_MUST_CHANGE),
+    (re.compile(r"not permitted for this account|admin key required", re.I), MSG_FORBIDDEN),
+    (re.compile(r"api key not accepted from this address", re.I),
+     "کلید سرویس فقط روی خود رایانهٔ سرور قابل استفاده است."),
     (re.compile(r"invalid api key", re.I), MSG_INVALID_KEY),
-    (re.compile(r"admin key required", re.I), MSG_FORBIDDEN),
+    (re.compile(r"username already exists", re.I), "این نام کاربری قبلاً استفاده شده است."),
+    (re.compile(r"username must be", re.I),
+     "نام کاربری باید ۳ تا ۳۲ نویسهٔ انگلیسی، عدد، نقطه، خط تیره یا زیرخط باشد."),
+    (re.compile(r"password must be at least (\d+)", re.I), "گذرواژه باید حداقل {0} نویسه باشد."),
+    (re.compile(r"password must contain letters and digits", re.I),
+     "گذرواژه باید هم حرف و هم عدد داشته باشد."),
+    (re.compile(r"password is too long", re.I), "گذرواژه بیش از حد طولانی است."),
+    (re.compile(r"current password is wrong", re.I), "گذرواژهٔ فعلی نادرست است."),
+    (re.compile(r"new password must differ", re.I),
+     "گذرواژهٔ جدید باید با گذرواژهٔ فعلی متفاوت باشد."),
+    (re.compile(r"cannot remove the last super admin", re.I),
+     "حداقل یک مدیر کل فعال باید باقی بماند."),
+    (re.compile(r"cannot delete your own account", re.I),
+     "نمی‌توانید حساب کاربری خودتان را حذف کنید."),
+    (re.compile(r"staff account not found", re.I), "کاربر مورد نظر یافت نشد."),
+    (re.compile(r"staff accounts already exist", re.I),
+     "مدیر کل قبلاً روی سرور ساخته شده است. با همان حساب وارد شوید."),
 )
 
 _STATUS_FA = {
@@ -109,7 +146,8 @@ class ApiConnectionError(ApiError):
 
 
 class ApiAuthError(ApiError):
-    def __init__(self, message: str = MSG_INVALID_KEY, *, status_code: int = 401, raw: str = "") -> None:
+    def __init__(self, message: str = MSG_SESSION_EXPIRED, *, status_code: int = 401,
+                 raw: str = "") -> None:
         super().__init__(message, status_code=status_code, kind="auth", raw=raw)
 
 
@@ -152,7 +190,7 @@ def translate_detail(detail: Any, status_code: int | None = None) -> str:
                 return to_persian_digits(template)
 
     # Persian text coming from the server (already localized) is kept.
-    if re.search(r"[\u0600-\u06FF]", text):
+    if re.search(r"[؀-ۿ]", text):
         return to_persian_digits(text)
 
     if status_code == 404:
@@ -196,31 +234,43 @@ class SystemInfo:
 
 
 class ShopApiClient:
-    """Thin, typed wrapper over the shopapi admin REST surface."""
+    """Thin, typed wrapper over the shopapi REST surface for staff clients."""
 
     def __init__(
         self,
         base_url: str = "",
-        api_key: str = "",
+        token: str = "",
         *,
         timeout: float = DEFAULT_TIMEOUT,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.base_url = str(base_url or "").strip().rstrip("/")
-        self.api_key = str(api_key or "").strip()
+        self.token = str(token or "").strip()
         self.timeout = timeout
         self._transport = transport
         self._client: httpx.Client | None = None
+        #: Called (possibly from a worker thread) when the server rejects our
+        #: session, so the UI can send the user back to the login window.
+        self.on_session_invalid: Optional[Callable[[], None]] = None
 
     # ---- lifecycle -------------------------------------------------------
-    def configure(self, base_url: str, api_key: str) -> None:
+    def configure(self, base_url: str, token: str | None = None) -> None:
+        """Point at a server; ``token=None`` keeps the current session token."""
         self.base_url = str(base_url or "").strip().rstrip("/")
-        self.api_key = str(api_key or "").strip()
+        if token is not None:
+            self.token = str(token or "").strip()
         self.close()
+
+    def set_token(self, token: str) -> None:
+        self.token = str(token or "").strip()
 
     @property
     def is_configured(self) -> bool:
         return bool(self.base_url)
+
+    @property
+    def has_session(self) -> bool:
+        return bool(self.token)
 
     def close(self) -> None:
         if self._client is not None:
@@ -243,8 +293,10 @@ class ShopApiClient:
         return self._client
 
     # ---- request core ----------------------------------------------------
-    def _headers(self, with_key: bool = True) -> dict[str, str]:
-        return {API_KEY_HEADER: self.api_key} if with_key and self.api_key else {}
+    def _headers(self, with_auth: bool = True) -> dict[str, str]:
+        if with_auth and self.token:
+            return {"Authorization": f"Bearer {self.token}"}
+        return {}
 
     def _request(
         self,
@@ -253,19 +305,22 @@ class ShopApiClient:
         *,
         params: dict[str, Any] | None = None,
         json_body: Any = None,
-        with_key: bool = True,
+        with_auth: bool = True,
+        headers: dict[str, str] | None = None,
     ) -> Any:
         if not self.base_url:
             raise ApiConnectionError("آدرس سرور فروشگاه تنظیم نشده است. به صفحهٔ تنظیمات بروید.")
         # Drop empty params so shopapi applies its own defaults.
         clean_params = {k: v for k, v in (params or {}).items() if v is not None and v != ""}
+        all_headers = self._headers(with_auth)
+        all_headers.update(headers or {})
         try:
             response = self._http().request(
                 method,
                 path,
                 params=clean_params or None,
                 json=json_body,
-                headers=self._headers(with_key),
+                headers=all_headers,
             )
         except httpx.TimeoutException as exc:
             log.warning("shopapi timeout: %s %s", method, path)
@@ -274,9 +329,10 @@ class ShopApiClient:
             log.warning("shopapi connection error: %s %s (%s)", method, path, type(exc).__name__)
             raise ApiConnectionError(raw=str(exc)) from exc
 
-        return self._handle(response, method, path)
+        return self._handle(response, method, path, with_auth=with_auth)
 
-    def _handle(self, response: httpx.Response, method: str, path: str) -> Any:
+    def _handle(self, response: httpx.Response, method: str, path: str,
+                *, with_auth: bool = True) -> Any:
         status_code = response.status_code
         if 200 <= status_code < 300:
             if not response.content:
@@ -296,10 +352,21 @@ class ShopApiClient:
             detail = response.text[:300]
 
         message = translate_detail(detail, status_code)
-        if status_code in (401,):
+        if status_code == 401:
+            if with_auth and self.token:
+                # The server no longer accepts our session (expired, revoked,
+                # role changed, password reset…). Forget it and tell the UI.
+                self.token = ""
+                callback = self.on_session_invalid
+                if callback is not None:
+                    try:
+                        callback()
+                    except Exception:  # noqa: BLE001 - never break the caller
+                        log.exception("session-invalid callback failed")
             raise ApiAuthError(message, status_code=status_code, raw=str(detail)[:200])
         if status_code == 403:
-            raise ApiAuthError(message or MSG_FORBIDDEN, status_code=status_code, raw=str(detail)[:200])
+            raise ApiAuthError(message or MSG_FORBIDDEN, status_code=status_code,
+                               raw=str(detail)[:200])
         if status_code == 422:
             log.info("shopapi validation error on %s %s", method, path)
         elif status_code == 503:
@@ -309,8 +376,8 @@ class ShopApiClient:
 
     # ---- endpoints -------------------------------------------------------
     def health(self) -> dict:
-        """``GET /health`` — needs no API key."""
-        return self._request("GET", "/health", with_key=False) or {}
+        """``GET /health`` — needs no sign-in."""
+        return self._request("GET", "/health", with_auth=False) or {}
 
     def system_info(self) -> SystemInfo:
         """``GET /admin/system-info`` — read-only operational flags.
@@ -333,7 +400,7 @@ class ShopApiClient:
         return SystemInfo.from_payload(payload)
 
     def list_customers(self, status: str | None = None) -> list[dict]:
-        """``GET /admin/users`` — CUSTOMERS, not internal admin users."""
+        """``GET /admin/users`` — CUSTOMERS, not staff accounts."""
         payload = self._request("GET", "/admin/users", params={"status": status})
         return list(payload or [])
 
@@ -406,6 +473,93 @@ class ShopApiClient:
         return payload
 
     def test_connection(self) -> SystemInfo:
-        """Health check + system info; raises :class:`ApiError` on failure."""
+        """Health check + system info (needs a signed-in session)."""
         self.health()
         return self.system_info()
+
+    def probe_server(self) -> dict:
+        """Before sign-in: is the server up, and does it still need a first admin?"""
+        self.health()
+        return self.auth_status()
+
+    # ---- staff sign-in ---------------------------------------------------
+    def auth_status(self) -> dict:
+        """``GET /auth/status`` — public; tells whether the first admin is missing."""
+        return self._request("GET", "/auth/status", with_auth=False) or {}
+
+    def login(self, username: str, password: str, *, remember: bool = False,
+              client_name: str = "") -> dict:
+        """``POST /auth/login``; on success the token is kept for later calls."""
+        payload = self._request(
+            "POST", "/auth/login", with_auth=False,
+            json_body={"username": username, "password": password,
+                       "remember": bool(remember), "client": str(client_name or "")[:100]},
+        )
+        if not isinstance(payload, dict) or not payload.get("token"):
+            raise ApiError(MSG_BAD_RESPONSE, kind="decode")
+        self.token = str(payload["token"])
+        return payload
+
+    def logout(self) -> None:
+        """Best effort: the local token is dropped even if the server is away."""
+        if not self.token:
+            return
+        try:
+            self._request("POST", "/auth/logout")
+        except ApiError:
+            pass
+        finally:
+            self.token = ""
+
+    def me(self) -> dict:
+        return self._request("GET", "/auth/me") or {}
+
+    def change_password(self, current_password: str, new_password: str) -> None:
+        self._request("POST", "/auth/change-password", json_body={
+            "current_password": current_password, "new_password": new_password})
+
+    def bootstrap(self, service_key: str, username: str, full_name: str, password: str) -> dict:
+        """Create the first super admin. Works only on the server machine itself."""
+        return self._request(
+            "POST", "/auth/bootstrap", with_auth=False,
+            headers={API_KEY_HEADER: str(service_key or "").strip()},
+            json_body={"username": username, "full_name": full_name, "password": password},
+        )
+
+    # ---- staff management (super admin) ------------------------------------
+    def list_staff(self) -> list[dict]:
+        return list(self._request("GET", "/admin/staff") or [])
+
+    def create_staff(self, username: str, full_name: str, role: str, password: str,
+                     *, must_change_password: bool = True) -> dict:
+        return self._request("POST", "/admin/staff", json_body={
+            "username": username, "full_name": full_name, "role": role,
+            "password": password, "must_change_password": must_change_password})
+
+    def update_staff(self, staff_id: int, *, full_name: str | None = None,
+                     role: str | None = None, active: bool | None = None) -> dict:
+        body = {k: v for k, v in {"full_name": full_name, "role": role, "active": active}.items()
+                if v is not None}
+        return self._request("PATCH", f"/admin/staff/{int(staff_id)}", json_body=body)
+
+    def reset_staff_password(self, staff_id: int, password: str,
+                             *, must_change_password: bool = True) -> dict:
+        return self._request("POST", f"/admin/staff/{int(staff_id)}/password", json_body={
+            "password": password, "must_change_password": must_change_password})
+
+    def unlock_staff(self, staff_id: int) -> dict:
+        return self._request("POST", f"/admin/staff/{int(staff_id)}/unlock")
+
+    def delete_staff(self, staff_id: int) -> None:
+        self._request("DELETE", f"/admin/staff/{int(staff_id)}")
+
+    def audit_log(self, limit: int = 200) -> list[dict]:
+        return list(self._request("GET", "/admin/audit", params={"limit": limit}) or [])
+
+    # ---- notifications -----------------------------------------------------
+    def events(self, after: int | None = None, limit: int = 100) -> dict:
+        """``GET /admin/events``; ``after=None`` returns only the current position."""
+        payload = self._request("GET", "/admin/events", params={"after": after, "limit": limit})
+        if not isinstance(payload, dict):
+            raise ApiError(MSG_BAD_RESPONSE, kind="decode")
+        return payload

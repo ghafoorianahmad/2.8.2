@@ -29,6 +29,8 @@ class AppContext(QObject):
     principal: Optional[Principal] = None
     system_info: SystemInfo = field(default_factory=SystemInfo.unavailable)
     connection_ok: bool = False
+    #: TrayNotifier (unread counters, desktop notifications); None in tests.
+    notifier: Optional[object] = None
 
     # emitted when the shopapi connection state changes (green/red dot)
     connection_changed = Signal(bool)
@@ -36,6 +38,8 @@ class AppContext(QObject):
     system_info_changed = Signal(object)
     # emitted after any write action so refreshable pages can reload
     data_changed = Signal()
+    # emitted with the raw server events (new customer / order / receipt…)
+    server_events = Signal(list)
 
     def __post_init__(self) -> None:
         super().__init__()
@@ -93,6 +97,11 @@ class AppContext(QObject):
         self.system_info = SystemInfo.unavailable()
         self.set_connection(False)
         self.system_info_changed.emit(self.system_info)
+
+    def mark_seen(self, *kinds: str) -> None:
+        """Clear unread notification counters (when the user opens that list)."""
+        if self.notifier is not None:
+            self.notifier.mark_seen(*kinds)
 
     def audit(self, action: str, detail: str = "") -> None:
         actor = self.principal.username if self.principal else "system"

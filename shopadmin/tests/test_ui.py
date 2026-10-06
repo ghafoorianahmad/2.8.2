@@ -34,6 +34,8 @@ from app.ui.pages.users import UserFormDialog, UsersPage  # noqa: E402
 from app.ui.widgets_shamsi import ShamsiDateEdit, ShamsiRangePicker  # noqa: E402
 from app.ui.wizard import SetupWizard, needs_setup  # noqa: E402
 
+from .conftest import OWNER_PASSWORD, SERVICE_KEY, FakeShopApi, make_client  # noqa: E402
+
 PERSIAN_RE = re.compile(r"[\u0600-\u06FF]")
 LATIN_WORD_RE = re.compile(r"[A-Za-z]{3,}")
 #: Filesystem paths must stay in their real script to be usable.
@@ -41,7 +43,7 @@ WINDOWS_PATH_RE = re.compile(r"[A-Za-z]:\\|\\\\|/|%[A-Za-z_]+%|\b[\w.-]+\.(db|lo
 
 #: Technical tokens that are legitimately Latin-script in the interface.
 ALLOWED_LATIN = {
-    "csv", "xlsx", "api", "shopapi", "admin_api_key", "http", "https",
+    "csv", "xlsx", "api", "shopapi", "admin_api_key", "http", "https", "192.168.1.10",
     "127.0.0.1", "8000", "app.log", "shopadmin.db", "shopadmin",
 }
 
@@ -52,13 +54,11 @@ def ui_context(tmp_path, fake_api, admin_qapp):
     import httpx
 
     store = Store(tmp_path / "ui.db")
-    store.configure_connection("http://shopapi.test", "admin-key")
+    store.configure_connection("http://shopapi.test")
     store.set_setting("wizard_completed", True)
-    auth = AuthService(store)
-    principal = auth.create_first_super_admin("owner", "مالک فروشگاه", "Secret123")
-    client = ShopApiClient(
-        "http://shopapi.test", "admin-key", transport=httpx.MockTransport(fake_api.handler)
-    )
+    client = make_client(fake_api)
+    auth = AuthService(store, client)
+    principal = auth.authenticate("owner", OWNER_PASSWORD).principal
     context = AppContext(store=store, auth=auth, api=client, principal=principal)
     context.apply_system_info(SystemInfo(accounting_write_enabled=True, reachable=True))
     yield context
@@ -317,8 +317,8 @@ def test_viewer_cannot_edit_the_connection_settings(ui_context, admin_qapp):
     context = make_context_with_role(ui_context, ROLE_VIEWER)
     page = SettingsPage(context)
     assert page.base_url_input.isEnabled() is False
-    assert page.api_key_input.isEnabled() is False
     assert page.save_connection_button.isEnabled() is False
+    assert not hasattr(page, "api_key_input")
 
 
 def test_super_admin_can_edit_the_connection_settings(ui_context, admin_qapp):
@@ -328,16 +328,14 @@ def test_super_admin_can_edit_the_connection_settings(ui_context, admin_qapp):
     assert page.save_connection_button.isEnabled() is True
 
 
-def test_api_key_field_is_masked_but_editable(ui_context, admin_qapp):
-    from PySide6.QtWidgets import QLineEdit
-
-    context = make_context_with_role(ui_context, ROLE_SUPER_ADMIN)
+def test_notification_preferences_are_saved_locally(ui_context, admin_qapp):
+    context = make_context_with_role(ui_context, ROLE_VIEWER)
     page = SettingsPage(context)
-    assert page.api_key_input.echoMode() == QLineEdit.EchoMode.Password
-    page._toggle_reveal(True)
-    assert page.api_key_input.echoMode() == QLineEdit.EchoMode.Normal
-    page._toggle_reveal(False)
-    assert page.api_key_input.echoMode() == QLineEdit.EchoMode.Password
+    page.notify_sound_check.setChecked(False)
+    page.poll_spin.setValue(30)
+    page._save_notifications()
+    assert context.store.get_setting("notify_sound") is False
+    assert context.store.get_setting("event_poll_seconds") == 30
 
 
 def test_viewer_sees_disabled_action_buttons_on_customers(ui_context, admin_qapp):
@@ -452,34 +450,26 @@ def test_topbar_shows_the_user_name_and_role(ui_context, admin_qapp):
 # --------------------------------------------------------------------------
 # first-run wizard
 # --------------------------------------------------------------------------
+def _offline_auth(store) -> AuthService:
+    """An AuthService whose client has no server behind it (UI-only tests)."""
+    return AuthService(store, ShopApiClient("http://127.0.0.1:9"))
+
+
 def test_needs_setup_on_a_fresh_store(tmp_path):
     store = Store(tmp_path / "fresh.db")
     try:
-        auth = AuthService(store)
-        assert needs_setup(store, auth) is True
+        assert needs_setup(store) is True
     finally:
         store.close()
 
 
-def test_needs_setup_is_false_after_configuration_and_first_admin(tmp_path):
+def test_needs_setup_is_false_once_the_server_address_is_saved(tmp_path):
     store = Store(tmp_path / "done.db")
     try:
-        auth = AuthService(store)
-        store.configure_connection("http://127.0.0.1:8000", "key")
+        store.configure_connection("http://127.0.0.1:8000")
+        assert needs_setup(store) is True  # wizard not finished yet
         store.set_setting("wizard_completed", True)
-        auth.create_first_super_admin("owner", "مالک", "Secret123")
-        assert needs_setup(store, auth) is False
-    finally:
-        store.close()
-
-
-def test_needs_setup_when_configured_but_no_admin_exists(tmp_path):
-    store = Store(tmp_path / "half.db")
-    try:
-        auth = AuthService(store)
-        store.configure_connection("http://127.0.0.1:8000", "key")
-        store.set_setting("wizard_completed", True)
-        assert needs_setup(store, auth) is True
+        assert needs_setup(store) is False
     finally:
         store.close()
 
@@ -487,12 +477,13 @@ def test_needs_setup_when_configured_but_no_admin_exists(tmp_path):
 def test_wizard_has_three_steps_all_in_persian(tmp_path, admin_qapp):
     store = Store(tmp_path / "wizard.db")
     try:
-        wizard = SetupWizard(store, AuthService(store))
+        wizard = SetupWizard(store, _offline_auth(store))
         assert wizard.stack.count() == 3
         assert wizard._step == 0
         assert wizard.back_button.isEnabled() is False
         labels = [chip.text() for chip in wizard._step_labels]
         assert all(PERSIAN_RE.search(text) for text in labels)
+        assert not hasattr(wizard, "api_key_input"), "clients never hold the service key"
     finally:
         store.close()
 
@@ -500,66 +491,119 @@ def test_wizard_has_three_steps_all_in_persian(tmp_path, admin_qapp):
 def test_wizard_rejects_a_bad_base_url(tmp_path, admin_qapp):
     store = Store(tmp_path / "wizard2.db")
     try:
-        wizard = SetupWizard(store, AuthService(store))
+        wizard = SetupWizard(store, _offline_auth(store))
         wizard._step = 1
         wizard.base_url_input.setText("not-a-url")
-        wizard.api_key_input.setText("key")
         assert wizard._valid_base_url() is False
         assert _shown(wizard.connection_result) is True
     finally:
         store.close()
 
 
-def test_wizard_requires_all_admin_fields(tmp_path, admin_qapp):
-    store = Store(tmp_path / "wizard3.db")
-    try:
-        auth = AuthService(store)
-        wizard = SetupWizard(store, auth)
-        wizard.base_url_input.setText("http://127.0.0.1:8000")
-        wizard.api_key_input.setText("key")
+def _wizard_with_fake(tmp_path, fake: FakeShopApi, name: str):
+    store = Store(tmp_path / name)
+    client = make_client(fake, token="")
+    wizard = SetupWizard(store, AuthService(store, client))
+    return store, client, wizard
 
+
+def _patch_probe(monkeypatch, fake: FakeShopApi) -> None:
+    """The wizard builds its own probe client; route it to the fake server."""
+    import httpx
+
+    import app.ui.wizard as wizard_module
+
+    real = wizard_module.ShopApiClient
+
+    def factory(base_url, token="", **kwargs):
+        kwargs["transport"] = httpx.MockTransport(fake.handler)
+        return real(base_url, token, **kwargs)
+
+    monkeypatch.setattr(wizard_module, "ShopApiClient", factory)
+
+
+def _pump(admin_qapp):
+    from PySide6.QtCore import QThreadPool
+
+    for _ in range(10):
+        admin_qapp.processEvents()
+    QThreadPool.globalInstance().waitForDone(5000)
+    for _ in range(30):
+        admin_qapp.processEvents()
+
+
+def test_wizard_finishes_directly_when_the_server_has_staff(tmp_path, admin_qapp,
+                                                           monkeypatch, fake_api):
+    _patch_probe(monkeypatch, fake_api)
+    store, client, wizard = _wizard_with_fake(tmp_path, fake_api, "wizard_existing.db")
+    try:
+        done = []
+        wizard.finished.connect(lambda: done.append(True))
+        wizard._step = 1
+        wizard.base_url_input.setText("http://192.168.1.10:8000/")
+        wizard._next()
+        _pump(admin_qapp)
+        assert done == [True]
+        assert store.base_url == "http://192.168.1.10:8000"
+        assert store.get_setting("wizard_completed") is True
+    finally:
+        client.close()
+        store.close()
+
+
+def test_wizard_bootstraps_a_new_server(tmp_path, admin_qapp, monkeypatch):
+    fake = FakeShopApi()  # no staff yet
+    _patch_probe(monkeypatch, fake)
+    store, client, wizard = _wizard_with_fake(tmp_path, fake, "wizard_new.db")
+    try:
+        done = []
+        wizard.finished.connect(lambda: done.append(True))
+        wizard._step = 1
+        wizard.base_url_input.setText("http://127.0.0.1:8000")
+        wizard._next()
+        _pump(admin_qapp)
+        assert wizard._step == 2 and done == []
+
+        wizard.service_key_input.setText(SERVICE_KEY)
+        wizard.full_name_input.setText("مالک فروشگاه")
+        wizard.new_username_input.setText("owner")
+        wizard.new_password_input.setText("Secret123")
+        wizard.confirm_password_input.setText("Secret123")
+        wizard._finish()
+        _pump(admin_qapp)
+        assert done == [True]
+        assert fake.find_staff("owner")["role"] == ROLE_SUPER_ADMIN
+        assert store.get_setting("wizard_completed") is True
+        assert wizard.service_key_input.text() == ""  # never kept around
+        dump = str(store.all_settings())
+        assert SERVICE_KEY not in dump and "Secret123" not in dump
+    finally:
+        client.close()
+        store.close()
+
+
+def test_wizard_validates_the_admin_fields(tmp_path, admin_qapp):
+    fake = FakeShopApi()
+    store, client, wizard = _wizard_with_fake(tmp_path, fake, "wizard3.db")
+    try:
+        wizard.service_key_input.setText(SERVICE_KEY)
         wizard.full_name_input.setText("")
         wizard.new_username_input.setText("owner")
         wizard.new_password_input.setText("Secret123")
         wizard.confirm_password_input.setText("Secret123")
         wizard._finish()
-        assert auth.needs_first_super_admin is True
+        assert _shown(wizard.admin_error)
 
         wizard.full_name_input.setText("مالک فروشگاه")
         wizard.confirm_password_input.setText("different")
         wizard._finish()
-        assert auth.needs_first_super_admin is True
-
         wizard.confirm_password_input.setText("123")
+        wizard.new_password_input.setText("123")
         wizard._finish()
-        assert auth.needs_first_super_admin is True
+        _pump(admin_qapp)
+        assert fake.staff == {}
     finally:
-        store.close()
-
-
-def test_wizard_creates_the_super_admin_and_marks_completion(tmp_path, admin_qapp):
-    store = Store(tmp_path / "wizard4.db")
-    try:
-        auth = AuthService(store)
-        wizard = SetupWizard(store, auth)
-        results = []
-        wizard.finished.connect(lambda: results.append(True))
-
-        wizard.base_url_input.setText("http://127.0.0.1:8000/")
-        wizard.api_key_input.setText("the-admin-key")
-        wizard.full_name_input.setText("مالک فروشگاه")
-        wizard.new_username_input.setText("owner")
-        wizard.new_password_input.setText("Secret123")
-        wizard.confirm_password_input.setText("Secret123")
-        wizard._finish()
-
-        assert results == [True]
-        assert store.get_setting("wizard_completed") is True
-        assert store.base_url == "http://127.0.0.1:8000"
-        assert store.api_key == "the-admin-key"
-        assert auth.needs_first_super_admin is False
-        assert auth.authenticate("owner", "Secret123").principal.role == ROLE_SUPER_ADMIN
-    finally:
+        client.close()
         store.close()
 
 
@@ -571,8 +615,7 @@ def test_login_window_rejects_empty_fields(tmp_path, admin_qapp):
 
     store = Store(tmp_path / "login.db")
     try:
-        auth = AuthService(store)
-        window = LoginWindow(store, auth)
+        window = LoginWindow(store, _offline_auth(store))
         window._submit()
         assert _shown(window.error_label) is True
         assert PERSIAN_RE.search(window.error_label.text())
@@ -585,48 +628,50 @@ def test_login_window_has_a_persian_remember_me_and_logout_labels(tmp_path, admi
 
     store = Store(tmp_path / "login2.db")
     try:
-        window = LoginWindow(store, AuthService(store))
+        window = LoginWindow(store, _offline_auth(store))
         assert window.remember_check.text() == "مرا به خاطر بسپار"
         assert window.login_button.text() == "ورود"
     finally:
         store.close()
 
 
-def test_remember_me_token_never_stores_the_password(store, super_admin):
-    auth = AuthService(store)
-    token = auth.create_remember_token(super_admin.user_id)
-    assert token and len(token) > 20
-    row = store.get_session_token(super_admin.user_id)
-    assert row is not None
-    assert token not in row["token_hash"]
-    assert "Secret123" not in str(row)
+def test_login_window_signs_in_through_the_server(tmp_path, admin_qapp, fake_api):
+    from app.ui.login_window import LoginWindow
+
+    store = Store(tmp_path / "login3.db")
+    client = make_client(fake_api, token="")
+    try:
+        window = LoginWindow(store, AuthService(store, client))
+        results = []
+        window.logged_in.connect(results.append)
+        window.username_input.setText("owner")
+        window.password_input.setText(OWNER_PASSWORD)
+        window.remember_check.setChecked(False)
+        window._submit()
+        _pump(admin_qapp)
+        assert len(results) == 1 and results[0].principal.username == "owner"
+        assert window.password_input.text() == ""
+    finally:
+        client.close()
+        store.close()
 
 
-def test_authenticate_with_token_works_and_expires(store, super_admin):
-    auth = AuthService(store)
-    token = auth.create_remember_token(super_admin.user_id, days=7)
-    result = auth.authenticate_with_token(super_admin.user_id, token)
-    assert result.principal.username == "owner"
+def test_login_window_shows_the_server_refusal(tmp_path, admin_qapp, fake_api):
+    from app.ui.login_window import LoginWindow
 
-    # A wrong token is refused and clears the stored session.
-    from app.auth import AuthError
-
-    with pytest.raises(AuthError):
-        auth.authenticate_with_token(super_admin.user_id, "wrong-token")
-
-
-def test_expired_token_is_refused(store, super_admin):
-    from datetime import datetime, timedelta, timezone
-
-    from app.auth import AuthError
-
-    auth = AuthService(store)
-    token = auth.create_remember_token(super_admin.user_id)
-    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
-    store.save_session_token(super_admin.user_id, "hash", past)
-    with pytest.raises(AuthError) as exc:
-        auth.authenticate_with_token(super_admin.user_id, token)
-    assert "اعتبار" in exc.value.message or "گذرواژه" in exc.value.message
+    store = Store(tmp_path / "login4.db")
+    client = make_client(fake_api, token="")
+    try:
+        window = LoginWindow(store, AuthService(store, client))
+        window.username_input.setText("owner")
+        window.password_input.setText("Wrong1234")
+        window._submit()
+        _pump(admin_qapp)
+        assert _shown(window.error_label)
+        assert "نادرست" in window.error_label.text()
+    finally:
+        client.close()
+        store.close()
 
 
 def test_credentials_fallback_roundtrip():
@@ -808,10 +853,8 @@ def test_settings_page_loads_local_values(ui_context, admin_qapp):
     page.close()
 
 
-def test_users_page_lists_internal_users(ui_context, admin_qapp):
-    from app.auth import AuthService
-
-    AuthService(ui_context.store).create_user("staff1", "کارمند یک", "Secret123", "operator")
+def test_users_page_lists_server_staff(ui_context, fake_api, admin_qapp):
+    fake_api.add_staff("staff1", OWNER_PASSWORD, "operator", "کارمند یک")
     context = make_context_with_role(ui_context, ROLE_SUPER_ADMIN)
     page = UsersPage(context)
     _render_page(admin_qapp, page, timeout_ms=2000)
@@ -940,7 +983,7 @@ def test_wizard_step_two_button_has_aa_contrast(tmp_path, admin_qapp):
     """The step-2 screen's primary button must be clearly readable."""
     store = Store(tmp_path / "contrast_wizard.db")
     try:
-        wizard = SetupWizard(store, AuthService(store))
+        wizard = SetupWizard(store, _offline_auth(store))
         wizard._step = 1
         wizard._update_step()
         wizard.show()
@@ -981,7 +1024,7 @@ def test_wizard_step_indicator_chips_have_aa_contrast(tmp_path, admin_qapp):
 
     store = Store(tmp_path / "contrast_chips.db")
     try:
-        wizard = SetupWizard(store, AuthService(store))
+        wizard = SetupWizard(store, _offline_auth(store))
         wizard.show()
         for step in range(3):
             wizard._step = step
