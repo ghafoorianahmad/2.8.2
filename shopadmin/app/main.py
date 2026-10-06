@@ -99,10 +99,15 @@ class ShopAdminApp(QObject):
             log.info("first run detected; showing the setup wizard")
             self.show_wizard()
             return
-        self.api.configure(self.store.base_url)
+        self._configure_api()
         if self._try_auto_login():
             return
         self.show_login()
+
+    def _configure_api(self) -> None:
+        """Point the client at the saved server, with its pinned certificate."""
+        self.api.configure(self.store.base_url)
+        self.api.set_server_cert(self.store.server_cert_pem)
 
     # -------------------------------------------------------------- service
     def ensure_service_started(self) -> None:
@@ -158,12 +163,12 @@ class ShopAdminApp(QObject):
             self.wizard = None
         log.info("setup wizard finished")
         self.ensure_service_started()
-        self.api.configure(self.store.base_url)
+        self._configure_api()
         self.show_login()
 
     # ------------------------------------------------------------------ login
     def show_login(self, message: str = "") -> None:
-        self.api.configure(self.store.base_url)
+        self._configure_api()
         if self.login_window is None:
             self.login_window = LoginWindow(self.store, self.auth)
             self.login_window.logged_in.connect(self._on_logged_in)
@@ -247,7 +252,8 @@ class ShopAdminApp(QObject):
             self.watcher.stop()
         interval = self.store.get_int_setting("event_poll_seconds", 15, minimum=5, maximum=600)
         self.watcher = EventWatcher(self.store.base_url, self.api.token,
-                                    interval_seconds=interval, parent=self)
+                                    interval_seconds=interval, parent=self,
+                                    server_cert_pem=self.store.server_cert_pem)
         self.watcher.events_arrived.connect(self._on_server_events)
         self.watcher.session_lost.connect(self._on_session_invalid)
         self.watcher.start()
@@ -313,7 +319,7 @@ class ShopAdminApp(QObject):
             if not self.watcher.running:
                 self.watcher.start()
         if old_token and old_token != self.api.token:
-            _logout_token(self.store.base_url, old_token)
+            _logout_token(self.store.base_url, old_token, self.store.server_cert_pem)
         self.main_window.showNormal()
         self.main_window.raise_()
         self.main_window.reset_activity()
@@ -348,7 +354,11 @@ class ShopAdminApp(QObject):
             if self.context is not None and self.context.principal is not None:
                 self.store.audit(self.context.principal.username, "logout", "خروج از برنامه")
             self._close_session(end_server_session=True)
-            self.show_login(message)
+            if needs_setup(self.store):
+                # e.g. the server address was changed in the settings page
+                self.show_wizard()
+            else:
+                self.show_login(message)
         finally:
             self._logging_out = False
 
@@ -377,12 +387,12 @@ class ShopAdminApp(QObject):
             log.exception("error during service shutdown: %s", type(exc).__name__)
 
 
-def _logout_token(base_url: str, token: str) -> None:
+def _logout_token(base_url: str, token: str, server_cert_pem: str = "") -> None:
     """End an old server session in the background (best effort)."""
     from .ui.async_utils import run_async
 
     def work() -> None:
-        client = ShopApiClient(base_url, token, timeout=5)
+        client = ShopApiClient(base_url, token, timeout=5, server_cert_pem=server_cert_pem)
         try:
             client.logout()
         finally:

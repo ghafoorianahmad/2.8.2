@@ -28,6 +28,7 @@ SETTINGS_CHANGE_OWN_PASSWORD = "settings.change_own_password"
 SETTINGS_VIEW_LOG = "settings.view_log"
 USERS_VIEW = "users.view"
 USERS_MANAGE = "users.manage"
+SERVER_MANAGE = "server.manage"
 
 ALL_ROLES = (ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_OPERATOR, ROLE_VIEWER)
 
@@ -99,6 +100,7 @@ PERMISSIONS: dict[str, frozenset[str]] = {
             SETTINGS_VIEW_LOG,
             USERS_VIEW,
             USERS_MANAGE,
+            SERVER_MANAGE,
         }
     ),
 }

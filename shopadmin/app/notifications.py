@@ -88,9 +88,11 @@ class EventWatcher(QObject):
     reachability_changed = Signal(bool)
 
     def __init__(self, base_url: str, token: str, *, interval_seconds: int = 15,
-                 client: ShopApiClient | None = None, parent: QObject | None = None) -> None:
+                 client: ShopApiClient | None = None, parent: QObject | None = None,
+                 server_cert_pem: str = "") -> None:
         super().__init__(parent)
-        self.client = client or ShopApiClient(base_url, token, timeout=10)
+        self.client = client or ShopApiClient(base_url, token, timeout=10,
+                                              server_cert_pem=server_cert_pem)
         self.last_id: Optional[int] = None
         self._busy = False
         self._reachable = True

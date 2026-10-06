@@ -10,3 +10,4 @@ keyring>=24.0 ; sys_platform == "win32"
 pytest>=8.0
 pytest-qt>=4.4
 pyinstaller>=6.6
+cryptography>=43   # tests only: makes a throwaway TLS certificate

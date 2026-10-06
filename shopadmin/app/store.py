@@ -67,8 +67,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "close_to_tray": True,
 }
 
-#: Values never written to the log in clear.
-SECRET_SETTING_KEYS: frozenset[str] = frozenset()
+
+#: Long or sensitive values never written to the log in clear.
+SECRET_SETTING_KEYS: frozenset[str] = frozenset({"server_cert_pem"})
 
 
 class Store:
@@ -178,8 +179,15 @@ class Store:
     def base_url(self) -> str:
         return str(self.get_setting("shopapi_base_url", "") or "").strip().rstrip("/")
 
-    def configure_connection(self, base_url: str) -> None:
+    def configure_connection(self, base_url: str, server_cert_pem: str | None = None) -> None:
         self.set_setting("shopapi_base_url", str(base_url).strip().rstrip("/"))
+        if server_cert_pem is not None:
+            self.set_setting("server_cert_pem", server_cert_pem)
+
+    @property
+    def server_cert_pem(self) -> str:
+        """The server's own certificate, pinned at setup (public; not a secret)."""
+        return str(self.get_setting("server_cert_pem", "") or "")
 
     def is_configured(self) -> bool:
         return bool(self.base_url and self.get_setting("wizard_completed", False))

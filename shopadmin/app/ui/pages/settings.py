@@ -325,7 +325,13 @@ class SettingsPage(BasePage):
             if same_server:
                 # Our own session also proves the account still works.
                 return self.context.api.test_connection()
-            probe = ShopApiClient(base_url, timeout=10)
+            if base_url.startswith("https://"):
+                from ...api_client import fetch_server_certificate
+
+                pem, _fp = fetch_server_certificate(base_url)
+            else:
+                pem = ""
+            probe = ShopApiClient(base_url, timeout=10, server_cert_pem=pem)
             try:
                 return probe.probe_server()
             finally:
@@ -390,7 +396,8 @@ class SettingsPage(BasePage):
             return
         if not widgets.confirm(
             self, "تغییر آدرس سرور",
-            "پس از تغییر آدرس، از حساب خارج می‌شوید و باید روی سرور جدید وارد شوید. ادامه می‌دهید؟",
+            "پس از تغییر آدرس، از حساب خارج می‌شوید، اثرانگشت امنیتی سرور جدید را تأیید "
+            "می‌کنید و سپس روی آن وارد می‌شوید. ادامه می‌دهید؟",
             confirm_text="تغییر و خروج", cancel_text="انصراف",
         ):
             return
@@ -399,7 +406,10 @@ class SettingsPage(BasePage):
         # Saved first; the API client still points at the OLD server, so the
         # logout below ends the session there before the login window switches
         # to the new address.
-        self.context.store.configure_connection(base_url)
+        # A new server means a new certificate to verify: the setup wizard runs
+        # again (with this address filled in) after signing out.
+        self.context.store.configure_connection(base_url, "")
+        self.context.store.set_setting("wizard_completed", False)
         window = self.window()
         if hasattr(window, "logout_requested"):
             window.logout_requested.emit()

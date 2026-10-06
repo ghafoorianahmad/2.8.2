@@ -12,9 +12,12 @@ the UI can show it verbatim, with no English text and no stack traces.
 """
 from __future__ import annotations
 
+import hashlib
 import re
+import ssl
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -54,6 +57,52 @@ MSG_SERVER_ERROR = "خطای داخلی سرور فروشگاه رخ داد. ل�
 MSG_UNAVAILABLE = "سرور فروشگاه در دسترس نیست یا سرویس حسابداری پاسخ نمی‌دهد."
 MSG_BAD_RESPONSE = "پاسخ سرور فروشگاه قابل خواندن نبود."
 MSG_UNEXPECTED = "خطای پیش‌بینی‌نشده در ارتباط با سرور فروشگاه رخ داد."
+MSG_TLS_MISMATCH = (
+    "گواهی امنیتی سرور با گواهی ثبت‌شده در این رایانه یکی نیست. ممکن است کسی در "
+    "شبکه خود را جای سرور جا زده باشد. تا بررسی مدیر کل، وارد نشوید."
+)
+MSG_TLS_NOT_PINNED = "گواهی امنیتی سرور هنوز روی این رایانه ثبت نشده است. تنظیمات اولیه را دوباره انجام دهید."
+
+
+def fingerprint_of_pem(pem: str) -> str:
+    """SHA-256 of the DER certificate as 'AB:CD:…' — same format the server shows."""
+    der = ssl.PEM_cert_to_DER_cert(pem)
+    digest = hashlib.sha256(der).hexdigest().upper()
+    return ":".join(digest[i:i + 2] for i in range(0, len(digest), 2))
+
+
+def short_fingerprint(fingerprint: str) -> str:
+    """The first 8 bytes, grouped for reading aloud: 'AB12 CD34 EF56 7890'."""
+    hexes = fingerprint.replace(":", "")[:16]
+    return " ".join(hexes[i:i + 4] for i in range(0, 16, 4))
+
+
+def fetch_server_certificate(base_url: str, timeout: float = 8.0) -> tuple[str, str]:
+    """Download the certificate an HTTPS server presents (trust on first use).
+
+    Returns (pem, fingerprint). The caller must show the fingerprint to the
+    owner, who compares it with the one displayed on the server, before it is
+    stored and trusted.
+    """
+    parts = urlsplit(base_url)
+    if parts.scheme != "https" or not parts.hostname:
+        raise ApiError("آدرس سرور باید با https:// شروع شود.", kind="tls")
+    try:
+        pem = ssl.get_server_certificate((parts.hostname, parts.port or 443), timeout=timeout)
+    except (OSError, ssl.SSLError) as exc:
+        raise ApiConnectionError(raw=str(exc)) from exc
+    return pem, fingerprint_of_pem(pem)
+
+
+def pinned_context(pem: str) -> ssl.SSLContext:
+    """Trust exactly this certificate and nothing else.
+
+    The host name is not checked: the pin is stronger than a name (the server's
+    LAN address may change, its certificate does not).
+    """
+    context = ssl.create_default_context(cadata=pem)
+    context.check_hostname = False
+    return context
 
 # shopapi's English ``detail`` strings -> Persian shown to the operator.
 _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -109,6 +158,13 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"staff account not found", re.I), "کاربر مورد نظر یافت نشد."),
     (re.compile(r"staff accounts already exist", re.I),
      "مدیر کل قبلاً روی سرور ساخته شده است. با همان حساب وارد شوید."),
+    # ---- server control ----
+    (re.compile(r"restart not available", re.I),
+     "سرور در حالت سرویس اجرا نمی‌شود و از راه دور راه‌اندازی دوباره نمی‌شود."),
+    (re.compile(r"settings file not available", re.I),
+     "فایل تنظیمات سرور در دسترس نیست (سرور در حالت سرویس اجرا نمی‌شود)."),
+    (re.compile(r"log file not available", re.I), "فایل گزارش سرور در دسترس نیست."),
+    (re.compile(r"nothing to change", re.I), "تغییری برای ذخیره وجود ندارد."),
 )
 
 _STATUS_FA = {
@@ -157,6 +213,11 @@ def translate_detail(detail: Any, status_code: int | None = None) -> str:
     ``detail`` may be a string (HTTPException) or a list of pydantic validation
     errors (422). Unknown English text is never shown to the user as-is.
     """
+    if isinstance(detail, dict) and isinstance(detail.get("fields"), dict):
+        from .server_settings import translate_field_errors
+
+        return translate_field_errors(detail["fields"])
+
     if isinstance(detail, list):
         parts: list[str] = []
         for item in detail:
@@ -243,9 +304,11 @@ class ShopApiClient:
         *,
         timeout: float = DEFAULT_TIMEOUT,
         transport: httpx.BaseTransport | None = None,
+        server_cert_pem: str = "",
     ) -> None:
         self.base_url = str(base_url or "").strip().rstrip("/")
         self.token = str(token or "").strip()
+        self.server_cert_pem = str(server_cert_pem or "")
         self.timeout = timeout
         self._transport = transport
         self._client: httpx.Client | None = None
@@ -263,6 +326,14 @@ class ShopApiClient:
 
     def set_token(self, token: str) -> None:
         self.token = str(token or "").strip()
+
+    def set_server_cert(self, pem: str) -> None:
+        self.server_cert_pem = str(pem or "")
+        self.close()
+
+    @property
+    def uses_tls(self) -> bool:
+        return self.base_url.startswith("https://")
 
     @property
     def is_configured(self) -> bool:
@@ -289,6 +360,10 @@ class ShopApiClient:
             }
             if self._transport is not None:
                 kwargs["transport"] = self._transport
+            elif self.uses_tls:
+                if not self.server_cert_pem:
+                    raise ApiError(MSG_TLS_NOT_PINNED, kind="tls")
+                kwargs["verify"] = pinned_context(self.server_cert_pem)
             self._client = httpx.Client(**kwargs)
         return self._client
 
@@ -325,6 +400,12 @@ class ShopApiClient:
         except httpx.TimeoutException as exc:
             log.warning("shopapi timeout: %s %s", method, path)
             raise ApiError(MSG_TIMEOUT, kind="timeout", raw=str(exc)) from exc
+        except httpx.ConnectError as exc:
+            if "CERTIFICATE_VERIFY_FAILED" in str(exc):
+                log.error("TLS: the server certificate does not match the pinned one")
+                raise ApiError(MSG_TLS_MISMATCH, kind="tls", raw="certificate mismatch") from exc
+            log.warning("shopapi connection error: %s %s (ConnectError)", method, path)
+            raise ApiConnectionError(raw=str(exc)) from exc
         except httpx.HTTPError as exc:
             log.warning("shopapi connection error: %s %s (%s)", method, path, type(exc).__name__)
             raise ApiConnectionError(raw=str(exc)) from exc
@@ -555,6 +636,23 @@ class ShopApiClient:
 
     def audit_log(self, limit: int = 200) -> list[dict]:
         return list(self._request("GET", "/admin/audit", params={"limit": limit}) or [])
+
+    # ---- server control (super admin) ---------------------------------------
+    def server_status(self) -> dict:
+        return self._request("GET", "/admin/server/status") or {}
+
+    def server_settings(self) -> dict:
+        return (self._request("GET", "/admin/server/settings") or {}).get("settings", {})
+
+    def update_server_settings(self, values: dict[str, str]) -> dict:
+        return self._request("PUT", "/admin/server/settings", json_body={"values": values}) or {}
+
+    def server_logs(self, lines: int = 200) -> list[str]:
+        payload = self._request("GET", "/admin/server/logs", params={"lines": lines}) or {}
+        return list(payload.get("lines") or [])
+
+    def restart_server(self) -> None:
+        self._request("POST", "/admin/server/restart")
 
     # ---- notifications -----------------------------------------------------
     def events(self, after: int | None = None, limit: int = 100) -> dict:

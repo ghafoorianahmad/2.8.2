@@ -26,6 +26,7 @@ from ..permissions import (
     ORDERS_VIEW,
     PRODUCTS_VIEW,
     REPORTS_VIEW,
+    SERVER_MANAGE,
     SETTINGS_VIEW,
     USERS_VIEW,
 )
@@ -37,6 +38,7 @@ from .pages.dashboard import DashboardPage
 from .pages.orders import OrdersPage
 from .pages.products import ProductsPage
 from .pages.reports import ReportsPage
+from .pages.server import ServerPage
 from .pages.settings import SettingsPage
 from .pages.users import UsersPage
 
@@ -49,6 +51,7 @@ NAV_ITEMS = (
     ("reports", "گزارش‌ها", "reports", REPORTS_VIEW),
     ("settings", "تنظیمات", "settings", SETTINGS_VIEW),
     ("users", "کاربران سیستم", "users", USERS_VIEW),
+    ("server", "سرور فروشگاه", "server", SERVER_MANAGE),
 )
 
 BANNER_TEXT = "حالت آزمایشی — سفارش‌ها واقعاً در حسابداری ثبت نمی‌شوند"
@@ -303,6 +306,7 @@ class MainWindow(QMainWindow):
             "reports": ReportsPage,
             "settings": SettingsPage,
             "users": UsersPage,
+            "server": ServerPage,
         }
         for key, text, _icon, permission in NAV_ITEMS:
             if not self.context.can(permission):

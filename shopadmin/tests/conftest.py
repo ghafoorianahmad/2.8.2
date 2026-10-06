@@ -83,6 +83,13 @@ class FakeShopApi:
         self.tokens: dict[str, int] = {}
         self.events: list[dict] = []
         self.login_bodies: list[dict] = []
+        self.tls_fingerprint = ":".join(["AB"] * 32)
+        self.server_settings: dict[str, str] = {
+            "BANK_ACCOUNT_TEXT": "حساب قدیم", "RESERVE_HOURS": "12",
+            "ALLOW_SHARED_PERSON_CODE": "false", "TELEGRAM_TOKEN": "123:secret", "BALE_TOKEN": "",
+        }
+        self.settings_puts: list[dict] = []
+        self.restarts = 0
 
     # ---- helpers used by tests ------------------------------------------
     def add_staff(self, username: str, password: str = OWNER_PASSWORD, role: str = "operator",
@@ -241,6 +248,11 @@ class FakeShopApi:
                 return detail(403, "Not permitted for this account")
             return self._staff_admin(request, path, body, user, reply, detail)
 
+        if path.startswith("/admin/server"):
+            if not is_super:
+                return detail(403, "Not permitted for this account")
+            return self._server_admin(request, path, body, reply, detail)
+
         if path == "/admin/events":
             after = request.url.params.get("after")
             last = self.events[-1]["id"] if self.events else 0
@@ -328,6 +340,44 @@ class FakeShopApi:
         if path == "/groups":
             return reply(200, self.groups)
 
+        return detail(404, "Not Found")
+
+    def _server_admin(self, request, path, body, reply, detail):
+        if path == "/admin/server/status":
+            return reply(200, {
+                "version": "2.0.0", "python": "3.12", "started_at": TS, "uptime_seconds": 93784,
+                "accounting": {"ok": True, "latency_ms": 12},
+                "accounting_server": ".\\SQLEXPRESS", "accounting_database": "hesab5 t",
+                "accounting_write_enabled": False, "write_allowed_on_host": False,
+                "tls_fingerprint": self.tls_fingerprint, "restart_available": True,
+                "settings_editable": True,
+                "components": {"bots": {"configured": ["bale"], "platforms": {
+                    "bale": {"running": True, "last_ok_at": TS, "consecutive_errors": 0}}}},
+                "counts": {"customers_pending": 2, "orders_awaiting_payment": 1,
+                           "orders_receipt_uploaded": 3, "staff": len(self.staff)},
+            })
+        if path == "/admin/server/settings" and request.method == "GET":
+            out = {}
+            for key, value in self.server_settings.items():
+                secret = key.endswith("TOKEN") or key == "PROXY_URL"
+                out[key] = {"secret": True, "set": bool(value)} if secret else \
+                    {"secret": False, "value": value}
+            return reply(200, {"settings": out})
+        if path == "/admin/server/settings" and request.method == "PUT":
+            values = body.get("values") or {}
+            bad = {k: "cannot be changed remotely" for k in values if k not in self.server_settings}
+            if "RESERVE_HOURS" in values and not str(values["RESERVE_HOURS"]).isdigit():
+                bad["RESERVE_HOURS"] = "must be a whole number between 1 and 168"
+            if bad:
+                return reply(422, {"detail": {"message": "Invalid settings", "fields": bad}})
+            self.settings_puts.append(dict(values))
+            self.server_settings.update(values)
+            return reply(200, {"ok": True, "restart_required": True})
+        if path == "/admin/server/logs":
+            return reply(200, {"lines": ["2025-01-01 INFO started", "2025-01-01 INFO ready"]})
+        if path == "/admin/server/restart":
+            self.restarts += 1
+            return reply(200, {"ok": True})
         return detail(404, "Not Found")
 
     def _staff_admin(self, request, path, body, user, reply, detail):

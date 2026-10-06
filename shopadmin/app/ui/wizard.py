@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -17,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..api_client import ShopApiClient
+from ..api_client import ShopApiClient, fetch_server_certificate, short_fingerprint
 from ..auth import MIN_PASSWORD_LENGTH, AuthService, validate_password_strength
 from ..logging_setup import get_logger
 from ..paths import APP_VERSION, data_dir, db_path
@@ -101,6 +102,8 @@ class SetupWizard(QWidget):
 
         self._step = 0
         self.bootstrap_required = False
+        self._pending_pem = ""
+        self._cert_url = ""
         self._update_step()
 
     # ------------------------------------------------------------------ steps
@@ -154,7 +157,7 @@ class SetupWizard(QWidget):
 
         panel = widgets.Panel("گام ۲ — اتصال به سرور فروشگاه")
         panel.body.addWidget(widgets.label(
-            "نشانی رایانهٔ سرور فروشگاه در شبکه. نمونه: http://192.168.1.10:8000",
+            "نشانی رایانهٔ سرور فروشگاه در شبکه. نمونه: https://192.168.1.10:8443",
             name="Muted", wrap=True,
         ))
 
@@ -178,6 +181,34 @@ class SetupWizard(QWidget):
         self.connection_result = widgets.label("", wrap=True)
         self.connection_result.setVisible(False)
         panel.body.addWidget(self.connection_result)
+
+        # ---- certificate check (trust on first use) ----------------------
+        self.cert_box = QFrame()
+        self.cert_box.setObjectName("Card")
+        cert_layout = QVBoxLayout(self.cert_box)
+        cert_layout.setContentsMargins(14, 12, 14, 12)
+        cert_layout.setSpacing(8)
+        cert_layout.addWidget(widgets.label("اثرانگشت امنیتی سرور", bold=True))
+        cert_layout.addWidget(widgets.label(
+            "این کد را با کدی که روی صفحهٔ رایانهٔ سرور نمایش داده می‌شود (صفحهٔ «سرور» "
+            "در برنامهٔ مدیریت روی همان رایانه، یا فایل tls\\fingerprint.txt) مقایسه کنید. "
+            "اگر یکی نیست، ادامه ندهید.",
+            name="Muted", wrap=True,
+        ))
+        self.fingerprint_label = widgets.label("", size=14, bold=True)
+        self.fingerprint_label.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.fingerprint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.fingerprint_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        cert_layout.addWidget(self.fingerprint_label)
+        self.fingerprint_full = widgets.label("", name="Faint", wrap=True)
+        self.fingerprint_full.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.fingerprint_full.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        cert_layout.addWidget(self.fingerprint_full)
+        self.cert_confirm = QCheckBox("این اثرانگشت با اثرانگشت روی رایانهٔ سرور یکی است")
+        cert_layout.addWidget(self.cert_confirm)
+        self.cert_box.setVisible(False)
+        panel.body.addWidget(self.cert_box)
+
         layout.addWidget(panel)
         layout.addStretch(1)
         return page
@@ -291,7 +322,8 @@ class SetupWizard(QWidget):
         return True
 
     def _complete(self) -> None:
-        self.store.configure_connection(self.base_url_input.text().strip())
+        self.store.configure_connection(self.base_url_input.text().strip().rstrip("/"),
+                                        self._pending_pem)
         self.store.set_setting("wizard_completed", True)
         self.store.audit("setup", "setup", "تنظیمات اولیهٔ برنامه انجام شد")
         log.info("first-run wizard completed")
@@ -308,35 +340,65 @@ class SetupWizard(QWidget):
     def _test_connection(self, advance: bool = False) -> None:
         if not self._valid_base_url():
             return
-        base_url = self.base_url_input.text().strip()
+        base_url = self.base_url_input.text().strip().rstrip("/")
+        if base_url != self._cert_url:
+            # A different address: any earlier certificate decision is void.
+            self._pending_pem = ""
+            self._cert_url = base_url
+            self.cert_confirm.setChecked(False)
+            self.cert_box.setVisible(False)
         self.test_button.setEnabled(False)
         self.next_button.setEnabled(False)
         self.test_button.setText("در حال آزمایش…")
         self._show_connection_result("در حال برقراری ارتباط با سرور فروشگاه…", ok=True)
-
-        probe = ShopApiClient(base_url, timeout=10)
+        known_pem = self._pending_pem
 
         def work() -> dict:
+            pem = known_pem
+            if base_url.startswith("https://") and not pem:
+                pem, _fingerprint = fetch_server_certificate(base_url)
+            probe = ShopApiClient(base_url, timeout=10, server_cert_pem=pem)
             try:
-                return probe.probe_server()
+                status = probe.probe_server()
             finally:
                 probe.close()
+            return {"status": status, "pem": pem}
 
-        def ok(status: dict) -> None:
+        def ok(result: dict) -> None:
+            status, pem = result["status"], result["pem"]
             self.bootstrap_required = bool(status.get("bootstrap_required"))
             detail = ("سرور هنوز مدیر کل ندارد؛ در گام بعد آن را می‌سازید."
                       if self.bootstrap_required else
                       "پس از پایان، با نام کاربری و گذرواژهٔ خود وارد شوید.")
+            if not base_url.startswith("https://"):
+                detail += ("\nهشدار: این اتصال رمزنگاری نشده است (http). فقط برای آزمایش روی "
+                           "همین رایانه مناسب است؛ در شبکه از https استفاده کنید.")
             self._show_connection_result("ارتباط با سرور فروشگاه برقرار شد.", ok=True,
                                          detail=detail)
-            if advance:
-                self.store.configure_connection(base_url)
-                if self.bootstrap_required:
-                    self._step = 2
-                    self._update_step()
-                    self.service_key_input.setFocus()
-                else:
-                    self._complete()
+            if pem:
+                from ..api_client import fingerprint_of_pem
+
+                fingerprint = fingerprint_of_pem(pem)
+                self._pending_pem = pem
+                self.fingerprint_label.setText(short_fingerprint(fingerprint))
+                self.fingerprint_full.setText(fingerprint)
+                self.cert_box.setVisible(True)
+            if not advance:
+                return
+            if pem and not self.cert_confirm.isChecked():
+                self._show_connection_result(
+                    "اثرانگشت امنیتی سرور را با رایانهٔ سرور مقایسه کنید و اگر یکی است، "
+                    "تیک تأیید را بزنید.", ok=False)
+                return
+            self.store.configure_connection(base_url, pem)
+            self.auth.api.configure(base_url, "")
+            self.auth.api.set_server_cert(pem)
+            if self.bootstrap_required:
+                self._step = 2
+                self._update_step()
+                self.service_key_input.setFocus()
+            else:
+                self._complete()
 
         def fail(message: str, _kind: str) -> None:
             self._show_connection_result(message, ok=False)

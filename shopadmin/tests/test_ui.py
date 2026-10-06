@@ -422,7 +422,8 @@ def test_sidebar_shows_users_for_the_super_admin(ui_context, admin_qapp):
     context = make_context_with_role(ui_context, ROLE_SUPER_ADMIN)
     window = MainWindow(context)
     assert "users" in window._nav_buttons
-    assert len(window._nav_buttons) == 7
+    assert "server" in window._nav_buttons
+    assert len(window._nav_buttons) == 8
     window.close()
 
 
