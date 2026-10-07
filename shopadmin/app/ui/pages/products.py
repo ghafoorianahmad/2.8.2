@@ -30,15 +30,20 @@ class ProductsPage(BasePage):
     subtitle = "فهرست کالاها و موجودی (فقط خواندنی)"
 
     def build_body(self) -> None:
-        bar = QHBoxLayout()
-        bar.setSpacing(10)
+        bar_holder = QWidget()
+        bar = widgets.FlowLayout(bar_holder, spacing=10)
 
-        bar.addWidget(widgets.label("گروه کالا:"))
+        group_box = QWidget()
+        group_row = QHBoxLayout(group_box)
+        group_row.setContentsMargins(0, 0, 0, 0)
+        group_row.setSpacing(6)
+        group_row.addWidget(widgets.label("گروه کالا:"))
         self.group_combo = QComboBox()
         self.group_combo.setMinimumWidth(200)
         self.group_combo.addItem("همهٔ گروه‌ها", None)
         self.group_combo.currentIndexChanged.connect(lambda _i: self.load())
-        bar.addWidget(self.group_combo)
+        group_row.addWidget(self.group_combo)
+        bar.addWidget(group_box)
 
         self.in_stock_only = widgets.button("فقط کالاهای موجود", variant="ghost")
         self.in_stock_only.setObjectName("Tab")
@@ -46,14 +51,13 @@ class ProductsPage(BasePage):
         self.in_stock_only.clicked.connect(lambda: self.load())
         bar.addWidget(self.in_stock_only)
 
-        bar.addStretch(1)
         self.search = widgets.SearchBox("جستجوی نام کالا…")
         self.search.textChanged.connect(self._on_search_changed)
         bar.addWidget(self.search)
-        self.body.addLayout(bar)
+        self.body.addWidget(bar_holder)
 
         panel = widgets.Panel()
-        self.table = widgets.DataTable(HEADERS, selectable_rows=True)
+        self.table = widgets.DataTable(HEADERS, selectable_rows=True, key="products")
         self.table.set_empty_state(
             "کالایی با این مشخصات پیدا نشد",
             "عبارت جستجو یا گروه انتخابی را تغییر دهید.",

@@ -225,6 +225,16 @@ def render_all(app: QApplication, tmp: Path, opened: list) -> int:
         settle(app, rounds)
         grab(window, OUT / name)
 
+    # ---- small / not maximised windows (responsive check) ------------------
+    for width, height in ((1366, 768), (900, 600)):
+        window.resize(width, height)
+        for key in ("dashboard", "customers", "orders"):
+            window.navigate(key)
+            settle(app, 40)
+            grab(window, OUT / f"18-{key}-{width}x{height}.png")
+    window.resize(1440, 900)
+    settle(app, 10)
+
     # ---- order detail dialog ---------------------------------------------
     from app.ui.pages.orders import OrderDetailDialog
 

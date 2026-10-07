@@ -44,6 +44,25 @@ def to_english_digits(value: object) -> str:
     return str(value).translate(_TO_ENGLISH)
 
 
+#: Unicode bidi isolates: keep a run of digits/symbols left-to-right inside RTL text.
+LRI = "⁦"   # left-to-right isolate
+PDI = "⁩"   # pop directional isolate
+
+
+def isolate_ltr(text: object) -> str:
+    """Wrap ``text`` so digits, ``+``, ``*`` or ``/`` never get reordered in an RTL cell."""
+    value = str(text)
+    if not value or value == "—":
+        return value
+    return f"{LRI}{value}{PDI}"
+
+
+def format_phone(value: object) -> str:
+    """Phone/code with Persian digits, shown left-to-right even inside RTL text."""
+    text = str(value or "").strip()
+    return isolate_ltr(to_persian_digits(text)) if text else "—"
+
+
 def normalize_fa(text: object) -> str:
     """Normalize Persian text for searching/comparison (letters + digits)."""
     return to_english_digits(text).translate(_ARABIC_TRANS).strip()

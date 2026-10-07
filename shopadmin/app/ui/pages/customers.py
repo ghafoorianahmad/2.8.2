@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from ...api_client import ApiError
 from ...logging_setup import mask_phone
 from ...permissions import CUSTOMERS_APPROVE, CUSTOMERS_REJECT
-from ...persian import format_shamsi, normalize_fa, to_english_digits, to_persian_digits
+from ...persian import format_phone, format_shamsi, normalize_fa, to_english_digits, to_persian_digits
 from ...statuses import (
     CUSTOMER_APPROVED,
     CUSTOMER_PENDING,
@@ -49,8 +49,8 @@ class CustomersPage(BasePage):
 
     def build_body(self) -> None:
         # ---- filter tabs + search ---------------------------------------
-        bar = QHBoxLayout()
-        bar.setSpacing(8)
+        bar_holder = QWidget()
+        bar = widgets.FlowLayout(bar_holder, spacing=8)
         self._tab_buttons: dict[str, object] = {}
         self._active_tab = "all"
         for key, label_text, _status in TABS:
@@ -61,16 +61,15 @@ class CustomersPage(BasePage):
             tab.clicked.connect(lambda _checked=False, k=key: self._select_tab(k))
             self._tab_buttons[key] = tab
             bar.addWidget(tab)
-        bar.addStretch(1)
 
         self.search = widgets.SearchBox("جستجو بر اساس نام یا شماره موبایل…")
         self.search.textChanged.connect(self._on_search)
         bar.addWidget(self.search)
-        self.body.addLayout(bar)
+        self.body.addWidget(bar_holder)
 
         # ---- table -------------------------------------------------------
         panel = widgets.Panel()
-        self.table = widgets.DataTable(HEADERS)
+        self.table = widgets.DataTable(HEADERS, key="customers")
         self.table.set_empty_state(
             "هیچ مشتری‌ای در این وضعیت وجود ندارد",
             "با تغییر زبانه‌های بالا یا پاک کردن جستجو، نتیجهٔ دیگری ببینید.",
@@ -140,7 +139,7 @@ class CustomersPage(BasePage):
                 self.table.insertRow(row)
                 self.table.set_cell(row, 0, str(customer.get("name") or "—"), bold=True)
                 self.table.set_cell(row, 1, platform_fa(customer.get("platform")))
-                self.table.set_cell(row, 2, to_persian_digits(mask_phone(customer.get("phone"))))
+                self.table.set_cell(row, 2, format_phone(mask_phone(customer.get("phone"))))
                 code = customer.get("person_code")
                 self.table.set_cell(
                     row, 3, to_persian_digits(code) if code else "—"
@@ -298,7 +297,7 @@ class ApproveCustomerDialog(QDialog):
         form.addRow(widgets.label("پلتفرم"), widgets.label(platform_fa(customer.get("platform"))))
         form.addRow(
             widgets.label("شماره موبایل"),
-            widgets.label(to_persian_digits(mask_phone(customer.get("phone")))),
+            widgets.label(format_phone(mask_phone(customer.get("phone")))),
         )
         form.addRow(widgets.label("تاریخ ثبت"), widgets.label(format_shamsi(customer.get("created_at"))))
         form.addRow(widgets.label("وضعیت"), widgets.label(customer_status_fa(customer.get("status"))))

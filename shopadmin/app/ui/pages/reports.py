@@ -40,12 +40,12 @@ class ReportsPage(BasePage):
 
     def build_body(self) -> None:
         filters = widgets.Panel("صافی‌های گزارش")
-        row = QHBoxLayout()
-        row.setSpacing(12)
+        row_holder = QWidget()
+        row = widgets.FlowLayout(row_holder, spacing=12)
 
         self.range_picker = ShamsiRangePicker()
         self.range_picker.changed.connect(self._on_filters_changed)
-        row.addWidget(self.range_picker, 1)
+        row.addWidget(self.range_picker)
 
         row.addWidget(widgets.label("وضعیت سفارش:"))
         self.status_combo = QComboBox()
@@ -56,12 +56,11 @@ class ReportsPage(BasePage):
         self.status_combo.currentIndexChanged.connect(lambda _i: self.load())
         row.addWidget(self.status_combo)
 
-        filters.body.addLayout(row)
+        filters.body.addWidget(row_holder)
         self.body.addWidget(filters)
 
         # ---- summary cards ----------------------------------------------
-        cards = QHBoxLayout()
-        cards.setSpacing(14)
+        cards = widgets.CardGrid(min_card_width=250)
         self.card_orders = widgets.StatCard(
             "تعداد سفارش", icon_name="orders", accent=theme.PRIMARY, tint=theme.PRIMARY_LIGHT
         )
@@ -72,15 +71,15 @@ class ReportsPage(BasePage):
             "مشتریان جدید", icon_name="customers", accent=theme.INFO, tint=theme.INFO_LIGHT
         )
         for card in (self.card_orders, self.card_amount, self.card_customers):
-            cards.addWidget(card, 1)
-        self.body.addLayout(cards)
+            cards.add_card(card)
+        self.body.addWidget(cards)
 
         # ---- table + export ---------------------------------------------
         panel = widgets.Panel("سفارش‌های بازهٔ انتخابی")
         export_row = QHBoxLayout()
         export_row.addWidget(widgets.label(
             f"بازهٔ گزارش: {format_shamsi_long(self.range_picker.from_date())} تا "
-            f"{format_shamsi_long(self.range_picker.to_date())}", name="Muted"
+            f"{format_shamsi_long(self.range_picker.to_date())}", name="Muted", wrap=True
         ), 1)
 
         self.export_excel_button = widgets.button(
@@ -99,7 +98,7 @@ class ReportsPage(BasePage):
         export_row.addWidget(self.export_csv_button)
         panel.body.addLayout(export_row)
 
-        self.table = widgets.DataTable(HEADERS)
+        self.table = widgets.DataTable(HEADERS, key="reports")
         self.table.set_empty_state(
             "در این بازه سفارشی وجود ندارد",
             "بازهٔ تاریخ را بزرگ‌تر کنید یا وضعیت را روی «همهٔ وضعیت‌ها» بگذارید.",

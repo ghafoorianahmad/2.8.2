@@ -27,8 +27,7 @@ class DashboardPage(BasePage):
     auto_refreshable = True
 
     def build_body(self) -> None:
-        cards = QHBoxLayout()
-        cards.setSpacing(14)
+        cards = widgets.CardGrid(min_card_width=250)
         self.card_pending_customers = widgets.StatCard(
             "مشتریان در انتظار تأیید", icon_name="customers",
             accent=theme.WARNING, tint=theme.WARNING_LIGHT,
@@ -47,8 +46,8 @@ class DashboardPage(BasePage):
         )
         for card in (self.card_pending_customers, self.card_receipts,
                      self.card_today, self.card_products):
-            cards.addWidget(card, 1)
-        self.body.addLayout(cards)
+            cards.add_card(card)
+        self.body.addWidget(cards)
 
         self.card_pending_customers.clicked.connect(lambda: self._go("customers", "pending"))
         self.card_receipts.clicked.connect(lambda: self._go("orders", ORDER_RECEIPT_UPLOADED))
@@ -60,7 +59,7 @@ class DashboardPage(BasePage):
         self.body.addWidget(chart_panel)
 
         panel = widgets.Panel("آخرین ۱۰ سفارش")
-        self.table = widgets.DataTable(DASHBOARD_HEADERS)
+        self.table = widgets.DataTable(DASHBOARD_HEADERS, key="dashboard")
         self.table.set_empty_state(
             "هنوز سفارشی ثبت نشده است",
             "به‌محض ثبت سفارش توسط مشتریان، اینجا نمایش داده می‌شود.",

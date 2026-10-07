@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -54,7 +55,12 @@ NAV_ITEMS = (
     ("server", "سرور فروشگاه", "server", SERVER_MANAGE),
 )
 
-BANNER_TEXT = "حالت آزمایشی — سفارش‌ها واقعاً در حسابداری ثبت نمی‌شوند"
+SIDEBAR_WIDE = 232
+SIDEBAR_COMPACT = 68
+#: Below this window width the sidebar shows icons only.
+COMPACT_BELOW = 1100
+
+BANNER_TEXT ="حالت آزمایشی — سفارش‌ها واقعاً در حسابداری ثبت نمی‌شوند"
 
 log = get_logger("main_window")
 
@@ -74,8 +80,10 @@ class MainWindow(QMainWindow):
     def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.context = context
+        widgets.DataTable.settings_store = context.store   # remembers column widths
         self.toasts = widgets.ToastHost(self)
         self._pages: dict[str, QWidget] = {}
+        self._holders: dict[str, QScrollArea] = {}
         self._nav_buttons: dict[str, QPushButton] = {}
         self._nav_texts: dict[str, str] = {}
         self._current_key = ""
@@ -84,7 +92,8 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(f"مدیریت فروشگاه — {context.display_name}")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setMinimumSize(1180, 720)
+        self._compact = False
+        self.setMinimumSize(860, 560)
         self.resize(1360, 840)
 
         central = QWidget()
@@ -124,7 +133,8 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QWidget:
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(248)
+        self._sidebar = sidebar
+        sidebar.setFixedWidth(SIDEBAR_WIDE)
         sidebar.setStyleSheet(
             f"QFrame#Sidebar {{ background: {theme.SIDEBAR_BG}; "
             f"border: none; }}"
@@ -143,11 +153,13 @@ class MainWindow(QMainWindow):
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo.setStyleSheet(f"background: {theme.SIDEBAR_ACTIVE}; border-radius: 12px;")
         brand_layout.addWidget(logo)
-        titles = QVBoxLayout()
+        self._brand_titles = QWidget()
+        titles = QVBoxLayout(self._brand_titles)
+        titles.setContentsMargins(0, 0, 0, 0)
         titles.setSpacing(0)
         titles.addWidget(widgets.label("مدیریت فروشگاه", name="SidebarTitle"))
         titles.addWidget(widgets.label("کنسول مدیر", name="SidebarMuted"))
-        brand_layout.addLayout(titles, 1)
+        brand_layout.addWidget(self._brand_titles, 1)
         layout.addWidget(brand)
         divider = QFrame()
         divider.setFixedHeight(1)
@@ -298,6 +310,33 @@ class MainWindow(QMainWindow):
         self.status_dot.setPixmap(self._status_dot_unknown)
         return bar
 
+    # ------------------------------------------------------------------ density
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.toasts._reposition()
+        self._apply_density(event.size().width())
+
+    def _apply_density(self, width: int) -> None:
+        """Icon-only sidebar on small windows so the content keeps its room."""
+        compact = width < COMPACT_BELOW
+        if compact == self._compact and getattr(self, "_density_ready", False):
+            return
+        self._density_ready = True
+        self._compact = compact
+        self._sidebar.setFixedWidth(SIDEBAR_COMPACT if compact else SIDEBAR_WIDE)
+        self._sidebar.layout().setContentsMargins(*(8, 18, 8, 18) if compact else (14, 18, 14, 18))
+        self._brand_titles.setVisible(not compact)
+        self.connection_box.setVisible(not compact)
+        for key, button in self._nav_buttons.items():
+            text = self._nav_texts.get(key, "")
+            button.setText("" if compact else f"  {text}")
+            button.setToolTip(text if compact else "")
+        self._refresh_badges_text()
+
+    def _refresh_badges_text(self) -> None:
+        notifier = self.context.notifier
+        self._update_badges(dict(notifier.unread) if notifier is not None else {})
+
     # ------------------------------------------------------------------ pages
     def _build_pages(self) -> None:
         factories = {
@@ -315,7 +354,16 @@ class MainWindow(QMainWindow):
                 continue
             page = factories[key](self.context)
             self._pages[key] = page
-            self.stack.addWidget(page)
+            # A page keeps its natural minimum size; when the window is smaller it
+            # scrolls (last resort) instead of squeezing or cutting its content.
+            holder = QScrollArea()
+            holder.setObjectName("PageScroll")
+            holder.setWidgetResizable(True)
+            holder.setFrameShape(QFrame.Shape.NoFrame)
+            holder.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            holder.setWidget(page)
+            self._holders[key] = holder
+            self.stack.addWidget(holder)
 
     # ------------------------------------------------------------------ nav
     def navigate(self, key: str, filter_key: str = "") -> None:
@@ -332,7 +380,7 @@ class MainWindow(QMainWindow):
                 previous.leave()
 
         self._current_key = key
-        self.stack.setCurrentWidget(page)
+        self.stack.setCurrentWidget(self._holders.get(key, page))
         button = self._nav_buttons.get(key)
         if button is not None:
             button.setChecked(True)
@@ -493,7 +541,12 @@ class MainWindow(QMainWindow):
                 continue
             count = sum(int(unread.get(k, 0)) for k in kinds)
             text = self._nav_texts.get(key, "")
-            button.setText(f"  {text}  ({to_persian_digits(count)})" if count else f"  {text}")
+            if self._compact:
+                button.setText("")
+                button.setToolTip(f"{text} ({to_persian_digits(count)})" if count else text)
+            else:
+                button.setToolTip("")
+                button.setText(f"  {text}  ({to_persian_digits(count)})" if count else f"  {text}")
             button.setProperty("hasBadge", bool(count))
             button.style().unpolish(button)
             button.style().polish(button)
@@ -602,10 +655,6 @@ class MainWindow(QMainWindow):
         self.context.apply_system_info(info)
         # Keep the server indicator honest (quietly: no dialog on a blip).
         self.check_server(report=False)
-
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        super().resizeEvent(event)
-        self.toasts._reposition()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if not self.allow_close:

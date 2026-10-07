@@ -84,7 +84,7 @@ SPACE_LG = 24
 SPACE_XL = 32
 
 FONT_FAMILY_FALLBACKS = ("Vazirmatn", "Vazir", "Sahel", "IRANSans", "Tahoma", "Segoe UI", "Arial")
-BASE_FONT_SIZE = 11
+BASE_FONT_SIZE = 10
 
 _resolved_family: str | None = None
 
@@ -299,10 +299,10 @@ QFrame#Panel {{
     background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS}px;
 }}
 QLabel#CardTitle {{ color: {TEXT_MUTED}; font-size: {BASE_FONT_SIZE}pt; }}
-QLabel#CardValue {{ color: {INK}; font-size: 24pt; font-weight: 700; }}
-QLabel#PageTitle {{ color: {INK}; font-size: 17pt; font-weight: 700; }}
+QLabel#CardValue {{ color: {INK}; font-size: 21pt; font-weight: 700; }}
+QLabel#PageTitle {{ color: {INK}; font-size: 15pt; font-weight: 700; }}
 QLabel#PageSubtitle {{ color: {TEXT_MUTED}; font-size: {BASE_FONT_SIZE}pt; }}
-QLabel#SectionTitle {{ color: {INK}; font-size: 12pt; font-weight: 600; }}
+QLabel#SectionTitle {{ color: {INK}; font-size: 11pt; font-weight: 600; }}
 QLabel#Muted {{ color: {TEXT_MUTED}; }}
 QLabel#Faint {{ color: {TEXT_FAINT}; }}
 QLabel#EmptyTitle {{ color: {TEXT}; font-size: 12pt; font-weight: 600; }}
@@ -347,7 +347,7 @@ QPushButton#Ghost:hover {{ background: {HOVER}; color: {PRIMARY_DARK}; }}
 
 QPushButton#NavButton {{
     background: transparent; border: none; border-radius: {RADIUS}px;
-    padding: 11px 14px; text-align: right; font-size: 12pt; color: {SIDEBAR_TEXT};
+    padding: 10px 12px; text-align: right; font-size: 11pt; color: {SIDEBAR_TEXT};
 }}
 QPushButton#NavButton:hover {{ background: {SIDEBAR_HOVER}; color: #FFFFFF; }}
 QPushButton#NavButton:checked {{
@@ -424,12 +424,12 @@ QTableWidget, QTableView {{
     gridline-color: transparent; selection-background-color: {PRIMARY_SOFT};
     selection-color: {INK}; alternate-background-color: #FBFDFF;
 }}
-QTableWidget::item {{ padding: 8px 6px; border-bottom: 1px solid #F1F5F9; }}
+QTableWidget::item {{ padding: 6px 8px; border-bottom: 1px solid #F1F5F9; }}
 QTableWidget::item:selected {{ background: {PRIMARY_SOFT}; color: {INK}; }}
 QHeaderView {{ background: transparent; }}
 QHeaderView::section {{
-    background: #F8FAFC; color: {TEXT_MUTED}; padding: 10px 8px; border: none;
-    border-bottom: 1px solid {BORDER}; font-weight: 600;
+    background: #F8FAFC; color: {TEXT_MUTED}; padding: 9px 8px; border: none;
+    border-left: 1px solid {BORDER}; border-bottom: 1px solid {BORDER}; font-weight: 600;
 }}
 QHeaderView::section:first {{ border-top-right-radius: {RADIUS}px; }}
 QHeaderView::section:last {{ border-top-left-radius: {RADIUS}px; }}
@@ -468,6 +468,7 @@ def apply_theme(app: QApplication) -> None:
     loaded = load_application_fonts()
     family = resolve_font_family(loaded)
     font = QFont(family, BASE_FONT_SIZE)
+    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     app.setFont(font)
     # Full RTL everywhere: layout direction, alignment and widget mirroring.
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)

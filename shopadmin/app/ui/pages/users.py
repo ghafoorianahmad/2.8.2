@@ -59,7 +59,7 @@ class UsersPage(BasePage):
             "فوراً از همهٔ رایانه‌ها خارج می‌کند.",
             name="Muted", wrap=True,
         ))
-        self.table = widgets.DataTable(HEADERS)
+        self.table = widgets.DataTable(HEADERS, key="users")
         self.table.set_empty_state("کاربری ثبت نشده است", "", "users")
         self.table.setMinimumHeight(340)
         panel.body.addWidget(self.table, 1)

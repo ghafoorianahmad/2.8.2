@@ -7,16 +7,18 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Sequence
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QFrame,
     QGraphicsOpacityEffect,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLayout,
     QLineEdit,
     QPushButton,
     QSizePolicy,
@@ -60,7 +62,7 @@ def page_title(title: str, subtitle: str = "") -> QWidget:
     layout.setSpacing(2)
     layout.addWidget(label(title, name="PageTitle"))
     if subtitle:
-        layout.addWidget(label(subtitle, name="PageSubtitle"))
+        layout.addWidget(label(subtitle, name="PageSubtitle", wrap=True))
     return container
 
 
@@ -111,6 +113,128 @@ def vline() -> QFrame:
 # --------------------------------------------------------------------------
 # cards
 # --------------------------------------------------------------------------
+class FlowLayout(QLayout):
+    """Lays widgets out in rows and wraps to the next row when the width runs out.
+
+    Right-to-left aware: in an RTL parent the first widget sits on the right.
+    """
+
+    def __init__(self, parent: QWidget | None = None, spacing: int = 8) -> None:
+        super().__init__(parent)
+        self._items: list = []
+        self._space = spacing
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item) -> None:  # noqa: N802
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int):  # noqa: N802
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int):  # noqa: N802
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):  # noqa: N802
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        return self._layout(QRect(0, 0, width, 0), apply=False)
+
+    def setGeometry(self, rect: QRect) -> None:  # noqa: N802
+        super().setGeometry(rect)
+        self._layout(rect, apply=True)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:  # noqa: N802
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        return size + QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
+
+    def _layout(self, rect: QRect, *, apply: bool) -> int:
+        margins = self.contentsMargins()
+        area = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom())
+        rtl = self.parentWidget() is not None and             self.parentWidget().layoutDirection() == Qt.LayoutDirection.RightToLeft
+        x, y, row_height = area.x(), area.y(), 0
+        row: list[tuple[Any, int, int]] = []
+
+        def flush() -> None:
+            if not apply:
+                return
+            for item, ix, iy in row:
+                size = item.sizeHint()
+                left = area.x() + area.right() - ix - size.width() + 1 if rtl else ix
+                item.setGeometry(QRect(left, iy, size.width(), size.height()))
+
+        for item in self._items:
+            size = item.sizeHint()
+            if x + size.width() > area.right() + 1 and row_height > 0:
+                flush()
+                row = []
+                x, y, row_height = area.x(), y + row_height + self._space, 0
+            row.append((item, x, y))
+            x += size.width() + self._space
+            row_height = max(row_height, size.height())
+        flush()
+        return y + row_height - rect.y() + margins.bottom()
+
+
+class CardGrid(QWidget):
+    """Equal-width cards: all in one row when wide, wrapping into 2 / 1 columns when narrow."""
+
+    def __init__(self, min_card_width: int = 250, spacing: int = 14,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._cards: list[QWidget] = []
+        self._min = min_card_width
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(spacing)
+        self._columns = 0
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+    def add_card(self, card: QWidget) -> None:
+        self._cards.append(card)
+        self._relayout(force=True)
+
+    def columns(self) -> int:
+        return self._columns
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._relayout()
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(self._min, 0)
+
+    def _relayout(self, force: bool = False) -> None:
+        count = max(1, len(self._cards))
+        columns = max(1, min(count, (self.width() or 10_000) // self._min))
+        if columns < count:   # prefer an even grid (4 cards -> 2 x 2) over a lonely last card
+            even = max((c for c in range(2, columns + 1) if count % c == 0), default=columns)
+            columns = even
+        if columns == self._columns and not force:
+            return
+        self._columns = columns
+        for card in self._cards:
+            self._grid.removeWidget(card)
+        for index, card in enumerate(self._cards):
+            self._grid.addWidget(card, index // columns, index % columns)
+        for column in range(columns):
+            self._grid.setColumnStretch(column, 1)
+        for column in range(columns, count):
+            self._grid.setColumnStretch(column, 0)
+
+
 class StatCard(QFrame):
     """A large coloured dashboard card."""
 
@@ -139,10 +263,10 @@ class StatCard(QFrame):
 
         text_column = QVBoxLayout()
         text_column.setSpacing(4)
-        text_column.addWidget(label(title, name="CardTitle"))
+        text_column.addWidget(label(title, name="CardTitle", wrap=True))
         self._value_label = label(value, name="CardValue")
         text_column.addWidget(self._value_label)
-        self._hint_label = label(hint, name="Faint")
+        self._hint_label = label(hint, name="Faint", wrap=True)
         self._hint_label.setVisible(bool(hint))
         text_column.addWidget(self._hint_label)
         text_column.addStretch(1)
@@ -309,9 +433,25 @@ class DataTable(QTableWidget):
 
     row_activated = Signal(int)
 
+    #: Object with ``get_setting`` / ``set_setting`` (the Store); set by the app so
+    #: column widths survive restarts. ``None`` in tests and before login.
+    settings_store: Any = None
+    MIN_COLUMN = 72
+    MAX_AUTO_COLUMN = 280
+
     def __init__(self, headers: Sequence[str], *, selectable_rows: bool = False,
-                 parent: QWidget | None = None) -> None:
+                 key: str = "", parent: QWidget | None = None) -> None:
         super().__init__(0, len(headers), parent)
+        self._key = key
+        self._sizing = False       # True while we set widths ourselves (not a user drag)
+        self._auto_sized = False
+        self._user_sized = False   # the user dragged a column, or saved widths were restored
+        self._natural: list[int] = []
+        self._floor: list[int] = []
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(400)
+        self._save_timer.timeout.connect(self._save_widths)
         self.setHorizontalHeaderLabels(list(headers))
         self.verticalHeader().setVisible(False)
         self.setShowGrid(False)
@@ -327,10 +467,21 @@ class DataTable(QTableWidget):
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         header = self.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        # Interactive: the user can drag any column edge; the last column fills the rest.
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
+        header.setMinimumSectionSize(self.MIN_COLUMN)
+        header.setCascadingSectionResizes(False)
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.verticalHeader().setDefaultSectionSize(50)
+        header.sectionResized.connect(self._on_section_resized)
+        # Long text is cut with an ellipsis (tooltip shows it all); a horizontal
+        # scroll bar appears only when the columns really do not fit.
+        self.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.verticalHeader().setDefaultSectionSize(46)
+        self._headers = list(headers)
+        self._restore_widths()
 
         self._empty_title = "موردی برای نمایش وجود ندارد"
         self._empty_hint = ""
@@ -342,6 +493,98 @@ class DataTable(QTableWidget):
         if selectable_rows:
             self.cellClicked.connect(self._emit_row)
             self.doubleClicked.connect(lambda index: self.row_activated.emit(index.row()))
+
+    # ---- column widths ---------------------------------------------------
+    def _settings_name(self) -> str:
+        return f"table_widths.{self._key}"
+
+    def _restore_widths(self) -> None:
+        store = DataTable.settings_store
+        if not self._key or store is None:
+            return
+        try:
+            saved = store.get_setting(self._settings_name())
+        except Exception:  # noqa: BLE001 - widths are a convenience only
+            return
+        if isinstance(saved, list) and len(saved) == self.columnCount() \
+                and all(isinstance(w, int) and w > 0 for w in saved):
+            self._apply_widths(saved)
+            self._auto_sized = True   # the user's widths win over automatic sizing
+            self._user_sized = True
+
+    def _apply_widths(self, widths: Sequence[int]) -> None:
+        self._sizing = True
+        try:
+            for column, width in enumerate(widths):
+                self.setColumnWidth(column, max(self.MIN_COLUMN, int(width)))
+        finally:
+            self._sizing = False
+
+    def _on_section_resized(self, _index: int, _old: int, _new: int) -> None:
+        if self._sizing:
+            return
+        self._user_sized = True
+        if self._key and DataTable.settings_store is not None:
+            self._save_timer.start()
+
+    def _save_widths(self) -> None:
+        store = DataTable.settings_store
+        if store is None or not self._key:
+            return
+        widths = [self.columnWidth(c) for c in range(self.columnCount())]
+        try:
+            store.set_setting(self._settings_name(), widths)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def reset_widths(self) -> None:
+        """Forget saved widths and size the columns to their content again."""
+        store = DataTable.settings_store
+        if store is not None and self._key:
+            try:
+                store.set_setting(self._settings_name(), None)
+            except Exception:  # noqa: BLE001
+                pass
+        self._auto_sized = False
+        self._user_sized = False
+        self._auto_size()
+
+    def _auto_size(self) -> None:
+        """Sensible first widths: content width clamped to [MIN, MAX_AUTO]."""
+        if self._auto_sized or self.rowCount() == 0:
+            return
+        self._auto_sized = True
+        metrics = self.fontMetrics()
+        widths = []
+        floors = []
+        for column in range(self.columnCount()):
+            floor = max(self.MIN_COLUMN, metrics.horizontalAdvance(self._headers[column]) + 44)
+            floors.append(floor)
+            wanted = floor
+            for row in range(min(self.rowCount(), 30)):
+                item = self.item(row, column)
+                if item is not None:
+                    wanted = max(wanted, metrics.horizontalAdvance(item.text()) + 36)
+                elif self.cellWidget(row, column) is not None:
+                    hint = self.cellWidget(row, column).sizeHint().width() + 24
+                    wanted = max(wanted, hint)
+                    floors[column] = max(floors[column], hint)   # never squeeze a pill/button
+            widths.append(min(max(wanted, self.MIN_COLUMN), self.MAX_AUTO_COLUMN))
+        self._natural, self._floor = widths, floors
+        self._fit_to_viewport()
+
+    def _fit_to_viewport(self) -> None:
+        """Shrink the roomy columns (never below their header) so nothing is cut off."""
+        if self._user_sized or not self._natural:
+            return
+        available = self.viewport().width() or self.width()
+        widths = list(self._natural)
+        excess = sum(widths) - available
+        slack = sum(w - f for w, f in zip(widths, self._floor))
+        if excess > 0 and slack > 0 and available > 0:
+            factor = min(1.0, excess / slack)
+            widths = [round(w - (w - f) * factor) for w, f in zip(widths, self._floor)]
+        self._apply_widths(widths)
 
     # ---- helpers ---------------------------------------------------------
     def _emit_row(self, row: int, _column: int) -> None:
@@ -363,8 +606,7 @@ class DataTable(QTableWidget):
             font = QFont(item.font())
             font.setBold(True)
             item.setFont(font)
-        if tooltip:
-            item.setToolTip(tooltip)
+        item.setToolTip(tooltip or text)   # the full text when the cell is cut short
         self.setItem(row, column, item)
         return item
 
@@ -412,6 +654,8 @@ class DataTable(QTableWidget):
         self._refresh_states()
 
     def _refresh_states(self) -> None:
+        if self.rowCount():
+            self._auto_size()
         empty = self.rowCount() == 0 and not self._busy
         if empty:
             if self._empty_widget is None:
@@ -432,6 +676,7 @@ class DataTable(QTableWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
+        self._fit_to_viewport()
         for widget in (self._empty_widget, self._busy_widget):
             if widget is not None:
                 widget.setGeometry(self.viewport().rect())

@@ -66,8 +66,8 @@ class OrdersPage(BasePage):
     subtitle = "بررسی فیش‌های پرداخت و تأیید سفارش‌ها"
 
     def build_body(self) -> None:
-        bar = QHBoxLayout()
-        bar.setSpacing(8)
+        bar_holder = QWidget()
+        bar = widgets.FlowLayout(bar_holder, spacing=8)
         self._tab_buttons: dict[str, object] = {}
         self._active_tab = "receipt_uploaded"
         for key, label_text, _status in TABS:
@@ -78,21 +78,20 @@ class OrdersPage(BasePage):
             tab.clicked.connect(lambda _checked=False, k=key: self._select_tab(k))
             self._tab_buttons[key] = tab
             bar.addWidget(tab)
-        bar.addStretch(1)
 
         self.search = widgets.SearchBox("جستجو بر اساس نام مشتری یا شمارهٔ سفارش…")
         self.search.textChanged.connect(self._on_search)
         bar.addWidget(self.search)
-        self.body.addLayout(bar)
+        self.body.addWidget(bar_holder)
 
         panel = widgets.Panel()
         hint = widgets.label(
             "برای دیدن اقلام سفارش و تأیید یا رد پرداخت، روی ردیف مورد نظر کلیک کنید.",
-            name="Muted",
+            name="Muted", wrap=True,
         )
         panel.body.addWidget(hint)
 
-        self.table = widgets.DataTable(HEADERS, selectable_rows=True)
+        self.table = widgets.DataTable(HEADERS, selectable_rows=True, key="orders")
         self.table.set_empty_state("هیچ سفارشی در این وضعیت وجود ندارد", "", "orders")
         self.table.setMinimumHeight(360)
         self.table.row_activated.connect(self._open_row)

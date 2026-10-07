@@ -107,6 +107,17 @@ class ShamsiDateEdit(QWidget):
             widget.setEnabled(enabled)
 
 
+def _labelled(text: str, field: QWidget) -> QWidget:
+    """A caption and its field kept together when a flow layout wraps."""
+    holder = QWidget()
+    row = QHBoxLayout(holder)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(6)
+    row.addWidget(widgets.label(text))
+    row.addWidget(field)
+    return holder
+
+
 class ShamsiRangePicker(QWidget):
     """From/To Shamsi range with quick presets."""
 
@@ -117,9 +128,7 @@ class ShamsiRangePicker(QWidget):
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         today = date.today()
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout = widgets.FlowLayout(self, spacing=10)
 
         self.preset_combo = QComboBox()
         self.preset_combo.addItem("امروز", "today")
@@ -128,18 +137,13 @@ class ShamsiRangePicker(QWidget):
         self.preset_combo.addItem("این ماه شمسی", "shamsi_month")
         self.preset_combo.addItem("بازهٔ دلخواه", "custom")
         self.preset_combo.setMinimumWidth(150)
-        layout.addWidget(widgets.label("بازه:"))
-        layout.addWidget(self.preset_combo)
+        layout.addWidget(_labelled("بازه:", self.preset_combo))
 
-        layout.addWidget(widgets.label("از:"))
         self.from_edit = ShamsiDateEdit(today - timedelta(days=29))
-        layout.addWidget(self.from_edit)
+        layout.addWidget(_labelled("از:", self.from_edit))
 
-        layout.addWidget(widgets.label("تا:"))
         self.to_edit = ShamsiDateEdit(today)
-        layout.addWidget(self.to_edit)
-
-        layout.addStretch(1)
+        layout.addWidget(_labelled("تا:", self.to_edit))
 
         self.preset_combo.currentIndexChanged.connect(self._apply_preset)
         self.from_edit.date_changed.connect(lambda _d: self._emit())
