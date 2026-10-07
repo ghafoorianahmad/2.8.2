@@ -137,13 +137,155 @@ def stylesheet_literals() -> list[tuple[str, str, str, float]]:
     return found
 
 
+#: Dialog buttons as the stylesheet defines them (default = plain QPushButton,
+#: e.g. the OK button of a QMessageBox; primary = MessageDialog «باشه»).
+DIALOG_BUTTON_PAIRS: list[tuple[str, str, str, float]] = [
+    ("dialog default button (QMessageBox OK): TEXT on SURFACE", "#1E293B", "#FFFFFF", 4.5),
+    ("dialog primary button: white on PRIMARY", "#FFFFFF", "#2563EB", 4.5),
+    ("dialog danger button: white on DANGER", "#FFFFFF", "#DC2626", 4.5),
+]
+
+
+# --------------------------------------------------------------------------
+# rendered check: what Qt REALLY paints
+#
+# The static pairs above cannot see cascade bugs, e.g. a window stylesheet
+# with an unscoped "background:" that repaints a primary button light while
+# its text stays white (the invisible «ادامه» bug). These checks render the
+# real windows and dialogs offscreen and measure the button pixels.
+# --------------------------------------------------------------------------
+def measure_widget(widget) -> tuple[str, str, float]:
+    """(background, text colour, ratio) of a rendered button.
+
+    Background = most frequent colour inside the border; text = the frequent
+    colour with the highest contrast against it (anti-aliasing produces only
+    a few pixels of each intermediate shade, so they are ignored).
+    """
+    from collections import Counter
+
+    image = widget.grab().toImage()
+    w, h = image.width(), image.height()
+    counts: Counter = Counter()
+    for y in range(3, max(4, h - 3)):
+        for x in range(3, max(4, w - 3)):
+            counts[image.pixelColor(x, y).name()] += 1
+    background = counts.most_common(1)[0][0]
+    total = sum(counts.values())
+    # A wide button with a short word has very few text pixels, so the floor
+    # is small; single anti-aliasing shades still stay below it.
+    candidates = [c for c, n in counts.items() if n >= max(6, total * 0.001) and c != background]
+    if not candidates:
+        return background, background, 1.0
+    text = max(candidates, key=lambda c: contrast_ratio(c, background))
+    return background, text, contrast_ratio(text, background)
+
+
+def rendered_pairs() -> list[tuple[str, str, str, float]]:
+    """Render wizards, login and dialogs; return measured (label, fg, bg, min)."""
+    import os
+    import tempfile
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
+
+    from app.api_client import ShopApiClient
+    from app.auth import AuthService
+    from app.store import Store
+    from app.ui import theme, widgets
+    from app.ui.login_window import LoginWindow
+    from app.ui.wizard import SetupWizard
+
+    app = QApplication.instance() or QApplication([])
+    app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    theme.apply_theme(app)
+
+    def settle() -> None:
+        for _ in range(10):
+            app.processEvents()
+
+    results: list[tuple[str, str, str, float]] = []
+
+    def check(label: str, button) -> None:
+        settle()
+        background, text, _ratio = measure_widget(button)
+        results.append((f"rendered {label}", text, background, 4.5))
+
+    tmp = tempfile.mkdtemp(prefix="contrast-audit-")
+    stores: list = []
+    windows: list = []
+    try:
+        store = Store(os.path.join(tmp, "w.db"))
+        stores.append(store)
+        wizard = SetupWizard(store, AuthService(store, ShopApiClient()))
+        wizard.show()
+        windows.append(wizard)
+        check("setup wizard «ادامه»", wizard.next_button)
+
+        login_store = Store(os.path.join(tmp, "l.db"))
+        stores.append(login_store)
+        login_store.configure_connection("http://shopapi.test")
+        login = LoginWindow(login_store, AuthService(login_store, ShopApiClient()))
+        login.show()
+        windows.append(login)
+        primaries = [b for b in login.findChildren(QPushButton) if b.objectName() == "Primary"]
+        for index, button in enumerate(primaries):
+            check(f"login primary #{index + 1} «{button.text().strip()}»", button)
+
+        try:
+            from app.ui.server_setup_wizard import ServerSetupWizard
+
+            server_wizard = ServerSetupWizard()
+            server_wizard.show()
+            windows.append(server_wizard)
+            check("server setup wizard «ادامه»", server_wizard.next_button)
+        except ImportError:
+            server_wizard = None  # client build without the server setup
+
+        parents = [("no parent", None), ("over setup wizard", wizard), ("over login", login)]
+        if server_wizard is not None:
+            parents.append(("over server wizard", server_wizard))
+        for where, parent in parents:
+            dialog = widgets.MessageDialog(parent, "خطا", "نمونهٔ پیام خطا", "error")
+            dialog.show()
+            check(f"error dialog «باشه» ({where})", dialog.ok_button)
+            dialog.close()
+
+            confirm = widgets.ConfirmDialog(parent, "تأیید", "نمونه", kind="warning")
+            confirm.show()
+            for button in confirm.findChildren(QPushButton):
+                check(f"confirm dialog «{button.text().strip()}» ({where})", button)
+            confirm.close()
+
+            box = QMessageBox(QMessageBox.Icon.Critical, "خطا", "نمونهٔ پیام", QMessageBox.StandardButton.Ok, parent)
+            box.show()
+            check(f"QMessageBox OK ({where})", box.button(QMessageBox.StandardButton.Ok))
+            box.close()
+    finally:
+        from PySide6.QtCore import QThreadPool
+
+        QThreadPool.globalInstance().waitForDone(10_000)
+        settle()
+        for window in windows:
+            window.close()
+        for store in stores:
+            try:
+                store.close()
+            except Exception:  # noqa: BLE001
+                pass
+    return results
+
+
 def main() -> int:
     pairs: list[tuple[str, str, str, float]] = []
     pairs += from_theme()
     pairs += EXTRA_PAIRS
     pairs += PILL_PAIRS
     pairs += INDICATOR_PAIRS
+    pairs += DIALOG_BUTTON_PAIRS
     pairs += stylesheet_literals()
+    if "--no-render" not in sys.argv:
+        pairs += rendered_pairs()
 
     failures: list[tuple[str, str, str, float, float]] = []
     print(f"{'ratio':>7}  {'min':>4}  result  pair")

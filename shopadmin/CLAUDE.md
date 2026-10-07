@@ -9,7 +9,7 @@
 - **قاعده:** در شروع هر جلسه، قبل از هر کاری این بخش را بخوان و با وضعیت واقعی پوشه‌ها تطبیق بده؛ اگر کهنه بود اصلاحش کن.
 - **چه کسی صدا می‌زند:** ربات‌های بله/تلگرام (`BOT_API_KEY`) و ShopAdmin (`ADMIN_API_KEY`) → shopapi → SQL Server «سازه حساب». سایت به API وصل نیست (فقط لینک ربات).
 - **سرور فروشگاه (PC کنار SQL Server):** `ShopSystem.exe` (shopapi + بات‌ها، با `.env` و دو SQLite کنار exe) و SQL Server/ODBC Driver 17؛ تنها جایی که به حسابداری وصل می‌شود.
-- **PCهای کارمندان:** فقط `ShopAdmin.exe` با آدرس راه دور سرور + کلید ادمین؛ برای آدرس غیرمحلی هیچ سرویسی راه نمی‌اندازد. (استنباط از `NOTES.md`/`child_process.py`؛ استقرار چندکاره هنوز عملاً تست نشده.)
+- **PCهای کارمندان:** فقط `ShopAdmin.exe` با آدرس راه دور سرور + کلید ادمین؛ **هرگز** سرور را پیدا/اجرا/متوقف نمی‌کند (از 2026-10-07 `services/connection.py` فقط `/health` را پروب می‌کند؛ `child_process.py`/`jobobject.py` حذف شدند).
 - **نصب تک‌سیستمه:** `ShopAdminSetup.exe` هر دو را کنار هم نصب می‌کند و ShopAdmin سرویس را خودش بالا می‌آورد.
 - **ناتمام (کار نصب‌کننده ۱۴۰۵/۰۷/۱۳ نیمه‌کاره ماند):**
   1. `.env` توسعه داخل staging/installer رفته → پاک‌سازی و بیلد مجدد (`ShopAdminSetup.exe` فعلی را نده).
@@ -40,7 +40,7 @@
 
 ## ساختار shopadmin
 
-- `app/`: `main.py`, `api_client.py` (ترجمهٔ خطا به فارسی), `auth.py` (bcrypt، قفل ۵ تلاش/۱۵ دقیقه، توکن remember-me در keyring), `store.py` (SQLite محلی: `admin_users`, settings, audit), `permissions.py` (super_admin / مدیر فروش / اپراتور / ناظر), `persian.py` (ارقام فارسی + شمسی بدون وابستگی), `statuses.py`, `reporting.py`, `paths.py`, `services/child_process.py` + `jobobject.py` (راه‌اندازی خودکار ShopSystem.exe)، `ui/` (صفحه‌ها، wizard اولیه، login، theme AA).
+- `app/`: `main.py`, `api_client.py` (ترجمهٔ خطا به فارسی), `auth.py` (bcrypt، قفل ۵ تلاش/۱۵ دقیقه، توکن remember-me در keyring), `store.py` (SQLite محلی: `admin_users`, settings, audit), `permissions.py` (super_admin / مدیر فروش / اپراتور / ناظر), `persian.py` (ارقام فارسی + شمسی بدون وابستگی), `statuses.py`, `reporting.py`, `paths.py`, `services/connection.py` (فقط پروب اتصال؛ بیلد کلاینت بدون `server_setup`)، `ui/` (صفحه‌ها، wizard اولیه، login، theme AA).
 - داده محلی: `%LOCALAPPDATA%\ShopAdmin` (`shopadmin.db`, `app.log`, `shopapi.log`)؛ با `SHOPADMIN_DATA_DIR` قابل تغییر.
 - `tests/` (~۳۱۱ تست، بدون شبکه/SQL)، `scripts/` (`e2e_check.py`, `e2e_app_live.py` نیاز به shopapi زنده؛ `contrast_audit.py`, `render_screens.py` → `docs/screens/`).
 - بیلد: `build_shopadmin.py --clean` (یا `.bat`) → `dist/ShopAdmin/`؛ سپس `build_installer.bat` → `dist/installer/ShopAdminSetup.exe` (۴۸MB). نیازمند Inno Setup (`.tools/innosetup.exe`, یا `winget install JRSoftware.InnoSetup`) و بیلد قبلی `../shopsystem/build_exe.bat`. ویل‌های PySide6 در `.wheels/` (به‌خاطر قطعی TLS با pythonhosted).

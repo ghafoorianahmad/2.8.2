@@ -114,7 +114,7 @@ class MainWindow(QMainWindow):
         self._build_pages()
         self._install_inactivity_filter()
         self._connect_context()
-        self._build_service_monitor()
+        self._build_server_monitor()
         self._refresh_header()
         self._update_banner()
 
@@ -245,24 +245,24 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(widgets.vline())
 
-        # ---- shopapi service state (متصل / در حال راه‌اندازی / قطع) ------
-        service_box = QWidget()
-        service_layout = QHBoxLayout(service_box)
-        service_layout.setContentsMargins(0, 0, 0, 0)
-        service_layout.setSpacing(8)
-        self.service_dot = QLabel()
-        self.service_dot.setFixedSize(14, 14)
-        service_layout.addWidget(self.service_dot)
-        self.service_label = widgets.label("", name="Muted")
-        service_layout.addWidget(self.service_label)
-        self.service_retry_button = widgets.button(
-            "راه‌اندازی", icon_name="refresh", variant="ghost",
-            tooltip="تلاش دوباره برای راه‌اندازی سرویس فروشگاه",
-            on_click=self.retry_service,
+        # ---- server reachability (متصل / در حال بررسی / در دسترس نیست) ----
+        server_box = QWidget()
+        server_layout = QHBoxLayout(server_box)
+        server_layout.setContentsMargins(0, 0, 0, 0)
+        server_layout.setSpacing(8)
+        self.server_dot = QLabel()
+        self.server_dot.setFixedSize(14, 14)
+        server_layout.addWidget(self.server_dot)
+        self.server_label = widgets.label("", name="Muted")
+        server_layout.addWidget(self.server_label)
+        self.server_retry_button = widgets.button(
+            "تلاش دوباره", icon_name="refresh", variant="ghost",
+            tooltip="بررسی دوبارهٔ اتصال به سرور فروشگاه",
+            on_click=self.retry_server,
         )
-        self.service_retry_button.setVisible(False)
-        service_layout.addWidget(self.service_retry_button)
-        layout.addWidget(service_box)
+        self.server_retry_button.setVisible(False)
+        server_layout.addWidget(self.server_retry_button)
+        layout.addWidget(server_box)
 
         layout.addWidget(widgets.vline())
 
@@ -401,69 +401,73 @@ class MainWindow(QMainWindow):
             if page is not None and hasattr(page, "configure_auto_refresh"):
                 page.configure_auto_refresh()
 
-    # ------------------------------------------------------- shopapi service
-    def _build_service_monitor(self) -> None:
-        """Create a ServiceMonitor when the controller did not supply one.
+    # ------------------------------------------------------- server reachability
+    # The console is a pure client: it only probes the configured server
+    # address. It never looks for, starts or stops a server program.
+    def _build_server_monitor(self) -> None:
+        """Own a monitor until the controller attaches its shared one (tests)."""
+        from ..services.connection import ServerMonitor
 
-        Normally the application controller owns the monitor (so it can start
-        the service before anyone logs in, and always clean it up on quit); this
-        fallback keeps :class:`MainWindow` usable on its own, e.g. in tests.
-        """
-        from ..services.child_process import ServiceMonitor
+        self.attach_server_monitor(ServerMonitor(self.context.store.base_url, self))
 
-        monitor = getattr(self, "_injected_service_monitor", None)
+    def attach_server_monitor(self, monitor) -> None:
+        """Connect a ServerMonitor to this window's top bar."""
+        previous = getattr(self, "server_monitor", None)
+        if previous is not None and previous is not monitor:
+            previous.state_changed.disconnect(self._on_server_state)
+            previous.unreachable.disconnect(self._on_server_unreachable)
+        self.server_monitor = monitor
+        monitor.set_base_url(self.context.store.base_url, self.context.store.server_cert_pem)
+        if previous is not monitor:
+            monitor.state_changed.connect(self._on_server_state)
+            monitor.unreachable.connect(self._on_server_unreachable)
+        self._on_server_state(monitor.state)
+
+    def check_server(self, *, report: bool = True) -> None:
+        """Probe the configured server address (never launches anything)."""
+        monitor = getattr(self, "server_monitor", None)
         if monitor is None:
-            monitor = ServiceMonitor(self.context.store.base_url, self)
-        self.attach_service_monitor(monitor)
-
-    def attach_service_monitor(self, monitor) -> None:
-        """Connect an externally owned ServiceMonitor to this window's top bar."""
-        self.service_monitor = monitor
-        self.service_monitor.set_base_url(self.context.store.base_url,
-                                         self.context.store.server_cert_pem)
-        self.service_monitor.state_changed.connect(self._on_service_state)
-        self.service_monitor.message.connect(self._on_service_message)
-        self.service_monitor.failed.connect(self._on_service_error)
-        self._on_service_state(self.service_monitor.state)
-
-    def ensure_service_running(self) -> None:
-        """Ask the manager to probe, and start the local service if needed."""
-        if getattr(self, "service_monitor", None) is None:
             return
-        self.service_monitor.set_base_url(self.context.store.base_url,
-                                         self.context.store.server_cert_pem)
-        self.service_monitor.ensure_running_async()
+        monitor.set_base_url(self.context.store.base_url, self.context.store.server_cert_pem)
+        monitor.check_async(report=report)
 
-    def retry_service(self) -> None:
-        self.service_retry_button.setEnabled(False)
-        self.service_retry_button.setText("در حال تلاش…")
-        self.ensure_service_running()
+    def retry_server(self) -> None:
+        self.server_retry_button.setEnabled(False)
+        self.server_retry_button.setText("در حال تلاش…")
+        self.check_server()
 
-    def _on_service_state(self, state) -> None:
-        from ..services.child_process import ServiceState
+    def _on_server_state(self, state) -> None:
+        from ..services.connection import ConnectionState
 
         colors = {
-            ServiceState.CONNECTED: (theme.SUCCESS, theme.SUCCESS_DARK),
-            ServiceState.STARTING: (theme.WARNING, theme.WARNING_TEXT),
-            ServiceState.OFFLINE: (theme.DANGER, theme.DANGER),
-            ServiceState.REMOTE: (theme.INFO, theme.INFO_DARK),
+            ConnectionState.CONNECTED: (theme.SUCCESS, theme.SUCCESS_DARK),
+            ConnectionState.CHECKING: (theme.WARNING, theme.WARNING_TEXT),
+            ConnectionState.OFFLINE: (theme.DANGER, theme.DANGER),
         }
         dot_color, text_color = colors.get(state, (theme.TEXT_FAINT, theme.TEXT_MUTED))
-        self.service_dot.setPixmap(theme.dot_pixmap(dot_color, 14))
-        self.service_label.setText(state.label_fa)
-        self.service_label.setStyleSheet(f"color: {text_color};")
-        self.service_retry_button.setVisible(state == ServiceState.OFFLINE)
-        self.service_retry_button.setEnabled(True)
-        self.service_retry_button.setText("راه‌اندازی")
+        self.server_dot.setPixmap(theme.dot_pixmap(dot_color, 14))
+        self.server_label.setText(state.label_fa)
+        self.server_label.setStyleSheet(f"color: {text_color};")
+        self.server_retry_button.setVisible(state == ConnectionState.OFFLINE)
+        self.server_retry_button.setEnabled(True)
+        self.server_retry_button.setText("تلاش دوباره")
 
-    def _on_service_message(self, message: str) -> None:
-        if message:
-            self.toasts.show(message, "info", 3000)
+    def _on_server_unreachable(self, message: str) -> None:
+        """«سرور در دسترس نیست» + address, with a retry; never blocks the app."""
+        from ..services.connection import MSG_SERVER_UNREACHABLE
 
-    def _on_service_error(self, message: str) -> None:
-        """A failed auto-start is shown clearly but must not block the app."""
-        widgets.error(self, "سرویس فروشگاه", message)
-        self.toasts.show_error(message)
+        self.toasts.show_error(MSG_SERVER_UNREACHABLE)
+        if not self.isVisible() or getattr(self, "_unreachable_open", False):
+            return
+        self._unreachable_open = True
+        try:
+            retry = widgets.confirm(self, MSG_SERVER_UNREACHABLE, message,
+                                    confirm_text="تلاش دوباره", cancel_text="بستن",
+                                    kind="warning")
+        finally:
+            self._unreachable_open = False
+        if retry:
+            self.retry_server()
 
     def _update_banner(self) -> None:
         """Yellow banner whenever shopapi runs with accounting writes disabled."""
@@ -596,10 +600,8 @@ class MainWindow(QMainWindow):
 
     def _on_connection_probe_ok(self, info) -> None:
         self.context.apply_system_info(info)
-        # Keep the service indicator honest about what the server really is.
-        monitor = getattr(self, "service_monitor", None)
-        if monitor is not None:
-            monitor.refresh_state_async()
+        # Keep the server indicator honest (quietly: no dialog on a blip).
+        self.check_server(report=False)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)

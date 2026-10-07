@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 from xml.sax.saxutils import escape
 
+from .errors import SetupError
 from .logging_setup import get_logger
 from .paths import app_dir, is_frozen
 
@@ -43,13 +44,7 @@ SID_ADMINISTRATORS = "S-1-5-32-544"
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
-class SetupError(Exception):
-    """A setup step failed; ``message`` is Persian and safe to show."""
-
-    def __init__(self, message: str, detail: str = "") -> None:
-        super().__init__(message)
-        self.message = message
-        self.detail = detail
+__all__ = ["SetupError"]
 
 
 def data_dir() -> Path:
@@ -84,11 +79,29 @@ def relaunch_elevated(extra_args: list[str]) -> bool:
 # --------------------------------------------------------------------------
 # the server program
 # --------------------------------------------------------------------------
+SERVER_EXE_NAME = "ShopSystem.exe"
+
+
+def find_server_executable() -> Optional[Path]:
+    """The server installer's layout: ``{app}\\ShopSystem\\ShopSystem.exe``.
+
+    Only the server setup (``--server-setup``, run by ShopServerSetup) uses
+    this; the everyday management console never looks for the server program.
+    """
+    here = app_dir()
+    roots = [here, here / "ShopSystem", here.parent / "ShopSystem"]
+    if not is_frozen():
+        roots.append(here.parent / "shopsystem" / "dist" / "ShopSystem")
+    for root in roots:
+        candidate = root / SERVER_EXE_NAME
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def server_command() -> list[str]:
     """How to run ShopSystem: the installed exe, or launcher.py from source."""
-    from .services.child_process import find_service_executable
-
-    exe = find_service_executable()
+    exe = find_server_executable()
     if exe is not None:
         return [str(exe)]
     source = app_dir().parent / "shopsystem" / "launcher.py"

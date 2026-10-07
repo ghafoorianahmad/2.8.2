@@ -185,7 +185,9 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#MyServiceExeName}"; \
 ; (settings + log) and %ProgramData%\ShopServer are intentionally left behind
 ; so a reinstall keeps the configuration. Documented in installer_readme.txt.
 Type: files; Name: "{app}\shopapi.log"
+#ifdef SERVER
 Type: dirifempty; Name: "{app}\ShopSystem"
+#endif
 
 [Code]
 { ---------------------------------------------------------------------

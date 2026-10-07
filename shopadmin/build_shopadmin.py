@@ -43,6 +43,12 @@ EXCLUDED_QT_MODULES = (
 )
 
 
+#: Left out of the staff-computer (client) build: only the server installer
+#: runs the server setup, and the client must carry nothing that knows how to
+#: find or start the server program.
+SERVER_ONLY_MODULES = ("app.server_setup", "app.ui.server_setup_wizard")
+
+
 def check_environment() -> None:
     missing: list[str] = []
     for module in ("PySide6", "httpx", "bcrypt", "dotenv", "openpyxl"):
@@ -74,11 +80,17 @@ def assets_exist() -> bool:
     return any(assets.rglob("*"))
 
 
-def build(clean: bool, console: bool) -> int:
+def build(clean: bool, console: bool, variant: str = "full") -> int:
     check_environment()
+    client = variant == "client"
+    # The client build gets its own output folders so both builds can coexist.
+    dist_dir = DIST_DIR / "client" if client else DIST_DIR
+    work_dir = BUILD_DIR / "pyi_client" if client else BUILD_DIR
+    spec_dir = BUILD_DIR / "spec_client" if client else ROOT
 
     if clean:
-        for path in (DIST_DIR, BUILD_DIR):
+        targets = (dist_dir / APP_NAME, work_dir) if client else (DIST_DIR / APP_NAME, BUILD_DIR / APP_NAME)
+        for path in targets:
             if path.exists():
                 shutil.rmtree(path, ignore_errors=True)
                 print(f"removed {path}")
@@ -106,9 +118,9 @@ def build(clean: bool, console: bool) -> int:
         "--clean",
         "--onedir",
         "--name", APP_NAME,
-        "--distpath", str(DIST_DIR),
-        "--workpath", str(BUILD_DIR),
-        "--specpath", str(ROOT),
+        "--distpath", str(dist_dir),
+        "--workpath", str(work_dir),
+        "--specpath", str(spec_dir),
         "--hidden-import", "bcrypt",
         "--hidden-import", "openpyxl",
         "--hidden-import", "PySide6.QtSvg",
@@ -123,6 +135,7 @@ def build(clean: bool, console: bool) -> int:
         "--collect-submodules", "keyring",
         "--collect-submodules", "openpyxl",
         *[f"--exclude-module={module}" for module in EXCLUDED_QT_MODULES],
+        *([f"--exclude-module={module}" for module in SERVER_ONLY_MODULES] if client else []),
         *add_data,
         *icon_args,
         ("--console" if console else "--windowed"),
@@ -135,12 +148,20 @@ def build(clean: bool, console: bool) -> int:
         print("BUILD FAILED", file=sys.stderr)
         return result.returncode
 
-    exe = DIST_DIR / APP_NAME / f"{APP_NAME}.exe"
+    exe = dist_dir / APP_NAME / f"{APP_NAME}.exe"
     if not exe.exists():
         print(f"BUILD FAILED: {exe} was not produced", file=sys.stderr)
         return 1
+    if client:
+        leaked = client_build_leaks(dist_dir / APP_NAME)
+        if leaked:
+            print("BUILD FAILED: the client build still references the server program:",
+                  file=sys.stderr)
+            for path in leaked:
+                print(f"   {path}", file=sys.stderr)
+            return 1
 
-    size_mb = sum(f.stat().st_size for f in (DIST_DIR / APP_NAME).rglob("*") if f.is_file()) / 1e6
+    size_mb = sum(f.stat().st_size for f in (dist_dir / APP_NAME).rglob("*") if f.is_file()) / 1e6
     print()
     print("=" * 68)
     print(" BUILD SUCCEEDED")
@@ -152,14 +173,75 @@ def build(clean: bool, console: bool) -> int:
     return 0
 
 
+def client_build_leaks(folder: Path) -> list[Path]:
+    """Files in a build that mention ``ShopSystem`` (the server program).
+
+    PyInstaller keeps the compiled app modules zlib-compressed inside the PYZ
+    archive, so a plain byte search cannot see them; the archive is opened
+    and every module is decompressed and searched too.
+    """
+    needle = b"ShopSystem"
+    hits: list[Path] = []
+    for path in folder.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if needle in data or needle.lower() in data.lower():
+            hits.append(path)
+    hits += [folder / name for name in _pyz_modules_mentioning(folder, needle)]
+    return hits
+
+
+def _pyz_modules_mentioning(folder: Path, needle: bytes) -> list[str]:
+    """Names of modules inside the bundled PYZ archive(s) containing ``needle``."""
+    try:
+        from PyInstaller.archive.readers import CArchiveReader, ZlibArchiveReader
+    except ImportError:
+        return []
+    found: list[str] = []
+    exe = folder / f"{APP_NAME}.exe"
+    archives = [p for p in folder.rglob("*.pyz")]
+    try:
+        carchive = CArchiveReader(str(exe))
+        for name in carchive.toc:
+            if name.endswith(".pyz") or name == "PYZ-00.pyz" or name.startswith("PYZ"):
+                archives.append((exe, name))
+    except Exception:  # noqa: BLE001 - not a PyInstaller exe / layout differs
+        pass
+    for archive in archives:
+        try:
+            if isinstance(archive, tuple):
+                reader = CArchiveReader(str(archive[0])).open_embedded_archive(archive[1])
+            else:
+                reader = ZlibArchiveReader(str(archive))
+            for name in reader.toc:
+                try:
+                    code = reader.extract(name, raw=True)
+                except TypeError:
+                    code = reader.extract(name)
+                blob = code if isinstance(code, (bytes, bytearray)) else repr(code).encode()
+                if needle in blob or needle.lower() in bytes(blob).lower():
+                    found.append(f"PYZ:{name}")
+        except Exception:  # noqa: BLE001
+            continue
+    return found
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build ShopAdmin.exe")
-    parser.add_argument("--clean", action="store_true", help="remove build/ and dist/ first")
+    parser.add_argument("--clean", action="store_true", help="remove the previous build first")
     parser.add_argument("--console", action="store_true",
                         help="keep a console window (useful for troubleshooting)")
+    parser.add_argument("--variant", choices=("full", "client"), default="full",
+                        help="full = with the server setup (ShopServerSetup); "
+                             "client = staff computers, no server setup at all "
+                             "(-> dist\\client\\ShopAdmin)")
     args = parser.parse_args()
     try:
-        return build(args.clean, args.console)
+        return build(args.clean, args.console, args.variant)
     except SystemExit as exc:  # pragma: no cover
         return int(exc.code or 0)
 

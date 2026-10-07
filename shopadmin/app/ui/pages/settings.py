@@ -285,8 +285,8 @@ class SettingsPage(BasePage):
                 theme.WARNING_TEXT,
             )
             self.connection_hint.setText(
-                "برای نمایش وضعیت ثبت در حسابداری، سرویس فروشگاه را با نسخهٔ "
-                "به‌روز («ShopSystem.exe») دوباره بسازید."
+                "برای نمایش وضعیت ثبت در حسابداری، نرم‌افزار سرور فروشگاه را "
+                "روی رایانهٔ سرور به‌روز کنید."
             )
             return
         mode = "فعال (ثبت واقعی در حسابداری)" if info.accounting_write_enabled \

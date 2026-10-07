@@ -80,9 +80,8 @@ class ShopAdminApp(QObject):
         self.wizard: Optional[SetupWizard] = None
         self.watcher = None
         self.notifier = None
-        #: Owned here (not by the window) so it always survives long enough to
-        #: be cleaned up on quit, even if the main window is already gone.
-        self.service_monitor = None
+        #: Probe-only reachability monitor; the console never runs a server.
+        self.server_monitor = None
         self._logging_out = False
         self._locked = False
         self._quitting = False
@@ -97,7 +96,6 @@ class ShopAdminApp(QObject):
         if server_setup:
             self.show_server_setup()
             return
-        self.ensure_service_started()
         if needs_setup(self.store):
             log.info("first run detected; showing the setup wizard")
             self.show_wizard()
@@ -112,31 +110,15 @@ class ShopAdminApp(QObject):
         self.api.configure(self.store.base_url)
         self.api.set_server_cert(self.store.server_cert_pem)
 
-    # -------------------------------------------------------------- service
-    def ensure_service_started(self) -> None:
-        """Probe the shopapi address and start ShopSystem.exe if it is local."""
-        from .services.child_process import ServiceMonitor
+    # -------------------------------------------------------------- server
+    def server_monitor_for_window(self):
+        """The reachability monitor shared by the main window (probe only)."""
+        from .services.connection import ServerMonitor
 
-        base_url = self.store.base_url
-        if not base_url:
-            return
-        if self.service_monitor is None:
-            self.service_monitor = ServiceMonitor(base_url)
-            self.service_monitor.failed.connect(self._on_service_failure)
-            self.service_monitor.failed_soft.connect(self._on_service_slow)
-        self.service_monitor.set_base_url(base_url, self.store.server_cert_pem)
-        self.service_monitor.ensure_running_async()
-
-    def _on_service_failure(self, message: str) -> None:
-        parent = self.main_window or self.login_window or self.wizard
-        log.warning("service start reported a problem: %s", message)
-        try:
-            widgets.error(parent, "سرویس فروشگاه", message)
-        except Exception as exc:  # noqa: BLE001 - a dialog must never be fatal
-            log.warning("could not show the service error dialog: %s", type(exc).__name__)
-
-    def _on_service_slow(self, message: str) -> None:
-        log.warning("service is slow to become ready: %s", message)
+        if self.server_monitor is None:
+            self.server_monitor = ServerMonitor(self.store.base_url)
+        self.server_monitor.set_base_url(self.store.base_url, self.store.server_cert_pem)
+        return self.server_monitor
 
     # -------------------------------------------------------------- auto login
     def _try_auto_login(self) -> bool:
@@ -183,7 +165,6 @@ class ShopAdminApp(QObject):
             self.wizard.close()
             self.wizard = None
         log.info("setup wizard finished")
-        self.ensure_service_started()
         self._configure_api()
         self.show_login()
 
@@ -239,14 +220,14 @@ class ShopAdminApp(QObject):
         self._start_notifications()
         self.context.notifier = self.notifier
         self.main_window = MainWindow(self.context)
-        self.main_window.attach_service_monitor(self.service_monitor)
+        self.main_window.attach_server_monitor(self.server_monitor_for_window())
         self.main_window.logout_requested.connect(self.logout)
         self.main_window.session_expired.connect(self._lock)
         self.main_window.close_requested.connect(self._on_main_close)
         self.main_window.show()
         _centre(self.main_window)
         self.main_window.reset_activity()
-        QTimer.singleShot(50, self.main_window.ensure_service_running)
+        QTimer.singleShot(50, self.main_window.check_server)
         QTimer.singleShot(700, self.main_window.check_connection_async)
         log.info("session started for role=%s (auto=%s)", principal.role, auto)
 
@@ -393,19 +374,11 @@ class ShopAdminApp(QObject):
         self.app.quit()
 
     def shutdown(self) -> None:
-        """Stop the local shopapi service we started. Safe to call twice."""
+        """Stop notifications on quit. Safe to call twice; no server is touched."""
         self._stop_notifications()
         if self.notifier is not None:
             self.notifier.hide()
-        monitor = self.service_monitor
-        if monitor is None:
-            return
-        self.service_monitor = None
-        log.info("application is quitting; stopping the local service if we started it")
-        try:
-            monitor.shutdown()
-        except Exception as exc:  # noqa: BLE001 - shutdown must never raise
-            log.exception("error during service shutdown: %s", type(exc).__name__)
+        self.server_monitor = None
 
 
 def _logout_token(base_url: str, token: str, server_cert_pem: str = "") -> None:
@@ -508,7 +481,18 @@ def run(argv: list[str] | None = None) -> int:
     server_setup = "--server-setup" in args
 
     if server_setup:
-        from .server_setup import is_admin, relaunch_elevated
+        try:
+            from .server_setup import is_admin, relaunch_elevated
+        except ImportError:
+            # The staff-computer build ships without the server setup.
+            logger.info("--server-setup requested in the client build; refusing")
+            QApplication(args)
+            QMessageBox.information(
+                None, "راه‌اندازی سرور",
+                "این نسخه فقط برنامهٔ مدیریت (کلاینت) است. برای راه‌اندازی سرور، "
+                "«ShopServerSetup» را روی رایانهٔ سرور نصب کنید.",
+            )
+            return 0
 
         if not is_admin():
             # Ask Windows for administrator rights (UAC) and let that copy work.

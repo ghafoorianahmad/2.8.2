@@ -18,7 +18,7 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 
 from ..api_client import ApiError
 from ..auth import AuthError
-from ..server_setup import SetupError
+from ..errors import SetupError
 from ..logging_setup import get_logger
 
 log = get_logger("worker")

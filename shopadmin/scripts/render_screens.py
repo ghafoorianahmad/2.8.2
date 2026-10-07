@@ -170,6 +170,27 @@ def render_all(app: QApplication, tmp: Path, opened: list) -> int:
     wizard.new_username_input.setText("owner")
     settle(app, 5)
     grab(wizard, OUT / "03-wizard-admin.png")
+
+    # ---- dialogs over the wizard (they inherit its stylesheet) -----------
+    from app.services.connection import MSG_SERVER_UNREACHABLE, unreachable_message
+    from app.ui import widgets
+
+    error_dialog = widgets.MessageDialog(
+        wizard, "خطای اتصال", "ارتباط با سرور فروشگاه برقرار نشد.", "error",
+        detail="نشانی سرور و اتصال شبکه را بررسی کنید.",
+    )
+    error_dialog.show()
+    settle(app, 5)
+    grab(error_dialog, OUT / "16-error-dialog.png")
+    error_dialog.close()
+    unreachable = widgets.ConfirmDialog(
+        wizard, MSG_SERVER_UNREACHABLE, unreachable_message("https://192.168.1.10:8443"),
+        confirm_text="تلاش دوباره", cancel_text="بستن", kind="warning",
+    )
+    unreachable.show()
+    settle(app, 5)
+    grab(unreachable, OUT / "17-server-unreachable.png")
+    unreachable.close()
     wizard.close()
 
     # ---- login ------------------------------------------------------------

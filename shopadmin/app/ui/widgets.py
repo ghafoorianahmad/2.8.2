@@ -604,6 +604,21 @@ def position_toasts(host: ToastHost) -> None:
 # --------------------------------------------------------------------------
 # dialogs
 # --------------------------------------------------------------------------
+def fit_wrapped_height(dialog: QDialog) -> None:
+    """Grow a dialog so wrapped labels are not clipped.
+
+    Top-level windows ignore height-for-width, so a long wrapped message would
+    be cut off at the bottom; ask the layout for the height it needs at the
+    current width instead.
+    """
+    layout = dialog.layout()
+    if layout is None:
+        return
+    needed = layout.totalHeightForWidth(dialog.width())
+    if needed > dialog.height():
+        dialog.resize(dialog.width(), needed)
+
+
 class MessageDialog(QDialog):
     """A clear Persian message box with an icon; no English button text."""
 
@@ -654,6 +669,10 @@ class MessageDialog(QDialog):
         root.addLayout(buttons)
         self.ok_button.setDefault(True)
 
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        fit_wrapped_height(self)
+
 
 class ConfirmDialog(QDialog):
     """RTL confirmation with Persian Yes/No labels."""
@@ -694,6 +713,10 @@ class ConfirmDialog(QDialog):
         buttons.addWidget(confirm)
         buttons.addWidget(cancel)
         root.addLayout(buttons)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        fit_wrapped_height(self)
 
 
 def info(parent: QWidget | None, title: str, message: str, *, kind: str = "info",
