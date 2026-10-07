@@ -15,7 +15,13 @@ from . import texts
 from .config import Settings
 from .platforms import BotApiError, PlatformAdapter, contact_keyboard, inline_keyboard, reply_keyboard
 from .ratelimit import RateLimiter
-from .shopapi import ShopApiClient, ShopApiError, ShopApiUnavailable, format_admin_error
+from .shopapi import (
+    ShopApiClient,
+    ShopApiError,
+    ShopApiRejected,
+    ShopApiUnavailable,
+    format_admin_error,
+)
 from .store import Store
 from .utils import (
     fmt_num,
@@ -43,6 +49,8 @@ CALLBACK_ARG_COUNTS: dict[str, int] = {
     "cart": 0,
     "orders": 0,
     "contact": 0,
+    "support": 0,
+    "info": 0,
     "search": 0,
     "cclear": 0,
     "checkout": 0,
@@ -55,12 +63,21 @@ CALLBACK_ARG_COUNTS: dict[str, int] = {
     "adru": 1,
     "adap": 1,
     "adrp": 1,
+    "adst": 1,
+    "rcpt": 1,
     "pg": 2,
     "qty": 2,
     "add": 2,
     "adsug": 2,
 }
-ADMIN_ACTIONS = frozenset({"addu", "adru", "adap", "adrp", "adsug"})
+ADMIN_ACTIONS = frozenset({"addu", "adru", "adap", "adrp", "adsug", "adst"})
+#: Screens anyone may open, even before registration is approved.
+PUBLIC_ACTIONS = frozenset({"support", "info", "contact"})
+#: shopapi event kinds that mean "tell the customer" (decisions made in ShopAdmin too).
+CUSTOMER_EVENT_KINDS = frozenset(
+    {"customer_approved", "customer_rejected", "payment_approved", "payment_rejected"}
+)
+EVENT_CURSOR_KEY = "shopapi_event_cursor"
 MAX_CALLBACK_LEN = 64
 MAX_CALLBACK_ARG = 1_000_000_000
 MAX_QTY = 1000
@@ -87,6 +104,10 @@ def parse_callback(data: Any) -> tuple[str, list[int]] | None:
             return None
         args.append(value)
     return action, args
+
+
+def _stock_label(in_stock: bool) -> str:
+    return texts.IN_STOCK if in_stock else texts.OUT_OF_STOCK_LABEL
 
 
 def _safe_error(exc: BaseException) -> str:
@@ -293,13 +314,28 @@ class BotEngine:
         state, data = self.store.get_conversation(platform, chat_id)
 
         is_admin = self.settings.is_admin_chat(platform, chat_id)
+        command = text.split()[0].lower().split("@", 1)[0] if text.startswith("/") else ""
+
+        # commands that work for everyone, in any state
+        if command == "/myid":
+            await self._send_text(adapter, chat_id, texts.MY_ID.format(chat_id=chat_id))
+            return
+        if command == "/help":
+            await self._send_text(adapter, chat_id, texts.HELP)
+            return
 
         # admin commands and the admin person-code prompt come first
-        if text.startswith("/") and is_admin:
+        if command and is_admin:
             if await self._maybe_admin_command(adapter, platform, chat_id, text):
                 return
         if state == STATE_ADMIN_PERSON_CODE and is_admin:
             await self._admin_person_code(adapter, platform, chat_id, text, data)
+            return
+
+        # /start always restarts, even in the middle of registration
+        if command in ("/start", "/menu"):
+            self.store.clear_conversation(platform, chat_id)
+            await self._customer_entry(adapter, platform, chat_id, welcome=command == "/start")
             return
 
         # registration states (the user may not exist in shopapi yet)
@@ -308,11 +344,6 @@ class BotEngine:
             return
         if state == STATE_AWAIT_PHONE:
             await self._registration_phone(adapter, platform, chat_id, text, contact)
-            return
-
-        if text.startswith("/start"):
-            self.store.clear_conversation(platform, chat_id)
-            await self._customer_entry(adapter, platform, chat_id)
             return
 
         # text-only platforms: a typed button label acts as a callback
@@ -325,12 +356,8 @@ class BotEngine:
         if user is None:
             await self._begin_registration(adapter, platform, chat_id)
             return
-        status = user.get("status")
-        if status == "pending":
-            await self._send_text(adapter, chat_id, texts.STILL_PENDING)
-            return
-        if status == "rejected":
-            await self._send_text(adapter, chat_id, texts.REJECTED_USER)
+        if user.get("status") != "approved":
+            await self._show_not_approved(adapter, platform, chat_id, user)
             return
 
         if state == STATE_AWAIT_SEARCH and text:
@@ -344,34 +371,43 @@ class BotEngine:
                 await self._send_text(adapter, chat_id, texts.RECEIPT_EXPECTED_PHOTO)
             return
         if photo:
-            await self._send_text(adapter, chat_id, texts.ASK_RECEIPT)
+            # a receipt outside the receipt step: let the customer pick the order
+            await self._show_orders(adapter, platform, chat_id)
             return
 
         # any other text: back to the main menu
         await self._show_main_menu(adapter, platform, chat_id)
 
     async def _customer_entry(
-        self, adapter: PlatformAdapter, platform: str, chat_id: str
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, *, welcome: bool = True
     ) -> None:
+        intro = texts.WELCOME if welcome else None
         user = await self.api.get_user(platform, chat_id)
         if user is None:
-            await self._begin_registration(adapter, platform, chat_id)
+            await self._begin_registration(adapter, platform, chat_id, intro=intro)
             return
-        status = user.get("status")
-        if status == "pending":
-            await self._send_text(adapter, chat_id, texts.STILL_PENDING)
+        if user.get("status") != "approved":
+            await self._show_not_approved(adapter, platform, chat_id, user, intro=intro)
             return
-        if status == "rejected":
-            await self._send_text(adapter, chat_id, texts.REJECTED_USER)
-            return
-        await self._show_main_menu(adapter, platform, chat_id)
+        await self._show_main_menu(adapter, platform, chat_id, intro=intro)
+
+    async def _show_not_approved(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, user: dict,
+        *, intro: str | None = None,
+    ) -> None:
+        body = texts.REJECTED_USER if user.get("status") == "rejected" else texts.STILL_PENDING
+        if intro:
+            body = f"{intro}\n\n{body}"
+        rows = [[(texts.BTN_SUPPORT, "support"), (texts.BTN_INFO, "info")]]
+        await self._send_options(adapter, platform, chat_id, body, rows, state=STATE_NONE, data={})
 
     # ================= registration =======================================
     async def _begin_registration(
-        self, adapter: PlatformAdapter, platform: str, chat_id: str
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, *, intro: str | None = None
     ) -> None:
         self.store.set_conversation(platform, chat_id, STATE_AWAIT_NAME, {})
-        await self._send_text(adapter, chat_id, texts.ASK_NAME)
+        body = f"{intro}\n\n{texts.ASK_NAME}" if intro else texts.ASK_NAME
+        await self._send_text(adapter, chat_id, body)
 
     async def _registration_name(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, text: str
@@ -418,15 +454,23 @@ class BotEngine:
         return [
             [(texts.BTN_GROUPS, "groups"), (texts.BTN_SEARCH, "search")],
             [(texts.BTN_CART, "cart"), (texts.BTN_ORDERS, "orders")],
-            [(texts.BTN_CONTACT, "contact")],
+            [(texts.BTN_SUPPORT, "support"), (texts.BTN_INFO, "info")],
         ]
 
     async def _show_main_menu(
-        self, adapter: PlatformAdapter, platform: str, chat_id: str
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, *, intro: str | None = None
+    ) -> None:
+        body = f"{intro}\n\n{texts.MAIN_MENU}" if intro else texts.MAIN_MENU
+        await self._send_options(
+            adapter, platform, chat_id, body, self._main_menu_rows(),
+            state=STATE_NONE, data={},
+        )
+
+    async def _show_static(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, text: str
     ) -> None:
         await self._send_options(
-            adapter, platform, chat_id, texts.MAIN_MENU, self._main_menu_rows(),
-            state=STATE_NONE, data={},
+            adapter, platform, chat_id, text, [[(texts.BTN_MENU, "menu")]],
         )
 
     async def _show_groups(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
@@ -456,7 +500,10 @@ class BotEngine:
     ) -> None:
         page = max(1, int(page or 1))
         page_size = max(1, int(self.settings.product_page_size))
-        result = await self.api.get_products(q=q, group=group, page=page, page_size=page_size)
+        result = await self.api.get_products(
+            q=q, group=group, page=page, page_size=page_size,
+            in_stock=not self.settings.show_out_of_stock,
+        )
         items = [it for it in (result.get("items") or []) if isinstance(it, dict)]
         total = int(result.get("total") or 0)
         pages = max(1, (total + page_size - 1) // page_size)
@@ -477,10 +524,14 @@ class BotEngine:
                     "price": float(price),
                     "qty": float(available),
                 }
+                in_stock = float(available) > 0
                 lines.append(
-                    f"• {name} — {fmt_num(price)} تومان — موجودی {fmt_num(available)}"
+                    texts.PRODUCT_LINE.format(
+                        name=name, price=fmt_num(price), stock=_stock_label(in_stock)
+                    )
                 )
-                rows.append([(shorten(name, 40) or str(code), f"prod:{code}")])
+                label = shorten(name, 40) or str(code)
+                rows.append([(label if in_stock else f"❌ {label}", f"prod:{code}")])
             nav = []
             group_arg = int(group) if group is not None else 0
             if page > 1:
@@ -511,9 +562,18 @@ class BotEngine:
             await self._send_text(adapter, chat_id, texts.NO_PRODUCTS)
             return
         qty = max(1, min(int(qty or 1), MAX_QTY))
+        in_stock = float(product.get("qty") or 0) > 0
         body = texts.PRODUCT_DETAIL.format(
-            name=product["name"], price=fmt_num(product["price"]), qty=fmt_num(qty)
+            name=product["name"], price=fmt_num(product["price"]),
+            stock=_stock_label(in_stock), qty=fmt_num(qty),
         )
+        if not in_stock:
+            await self._send_options(
+                adapter, platform, chat_id, f"{body}\n{texts.OUT_OF_STOCK}",
+                [[(texts.BTN_MENU, "menu")]], state=STATE_NONE, data=data,
+                edit_message_id=edit_message_id,
+            )
+            return
         rows = [
             [
                 (texts.BTN_MINUS, f"qty:{code}:{max(1, qty - 1)}"),
@@ -615,17 +675,30 @@ class BotEngine:
             return
         self.store.cart_clear(platform, chat_id)
         order_id = order.get("id")
-        parts = [
-            texts.CHECKOUT_OK.format(order_id=order_id, total=fmt_num(order.get("total")))
-        ]
-        instructions = str(order.get("payment_instructions") or "").strip()
-        if instructions:
-            parts.append(instructions)
-        parts.append(texts.ASK_RECEIPT)
+        total = fmt_num(order.get("total"))
+        parts = [texts.CHECKOUT_OK.format(order_id=order_id, total=total)]
+        parts.append(
+            self._payment_text(order_id, total, order.get("payment_instructions"))
+        )
         self.store.set_conversation(
             platform, chat_id, STATE_AWAIT_RECEIPT, {"order_id": order_id}
         )
-        await self._send_text(adapter, chat_id, "\n\n".join(parts))
+        await self._send_options(
+            adapter, platform, chat_id, "\n\n".join(parts), [[(texts.BTN_MENU, "menu")]],
+        )
+        if order_id is not None and not self.store.is_announced("neworder", int(order_id)):
+            self.store.mark_announced("neworder", int(order_id), platform, chat_id)
+            await self._announce_new_order(order)
+
+    @staticmethod
+    def _payment_text(order_id, total: str, api_instructions) -> str:
+        """Card details from messages.fa.json; shopapi's BANK_ACCOUNT_TEXT is the
+        fallback while the card number there is still a placeholder."""
+        card = str(texts.SHOP.get("card_number") or "")
+        fallback = str(api_instructions or "").strip()
+        if fallback and not any(ch.isdigit() for ch in card):
+            return f"{fallback}\n\n" + texts.ASK_RECEIPT.format(order_id=order_id)
+        return texts.PAYMENT_INSTRUCTIONS.format(order_id=order_id, total=total)
 
     async def _save_receipt(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, photo, data: dict
@@ -642,10 +715,22 @@ class BotEngine:
         if not file_ref:
             await self._send_text(adapter, chat_id, texts.RECEIPT_EXPECTED_PHOTO)
             return
-        await self.api.upload_receipt(int(order_id), str(file_ref), platform, chat_id)
+        try:
+            order = await self.api.upload_receipt(int(order_id), str(file_ref), platform, chat_id)
+        except ShopApiRejected as exc:
+            self.store.clear_conversation(platform, chat_id)
+            message = texts.ORDER_NOT_AWAITING if exc.status == 409 else exc.message_fa
+            await self._send_text(adapter, chat_id, message)
+            return
         self.store.save_receipt(int(order_id), platform, chat_id, str(file_ref))
         self.store.clear_conversation(platform, chat_id)
-        await self._send_text(adapter, chat_id, texts.RECEIPT_RECEIVED)
+        await self._send_options(
+            adapter, platform, chat_id, texts.RECEIPT_RECEIVED, [[(texts.BTN_MENU, "menu")]],
+        )
+        # tell the admins right away instead of waiting for the next sweep
+        if isinstance(order, dict) and not self.store.is_announced("order", int(order_id)):
+            await self._announce_order(order)
+            self.store.mark_announced("order", int(order_id), platform, chat_id)
 
     async def _show_orders(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
         orders = await self.api.list_user_orders(platform, chat_id)
@@ -656,18 +741,32 @@ class BotEngine:
             )
             return
         lines = [texts.ORDERS_TITLE]
+        rows = []
         for order in orders[:10]:
-            status = texts.ORDER_STATUS_FA.get(
-                str(order.get("status") or ""), str(order.get("status") or "")
-            )
             lines.append(
                 texts.ORDER_LINE.format(
-                    order_id=order.get("id"), status=status, total=fmt_num(order.get("total"))
+                    order_id=order.get("id"), status=texts.status_fa(order.get("status")),
+                    total=fmt_num(order.get("total")),
                 )
             )
+            if order.get("status") == "awaiting_payment" and order.get("id") is not None:
+                rows.append(
+                    [(f"{texts.BTN_SEND_RECEIPT} ({order.get('id')})", f"rcpt:{order.get('id')}")]
+                )
+        rows.append([(texts.BTN_MENU, "menu")])
         await self._send_options(
-            adapter, platform, chat_id, "\n".join(lines), [[(texts.BTN_MENU, "menu")]],
-            state=STATE_NONE, data={},
+            adapter, platform, chat_id, "\n".join(lines), rows, state=STATE_NONE, data={},
+        )
+
+    async def _ask_receipt(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, order_id: int
+    ) -> None:
+        self.store.set_conversation(
+            platform, chat_id, STATE_AWAIT_RECEIPT, {"order_id": int(order_id)}
+        )
+        await self._send_options(
+            adapter, platform, chat_id, texts.ASK_RECEIPT.format(order_id=order_id),
+            [[(texts.BTN_MENU, "menu")]],
         )
 
     async def _ask_search(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
@@ -709,6 +808,12 @@ class BotEngine:
             await self._handle_admin_callback(
                 adapter, platform, chat_id, message_id, callback_id, action, args
             )
+            return
+
+        if action in PUBLIC_ACTIONS:
+            await self._answer_callback(adapter, callback_id)
+            text = texts.SHOP_INFO if action == "info" else texts.SUPPORT
+            await self._show_static(adapter, platform, chat_id, text)
             return
 
         user = await self.api.get_user(platform, chat_id)
@@ -771,9 +876,9 @@ class BotEngine:
         elif action == "orders":
             await self._answer_callback(adapter, callback_id)
             await self._show_orders(adapter, platform, chat_id)
-        elif action == "contact":
+        elif action == "rcpt":
             await self._answer_callback(adapter, callback_id)
-            await self._send_text(adapter, chat_id, texts.CONTACT_SHOP)
+            await self._ask_receipt(adapter, platform, chat_id, args[0])
         elif action == "search":
             await self._answer_callback(adapter, callback_id)
             await self._ask_search(adapter, platform, chat_id)
@@ -782,11 +887,16 @@ class BotEngine:
 
     # ================= admin flow =========================================
     async def admin_sweep(self) -> dict:
-        """Announce new pending users and new receipts to the admin chats."""
+        """Announce new pending users and new receipts to the admin chats, and
+        tell customers about decisions (made here or in ShopAdmin)."""
+        announced = {"users": 0, "orders": 0, "notified": 0}
+        try:
+            announced["notified"] = await self.notify_customers_from_events()
+        except ShopApiError:
+            pass
         platforms = tuple(self.adapters.keys())
         if not self.settings.admin_targets(platforms):
-            return {"users": 0, "orders": 0}
-        announced = {"users": 0, "orders": 0}
+            return announced
 
         try:
             users = await self.api.admin_list_users("pending")
@@ -876,14 +986,78 @@ class BotEngine:
         )
         await self._broadcast_admin(body, rows)
 
+    async def notify_customers_from_events(self) -> int:
+        """Follow shopapi's /admin/events feed and message the customer once per
+        decision. The first run only records the current position (no replay)."""
+        raw = self.store.get_value(EVENT_CURSOR_KEY)
+        if raw is None:
+            feed = await self.api.admin_events(None)
+            self.store.set_value(EVENT_CURSOR_KEY, str(int(feed.get("last_id") or 0)))
+            return 0
+        feed = await self.api.admin_events(int(raw))
+        sent = 0
+        for event in feed.get("items") or []:
+            if not isinstance(event, dict):
+                continue
+            kind = str(event.get("kind") or "")
+            ref_id = event.get("ref_id")
+            if kind in CUSTOMER_EVENT_KINDS and ref_id is not None:
+                if await self._notify_decision(kind, int(ref_id)):
+                    sent += 1
+        self.store.set_value(EVENT_CURSOR_KEY, str(int(feed.get("last_id") or raw)))
+        return sent
+
+    async def _notify_decision(self, kind: str, ref_id: int) -> bool:
+        """Message the customer about one decision, at most once."""
+        marker = f"notified:{kind}"
+        if self.store.is_announced(marker, ref_id):
+            return False
+        if kind.startswith("customer_"):
+            target = self.store.get_notice("user", ref_id) or await self._find_user_chat(ref_id)
+            text = texts.APPROVED_BY_ADMIN if kind == "customer_approved" else texts.REJECTED_BY_ADMIN
+        else:
+            target = (
+                self.store.get_receipt(ref_id)
+                or self.store.get_notice("order", ref_id)
+                or self.store.get_notice("neworder", ref_id)
+            )
+            template = texts.PAYMENT_APPROVED if kind == "payment_approved" else texts.PAYMENT_REJECTED
+            text = template.format(order_id=ref_id)
+        self.store.mark_announced(
+            marker, ref_id, str((target or {}).get("platform") or ""),
+            (target or {}).get("chat_id") or "",
+        )
+        if not target:
+            return False
+        await self._notify_customer(target, text)
+        return True
+
+    async def _find_user_chat(self, user_id: int) -> dict | None:
+        for status_filter in ("approved", "rejected"):
+            try:
+                users = await self.api.admin_list_users(status_filter)
+            except ShopApiError:
+                return None
+            for user in users:
+                if isinstance(user, dict) and user.get("id") == user_id:
+                    return {"platform": user.get("platform"), "chat_id": user.get("chat_id")}
+        return None
+
+    def _items_text(self, order: dict) -> str:
+        items = [it for it in (order.get("items") or []) if isinstance(it, dict)]
+        return "\n".join(f"• {it.get('name')} × {fmt_num(it.get('qty'))}" for it in items) or "—"
+
+    async def _announce_new_order(self, order: dict) -> None:
+        order_id = order.get("id")
+        body = texts.NEW_ORDER_NOTICE.format(
+            order_id=order_id, total=fmt_num(order.get("total")), items=self._items_text(order)
+        )
+        await self._broadcast_admin(body, [[(texts.BTN_ORDER_STATUS, f"adst:{order_id}")]])
+
     async def _announce_order(self, order: dict) -> None:
         order_id = order.get("id")
-        items = [it for it in (order.get("items") or []) if isinstance(it, dict)]
-        items_text = (
-            "\n".join(f"• {it.get('name')} × {fmt_num(it.get('qty'))}" for it in items) or "—"
-        )
         body = texts.NEW_RECEIPT_NOTICE.format(
-            order_id=order_id, total=fmt_num(order.get("total")), items=items_text
+            order_id=order_id, total=fmt_num(order.get("total")), items=self._items_text(order)
         )
         rows = [
             [
@@ -940,14 +1114,12 @@ class BotEngine:
         if not order:
             await self._send_text(adapter, chat_id, texts.ADMIN_UNKNOWN_ORDER.format(order_id=order_id))
             return
-        status = texts.ORDER_STATUS_FA.get(
-            str(order.get("status") or ""), str(order.get("status") or "")
-        )
         await self._send_text(
             adapter,
             chat_id,
             texts.ADMIN_ORDER_STATUS.format(
-                order_id=order.get("id"), status=status, total=fmt_num(order.get("total"))
+                order_id=order.get("id"), status=texts.status_fa(order.get("status")),
+                total=fmt_num(order.get("total")),
             ),
         )
 
@@ -990,6 +1162,10 @@ class BotEngine:
         if action == "adrp":
             await self._reject_payment(adapter, platform, chat_id, args[0], callback_id)
             return
+        if action == "adst":
+            await self._answer_callback(adapter, callback_id)
+            await self._admin_order_status(adapter, platform, chat_id, args[0])
+            return
 
     async def _notify_customer(self, notice: dict | None, text: str) -> None:
         if not notice:
@@ -999,6 +1175,16 @@ class BotEngine:
         if adapter is None or not chat_id:
             return
         await self._send_text(adapter, chat_id, text)
+
+    async def _notify_once(self, kind: str, ref_id: int, notice: dict | None, text: str) -> None:
+        marker = f"notified:{kind}"
+        if self.store.is_announced(marker, int(ref_id)):
+            return
+        self.store.mark_announced(
+            marker, int(ref_id), str((notice or {}).get("platform") or ""),
+            (notice or {}).get("chat_id") or "",
+        )
+        await self._notify_customer(notice, text)
 
     async def _approve_user(
         self,
@@ -1021,7 +1207,7 @@ class BotEngine:
         self.store.clear_conversation(platform, chat_id)
         await self._answer_callback(adapter, callback_id, texts.ADMIN_USER_APPROVED)
         await self._send_text(adapter, chat_id, texts.ADMIN_USER_APPROVED)
-        await self._notify_customer(notice, texts.APPROVED_BY_ADMIN)
+        await self._notify_once("customer_approved", user_id, notice, texts.APPROVED_BY_ADMIN)
 
     async def _reject_user(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, user_id: int, callback_id
@@ -1035,27 +1221,33 @@ class BotEngine:
             return
         await self._answer_callback(adapter, callback_id, texts.ADMIN_USER_REJECTED)
         await self._send_text(adapter, chat_id, texts.ADMIN_USER_REJECTED)
-        await self._notify_customer(notice, texts.REJECTED_BY_ADMIN)
+        await self._notify_once("customer_rejected", user_id, notice, texts.REJECTED_BY_ADMIN)
 
     async def _approve_payment(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, order_id: int, callback_id
     ) -> None:
-        notice = self.store.get_notice("order", int(order_id))
+        notice = self.store.get_receipt(int(order_id)) or self.store.get_notice("order", int(order_id))
         try:
-            await self.api.admin_approve_payment(int(order_id))
+            order = await self.api.admin_approve_payment(int(order_id))
         except ShopApiError as exc:
             message = format_admin_error(exc)
             await self._answer_callback(adapter, callback_id, message, True)
             await self._send_text(adapter, chat_id, message)
             return
-        await self._answer_callback(adapter, callback_id, texts.ADMIN_PAYMENT_APPROVED)
-        await self._send_text(adapter, chat_id, texts.ADMIN_PAYMENT_APPROVED)
-        await self._notify_customer(notice, texts.PAYMENT_APPROVED)
+        # With ACCOUNTING_WRITE_ENABLED=false shopapi only rehearses the write
+        # (dry-run + ROLLBACK): the order is not "written" and the admin is told so.
+        written = isinstance(order, dict) and order.get("status") == "written"
+        message = texts.ADMIN_PAYMENT_APPROVED if written else texts.ADMIN_PAYMENT_APPROVED_DRY_RUN
+        await self._answer_callback(adapter, callback_id, message)
+        await self._send_text(adapter, chat_id, message)
+        await self._notify_once(
+            "payment_approved", order_id, notice, texts.PAYMENT_APPROVED.format(order_id=order_id)
+        )
 
     async def _reject_payment(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, order_id: int, callback_id
     ) -> None:
-        notice = self.store.get_notice("order", int(order_id))
+        notice = self.store.get_receipt(int(order_id)) or self.store.get_notice("order", int(order_id))
         try:
             await self.api.admin_reject_payment(int(order_id))
         except ShopApiError as exc:
@@ -1065,4 +1257,6 @@ class BotEngine:
             return
         await self._answer_callback(adapter, callback_id, texts.ADMIN_PAYMENT_REJECTED)
         await self._send_text(adapter, chat_id, texts.ADMIN_PAYMENT_REJECTED)
-        await self._notify_customer(notice, texts.PAYMENT_REJECTED)
+        await self._notify_once(
+            "payment_rejected", order_id, notice, texts.PAYMENT_REJECTED.format(order_id=order_id)
+        )

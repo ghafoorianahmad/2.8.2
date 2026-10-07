@@ -1,130 +1,108 @@
-"""All user-facing Persian texts in one editable place."""
+"""All user-facing Persian texts, loaded from one editable JSON file.
+
+The defaults ship as `messages.fa.json` next to this module. An operator copy
+(``BOT_MESSAGES_FILE``, on the server ``%ProgramData%\\ShopServer\\messages.fa.json``)
+overrides them key by key, so a key missing from an older copy falls back to
+the default. A broken file never stops the bots: the defaults are used and the
+problem is logged. Changes take effect on restart.
+
+Shop placeholders ({shop_name}, {shop_phone}, {card_number}, ...) are filled in
+at load time; per-message placeholders ({order_id}, {total}, ...) stay for
+`str.format` in the engine. Every text is available as a module constant
+(`texts.WELCOME`, `texts.BTN_MENU`, ...).
+"""
 from __future__ import annotations
 
-# --- buttons ---------------------------------------------------------------
-BTN_GROUPS = "🗂 گروه کالاها"
-BTN_SEARCH = "🔍 جستجوی کالا"
-BTN_CART = "🛒 سبد خرید"
-BTN_ORDERS = "📦 سفارش‌های من"
-BTN_CONTACT = "☎️ تماس با فروشگاه"
-BTN_BACK = "⬅️ بازگشت"
-BTN_MENU = "🏠 منوی اصلی"
-BTN_NEXT = "بعدی ▶️"
-BTN_PREV = "◀️ قبلی"
-BTN_ADD = "➕ افزودن به سبد"
-BTN_CHECKOUT = "✅ ثبت سفارش"
-BTN_PLUS = "➕"
-BTN_MINUS = "➖"
-BTN_REMOVE = "🗑 حذف"
-BTN_CLEAR_CART = "🗑 خالی کردن سبد"
-BTN_SHARE_CONTACT = "📱 ارسال شماره من"
-BTN_APPROVE = "✅ تایید"
-BTN_REJECT = "❌ رد"
-BTN_PAY_APPROVE = "✅ تایید پرداخت"
-BTN_PAY_REJECT = "❌ رد پرداخت"
-BTN_USE_SUGGESTED = "✔️ استفاده از کد پیشنهادی"
+import json
+import logging
+import os
+import string
+from pathlib import Path
 
-# --- generic ---------------------------------------------------------------
-SERVICE_UNAVAILABLE = (
-    "در حال حاضر ارتباط با سامانه فروش برقرار نشد. لطفاً چند لحظه بعد دوباره تلاش کنید."
-)
-RATE_LIMITED = "تعداد پیام‌های شما زیاد است. لطفاً کمی بعد دوباره تلاش کنید."
-BAD_INPUT = "ورودی نامعتبر است. لطفاً دوباره تلاش کنید."
-BAD_CALLBACK = "این دکمه دیگر معتبر نیست. لطفاً منو را دوباره باز کنید."
-UNSUPPORTED_EVENT = "این نوع پیام پشتیبانی نمی‌شود."
-ONLY_PRIVATE = "این ربات فقط در گفتگوی خصوصی کار می‌کند."
-TEXT_TOO_LONG = "متن ارسالی طولانی است. لطفاً کوتاه‌تر بنویسید."
-CONTACT_SHOP = "برای تماس با فروشگاه با پشتیبانی در تماس باشید."
+logger = logging.getLogger("shopbots.texts")
 
-# --- registration ----------------------------------------------------------
-ASK_NAME = "سلام! 👋\nبرای ثبت سفارش، لطفاً نام و نام خانوادگی خود را بنویسید."
-ASK_PHONE = "ممنون. لطفاً شماره موبایل خود را ارسال کنید (مثال: 09121234567)."
-ASK_PHONE_WITH_BUTTON = (
-    "ممنون. لطفاً شماره موبایل خود را با دکمهٔ زیر ارسال کنید، "
-    "یا آن را تایپ کنید (مثال: 09121234567)."
-)
-PHONE_INVALID = "شمارهٔ وارد‌شده معتبر نیست. لطفاً به شکل 09xxxxxxxxx وارد کنید."
-NAME_INVALID = "لطفاً نام و نام خانوادگی خود را کامل بنویسید."
-REGISTERED_PENDING = (
-    "ثبت‌نام شما انجام شد. ✅\n"
-    "درخواست شما در انتظار تایید فروشگاه است؛ پس از تایید به شما اطلاع می‌دهیم."
-)
-STILL_PENDING = "درخواست شما هنوز در انتظار تایید فروشگاه است. 🙏"
-REJECTED_USER = "متاسفانه درخواست شما تایید نشد. برای اطلاعات بیشتر با فروشگاه تماس بگیرید."
-APPROVED_BY_ADMIN = "حساب شما تایید شد. ✅\nاز منوی زیر می‌توانید خرید کنید."
-REJECTED_BY_ADMIN = "متاسفانه درخواست شما تایید نشد. برای اطلاعات بیشتر با فروشگاه تماس بگیرید."
+DEFAULT_FILE = Path(__file__).resolve().with_name("messages.fa.json")
+ENV_VAR = "BOT_MESSAGES_FILE"
 
-# --- main menu -------------------------------------------------------------
-MAIN_MENU = "منوی اصلی: یکی از گزینه‌ها را انتخاب کنید."
+#: Where the current texts came from (for logs / status).
+SOURCE = str(DEFAULT_FILE)
+SHOP: dict[str, str] = {}
+ORDER_STATUS_FA: dict[str, str] = {}
 
-# --- groups / products -----------------------------------------------------
-NO_GROUPS = "گروهی برای نمایش وجود ندارد."
-GROUPS_TITLE = "گروه کالاها:"
-NO_PRODUCTS = "کالایی با این مشخصات پیدا نشد."
-PRODUCTS_TITLE = "کالاها ({page}/{pages}):"
-PRODUCT_DETAIL = "کالای «{name}»\nقیمت: {price} تومان\nموجودی: {qty}\nتعداد مورد نظر را انتخاب کنید."
-OUT_OF_STOCK = "این کالا موجود نیست."
-QTY_ADDED = "به سبد اضافه شد. 🛒"
-ASK_SEARCH = "بنویسید دنبال چه کالایی می‌گردید:"
 
-# --- cart ------------------------------------------------------------------
-CART_TITLE = "سبد خرید شما:"
-CART_EMPTY = "سبد خرید شما خالی است. 🛒"
-CART_LINE = "• {name} — تعداد {qty} × {price} تومان"
-CART_TOTAL = "جمع کل: {total} تومان"
-CART_REMOVED = "کالا از سبد حذف شد."
+class _Keep(dict):
+    """format_map helper: unknown placeholders are left untouched."""
 
-# --- checkout / receipt ----------------------------------------------------
-CHECKOUT_OK = "سفارش شما ثبت شد. ✅\nشمارهٔ سفارش: {order_id}\nجمع کل: {total} تومان"
-ASK_RECEIPT = "لطفاً عکس رسید پرداخت را ارسال کنید."
-RECEIPT_RECEIVED = "رسید شما دریافت شد. ✅ فروشگاه آن را بررسی می‌کند و نتیجه را اطلاع می‌دهد."
-RECEIPT_EXPECTED_PHOTO = "لطفاً عکس رسید را به‌صورت تصویر ارسال کنید."
-NO_ORDER_FOR_RECEIPT = "سفارشی برای ثبت رسید پیدا نشد. لطفاً از منوی «سفارش‌های من» دوباره تلاش کنید."
-ORDER_NOT_AWAITING = "برای این سفارش در وضعیت فعلی امکان ارسال رسید نیست."
-PAYMENT_APPROVED = "پرداخت شما تایید و سفارش در سیستم حسابداری ثبت شد. ✅"
-PAYMENT_REJECTED = "رسید پرداخت شما تایید نشد. ❌ لطفاً با فروشگاه تماس بگیرید."
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
 
-# --- orders ----------------------------------------------------------------
-ORDERS_TITLE = "سفارش‌های شما:"
-ORDERS_EMPTY = "هنوز سفارشی ثبت نکرده‌اید."
-ORDER_LINE = "• سفارش {order_id} — {status} — {total} تومان"
-ORDER_STATUS_FA = {
-    "awaiting_payment": "در انتظار پرداخت",
-    "receipt_uploaded": "رسید دریافت شد (در حال بررسی)",
-    "approved": "تایید شده",
-    "rejected": "رد شده",
-    "written": "تایید و ثبت شده",
-    "cancelled": "لغو شده",
-    "expired": "منقضی شده",
-}
 
-# --- admin -----------------------------------------------------------------
-ADMIN_ONLY = "این دستور فقط برای مدیران است."
-PENDING_USERS_TITLE = "کاربران در انتظار تایید:"
-PENDING_ORDERS_TITLE = "رسیدهای در انتظار بررسی:"
-NOTHING_PENDING = "موردی در انتظار بررسی نیست."
-NEW_USER_NOTICE = (
-    "👤 کاربر جدید در انتظار تایید\n"
-    "پلتفرم: {platform}\n"
-    "نام: {name}\n"
-    "موبایل: {phone}"
-)
-NEW_USER_SUGGESTION = "کد پیشنهادی حسابداری: {person_code}"
-NEW_RECEIPT_NOTICE = (
-    "🧾 رسید پرداخت جدید\n"
-    "سفارش: {order_id}\n"
-    "مبلغ: {total} تومان\n"
-    "اقلام:\n{items}"
-)
-ADMIN_ASK_PERSON_CODE = "لطفاً کد شخص را در نرم‌افزار حسابداری وارد کنید (فقط عدد):"
-ADMIN_USER_APPROVED = "کاربر تایید شد. ✅"
-ADMIN_USER_REJECTED = "کاربر رد شد."
-ADMIN_PAYMENT_APPROVED = "پرداخت تایید شد. ✅"
-ADMIN_PAYMENT_REJECTED = "پرداخت رد شد."
-ADMIN_UNKNOWN_ORDER = "سفارش {order_id} پیدا نشد."
-ADMIN_ORDER_STATUS = "سفارش {order_id} — وضعیت: {status} — مبلغ: {total} تومان"
-ADMIN_INSUFFICIENT_STOCK = "موجودی کالا کافی نیست؛ سفارش ثبت نشد."
-ADMIN_PERSON_CODE_NOT_FOUND = "این کد شخص در نرم‌افزار حسابداری پیدا نشد."
-ADMIN_PERSON_CODE_IN_USE = "این کد شخص قبلاً به کاربر دیگری متصل شده است."
-ADMIN_ACTION_FAILED = "عملیات انجام نشد: {reason}"
-ADMIN_PENDING_SUMMARY = "در انتظار تایید: {users} کاربر، {orders} رسید."
+def _escape(value: str) -> str:
+    # Shop values are substituted before the engine's str.format call.
+    return str(value).replace("{", "{{").replace("}", "}}")
+
+
+def fill_shop(text: str, shop: dict[str, str]) -> str:
+    """Replace only the shop placeholders; leave {order_id} etc. in place."""
+    fields = _Keep({k: _escape(v) for k, v in shop.items()})
+    try:
+        return string.Formatter().vformat(text, (), fields)
+    except (ValueError, IndexError):
+        # An unbalanced brace in an operator edit: show the text as written.
+        return text
+
+
+def _read(path: Path) -> dict:
+    with open(path, "r", encoding="utf-8-sig") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        raise ValueError("top level must be a JSON object")
+    return data
+
+
+def _section(data: dict, name: str) -> dict[str, str]:
+    raw = data.get(name)
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v) for k, v in raw.items() if isinstance(v, (str, int, float))}
+
+
+def load(path: str | os.PathLike | None = None) -> str:
+    """(Re)load the texts. Returns the source actually used."""
+    global SOURCE, SHOP, ORDER_STATUS_FA
+
+    defaults = _read(DEFAULT_FILE)
+    merged = {name: _section(defaults, name) for name in ("shop", "buttons", "messages", "order_status")}
+    source = str(DEFAULT_FILE)
+
+    override = path or os.environ.get(ENV_VAR, "").strip()
+    if override and Path(override).resolve() != DEFAULT_FILE:
+        try:
+            custom = _read(Path(override))
+        except FileNotFoundError:
+            logger.warning("texts: %s not found - using built-in texts", override)
+        except (OSError, ValueError) as exc:
+            logger.error(
+                "texts: %s is invalid (%s) - using built-in texts / "
+                "فایل متن‌ها خراب است؛ متن‌های پیش‌فرض استفاده شد",
+                override, type(exc).__name__,
+            )
+        else:
+            for name in merged:
+                merged[name].update({k: v for k, v in _section(custom, name).items()})
+            source = str(override)
+
+    SHOP = dict(merged["shop"])
+    for key, value in {**merged["buttons"], **merged["messages"]}.items():
+        globals()[key] = fill_shop(value, SHOP)
+    ORDER_STATUS_FA = dict(merged["order_status"])
+    SOURCE = source
+    return source
+
+
+def status_fa(status: str | None) -> str:
+    status = str(status or "")
+    return ORDER_STATUS_FA.get(status, status)
+
+
+load()

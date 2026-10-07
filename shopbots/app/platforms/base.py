@@ -19,10 +19,12 @@ Update = dict[str, Any]
 class BotApiError(Exception):
     """A Bot API call failed. The message is safe to log (no token, no URL)."""
 
-    def __init__(self, method: str, description: str):
+    def __init__(self, method: str, description: str, *, network: bool = False):
         super().__init__(f"{method}: {description}")
         self.method = method
         self.description = description
+        #: True when the Bot API was not reached at all (network / proxy down).
+        self.network = network
 
 
 class PlatformAdapter(ABC):
@@ -132,13 +134,19 @@ class HttpBotAdapter(PlatformAdapter):
             self._owns_client = True
         return self._client
 
+    def _network_error(self, method: str, exc: httpx.HTTPError) -> BotApiError:
+        """A log-safe description of a transport failure (never the URL)."""
+        if isinstance(exc, httpx.TimeoutException):
+            return BotApiError(method, "timeout", network=True)
+        return BotApiError(method, "network error", network=True)
+
     async def _call(self, method: str, payload: dict | None = None) -> Any:
         client = await self._http()
         try:
             response = await client.post(self._url(method), json=payload or {})
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
             # `from None` keeps the original (URL-bearing) exception out of the traceback.
-            raise BotApiError(method, "network error") from None
+            raise self._network_error(method, exc) from None
         if response.status_code >= 400:
             raise BotApiError(method, f"HTTP {response.status_code}")
         try:
@@ -222,8 +230,8 @@ class HttpBotAdapter(PlatformAdapter):
         client = await self._http()
         try:
             response = await client.get(f"{self._api_base}/file/bot{self._token}/{file_path}")
-        except httpx.HTTPError:
-            raise BotApiError("getFile", "network error") from None
+        except httpx.HTTPError as exc:
+            raise self._network_error("getFile", exc) from None
         if response.status_code >= 400:
             raise BotApiError("getFile", f"HTTP {response.status_code}")
         return response.content

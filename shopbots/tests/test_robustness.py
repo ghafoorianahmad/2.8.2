@@ -109,7 +109,7 @@ def test_rate_limit_per_user(env, bot_apis, shopapi):
 
         clock[0] = 120.0
         await push_message(engine, "bale", 5, CUSTOMER_CHAT, text="سلام")
-        assert bot_apis["bale"].last_text(CUSTOMER_CHAT) == texts.MAIN_MENU
+        assert bot_apis["bale"].last_text(CUSTOMER_CHAT).endswith(texts.MAIN_MENU)
 
     env(scenario, rate_limiter=limiter)
 
@@ -219,7 +219,7 @@ def test_one_platform_failing_does_not_stop_the_other(settings, store, shopapi, 
             await asyncio.wait_for(bale_task, timeout=5)
 
             # telegram kept working while bale was down
-            assert bot_apis["telegram"].last_text(CUSTOMER_CHAT) == texts.MAIN_MENU
+            assert bot_apis["telegram"].last_text(CUSTOMER_CHAT).endswith(texts.MAIN_MENU)
             # bale backed off exponentially and never stopped the process
             assert sleeps[0] == 1.0
             assert sleeps[1] == 2.0
@@ -325,9 +325,10 @@ def test_admin_sweep_is_a_noop_without_admins(env, settings, bot_apis, shopapi):
     shopapi.add_user("bale", CUSTOMER_CHAT, status="pending")
 
     async def scenario(engine, adapters, api):
-        assert await engine.admin_sweep() == {"users": 0, "orders": 0}
+        assert await engine.admin_sweep() == {"users": 0, "orders": 0, "notified": 0}
         assert bot_apis["bale"].sent == []
-        assert shopapi.requests == []
+        # only the event feed (customer notifications) is read; nothing is announced
+        assert [path for _, path, _ in shopapi.requests] == ["/admin/events"]
 
     env(scenario)
 
@@ -337,6 +338,6 @@ def test_admin_sweep_survives_shopapi_being_down(env, bot_apis, shopapi):
 
     async def scenario(engine, adapters, api):
         # no exception escapes the sweep, so the poller keeps its schedule
-        assert await engine.admin_sweep() == {"users": 0, "orders": 0}
+        assert await engine.admin_sweep() == {"users": 0, "orders": 0, "notified": 0}
 
     env(scenario)

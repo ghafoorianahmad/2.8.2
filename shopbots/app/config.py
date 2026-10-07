@@ -60,6 +60,8 @@ class Settings:
     telegram_token: str = ""
     bale_api_base: str = DEFAULT_BALE_API_BASE
     telegram_api_base: str = DEFAULT_TELEGRAM_API_BASE
+    #: Telegram-only proxy: socks5://host:port or http://host:port (TELEGRAM_PROXY,
+    #: falling back to the older PROXY_URL). Never used for shopapi or Bale.
     proxy_url: str = ""
 
     # --- admins ---
@@ -75,6 +77,10 @@ class Settings:
     max_name_len: int = 80
     http_timeout: float = 15.0
     product_page_size: int = 5
+    #: List out-of-stock products too (marked "ناموجود"); they cannot be ordered.
+    show_out_of_stock: bool = True
+    #: Operator copy of messages.fa.json ("" = built-in texts only).
+    messages_file: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -88,7 +94,7 @@ class Settings:
             telegram_token=_env("TELEGRAM_TOKEN", ""),
             bale_api_base=_env("BALE_API_BASE", DEFAULT_BALE_API_BASE),
             telegram_api_base=_env("TELEGRAM_API_BASE", DEFAULT_TELEGRAM_API_BASE),
-            proxy_url=_env("PROXY_URL", ""),
+            proxy_url=_env("TELEGRAM_PROXY", "") or _env("PROXY_URL", ""),
             admin_chat_ids=_env_list("ADMIN_CHAT_IDS"),
             sqlite_path=_env("SQLITE_PATH", str(BASE_DIR / "shopbots.db")),
             poll_timeout=_env_int("POLL_TIMEOUT", 25),
@@ -99,6 +105,8 @@ class Settings:
             max_name_len=_env_int("MAX_NAME_LEN", 80),
             http_timeout=_env_float("HTTP_TIMEOUT", 15.0),
             product_page_size=_env_int("PRODUCT_PAGE_SIZE", 5),
+            show_out_of_stock=_env_bool("SHOW_OUT_OF_STOCK", True),
+            messages_file=_env("BOT_MESSAGES_FILE", ""),
         )
 
     # --- helpers ---
@@ -143,8 +151,23 @@ class Settings:
             platforms.append("telegram")
         return tuple(platforms)
 
+    def proxy_label(self) -> str:
+        """The Telegram proxy without credentials, safe to log."""
+        return describe_proxy(self.proxy_url)
+
     def proxy_for(self, platform: str) -> str | None:
         """Only Telegram is proxied; Bale must work without a proxy."""
         if platform == "telegram" and self.proxy_url:
             return self.proxy_url
         return None
+
+
+def describe_proxy(url: str | None) -> str:
+    """scheme://host:port of a proxy URL; user/password are never shown."""
+    if not url:
+        return "none"
+    scheme, sep, rest = url.partition("://")
+    if not sep:
+        scheme, rest = "?", url
+    host = rest.rsplit("@", 1)[-1].split("/", 1)[0]
+    return f"{scheme.lower()}://{host}"

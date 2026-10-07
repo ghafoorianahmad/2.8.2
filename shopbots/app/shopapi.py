@@ -36,7 +36,6 @@ _STATUS_MESSAGES = {
     404: "موردی با این مشخصات پیدا نشد.",
     409: "امکان انجام این عملیات در وضعیت فعلی وجود ندارد.",
     422: "اطلاعات ارسالی نامعتبر است.",
-    503: texts.SERVICE_UNAVAILABLE,
 }
 
 
@@ -68,7 +67,11 @@ class ShopApiClient:
 
                 # Trust exactly the server's own self-signed certificate.
                 verify = ssl.create_default_context(cafile=self._settings.shopapi_ca_file)
-            self._client = httpx.AsyncClient(timeout=self._settings.http_timeout, verify=verify)
+            # trust_env=False: shopapi is local - never route it through a proxy
+            # (TELEGRAM_PROXY is Telegram-only; HTTP(S)_PROXY variables are ignored).
+            self._client = httpx.AsyncClient(
+                timeout=self._settings.http_timeout, verify=verify, trust_env=False
+            )
         return self._client
 
     @staticmethod
@@ -84,7 +87,9 @@ class ShopApiClient:
     def _message_for(self, status: int, detail: str | None) -> str:
         if status == 409 and detail and "stock" in detail.lower():
             return texts.ADMIN_INSUFFICIENT_STOCK
-        return _STATUS_MESSAGES.get(status, "خطای نامشخص از سامانه فروش.")
+        if status == 503:
+            return texts.SERVICE_UNAVAILABLE
+        return _STATUS_MESSAGES.get(status, "خطای نامشخص از سامانهٔ فروش.")
 
     async def _request(
         self,
@@ -276,6 +281,16 @@ class ShopApiClient:
             key=self._settings.admin_api_key,
             json_body=body,
         )
+
+    async def admin_events(self, after: int | None = None, limit: int = 200) -> dict:
+        """Staff notification feed: {"last_id": int, "items": [{kind, ref_id}, ...]}."""
+        params: dict[str, Any] = {"limit": int(limit)}
+        if after is not None:
+            params["after"] = int(after)
+        result = await self._request(
+            "GET", "/admin/events", key=self._settings.admin_api_key, params=params
+        )
+        return result if isinstance(result, dict) else {"last_id": after or 0, "items": []}
 
     async def admin_match_person(self, mobile: str) -> dict | None:
         return await self._request(

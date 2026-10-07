@@ -12,12 +12,14 @@ from collections.abc import Awaitable, Callable
 from . import health
 from .config import Settings
 from .engine import BotEngine, _safe_error
-from .platforms import PlatformAdapter
+from .platforms import BotApiError, PlatformAdapter
 from .store import Store
 
 logger = logging.getLogger("shopbots.polling")
 
 MAX_BACKOFF = 60.0
+#: While a platform stays unreachable, repeat the error line every N failures.
+ERROR_LOG_EVERY = 20
 # Long polling normally blocks on the server, but an immediate empty answer must
 # not turn the loop into a busy spin (it would starve the other platform's task).
 IDLE_POLL_SLEEP = 0.5
@@ -35,17 +37,26 @@ async def poll_platform(
     dry_run: bool = False,
     sleep: SleepFn = asyncio.sleep,
 ) -> None:
+    proxy = getattr(adapter, "proxy_label", None)
+    via = f" proxy={proxy}" if proxy else ""
     if dry_run:
-        logger.info("platform=%s started dry_run=true", platform)
+        logger.info("platform=%s started dry_run=true%s", platform, via)
         return
-    logger.info("platform=%s started", platform)
+    logger.info("platform=%s started%s", platform, via)
     health.mark_started(platform)
     backoff = 1.0
+    failures = 0
     try:
         while not stop_event.is_set():
             try:
                 offset = store.get_last_update_id(platform) + 1
                 updates = await adapter.get_updates(offset=offset, timeout=settings.poll_timeout)
+                if failures:
+                    logger.info(
+                        "platform=%s connection restored after %s failed attempts / "
+                        "اتصال دوباره برقرار شد", platform, failures,
+                    )
+                failures = 0
                 backoff = 1.0
                 health.mark_ok(platform)
                 if not updates:
@@ -60,13 +71,39 @@ async def poll_platform(
                 raise
             except Exception as exc:
                 error = _safe_error(exc)
-                logger.warning("platform=%s poll_error=%s", platform, error)
+                failures += 1
+                if failures == 1 or failures % ERROR_LOG_EVERY == 0:
+                    _log_poll_error(platform, exc, error, failures, backoff)
                 health.mark_error(platform, error)
                 await sleep(backoff)
                 backoff = min(backoff * 2, MAX_BACKOFF)
     finally:
         health.mark_stopped(platform)
     logger.info("platform=%s stopped", platform)
+
+
+def _log_poll_error(platform: str, exc: Exception, error: str, failures: int,
+                    backoff: float) -> None:
+    """One clear English + Persian line; never a URL, never the token."""
+    if isinstance(exc, BotApiError) and exc.network:
+        logger.error(
+            "platform=%s cannot reach the Bot API (%s); retrying with backoff up to %ss "
+            "[attempt %s] / %s در دسترس نیست (پروکسی یا اینترنت)؛ تلاش دوباره خودکار",
+            platform, error, int(MAX_BACKOFF), failures, platform,
+        )
+    elif isinstance(exc, BotApiError) and "409" in exc.description:
+        logger.error(
+            "platform=%s poll_error=%s - another copy of this bot (or a webhook) is using "
+            "the same token / نمونهٔ دیگری از ربات با همین توکن در حال اجراست",
+            platform, error,
+        )
+    elif isinstance(exc, BotApiError) and "401" in exc.description:
+        logger.error(
+            "platform=%s poll_error=%s - the bot token is wrong or revoked / توکن ربات نامعتبر است",
+            platform, error,
+        )
+    else:
+        logger.warning("platform=%s poll_error=%s [attempt %s]", platform, error, failures)
 
 
 async def admin_sweep_loop(

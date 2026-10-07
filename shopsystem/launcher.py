@@ -236,7 +236,11 @@ def wire_control(info: dict, *, supervised: bool) -> None:
 
         configured = [name for name, key in (("bale", "BALE_TOKEN"), ("telegram", "TELEGRAM_TOKEN"))
                       if os.environ.get(key, "").strip()]
-        return {"configured": configured, "platforms": health.snapshot()}
+        from shopbots_app.config import describe_proxy
+
+        proxy = os.environ.get("TELEGRAM_PROXY", "").strip() or os.environ.get("PROXY_URL", "").strip()
+        return {"configured": configured, "platforms": health.snapshot(),
+                "telegram_proxy": describe_proxy(proxy)}
 
     control.register_status_provider("bots", bots_status)
 
@@ -310,8 +314,32 @@ def wait_for_api(url: str, timeout: float = 30.0) -> bool:
 # --------------------------------------------------------------------------
 # subsystem 2: the bots (asyncio loop in a background thread)
 # --------------------------------------------------------------------------
+MESSAGES_FILE_NAME = "messages.fa.json"
+
+
+def prepare_messages_file() -> Path | None:
+    """The editable bot texts live in the data folder (next to .env).
+
+    On the first start the built-in defaults are copied there; an existing file
+    is never overwritten (upgrades only add keys through the built-in defaults).
+    """
+    from shopbots_app import texts
+
+    target = Paths.data_dir / MESSAGES_FILE_NAME
+    try:
+        if not target.exists():
+            target.write_bytes(texts.DEFAULT_FILE.read_bytes())
+            logger.info("bots: wrote default texts to %s (edit, then restart the task)", target)
+    except OSError as exc:
+        logger.warning("bots: cannot create %s (%s) - using built-in texts", target, type(exc).__name__)
+        return None
+    os.environ.setdefault("BOT_MESSAGES_FILE", str(target))
+    return target
+
+
 def start_bots(max_restarts: int = 10) -> threading.Thread:
     def run() -> None:
+        from shopbots_app import texts
         from shopbots_app.config import Settings as BotSettings
         from shopbots_app.main import run as run_bots
         from shopbots_app.store import Store as BotStore
@@ -327,6 +355,11 @@ def start_bots(max_restarts: int = 10) -> threading.Thread:
                 return
             # the API owns shopapi.db, so the bots keep their own state file
             settings.sqlite_path = str(Paths.data_dir / "shopbots.db")
+            prepare_messages_file()
+            source = texts.load()
+            logger.info("bots: texts from %s", source)
+            if "telegram" in platforms:
+                logger.info("bots: telegram proxy = %s", settings.proxy_label())
             try:
                 logger.info("bots: starting %s", ", ".join(platforms))
                 store = BotStore(settings.sqlite_path)
@@ -552,7 +585,8 @@ SETUP_FIELDS = {
     "telegram_token": "TELEGRAM_TOKEN",
     "bale_token": "BALE_TOKEN",
     "admin_chat_ids": "ADMIN_CHAT_IDS",
-    "proxy_url": "PROXY_URL",
+    "proxy_url": "TELEGRAM_PROXY",
+    "telegram_proxy": "TELEGRAM_PROXY",
 }
 
 #: Written once, on the first setup. Existing values are never replaced.

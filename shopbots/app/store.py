@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS admin_notices (
     PRIMARY KEY (kind, ref_id)
 );
 
+CREATE TABLE IF NOT EXISTS kv (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS receipts (
     order_id INTEGER PRIMARY KEY,
     platform TEXT NOT NULL,
@@ -240,6 +245,21 @@ class Store:
             except ValueError:
                 row["payload"] = {}
             return row
+
+    # ---- small key/value state (e.g. the shopapi event cursor) ------------
+    def get_value(self, key: str) -> str | None:
+        with self._lock:
+            row = self._fetchone("SELECT value FROM kv WHERE key=?", (key,))
+            return row["value"] if row else None
+
+    def set_value(self, key: str, value: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO kv (key, value) VALUES (?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, str(value)),
+            )
+            self._conn.commit()
 
     # ---- receipt file references (needed to show the photo to admins) ----
     def save_receipt(

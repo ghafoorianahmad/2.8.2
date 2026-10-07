@@ -117,7 +117,7 @@ def _token(value: str) -> Optional[str]:
 
 
 def _proxy(value: str) -> Optional[str]:
-    if value == "" or re.match(r"^(http|https|socks5)://[^\s]{3,200}$", value):
+    if value == "" or re.match(r"^(http|https|socks5h?)://[^\s]{3,200}$", value):
         return None
     return "must start with http://, https:// or socks5://"
 
@@ -141,7 +141,8 @@ EDITABLE: dict[str, tuple[Callable[[str], Optional[str]], bool]] = {
     "ADMIN_SWEEP_SECONDS": (_int_range(10, 3600), False),
     "BALE_TOKEN": (_token, True),
     "TELEGRAM_TOKEN": (_token, True),
-    "PROXY_URL": (_proxy, True),
+    "TELEGRAM_PROXY": (_proxy, True),
+    "PROXY_URL": (_proxy, True),   # older name; TELEGRAM_PROXY wins when both are set
 }
 
 

@@ -10,7 +10,7 @@
 | پوشه | چیست | وضعیت |
 | --- | --- | --- |
 | `shopapi/` | FastAPI؛ تنها جزئی که به SQL Server وصل می‌شود. کالا/گروه/موجودی/قیمت از حسابداری (فقط‌خواندنی)، مشتری/سفارش/رزرو در SQLite خودش، ثبت سفارش تأییدشده در `KalaOrder/KalaOrderDetail` (پیش‌فرض dry-run + ROLLBACK). کلیدها: `BOT_API_KEY`, `SITE_API_KEY`, `ADMIN_API_KEY` (هدر `X-API-Key`). | کامل؛ ۵۵ تست سبز؛ روی `hesab5 t` زنده تست شده |
-| `shopbots/` | ربات بله + تلگرام (long-polling، httpx خام، موتور گفتگوی مشترک). فقط HTTP به shopapi. ادمین‌ها از `ADMIN_CHAT_IDS` تأیید مشتری/فیش را داخل چت انجام می‌دهند. تلگرام با `PROXY_URL`. | کامل؛ ۴۸ تست سبز؛ **بله با ربات واقعی راستی‌آزمایی نشده** |
+| `shopbots/` | ربات بله + تلگرام (long-polling، httpx خام، موتور گفتگوی مشترک). فقط HTTP به shopapi. ادمین‌ها از `ADMIN_CHAT_IDS` تأیید مشتری/فیش را داخل چت انجام می‌دهند. تلگرام با `TELEGRAM_PROXY` (socks5/http). همهٔ متن‌ها/دکمه‌ها/اطلاعات فروشگاه در `app/messages.fa.json` (نسخهٔ قابل ویرایش: `%ProgramData%\ShopServer\messages.fa.json`). | کامل؛ ۷۷ تست سبز؛ **بله با ربات واقعی راستی‌آزمایی نشده** |
 | `shopadmin/` | کنسول دسکتاپ PySide6 (فارسی، RTL، شمسی): داشبورد، مشتریان، سفارش‌ها، محصولات، گزارش CSV/XLSX، تنظیمات، کاربران داخلی. ShopSystem.exe را به‌صورت child process (Job Object) بالا می‌آورد. + نصب‌کنندهٔ Inno Setup. | برنامه کامل (۳۲۳ تست سبز)؛ **نصب‌کننده نیمه‌کاره** |
 | `shopsystem/` | `launcher.py` → `ShopSystem.exe` (PyInstaller): API + بات‌ها در یک پروسه. پکیج‌های `app` در بیلد به `shopapi_app`/`shopbots_app` تغییر نام می‌دهند. `.env`، `shopapi.db`، `shopbots.db`، `app.log` کنار exe. | بیلد و تست‌شده با دادهٔ واقعی |
 
@@ -45,7 +45,7 @@ build_all.bat        # (ریشه) بیلد کامل به ترتیب درست: Sh
 
 ## وضعیت (به‌روز 2026-10-07)
 
-- تست‌ها: shopapi ۱۰۹ ✓، shopbots ۵۰ ✓، shopadmin ۳۴۷ ✓ (2026-10-07).
+- تست‌ها: shopapi ۱۰۹ ✓، shopbots ۷۷ ✓، shopadmin ۳۶۴ ✓ (2026-10-07، بعد از کار تلگرام).
 - **کلاینت هرگز سرور را اجرا نمی‌کند** (باگ Sandbox «ShopSystem.exe not found»): `child_process.py`/`jobobject.py` حذف؛ `services/connection.py` فقط `/health` را پروب می‌کند و در قطعی «سرور در دسترس نیست» + نشانی + «تلاش دوباره» نشان می‌دهد. بیلد کلاینت جدا (`build_shopadmin.py --variant client` → `dist/client`، بدون `server_setup`، بررسی خودکار صفر ارجاع به ShopSystem حتی داخل PYZ). باگ `build_installer.bat` (کپی قدیمی اسکریپت بعد از `:fail`) رفع شد.
 - **متن سفید روی زمینهٔ روشن** (دکمهٔ «ادامه» و OK دیالوگ‌ها) در سورس از 7bcabe8 رفع شده بود؛ installerهای قبلی قدیمی بودند. `contrast_audit.py` حالا دکمه‌های واقعی رندرشده (ویزاردها، ورود، MessageDialog/ConfirmDialog/QMessageBox روی هر پنجره) را اندازه می‌گیرد: ۹۵/۹۵ AA؛ قاعدهٔ قدیمی را ۱٫۰۶:۱ تشخیص می‌دهد.
 - هر دو installer در 2026-10-07 ۱۰:۵۰ از نو ساخته شدند (`ShopAdminSetup.exe` ۳۳MB، `ShopServerSetup.exe` ۵۱MB)؛ ShopSystem/سرور دست نخورد، `ACCOUNTING_WRITE_ENABLED=false`. نصب آزمایشی دوباره در Sandbox لازم است.
@@ -56,8 +56,17 @@ build_all.bat        # (ریشه) بیلد کامل به ترتیب درست: Sh
 ## کارهای پیش رو (backlog)
 
 ### ۰. دستورات جدید کاربر
-_(بعد از بررسی کامل، کاربر کارهای تکمیلی را می‌دهد؛ اینجا ثبت و تیک بخورند.)_
-- [ ] …
+- [x] (2026-10-07) ربات تلگرام آمادهٔ production برای «عصر ارتباطات ۲» (بله دست نخورد؛ موتور مشترک است پس متن‌های جدید در بله هم دیده می‌شوند):
+  - خوشامد با نام فروشگاه؛ منو: گروه‌ها، جستجو، سبد، سفارش‌های من، پشتیبانی، آدرس/ساعت کاری؛ لیست کالا = نام + قیمت سطح ۱ + «موجود/ناموجود» (بدون تعداد؛ ناموجود قابل سفارش نیست).
+  - `/myid` (همه، در هر وضعیت)، `/help`؛ `/start` وسط ثبت‌نام هم از نو شروع می‌کند. مشتری در انتظار تأیید فقط پشتیبانی/آدرس می‌بیند.
+  - پس از ثبت سفارش: دستور پرداخت از `messages.fa.json` (شمارهٔ کارت؛ تا وقتی شمارهٔ کارت placeholder است `BANK_ACCOUNT_TEXT` سرور)؛ دکمهٔ «ارسال رسید» در «سفارش‌های من».
+  - اعلان فوری به مدیر: سفارش جدید (دکمهٔ وضعیت)، رسید با عکس (تأیید/رد پرداخت)، مشتری جدید (تأیید/رد). تأیید در حالت dry-run صادقانه «در حسابداری ثبت نشد» می‌گوید.
+  - تصمیم‌های ShopAdmin از فید `/admin/events` به مشتری خبر داده می‌شود (یک‌بار؛ اجرای اول فقط مکان فعلی را ثبت می‌کند).
+  - `TELEGRAM_PROXY` (fallback: `PROXY_URL`) فقط روی کلاینت httpx تلگرام (polling/send/getFile/دانلود)؛ shopapi با `trust_env=False`. قطعی پروکسی: backoff 1→60s، یک خط خطای انگلیسی+فارسی در هر قطعی، «connection restored» در وصل دوباره؛ socksio در venv/بیلد. روی این PC پورت 10808 (xray) هم socks5 و هم http جواب می‌دهد → socks5 انتخاب شد.
+  - `scripts/set_telegram_token.ps1` (prompt مخفی، نوشتن درجا در `.env` با حفظ ACL) و `scripts/test_telegram_proxy.ps1` (تشخیص خودکار socks5→http، getMe بدون نمایش توکن؛ توکن از stdin به curl). در بیلد کنار `ShopSystem.exe\scripts\` کپی می‌شوند.
+  - `TELEGRAM_PROXY` به تنظیمات قابل ویرایش shopapi (`control.EDITABLE`) و صفحهٔ سرور ShopAdmin اضافه شد.
+  - تسک `ShopServer` با حساب `Lenovo` (Password logon) اجرا می‌شود و به 127.0.0.1:10808 دسترسی دارد؛ **ولی xray فقط با ورود کاربر بالا می‌آید** — اگر PC بدون لاگین ریستارت شود، تلگرام تا اجرای xray در حال retry است.
+  - [ ] بعد از «token set» کاربر: ری‌استارت تسک، بررسی `app.log`، تست /start، /myid، سفارش آزمایشی.
 
 ### ۱. سروسامان (مرحلهٔ ۱ — انجام شد 2026-10-07)
 - [x] git init + `.gitignore` ریشه + commit اولیه.

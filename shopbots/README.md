@@ -11,7 +11,11 @@ database, SQL Server or any accounting table.
 - Raw Bot API over HTTPS with `httpx` — **no bot framework**.
 - Each platform polls in its own asyncio task with exponential backoff, so a
   failure of one platform never stops the other.
-- All texts are Persian and live in `app/texts.py`.
+- All texts, buttons and shop info (name, address, phone, hours, card number,
+  support contact) are Persian and live in **one editable JSON file**:
+  `app/messages.fa.json` (built-in defaults). ShopServer copies it to
+  `%ProgramData%\ShopServer\messages.fa.json` on first start; edit that copy and
+  restart the task. Keys and placeholders are documented inside the file.
 
 ## Requirements
 
@@ -70,7 +74,9 @@ parameters:
 | `ADMIN_API_KEY` | `X-API-Key` for admin calls |
 | `BALE_TOKEN` / `TELEGRAM_TOKEN` | bot tokens (only configured platforms run) |
 | `BALE_API_BASE` / `TELEGRAM_API_BASE` | Bot API base URLs |
-| `PROXY_URL` | proxy for **Telegram only** (Telegram is blocked in Iran); Bale never uses it |
+| `TELEGRAM_PROXY` | proxy for **Telegram only**: `socks5://127.0.0.1:10808` or `http://...`. Every Telegram call (polling, send, getFile, file download) uses it; shopapi, Bale and SQL never do (`trust_env=False`). `PROXY_URL` is the older name, read when this is empty |
+| `BOT_MESSAGES_FILE` | operator copy of `messages.fa.json` (empty = built-in texts) |
+| `SHOW_OUT_OF_STOCK` | list out-of-stock products marked «ناموجود» (default `true`; they can never be ordered) |
 | `ADMIN_CHAT_IDS` | comma-separated admin chats: `telegram:123` / `bale:456` (a bare id matches any platform) |
 | `SQLITE_PATH` | bot state database (default `shopbots.db`) |
 | `POLL_TIMEOUT`, `ADMIN_SWEEP_SECONDS` | long-poll timeout, admin poll interval |
@@ -149,7 +155,7 @@ The suite never touches the network: the Bot API and shopapi are both faked with
 app/
   main.py            entry point + adapter construction
   config.py          settings from .env
-  texts.py           all Persian user-facing texts
+  texts.py           loads messages.fa.json (all Persian texts / buttons / shop info)
   logging_setup.py   logging that cannot leak tokens
   store.py           SQLite bot state (offsets, conversations, cart, notices, receipts)
   shopapi.py         typed shopapi client with Persian errors
@@ -160,7 +166,7 @@ app/
   platforms/
     base.py          PlatformAdapter interface + shared Bot API HTTP code
     bale.py          BaleAdapter
-    telegram.py      TelegramAdapter (honours PROXY_URL)
+    telegram.py      TelegramAdapter (TELEGRAM_PROXY, socks5/http)
 tests/               pytest suite with fake platforms
 ```
 
@@ -202,4 +208,22 @@ tests/               pytest suite with fake platforms
     `answerCallbackQuery`, `editMessageText`, `getFile`/file download, and the
     message-length limit — record the answers in `NOTES.md`.
 18. Confirm the Bale bot works **without** a proxy while the Telegram bot uses
-    `PROXY_URL`.
+    `TELEGRAM_PROXY`.
+
+## Telegram on ShopServer (proxy, token, admin)
+
+- Token: `scripts\set_telegram_token.ps1` (hidden prompt; writes only
+  `%ProgramData%\ShopServer\.env`, in place, keeping its ACL). Optional proxy and
+  `ADMIN_CHAT_IDS` in the same run.
+- Proxy test: `scripts\test_telegram_proxy.ps1 [-Detect] [-Save]` - tries
+  socks5 then http on 127.0.0.1:10808, then `getMe` with the token (never shown).
+- `/myid` answers any user with their chat id (put it in `ADMIN_CHAT_IDS` as
+  `telegram:<id>`); `/help` lists the commands.
+- Proxy down: polling retries with exponential backoff (1s ... 60s), logs one
+  English + Persian line per outage (`cannot reach the Bot API ... در دسترس نیست`)
+  and `connection restored` when it is back. The server never stops.
+- Admin notices: new customer (approve/reject), new order (status button) and
+  receipt photo (approve/reject payment), sent immediately. With
+  `ACCOUNTING_WRITE_ENABLED=false` an approval is a dry run and the admin is told
+  so. Decisions made in ShopAdmin reach the customer through shopapi's
+  `/admin/events` feed (once per decision).

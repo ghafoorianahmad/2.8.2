@@ -110,6 +110,8 @@ echo [3/6] Running PyInstaller (%MODE%) - this takes a few minutes ...
     --hidden-import sqlite3 ^
     --hidden-import pyodbc ^
     --hidden-import httpx ^
+    --hidden-import socksio ^
+    --add-data "%SRC%\shopbots_app\messages.fa.json;shopbots_app" ^
     --hidden-import httpcore ^
     --hidden-import anyio._backends._asyncio ^
     --hidden-import email.mime.multipart ^
@@ -128,6 +130,9 @@ if not exist "%OUT%" mkdir "%OUT%"
 
 copy /y "%PKG%\.env.example" "%OUT%\.env.example" >nul
 copy /y "%PKG%\README.txt" "%OUT%\README.txt" >nul
+if not exist "%OUT%\scripts" mkdir "%OUT%\scripts"
+copy /y "%WS%\scripts\set_telegram_token.ps1" "%OUT%\scripts\" >nul
+copy /y "%WS%\scripts\test_telegram_proxy.ps1" "%OUT%\scripts\" >nul
 if exist "%PKG%\NOTES.md" copy /y "%PKG%\NOTES.md" "%OUT%\NOTES.md" >nul
 
 if exist "%KEEP%\.env" (

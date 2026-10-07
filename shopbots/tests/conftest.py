@@ -147,6 +147,9 @@ class FakeShopApi:
         self.down = False
         self.person_match: dict | None = None
         self.approve_payment_fails = False
+        #: ACCOUNTING_WRITE_ENABLED=false: approve-payment rehearses and keeps the status
+        self.dry_run_writes = False
+        self.events: list[dict] = []
         self._next_user = 1
         self._next_order = 1
 
@@ -169,6 +172,10 @@ class FakeShopApi:
         self._next_user += 1
         self.users[(platform, str(chat_id))] = user
         return user
+
+    def add_event(self, kind: str, ref_id: int) -> None:
+        self.events.append({"id": len(self.events) + 1, "ts": "t", "kind": kind,
+                            "ref_id": ref_id, "actor": "staff:admin"})
 
     def _order_public(self, order: dict) -> dict:
         return {k: v for k, v in order.items() if not k.startswith("_")}
@@ -256,6 +263,15 @@ class FakeShopApi:
                 return self._err(404, "No matching person")
             return self._ok(self.person_match)
 
+        if method == "GET" and path == "/admin/events":
+            last = self.events[-1]["id"] if self.events else 0
+            if "after" not in params:
+                return self._ok({"last_id": last, "items": []})
+            after = int(params["after"])
+            items = [e for e in self.events if e["id"] > after]
+            return self._ok({"last_id": items[-1]["id"] if items else min(after, last),
+                             "items": items})
+
         if method == "GET" and path == "/admin/orders":
             status_filter = params.get("status")
             orders = [o for o in self.orders.values() if not status_filter or o["status"] == status_filter]
@@ -268,6 +284,8 @@ class FakeShopApi:
                 return self._err(404, "Order not found")
             if self.approve_payment_fails:
                 return self._err(409, "Insufficient stock for product 101")
+            if self.dry_run_writes:
+                return self._ok(self._order_public(order))
             order["status"] = "written"
             order["accounting_order_no"] = 777
             return self._ok(self._order_public(order))

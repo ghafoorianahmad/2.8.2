@@ -9,7 +9,7 @@ from .conftest import CUSTOMER_CHAT, OTHER_CHAT, push_callback, push_message
 def test_registration_asks_name_then_phone_and_registers(env, bot_apis, shopapi):
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
-        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.ASK_NAME
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == f"{texts.WELCOME}\n\n{texts.ASK_NAME}"
 
         await push_message(engine, "bale", 2, CUSTOMER_CHAT, text="علی رضایی")
         assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.ASK_PHONE_WITH_BUTTON
@@ -67,7 +67,7 @@ def test_rejected_user_is_told(env, bot_apis, shopapi):
 
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
-        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.REJECTED_USER
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT).endswith(texts.REJECTED_USER)
 
     env(scenario)
 
@@ -77,7 +77,7 @@ def test_approved_user_gets_main_menu(env, bot_apis, shopapi):
 
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
-        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.MAIN_MENU
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == f"{texts.WELCOME}\n\n{texts.MAIN_MENU}"
         rows = bot_apis["bale"].buttons_for(CUSTOMER_CHAT)
         assert any(cb == "groups" for row in rows for _, cb in row)
         assert any(cb == "cart" for row in rows for _, cb in row)
@@ -99,12 +99,12 @@ def test_groups_then_products_then_pagination(env, settings, bot_apis, shopapi):
         first = bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
         assert "کالای الف" in first
         assert "1,000" in first          # price comes from the API
-        assert "1/2" in first            # page 1 of 2
+        assert texts.PRODUCTS_TITLE.format(page=1, pages=2) in first
         callbacks = [cb for row in bot_apis["bale"].buttons_for(CUSTOMER_CHAT) for _, cb in row]
         assert "pg:1:2" in callbacks
 
         await push_callback(engine, "bale", 4, CUSTOMER_CHAT, "pg:1:2")
-        assert "2/2" in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        assert texts.PRODUCTS_TITLE.format(page=2, pages=2) in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
 
     env(scenario)
 
@@ -175,7 +175,7 @@ def test_checkout_and_receipt_upload(env, bot_apis, shopapi):
         assert "شمارهٔ سفارش" in body
         assert "2,000" in body
         assert "واریز به کارت 1234" in body      # payment text comes from the API
-        assert body.endswith(texts.ASK_RECEIPT)
+        assert body.endswith(texts.ASK_RECEIPT.format(order_id=1))
         assert engine.store.cart_list("bale", CUSTOMER_CHAT) == []
 
         order = next(iter(shopapi.orders.values()))
@@ -239,12 +239,21 @@ def test_out_of_stock_product_cannot_be_added(env, bot_apis, shopapi):
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
 
     async def scenario(engine, adapters, api):
-        # product 103 has 0 available, so the listing must not include it
+        # product 103 has 0 available: listed as "ناموجود", but it cannot be ordered
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
         await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "grp:2")
+        listing = bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        assert texts.OUT_OF_STOCK_LABEL in listing and texts.IN_STOCK in listing
         callbacks = [cb for row in bot_apis["bale"].buttons_for(CUSTOMER_CHAT) for _, cb in row]
-        assert "prod:103" not in callbacks
-        assert "prod:104" in callbacks
+        assert "prod:103" in callbacks and "prod:104" in callbacks
+        await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "prod:103")
+        assert texts.OUT_OF_STOCK in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        callbacks = [cb for row in bot_apis["bale"].buttons_for(CUSTOMER_CHAT) for _, cb in row]
+        assert not any(cb.startswith(("add:", "qty:")) for cb in callbacks)
+        # a forged "add" callback is refused too
+        await push_callback(engine, "bale", 4, CUSTOMER_CHAT, "add:103:1")
+        assert api is not None
+        assert not engine.store.cart_list("bale", CUSTOMER_CHAT)
 
     env(scenario)
 

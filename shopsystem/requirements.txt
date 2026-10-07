@@ -5,6 +5,7 @@ pydantic
 pyodbc
 python-dotenv
 httpx
+socksio        # SOCKS5 proxy support for Telegram (TELEGRAM_PROXY=socks5://...)
 cryptography   # the server's self-signed TLS certificate
 
 # Build-time only

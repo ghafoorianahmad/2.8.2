@@ -15,10 +15,10 @@ def test_sweep_announces_pending_user_once(env, bot_apis, shopapi):
 
     async def scenario(engine, adapters, api):
         first = await engine.admin_sweep()
-        assert first == {"users": 1, "orders": 0}
+        assert first == {"users": 1, "orders": 0, "notified": 0}
 
         notice = bot_apis["bale"].last_text_any(ADMIN_CHAT)
-        assert "کاربر جدید" in notice
+        assert texts.NEW_USER_NOTICE.splitlines()[0] in notice
         assert "bale" in notice
         assert mask_phone("09121234567") in notice
         assert "09121234567" not in notice          # never the full phone number
@@ -29,9 +29,9 @@ def test_sweep_announces_pending_user_once(env, bot_apis, shopapi):
         assert f"adsug:{user['id']}:7001" in callbacks
 
         # every admin chat was notified, and a second sweep announces nothing again
-        assert any("کاربر جدید" in t for t in bot_apis["telegram"].texts(ADMIN_CHAT))
+        assert any(texts.NEW_USER_NOTICE.splitlines()[0] in t for t in bot_apis["telegram"].texts(ADMIN_CHAT))
         second = await engine.admin_sweep()
-        assert second == {"users": 0, "orders": 0}
+        assert second == {"users": 0, "orders": 0, "notified": 0}
 
     env(scenario)
 
@@ -89,10 +89,10 @@ def test_sweep_announces_receipt_with_photo_and_admin_approves(env, bot_apis, sh
         engine.store.save_receipt(order["id"], "bale", CUSTOMER_CHAT, "RECEIPT-FILE")
 
         result = await engine.admin_sweep()
-        assert result == {"users": 0, "orders": 1}
+        assert result == {"users": 0, "orders": 1, "notified": 0}
 
         notice = bot_apis["bale"].last_text_any(ADMIN_CHAT)
-        assert "رسید پرداخت جدید" in notice
+        assert texts.NEW_RECEIPT_NOTICE.splitlines()[0] in notice
         assert str(order["id"]) in notice
         assert "2,000" in notice
         assert bot_apis["bale"].photos[-1]["photo"] == "RECEIPT-FILE"
@@ -101,7 +101,7 @@ def test_sweep_announces_receipt_with_photo_and_admin_approves(env, bot_apis, sh
 
         await push_callback(engine, "bale", 20, ADMIN_CHAT, f"adap:{order['id']}")
         assert shopapi.orders[order["id"]]["status"] == "written"
-        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.PAYMENT_APPROVED
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.PAYMENT_APPROVED.format(order_id=1)
 
     env(scenario)
 
@@ -123,7 +123,7 @@ def test_admin_rejects_payment(env, bot_apis, shopapi):
         await engine.admin_sweep()
         await push_callback(engine, "bale", 20, ADMIN_CHAT, f"adrp:{order['id']}")
         assert shopapi.orders[order["id"]]["status"] == "rejected"
-        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.PAYMENT_REJECTED
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.PAYMENT_REJECTED.format(order_id=1)
 
     env(scenario)
 
