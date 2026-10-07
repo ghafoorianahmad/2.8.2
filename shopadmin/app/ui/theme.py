@@ -57,7 +57,13 @@ BORDER = "#E2E8F0"
 BORDER_STRONG = "#CBD5E1"
 SURFACE = "#FFFFFF"
 BACKGROUND = "#F6F8FB"
-SIDEBAR_BG = "#FFFFFF"
+SIDEBAR_BG = "#0F172A"
+SIDEBAR_TEXT = "#CBD5E1"        # on SIDEBAR_BG = 12.0:1
+SIDEBAR_MUTED = "#94A3B8"       # on SIDEBAR_BG = 6.96:1
+SIDEBAR_HOVER = "#1E293B"       # SIDEBAR_TEXT on it = 9.8:1
+SIDEBAR_ACTIVE = "#1D4ED8"      # white on it = 6.70:1
+SIDEBAR_OK = "#6EE7B7"          # on SIDEBAR_BG = 11.5:1
+SIDEBAR_BAD = "#FCA5A5"         # on SIDEBAR_BG = 8.9:1
 HOVER = "#F1F5F9"
 SELECTED_BG = "#EFF6FF"
 
@@ -216,6 +222,21 @@ def icon(name: str, size: int = 20, color: str = TEXT) -> QIcon:
     return _ICON_CACHE[key]
 
 
+def nav_icon(name: str, size: int = 20) -> QIcon:
+    """Sidebar icon: light on the dark bar, white when the button is checked."""
+    key = (f"nav:{name}", size, "")
+    if key not in _ICON_CACHE:
+        result = QIcon()
+        normal = icon_pixmap(name, size, SIDEBAR_TEXT)
+        active = icon_pixmap(name, size, "#FFFFFF")
+        result.addPixmap(normal, QIcon.Mode.Normal, QIcon.State.Off)
+        result.addPixmap(active, QIcon.Mode.Normal, QIcon.State.On)
+        result.addPixmap(active, QIcon.Mode.Active, QIcon.State.Off)
+        result.addPixmap(active, QIcon.Mode.Active, QIcon.State.On)
+        _ICON_CACHE[key] = result
+    return _ICON_CACHE[key]
+
+
 def dot_pixmap(color: str, diameter: int = 12) -> QPixmap:
     pixmap = QPixmap(diameter, diameter)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -326,13 +347,17 @@ QPushButton#Ghost:hover {{ background: {HOVER}; color: {PRIMARY_DARK}; }}
 
 QPushButton#NavButton {{
     background: transparent; border: none; border-radius: {RADIUS}px;
-    padding: 11px 14px; text-align: right; font-size: 12pt; color: {TEXT};
+    padding: 11px 14px; text-align: right; font-size: 12pt; color: {SIDEBAR_TEXT};
 }}
-QPushButton#NavButton:hover {{ background: {HOVER}; }}
+QPushButton#NavButton:hover {{ background: {SIDEBAR_HOVER}; color: #FFFFFF; }}
 QPushButton#NavButton:checked {{
-    background: {PRIMARY_SOFT}; color: {PRIMARY_DARK}; font-weight: 700;
-    border-right: 3px solid {PRIMARY}; border-top-right-radius: 4px; border-bottom-right-radius: 4px;
+    background: {SIDEBAR_ACTIVE}; color: #FFFFFF; font-weight: 700;
 }}
+QPushButton#NavButton[hasBadge="true"] {{ color: #FDE68A; font-weight: 700; }}
+QPushButton#NavButton[hasBadge="true"]:checked {{ color: #FFFFFF; }}
+QFrame#Sidebar QLabel {{ background: transparent; }}
+QLabel#SidebarTitle {{ color: #FFFFFF; font-size: 12pt; font-weight: 700; }}
+QLabel#SidebarMuted {{ color: {SIDEBAR_MUTED}; }}
 
 QPushButton#Tab {{
     border: none; border-radius: {RADIUS_SM}px; padding: 7px 16px;

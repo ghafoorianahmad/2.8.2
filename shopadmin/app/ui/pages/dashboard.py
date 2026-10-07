@@ -1,7 +1,7 @@
 """صفحهٔ داشبورد — چهار کارت آماری، آخرین سفارش‌ها و به‌روزرسانی خودکار."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
@@ -53,6 +53,11 @@ class DashboardPage(BasePage):
         self.card_pending_customers.clicked.connect(lambda: self._go("customers", "pending"))
         self.card_receipts.clicked.connect(lambda: self._go("orders", ORDER_RECEIPT_UPLOADED))
         self.card_today.clicked.connect(lambda: self._go("orders", ORDER_WRITTEN))
+
+        chart_panel = widgets.Panel("سفارش‌های ۷ روز اخیر")
+        self.chart = widgets.BarChart()
+        chart_panel.body.addWidget(self.chart)
+        self.body.addWidget(chart_panel)
 
         panel = widgets.Panel("آخرین ۱۰ سفارش")
         self.table = widgets.DataTable(DASHBOARD_HEADERS)
@@ -118,8 +123,10 @@ class DashboardPage(BasePage):
         )
         self.card_products.set_value(format_int(products.get("total", 0)))
 
+        all_orders = list(receipts) + list(approved) + list(written)
+        self.chart.set_data(orders_per_day(all_orders))
         rows = sorted(
-            list(receipts) + list(approved) + list(written),
+            all_orders,
             key=lambda order: order.get("created_at") or "",
             reverse=True,
         )[:10]
@@ -153,6 +160,23 @@ class DashboardPage(BasePage):
         navigate = getattr(window, "navigate", None)
         if callable(navigate):
             navigate(page_key, filter_key)
+
+
+def orders_per_day(orders: list[dict], days: int = 7, today: date | None = None) -> list[tuple[str, int]]:
+    """Order counts for the last ``days`` days, oldest first, labelled شمسی «ماه/روز»."""
+    from ...persian import coerce_datetime, gregorian_to_jalali
+
+    end = today or datetime.now().date()
+    counts = {end - timedelta(days=offset): 0 for offset in range(days - 1, -1, -1)}
+    for order in orders:
+        moment = coerce_datetime(order.get("created_at"))
+        if moment is not None and moment.date() in counts:
+            counts[moment.date()] += 1
+    result = []
+    for day, count in counts.items():
+        _, month, dom = gregorian_to_jalali(day.year, day.month, day.day)
+        result.append((to_persian_digits(f"{month}/{dom}"), count))
+    return result
 
 
 def _is_today(value: object) -> bool:

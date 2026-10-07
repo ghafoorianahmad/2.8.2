@@ -127,7 +127,7 @@ class MainWindow(QMainWindow):
         sidebar.setFixedWidth(248)
         sidebar.setStyleSheet(
             f"QFrame#Sidebar {{ background: {theme.SIDEBAR_BG}; "
-            f"border-left: 1px solid {theme.BORDER}; }}"
+            f"border: none; }}"
         )
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(14, 18, 14, 18)
@@ -138,18 +138,21 @@ class MainWindow(QMainWindow):
         brand_layout.setContentsMargins(6, 0, 6, 10)
         brand_layout.setSpacing(10)
         logo = QLabel()
-        logo.setPixmap(theme.icon_pixmap("products", 28, theme.PRIMARY))
+        logo.setPixmap(theme.icon_pixmap("products", 28, "#FFFFFF"))
         logo.setFixedSize(42, 42)
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setStyleSheet(f"background: {theme.PRIMARY_SOFT}; border-radius: 12px;")
+        logo.setStyleSheet(f"background: {theme.SIDEBAR_ACTIVE}; border-radius: 12px;")
         brand_layout.addWidget(logo)
         titles = QVBoxLayout()
         titles.setSpacing(0)
-        titles.addWidget(widgets.label("مدیریت فروشگاه", size=12, bold=True))
-        titles.addWidget(widgets.label("کنسول مدیر", name="Faint"))
+        titles.addWidget(widgets.label("مدیریت فروشگاه", name="SidebarTitle"))
+        titles.addWidget(widgets.label("کنسول مدیر", name="SidebarMuted"))
         brand_layout.addLayout(titles, 1)
         layout.addWidget(brand)
-        layout.addWidget(widgets.hline())
+        divider = QFrame()
+        divider.setFixedHeight(1)
+        divider.setStyleSheet(f"background: {theme.SIDEBAR_HOVER};")
+        layout.addWidget(divider)
 
         group = QButtonGroup(self)
         group.setExclusive(True)
@@ -160,7 +163,7 @@ class MainWindow(QMainWindow):
             button = QPushButton(f"  {text}")
             button.setObjectName("NavButton")
             button.setCheckable(True)
-            button.setIcon(theme.icon(icon_name, 20, theme.TEXT))
+            button.setIcon(theme.nav_icon(icon_name))
             button.setIconSize(QSize(20, 20))
             button.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -170,16 +173,15 @@ class MainWindow(QMainWindow):
             self._nav_buttons[key] = button
 
         layout.addStretch(1)
-        layout.addWidget(widgets.hline())
 
         self.connection_box = QWidget()
         box_layout = QVBoxLayout(self.connection_box)
         box_layout.setContentsMargins(6, 6, 6, 0)
         box_layout.setSpacing(4)
-        self.connection_label = widgets.label("", name="Muted", wrap=True)
+        self.connection_label = widgets.label("", name="SidebarMuted", wrap=True)
         box_layout.addWidget(self.connection_label)
         self.version_label = widgets.label(
-            f"نسخهٔ {to_persian_digits(APP_VERSION)}", name="Faint"
+            f"نسخهٔ {to_persian_digits(APP_VERSION)}", name="SidebarMuted"
         )
         box_layout.addWidget(self.version_label)
         layout.addWidget(self.connection_box)
@@ -386,12 +388,12 @@ class MainWindow(QMainWindow):
             self.connection_label.setText(
                 f"متصل به {self.context.store.base_url}"
             )
-            self.connection_label.setStyleSheet(f"color: {theme.SUCCESS_DARK};")
+            self.connection_label.setStyleSheet(f"color: {theme.SIDEBAR_OK};")
         else:
             self.status_dot.setPixmap(self._status_dot_bad)
             self.status_text.setText("قطع")
             self.connection_label.setText(f"قطع ارتباط با {self.context.store.base_url}")
-            self.connection_label.setStyleSheet(f"color: {theme.DANGER};")
+            self.connection_label.setStyleSheet(f"color: {theme.SIDEBAR_BAD};")
 
     def _refresh_clock(self) -> None:
         if self._current_key:

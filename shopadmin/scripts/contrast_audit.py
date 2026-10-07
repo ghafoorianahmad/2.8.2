@@ -104,6 +104,13 @@ def from_theme() -> list[tuple[str, str, str, float]]:
         ("ROLE_PURPLE on SURFACE", theme.ROLE_PURPLE, theme.SURFACE, 4.5),
         ("DANGER on SURFACE (error text)", theme.DANGER, theme.SURFACE, 4.5),
         ("SUCCESS_DARK on SURFACE (ok text)", theme.SUCCESS_DARK, theme.SURFACE, 4.5),
+        ("SIDEBAR_TEXT on SIDEBAR_BG (nav)", theme.SIDEBAR_TEXT, theme.SIDEBAR_BG, 4.5),
+        ("SIDEBAR_MUTED on SIDEBAR_BG", theme.SIDEBAR_MUTED, theme.SIDEBAR_BG, 4.5),
+        ("SIDEBAR_TEXT on SIDEBAR_HOVER", theme.SIDEBAR_TEXT, theme.SIDEBAR_HOVER, 4.5),
+        ("white on SIDEBAR_HOVER (nav hover)", "#FFFFFF", theme.SIDEBAR_HOVER, 4.5),
+        ("white on SIDEBAR_ACTIVE (nav checked)", "#FFFFFF", theme.SIDEBAR_ACTIVE, 4.5),
+        ("SIDEBAR_OK on SIDEBAR_BG", theme.SIDEBAR_OK, theme.SIDEBAR_BG, 4.5),
+        ("SIDEBAR_BAD on SIDEBAR_BG", theme.SIDEBAR_BAD, theme.SIDEBAR_BG, 4.5),
     ]
 
 

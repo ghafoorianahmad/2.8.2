@@ -174,6 +174,65 @@ class StatCard(QFrame):
         super().mouseReleaseEvent(event)
 
 
+class BarChart(QWidget):
+    """Minimal bar chart (label + integer value per bar), painted directly.
+
+    Value labels are drawn above every bar so the chart never relies on colour
+    alone; bars use PRIMARY on the white panel (non-text contrast >= 3:1).
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._data: list[tuple[str, int]] = []
+        self.setMinimumHeight(170)
+        self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+
+    def set_data(self, data: list[tuple[str, int]]) -> None:
+        self._data = list(data)
+        self.update()
+
+    def data(self) -> list[tuple[str, int]]:
+        return list(self._data)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        from PySide6.QtGui import QColor, QPainter
+
+        if not self._data:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setFont(theme.app_font(9))
+        count = len(self._data)
+        top_pad, bottom_pad = 22, 24
+        slot = self.width() / count
+        bar_width = min(46.0, slot * 0.55)
+        plot_height = max(10, self.height() - top_pad - bottom_pad)
+        peak = max(1, max(value for _, value in self._data))
+        base_y = top_pad + plot_height
+        painter.setPen(QColor(theme.BORDER))
+        painter.drawLine(0, int(base_y), self.width(), int(base_y))
+        for index, (text, value) in enumerate(self._data):
+            center = slot * (count - index - 0.5)  # RTL: oldest bar on the right
+            height = plot_height * value / peak
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(theme.PRIMARY if value else theme.BORDER_STRONG))
+            painter.drawRoundedRect(
+                int(center - bar_width / 2), int(base_y - max(height, 3)),
+                int(bar_width), int(max(height, 3)), 6, 6,
+            )
+            painter.setPen(QColor(theme.INK))
+            painter.drawText(
+                int(center - slot / 2), int(base_y - max(height, 3) - 20),
+                int(slot), 18, Qt.AlignmentFlag.AlignCenter, to_persian_digits(value),
+            )
+            painter.setPen(QColor(theme.TEXT_MUTED))
+            painter.drawText(
+                int(center - slot / 2), int(base_y + 4),
+                int(slot), 18, Qt.AlignmentFlag.AlignCenter, text,
+            )
+        painter.end()
+
+
 class Panel(QFrame):
     """A titled white panel used to group content."""
 
