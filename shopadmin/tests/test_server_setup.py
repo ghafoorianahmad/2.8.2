@@ -41,6 +41,75 @@ def test_data_folder_is_locked_to_system_and_administrators_by_sid(captured):
     assert len(grants) == 2  # nobody else (no Users / Everyone)
 
 
+def test_hardening_never_recurses_with_grants_and_resets_existing_files(captured, tmp_path):
+    (tmp_path / "ShopServer" / ".env").write_text("A=1\n", encoding="utf-8")
+    setup.harden_data_dir()
+    assert "/T" not in captured[0]               # /T + (OI)(CI) emptied the ACL of .env
+    resets = [c for c in captured if "/reset" in c]
+    assert [c[1] for c in resets] == [str(tmp_path / "ShopServer" / ".env")]
+
+
+def test_hardening_creates_missing_folder_and_is_repeatable(captured, tmp_path, monkeypatch):
+    folder = tmp_path / "fresh" / "ShopServer"
+    monkeypatch.setattr(setup, "data_dir", lambda: folder)
+    setup.harden_data_dir()
+    setup.harden_data_dir()                      # second run after a partial success
+    assert folder.is_dir()
+
+
+def test_hardening_reports_the_real_error_when_env_is_unreadable(captured, tmp_path, monkeypatch):
+    (tmp_path / "ShopServer" / ".env").write_text("A=1\n", encoding="utf-8")
+    real_open = open
+
+    def deny(path, *args, **kwargs):
+        if str(path).endswith(".env"):
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", deny)
+    with pytest.raises(setup.SetupError) as exc:
+        setup.harden_data_dir()
+    assert "Permission denied" in exc.value.message
+
+
+def test_icacls_failure_shows_its_output(monkeypatch, tmp_path):
+    class Failed:
+        returncode = 5
+        stdout = ""
+        stderr = "Access is denied."
+
+    monkeypatch.setattr(setup, "data_dir", lambda: tmp_path / "ShopServer")
+    monkeypatch.setattr(setup, "_run", lambda command, **kw: Failed())
+    with pytest.raises(setup.SetupError) as exc:
+        setup.harden_data_dir()
+    assert "Access is denied" in exc.value.detail
+
+
+def test_server_tool_crash_surfaces_the_real_exception(monkeypatch):
+    class Crashed:
+        returncode = 1
+        stdout = b""
+        stderr = (b"Traceback...\nPermissionError: [Errno 13] Permission denied: "
+                  b"'C:\\\\ProgramData\\\\ShopServer\\\\.env'\n[PYI-1:ERROR] Failed\n")
+
+    monkeypatch.setattr(setup, "server_command", lambda: ["x.exe"])
+    monkeypatch.setattr(setup.subprocess, "run", lambda *a, **k: Crashed())
+    with pytest.raises(setup.SetupError) as exc:
+        setup.run_server_tool(["--check-db"])
+    assert "PermissionError" in exc.value.message
+    assert "قابل خواندن نبود" not in exc.value.message
+
+
+def test_config_json_is_removed_even_when_the_tool_fails(captured, monkeypatch, tmp_path):
+    def boom(args, timeout=60):
+        raise setup.SetupError("x")
+
+    monkeypatch.setattr(setup, "run_server_tool", boom)
+    with pytest.raises(setup.SetupError):
+        setup.write_config(setup.DatabaseConfig(".", "db", True), port=8443)
+    assert list((tmp_path / "ShopServer").glob("setup-*.json")) == []
+
+
 def test_task_runs_as_system_at_boot_and_restarts(captured):
     xml = setup.task_xml([r"C:\Program Files\ShopServer\ShopSystem\ShopSystem.exe"],
                          run_as_user=None)

@@ -496,7 +496,19 @@ def run(argv: list[str] | None = None) -> int:
 
         if not is_admin():
             # Ask Windows for administrator rights (UAC) and let that copy work.
-            relaunch_elevated(["--server-setup"])
+            shown = False
+            try:
+                shown = relaunch_elevated(["--server-setup"])
+            except Exception as exc:  # noqa: BLE001 - reported below
+                logger.warning("elevation request failed: %s", type(exc).__name__)
+            if not shown:
+                QApplication(args)
+                QMessageBox.warning(
+                    None, "راه‌اندازی سرور",
+                    "راه‌اندازی سرور به دسترسی «مدیر ویندوز» نیاز دارد و درخواست آن تأیید نشد. "
+                    "برنامه را دوباره باز کنید و در پنجرهٔ ویندوز (UAC) «Yes / بله» را بزنید؛ "
+                    "یا روی میان‌بر برنامه راست‌کلیک و «Run as administrator» را انتخاب کنید.",
+                )
             return 0
 
     app = QApplication(args)

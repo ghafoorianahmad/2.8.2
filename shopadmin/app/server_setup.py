@@ -129,15 +129,19 @@ def run_server_tool(args: list[str], timeout: float = 60) -> dict:
                                    creationflags=CREATE_NO_WINDOW, env=_server_env())
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise SetupError("اجرای برنامهٔ سرور ممکن نشد.", type(exc).__name__) from exc
-    output = completed.stdout.decode("utf-8", errors="replace").strip().splitlines()
-    for line in reversed(output):
+    stdout = completed.stdout.decode("utf-8", errors="replace").strip()
+    for line in reversed(stdout.splitlines()):
         if line.startswith("{"):
             try:
                 return json.loads(line)
             except ValueError:
                 break
-    raise SetupError("پاسخ برنامهٔ سرور قابل خواندن نبود.",
-                     completed.stderr.decode("utf-8", errors="replace")[-300:])
+    stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+    # The last meaningful line is the real error (e.g. "PermissionError: ... .env").
+    lines = [ln.strip() for ln in (stderr or stdout).splitlines()
+             if ln.strip() and not ln.startswith("[PYI-")]
+    reason = lines[-1][:300] if lines else f"کد خروج {completed.returncode}"
+    raise SetupError(f"برنامهٔ سرور با خطا متوقف شد: {reason}", (stderr or stdout)[-600:])
 
 
 def _run(command: list[str], *, timeout: float = 60, input_text: str | None = None) -> subprocess.CompletedProcess:
@@ -153,14 +157,43 @@ def harden_data_dir(extra_user: str | None = None) -> Path:
     """Create the data folder and allow only SYSTEM and Administrators (by SID,
     so it works on a Persian Windows too)."""
     folder = data_dir()
-    folder.mkdir(parents=True, exist_ok=True)
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise SetupError(f"ساخت پوشهٔ داده ({folder}) ممکن نشد: {exc}", str(exc)) from exc
     grants = [f"*{SID_SYSTEM}:(OI)(CI)F", f"*{SID_ADMINISTRATORS}:(OI)(CI)F"]
     if extra_user:
         grants.append(f"{extra_user}:(OI)(CI)M")
-    result = _run(["icacls", str(folder), "/inheritance:r", "/grant:r", *grants, "/T", "/C", "/Q"])
+    # Only the folder itself gets the explicit grants. Never pass /T here: applying an
+    # (OI)(CI) grant to a *file* together with /inheritance:r leaves it with an empty
+    # ACL, locking everybody (the service included) out of .env.
+    result = _run(["icacls", str(folder), "/inheritance:r", "/grant:r", *grants, "/C", "/Q"])
     if result.returncode != 0:
-        raise SetupError("دسترسی پوشهٔ دادهٔ سرور محدود نشد.", result.stderr[-300:])
+        raise SetupError("دسترسی پوشهٔ دادهٔ سرور محدود نشد.", _output_tail(result))
+    # Files from an earlier (partial) run: drop their own ACL so they inherit the folder's.
+    # This also repairs a .env that an older setup left unreadable.
+    for child in sorted(folder.rglob("*")):
+        fixed = _run(["icacls", str(child), "/reset", "/C", "/Q"])
+        if fixed.returncode != 0:
+            raise SetupError(f"بازنشانی دسترسی «{child.name}» ممکن نشد.", _output_tail(fixed))
+    _check_readable(folder / ".env")
     return folder
+
+
+def _output_tail(result, limit: int = 300) -> str:
+    return ((result.stderr or "") + (result.stdout or "")).strip()[-limit:]
+
+
+def _check_readable(path: Path) -> None:
+    """Fail with the real operating-system error if the file exists but cannot be opened."""
+    if not path.exists():
+        return
+    try:
+        with open(path, "rb"):
+            pass
+    except OSError as exc:
+        raise SetupError(f"فایل «{path.name}» پس از تنظیم دسترسی قابل خواندن نیست: {exc}",
+                         str(exc)) from exc
 
 
 @dataclass
@@ -184,12 +217,15 @@ def write_config(db: DatabaseConfig, *, port: int, extra: dict | None = None) ->
     }
     payload.update({k: v for k, v in (extra or {}).items() if v not in (None, "")})
     handle, name = tempfile.mkstemp(prefix="setup-", suffix=".json", dir=folder)
-    with os.fdopen(handle, "w", encoding="utf-8") as stream:
-        json.dump(payload, stream, ensure_ascii=False)
-    answer = run_server_tool(["--init-config", name])
-    Path(name).unlink(missing_ok=True)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False)
+        answer = run_server_tool(["--init-config", name])
+    finally:
+        Path(name).unlink(missing_ok=True)  # holds the DB password: never leave it behind
     if not answer.get("ok"):
-        raise SetupError("نوشتن تنظیمات سرور ممکن نشد.", str(answer)[:300])
+        reason = answer.get("message") or answer.get("error") or str(answer)
+        raise SetupError(f"نوشتن تنظیمات سرور ممکن نشد: {reason}"[:400], str(answer)[:300])
     return answer
 
 

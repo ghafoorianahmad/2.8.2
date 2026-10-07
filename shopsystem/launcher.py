@@ -665,10 +665,15 @@ def main(argv: list[str] | None = None) -> int:
     configure_paths(resolve_data_dir(args))
 
     init_json = _arg_value(args, "--init-config")
-    if init_json:
-        return init_config(Path(init_json))
-    if "--check-db" in args:
-        return check_db()
+    if init_json or "--check-db" in args:
+        # Setup helpers must always answer with JSON, even on failure, so the
+        # wizard can show the real reason instead of "unreadable response".
+        try:
+            return init_config(Path(init_json)) if init_json else check_db()
+        except Exception as exc:  # noqa: BLE001 - reported to the setup screen
+            text = str(exc).splitlines()[0][:300] if str(exc) else ""
+            _emit({"ok": False, "error": type(exc).__name__, "message": f"{type(exc).__name__}: {text}"})
+            return 1
     if "--fingerprint" in args:
         from server_tls import ensure_certificate
 

@@ -325,7 +325,7 @@ class ServerSetupWizard(QWidget):
         self._db_message("در حال ذخیره و آزمایش…", None)
 
         def work() -> dict:
-            setup.harden_data_dir()
+            setup.harden_data_dir(setup.current_windows_user() if db.trusted else None)
             setup.write_config(db, port=self.port.value())
             return setup.check_database()
 
@@ -416,7 +416,7 @@ class ServerSetupWizard(QWidget):
 
         def work(on_progress) -> tuple[str, str, str]:
             on_progress("محدود کردن دسترسی پوشهٔ داده")
-            setup.harden_data_dir()
+            setup.harden_data_dir(windows_user)
             on_progress("نوشتن تنظیمات سرور")
             setup.write_config(db, port=port, extra=extra)
             on_progress("ساخت وظیفهٔ خودکار ویندوز")
