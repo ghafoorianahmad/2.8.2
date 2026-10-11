@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 
 from app.core import (
     MAX_QTY,
@@ -11,10 +12,13 @@ from app.core import (
     STATUS_REJECTED,
     CartService,
     CatalogService,
+    ContactProblem,
     CustomerService,
     OrderService,
     ReceiptOutcome,
     normalize_search,
+    parse_product_ref,
+    receipt_file,
     receipt_file_ref,
 )
 from app.shopapi import ShopApiRejected
@@ -50,8 +54,8 @@ class StubApi:
         self.calls.append(("create_order", items))
         return self.order
 
-    async def upload_receipt(self, order_id, file_ref, platform, chat_id):
-        self.calls.append(("upload_receipt", order_id, file_ref))
+    async def upload_receipt(self, order_id, file_ref, platform, chat_id, data_b64=None):
+        self.calls.append(("upload_receipt", order_id, file_ref, data_b64))
         if self.receipt_error:
             raise self.receipt_error
         return {"id": order_id, "status": "receipt_uploaded"}
@@ -130,6 +134,9 @@ def test_failed_checkout_keeps_the_cart():
     assert len(orders.cart.items("bale", "1")) == 1
 
 
+JPEG = b"\xff\xd8\xff\xe0" + b"0" * 32
+
+
 def test_receipt_outcomes():
     photo = [{"file_id": "small"}, {"file_id": "big"}]
     assert receipt_file_ref(photo) == "big"
@@ -149,6 +156,53 @@ def test_receipt_outcomes():
     assert rejected.outcome is ReceiptOutcome.REJECTED and rejected.message_fa == "سفارش پیدا نشد"
 
 
+def test_receipt_photo_or_image_document():
+    limit = 1000
+    assert receipt_file([{"file_id": "p", "file_size": 10}], None, limit).file_ref == "p"
+    doc = {"file_id": "d", "mime_type": "image/png", "file_size": 10}
+    assert receipt_file(None, doc, limit).file_ref == "d"
+    named = {"file_id": "n", "file_name": "receipt.JPG"}
+    assert receipt_file(None, named, limit).file_ref == "n"
+    pdf = {"file_id": "x", "mime_type": "application/pdf"}
+    assert receipt_file(None, pdf, limit).outcome is ReceiptOutcome.NOT_A_PHOTO
+    big = {"file_id": "b", "mime_type": "image/jpeg", "file_size": limit + 1}
+    assert receipt_file(None, big, limit).outcome is ReceiptOutcome.TOO_LARGE
+    assert receipt_file([{"file_id": "p", "file_size": limit + 1}], None, limit).outcome \
+        is ReceiptOutcome.TOO_LARGE
+
+
+def test_receipt_is_downloaded_checked_and_sent():
+    api, store, orders = _orders()
+    orders.receipt_max_bytes = 100
+    doc = {"file_id": "d", "mime_type": "image/jpeg"}
+
+    async def ok(ref, limit):
+        assert ref == "d" and limit == 100
+        return JPEG
+
+    saved = run(orders.attach_receipt("bale", "1", 7, None, doc, download=ok))
+    assert saved.outcome is ReceiptOutcome.SAVED
+    assert base64.b64decode(api.calls[-1][3]) == JPEG
+
+    async def html(ref, limit):
+        return b"<html>not an image</html>"
+
+    assert run(orders.attach_receipt("bale", "1", 7, None, doc, download=html)).outcome \
+        is ReceiptOutcome.NOT_A_PHOTO
+
+    async def huge(ref, limit):
+        return JPEG + b"0" * 200
+
+    assert run(orders.attach_receipt("bale", "1", 7, None, doc, download=huge)).outcome \
+        is ReceiptOutcome.TOO_LARGE
+
+    async def broken(ref, limit):
+        raise RuntimeError("network")
+
+    assert run(orders.attach_receipt("bale", "1", 7, None, doc, download=broken)).outcome \
+        is ReceiptOutcome.DOWNLOAD_FAILED
+
+
 def test_order_list_is_capped():
     _api, _store, orders = _orders()
     listed = run(orders.list_for("bale", "1"))
@@ -166,14 +220,36 @@ def test_customer_status_mapping():
         assert run(customers.status("bale", "1")) == expected
 
 
-def test_customer_name_phone_and_registration():
+def test_contact_verification():
     api = StubApi()
     customers = CustomerService(api, max_name_len=10)
-    assert customers.valid_name("  علی ") == "علی"
-    for bad in ("", "ع", "/start", "x" * 11):
-        assert customers.valid_name(bad) is None
-    assert customers.phone_from("", {"phone_number": "+989121234567"}) == "09121234567"
-    assert customers.phone_from("۰۹۱۲۱۲۳۴۵۶۷", None) == "09121234567"
-    assert customers.phone_from("123", None) == ""
-    run(customers.register("bale", "1", "  ", "09121234567"))
-    assert api.calls[-1] == ("register_user", "bale", "1", "مشتری", "09121234567")
+    own = {"phone_number": "+989121234567", "user_id": 5, "first_name": "علی"}
+    verified = customers.verify_contact(own, 5)
+    assert verified.problem is ContactProblem.NONE
+    assert verified.phone == "09121234567" and verified.name == "علی"
+    assert customers.verify_contact(own, "5").problem is ContactProblem.NONE
+    # never a typed number, never somebody else's contact
+    assert customers.verify_contact(None, 5).problem is ContactProblem.NO_CONTACT
+    assert customers.verify_contact(own, 6).problem is ContactProblem.NOT_OWN
+    assert customers.verify_contact(own, None).problem is ContactProblem.NOT_OWN
+    no_owner = {"phone_number": "09121234567"}
+    assert customers.verify_contact(no_owner, 5).problem is ContactProblem.NOT_OWN
+    foreign = {"phone_number": "+14155550100", "user_id": 5}
+    assert customers.verify_contact(foreign, 5).problem is ContactProblem.NOT_MOBILE
+    # name: contact -> sender profile -> default; trimmed to max_name_len
+    nameless = {"phone_number": "09121234567", "user_id": 5}
+    assert customers.verify_contact(nameless, 5, {"first_name": "Sara"}).name == "Sara"
+    assert customers.verify_contact(nameless, 5).name == "مشتری"
+    long_name = {**nameless, "first_name": "x" * 30}
+    assert customers.verify_contact(long_name, 5).name == "x" * 10
+    run(customers.register("bale", "1", verified))
+    assert api.calls[-1] == ("register_user", "bale", "1", "علی", "09121234567")
+
+
+def test_product_ref_parsing():
+    assert parse_product_ref("kala_289") == 289
+    assert parse_product_ref("KALA_۲۸۹") == 289
+    assert parse_product_ref("289") is None
+    assert parse_product_ref("289", allow_bare_code=True) == 289
+    for bad in ("kala_", "kala_x", "kala_0", "kala_123456789", "hello", "", None):
+        assert parse_product_ref(bad, allow_bare_code=True) is None

@@ -50,6 +50,8 @@ def format_admin_error(exc: ShopApiError) -> str:
         return texts.ADMIN_PERSON_CODE_NOT_FOUND
     if "already linked" in detail:
         return texts.ADMIN_PERSON_CODE_IN_USE
+    if "not approved yet" in detail:
+        return texts.ADMIN_CUSTOMER_NOT_APPROVED
     return texts.ADMIN_ACTION_FAILED.format(reason=exc.detail or exc.message_fa)
 
 
@@ -87,6 +89,8 @@ class ShopApiClient:
     def _message_for(self, status: int, detail: str | None) -> str:
         if status == 409 and detail and "stock" in detail.lower():
             return texts.ADMIN_INSUFFICIENT_STOCK
+        if status == 422 and detail and "awaiting approval" in detail.lower():
+            return texts.PENDING_LIMIT
         if status == 503:
             return texts.SERVICE_UNAVAILABLE
         return _STATUS_MESSAGES.get(status, "خطای نامشخص از سامانهٔ فروش.")
@@ -160,6 +164,23 @@ class ShopApiClient:
         result.setdefault("items", [])
         return result
 
+    async def get_product(self, code: int) -> dict | None:
+        return await self._request("GET", f"/products/{int(code)}", key=self._settings.bot_api_key)
+
+    async def shop_state(self) -> dict:
+        result = await self._request("GET", "/shop/state", key=self._settings.bot_api_key)
+        return result if isinstance(result, dict) else {"closed": False}
+
+    async def get_statement(
+        self, platform: str, chat_id: str | int, page: int = 1, page_size: int = 10
+    ) -> dict | None:
+        return await self._request(
+            "GET",
+            f"/users/{platform}/{chat_id}/statement",
+            key=self._settings.bot_api_key,
+            params={"page": int(page), "page_size": int(page_size)},
+        )
+
     async def get_user(self, platform: str, chat_id: str | int) -> dict | None:
         return await self._request(
             "GET", f"/users/{platform}/{chat_id}", key=self._settings.bot_api_key
@@ -191,14 +212,18 @@ class ShopApiClient:
         )
 
     async def upload_receipt(
-        self, order_id: int, receipt_ref: str, platform: str, chat_id: str | int
+        self, order_id: int, receipt_ref: str, platform: str, chat_id: str | int,
+        data_b64: str | None = None,
     ) -> dict | None:
+        body: dict[str, Any] = {"receipt_ref": receipt_ref}
+        if data_b64:
+            body["data_b64"] = data_b64
         return await self._request(
             "POST",
             f"/orders/{int(order_id)}/receipt",
             key=self._settings.bot_api_key,
             params={"platform": platform, "chat_id": str(chat_id)},
-            json_body={"receipt_ref": receipt_ref},
+            json_body=body,
         )
 
     async def get_order(
@@ -236,6 +261,16 @@ class ShopApiClient:
                 params={"status": status_filter},
             )
             or []
+        )
+
+    async def admin_get_user(self, user_id: int) -> dict | None:
+        return await self._request(
+            "GET", f"/admin/users/{int(user_id)}", key=self._settings.admin_api_key
+        )
+
+    async def admin_get_order(self, order_id: int) -> dict | None:
+        return await self._request(
+            "GET", f"/orders/{int(order_id)}", key=self._settings.admin_api_key
         )
 
     async def admin_approve_user(self, user_id: int, person_code: int) -> dict | None:

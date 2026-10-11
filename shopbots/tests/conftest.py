@@ -37,8 +37,14 @@ class FakeBotApi:
         self.answered: list[dict] = []
         self.fail_methods: set[str] = set()
         self.raise_on: set[str] = set()
+        #: what a file download returns (a JPEG by default)
+        self.file_bytes: bytes = b"\xff\xd8\xff\xe0" + b"0" * 64
+        self.file_size: int | None = None
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        if "/file/bot" in request.url.path:
+            self.calls.append(("download", {}))
+            return httpx.Response(200, content=self.file_bytes)
         method = request.url.path.rstrip("/").rsplit("/", 1)[-1]
         payload = {}
         if request.content:
@@ -67,7 +73,10 @@ class FakeBotApi:
             self.answered.append(payload)
             return httpx.Response(200, json={"ok": True, "result": True})
         if method == "getFile":
-            return httpx.Response(200, json={"ok": True, "result": {"file_path": "photos/p.jpg"}})
+            result = {"file_path": "photos/p.jpg"}
+            if self.file_size is not None:
+                result["file_size"] = self.file_size
+            return httpx.Response(200, json={"ok": True, "result": result})
         return httpx.Response(200, json={"ok": True, "result": True})
 
     # --- assertions helpers ---
@@ -149,6 +158,13 @@ class FakeShopApi:
         #: ACCOUNTING_WRITE_ENABLED=false: approve-payment rehearses and keeps the status
         self.dry_run_writes = False
         self.events: list[dict] = []
+        #: phone -> accounting person code: registration approves at once (R4)
+        self.known_phones: dict[str, int] = {}
+        #: PENDING_MAX_ORDER_ITEMS > 0: customers awaiting approval may order
+        self.pending_can_order = True
+        self.closed = False
+        self.statement: dict | None = None
+        self.statement_requests: list[dict] = []
         self._next_user = 1
         self._next_order = 1
 
@@ -195,11 +211,12 @@ class FakeShopApi:
                 body = {}
         params = dict(request.url.params)
 
-        # API key separation: admin routes need the admin key, the rest the bot key
+        # API key separation: admin routes need the admin key; the service
+        # (admin) key may also read customer routes, as in shopapi
         if path.startswith("/admin/"):
             if key != ADMIN_KEY:
                 return self._err(401, "Invalid API key")
-        elif path != "/health" and key != BOT_KEY:
+        elif path != "/health" and key not in (BOT_KEY, ADMIN_KEY):
             return self._err(401, "Invalid API key")
 
         if method == "GET" and path == "/health":
@@ -207,6 +224,32 @@ class FakeShopApi:
 
         if method == "GET" and path == "/groups":
             return self._ok(self.groups)
+
+        if method == "GET" and path == "/shop/state":
+            return self._ok({"closed": self.closed})
+
+        if method == "GET" and path.startswith("/products/"):
+            code = int(path.split("/")[2])
+            product = next((p for p in self.products if p["code"] == code), None)
+            if product is None or product["unit_price"] <= 0:
+                return self._err(404, "Product not found")
+            return self._ok(product)
+
+        if method == "GET" and path.startswith("/users/") and path.endswith("/statement"):
+            parts = path.split("/")
+            user = self.users.get((parts[2], parts[3]))
+            if user is None:
+                return self._err(404, "User not found")
+            if user["status"] != "approved":
+                return self._err(403, "User is not approved")
+            self.statement_requests.append(params)
+            return self._ok(self.statement or {"balance": 0, "side": "zero", "total": 0,
+                                               "page": 1, "page_size": 8, "items": []})
+
+        if method == "GET" and path.startswith("/admin/users/"):
+            user_id = int(path.split("/")[3])
+            user = next((u for u in self.users.values() if u["id"] == user_id), None)
+            return self._ok(user) if user else self._err(404, "User not found")
 
         if method == "GET" and path == "/products":
             items = self.products
@@ -230,10 +273,15 @@ class FakeShopApi:
             platform = str(body.get("platform"))
             chat_id = str(body.get("chat_id"))
             existing = self.users.get((platform, chat_id))
-            if existing:
+            if existing and existing["status"] != "pending":
                 return self._ok(existing)
-            return self._ok(self.add_user(platform, chat_id, name=body.get("name", ""),
-                                          phone=body.get("phone", "")))
+            user = existing or self.add_user(platform, chat_id, name=body.get("name", ""),
+                                             phone=body.get("phone", ""))
+            code = self.known_phones.get(body.get("phone", ""))
+            if code is not None:
+                user["status"] = "approved"
+                user["person_code"] = code
+            return self._ok(user)
 
         if method == "GET" and path.startswith("/admin/users"):
             status_filter = params.get("status")
@@ -321,7 +369,8 @@ class FakeShopApi:
             user = self.users.get((platform, chat_id))
             if user is None:
                 return self._err(404, "User not found")
-            if user["status"] != "approved":
+            if user["status"] == "rejected" or (
+                    user["status"] != "approved" and not self.pending_can_order):
                 return self._err(403, "User is not approved")
             items = []
             total = 0.0
@@ -342,6 +391,7 @@ class FakeShopApi:
                 "id": order_id, "status": "awaiting_payment", "price_level": 3, "total": total,
                 "reserve_until": "t+12h", "accounting_order_no": None, "created_at": "t",
                 "items": items, "payment_instructions": "واریز به کارت 1234",
+                "user_id": user["id"], "customer_pending": user["status"] != "approved",
                 "_platform": platform, "_chat_id": chat_id,
             }
             self.orders[order_id] = order
@@ -361,6 +411,7 @@ class FakeShopApi:
                 return self._err(409, f"Order in status {order['status']}")
             order["status"] = "receipt_uploaded"
             order["receipt_ref"] = body.get("receipt_ref")
+            order["_receipt_b64"] = body.get("data_b64")
             return self._ok(self._order_public(order))
 
         if method == "GET" and path.startswith("/orders/"):
@@ -380,15 +431,26 @@ class FakeShopApi:
 
 # ============================ update builders ===============================
 def message_update(update_id: int, chat_id, *, text=None, contact=None, photo=None,
-                   chat_type="private") -> dict:
+                   document=None, chat_type="private", from_id="same") -> dict:
     message = {"message_id": update_id, "chat": {"id": chat_id, "type": chat_type}}
+    if from_id is not None:
+        message["from"] = {"id": chat_id if from_id == "same" else from_id,
+                           "first_name": "Bale", "last_name": "User"}
     if text is not None:
         message["text"] = text
     if contact is not None:
         message["contact"] = contact
     if photo is not None:
         message["photo"] = photo
+    if document is not None:
+        message["document"] = document
     return {"update_id": update_id, "message": message}
+
+
+def own_contact(chat_id, phone="09121234567", **extra) -> dict:
+    """What Bale's share-contact button sends for the user's own number."""
+    return {"phone_number": phone, "user_id": int(chat_id), "first_name": "Ali",
+            "last_name": "Rezaei", **extra}
 
 
 def callback_update(update_id: int, chat_id, data, *, chat_type="private") -> dict:

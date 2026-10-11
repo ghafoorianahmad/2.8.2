@@ -67,7 +67,11 @@ class PlatformAdapter(ABC):
     ) -> None: ...
 
     @abstractmethod
-    async def download_file_ref(self, file_ref: str) -> bytes | None: ...
+    async def download_file_ref(
+        self, file_ref: str, max_bytes: int | None = None
+    ) -> bytes | None:
+        """The file's bytes; None when the platform has no file path for it.
+        With ``max_bytes`` a larger file raises BotApiError("getFile", "too large")."""
 
     async def aclose(self) -> None:
         return None
@@ -222,19 +226,35 @@ class HttpBotAdapter(PlatformAdapter):
             payload["show_alert"] = True
         await self._call("answerCallbackQuery", payload)
 
-    async def download_file_ref(self, file_ref: str) -> bytes | None:
+    async def download_file_ref(
+        self, file_ref: str, max_bytes: int | None = None
+    ) -> bytes | None:
         result = await self._call("getFile", {"file_id": file_ref})
-        file_path = (result or {}).get("file_path") if isinstance(result, dict) else None
+        if not isinstance(result, dict):
+            return None
+        file_path = result.get("file_path")
         if not file_path:
             return None
+        declared = result.get("file_size")
+        if max_bytes is not None and isinstance(declared, int) and declared > max_bytes:
+            raise BotApiError("getFile", "too large")
         client = await self._http()
+        url = f"{self._api_base}/file/bot{self._token}/{file_path}"
+        chunks: list[bytes] = []
+        received = 0
         try:
-            response = await client.get(f"{self._api_base}/file/bot{self._token}/{file_path}")
+            # Streamed so an oversized file is cut off instead of held in memory.
+            async with client.stream("GET", url) as response:
+                if response.status_code >= 400:
+                    raise BotApiError("getFile", f"HTTP {response.status_code}")
+                async for chunk in response.aiter_bytes():
+                    received += len(chunk)
+                    if max_bytes is not None and received > max_bytes:
+                        raise BotApiError("getFile", "too large")
+                    chunks.append(chunk)
         except httpx.HTTPError as exc:
             raise self._network_error("getFile", exc) from None
-        if response.status_code >= 400:
-            raise BotApiError("getFile", f"HTTP {response.status_code}")
-        return response.content
+        return b"".join(chunks)
 
     async def aclose(self) -> None:
         if self._client is not None and self._owns_client:

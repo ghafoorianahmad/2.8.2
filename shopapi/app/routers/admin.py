@@ -9,15 +9,32 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 
-from .. import deps
+from .. import deps, receipts, tracking
 from ..accounting_reader import AccountingReader
-from ..accounting_writer import AccountingWriter
+from ..accounting_writer import AccountingLockTimeout, AccountingWriter
 from ..config import Settings
 from ..db_own import OwnDB
-from ..schemas import ApproveUserIn, OrderOut, PersonMatch, RejectIn, UserOut
+from ..schemas import (
+    ApproveUserIn,
+    OrderOut,
+    PersonMatch,
+    RejectIn,
+    ShopStateIn,
+    ShopStateOut,
+    UserOut,
+)
 from ..security import Identity, require_permission
-from ..staff import P_CUSTOMERS_DECIDE, P_ORDERS_EXPIRE, P_PAYMENTS_DECIDE, P_VIEW
+from ..staff import (
+    P_CUSTOMERS_DECIDE,
+    P_ORDERS_EXPIRE,
+    P_ORDERS_SHIP,
+    P_PAYMENTS_DECIDE,
+    P_SHOP_STATE,
+    P_VIEW,
+)
+from .public import SHOP_CLOSED_KEY, shop_state
 
 router = APIRouter(prefix="/admin")
 
@@ -25,6 +42,11 @@ CAN_VIEW = Depends(require_permission(P_VIEW))
 CAN_DECIDE_CUSTOMERS = Depends(require_permission(P_CUSTOMERS_DECIDE))
 CAN_DECIDE_PAYMENTS = Depends(require_permission(P_PAYMENTS_DECIDE))
 CAN_EXPIRE = Depends(require_permission(P_ORDERS_EXPIRE))
+CAN_SHIP = Depends(require_permission(P_ORDERS_SHIP))
+CAN_SET_SHOP_STATE = Depends(require_permission(P_SHOP_STATE))
+
+#: Orders that may be marked as shipped (paid and accepted).
+SHIPPABLE_STATUSES = ("approved", "written")
 
 
 @router.get("/system-info")
@@ -71,33 +93,89 @@ def match_person(
     return PersonMatch(**match)
 
 
+@router.get("/users/{user_id}", response_model=UserOut)
+def get_user(
+    user_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    _: Identity = CAN_VIEW,
+) -> UserOut:
+    user = db.get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    return UserOut(**user)
+
+
+def _create_person(writer: AccountingWriter, user: dict, payload: ApproveUserIn) -> int:
+    """Recipe §5.1 for a customer without a person code. Returns the code."""
+    first = (payload.first_name or "").strip()
+    last = (payload.last_name or "").strip()
+    if not last:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "last_name is required to create a person (or give person_code)",
+        )
+    try:
+        result = writer.create_person(first, last, user["phone"])
+    except AccountingLockTimeout:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Accounting is busy; try again") from None
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
+    if result.existing:
+        if result.ambiguous:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "This mobile belongs to several persons; choose person_code",
+            )
+        return int(result.person_code)
+    if not result.committed:
+        # Dry-run (ACCOUNTING_WRITE_ENABLED=false): rolled back, nothing to link.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Accounting writes are disabled; the person was not created",
+        )
+    return int(result.person_code)
+
+
 @router.post("/users/{user_id}/approve", response_model=UserOut)
 def approve_user(
     user_id: int,
     payload: ApproveUserIn,
     reader: AccountingReader = Depends(deps.get_reader),
+    writer: AccountingWriter = Depends(deps.get_writer),
     db: OwnDB = Depends(deps.get_db),
     settings: Settings = Depends(deps.get_settings),
     who: Identity = CAN_DECIDE_CUSTOMERS,
 ) -> UserOut:
+    user = db.get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    created = False
+    if payload.person_code is None:
+        person_code = _create_person(writer, user, payload)
+        created = True
+        name = f"{(payload.first_name or '').strip()} {(payload.last_name or '').strip()}".strip()
+        db.update_user_contact(user_id, name=name)
+    else:
+        person_code = payload.person_code
     with db.reservation_guard():
         user = db.get_user_by_id(user_id)
-        if user is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
-        if not reader.person_code_exists(payload.person_code):
+        if not created and not reader.person_code_exists(person_code):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                f"person_code {payload.person_code} not found",
+                f"person_code {person_code} not found",
             )
         if not settings.allow_shared_person_code:
-            other = db.get_user_by_person_code(payload.person_code)
+            other = db.get_user_by_person_code(person_code)
             if other is not None and other["id"] != user_id:
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
-                    f"person_code {payload.person_code} is already linked to another user",
+                    f"person_code {person_code} is already linked to another user",
                 )
-        user = db.set_user_approved(user_id, payload.person_code)
-    db.audit(who.actor, "user_approve", f"user id={user_id} person_code={payload.person_code}")
+        user = db.set_user_approved(user_id, person_code)
+    db.audit(
+        who.actor, "user_approve",
+        f"user id={user_id} person_code={person_code} created={created}",
+    )
     db.add_event("customer_approved", user_id, who.actor)
     return UserOut(**user)
 
@@ -146,6 +224,9 @@ def approve_payment(
             raise HTTPException(
                 status.HTTP_409_CONFLICT, f"Order in status {order['status']}; cannot approve"
             )
+        if order["user_status"] != "approved" or order["user_person_code"] is None:
+            # Orders of customers awaiting approval are written only after approval.
+            raise HTTPException(status.HTTP_409_CONFLICT, "Customer is not approved yet")
 
         items = db.get_order_items(order_id)
         merged: dict[int, float] = {}
@@ -239,3 +320,67 @@ def list_events(
     # replaced) resyncs the client instead of silencing it forever.
     last_id = items[-1]["id"] if items else min(after, db.last_event_id())
     return {"last_id": last_id, "items": items}
+
+
+@router.get("/orders/{order_id}/receipt")
+def get_receipt_image(
+    order_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+    _: Identity = CAN_VIEW,
+):
+    """The newest receipt image of an order (JPEG/PNG)."""
+    row = db.latest_receipt_file(order_id)
+    folder = settings.receipts_path()
+    path = receipts.resolve(folder, row["file_name"]) if row and folder else None
+    if path is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No receipt image")
+    return FileResponse(path, media_type=row["content_type"] or "application/octet-stream")
+
+
+@router.post("/orders/{order_id}/ship", response_model=OrderOut)
+def ship_order(
+    order_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_SHIP,
+) -> OrderOut:
+    order = db.get_order(order_id)
+    if order is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+    if order["status"] not in SHIPPABLE_STATUSES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Order in status {order['status']}; cannot ship"
+        )
+    if order.get("shipped_at"):
+        return OrderOut(**order)
+    order = db.set_shipped(order_id)
+    db.audit(who.actor, "order_ship", f"order id={order_id}")
+    db.add_event(tracking.EVENT_SHIPPED, order_id, who.actor)
+    return OrderOut(**order)
+
+
+@router.post("/orders/sync-invoices")
+def sync_invoices(
+    reader: AccountingReader = Depends(deps.get_reader),
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_EXPIRE,
+) -> dict:
+    """Check written orders for invoices now (also runs in the background)."""
+    return {"changed": tracking.sync_invoices(db, reader, who.actor)}
+
+
+@router.get("/shop/state", response_model=ShopStateOut)
+def get_shop_state(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_VIEW) -> ShopStateOut:
+    return shop_state(db)
+
+
+@router.put("/shop/state", response_model=ShopStateOut)
+def set_shop_state(
+    payload: ShopStateIn,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_SET_SHOP_STATE,
+) -> ShopStateOut:
+    db.set_state(SHOP_CLOSED_KEY, "1" if payload.closed else "0", who.actor)
+    db.audit(who.actor, "shop_state", f"closed={payload.closed}")
+    db.add_event("shop_closed" if payload.closed else "shop_opened", None, who.actor)
+    return shop_state(db)

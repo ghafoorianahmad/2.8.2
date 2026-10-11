@@ -70,3 +70,35 @@ class CatalogService:
         total = int(result.get("total") or 0)
         pages = max(1, (total + self.page_size - 1) // self.page_size)
         return ProductPage(items=items, page=page, pages=pages, total=total)
+
+    async def product(self, code: int) -> Product | None:
+        """One product by code (deep link / typed code), also when out of stock."""
+        found = await self.api.get_product(int(code))
+        if not isinstance(found, dict):
+            return None
+        return Product(
+            code=int(found.get("code") or code),
+            name=str(found.get("name") or ""),
+            price=float(found.get("unit_price") or 0),
+            available=float(found.get("available_qty") or 0),
+        )
+
+
+#: Deep-link payload from the site: ``/start kala_289`` (REQUIREMENTS §7).
+DEEP_LINK_PREFIX = "kala_"
+MAX_PRODUCT_CODE = 10_000_000
+
+
+def parse_product_ref(text: str | None, *, allow_bare_code: bool = False) -> int | None:
+    """``kala_289`` (also as a /start parameter) -> 289; with ``allow_bare_code``
+    a message that is only a number counts too (the fallback when the start
+    parameter is lost)."""
+    value = normalize_digits(text).strip()
+    if value.lower().startswith(DEEP_LINK_PREFIX):
+        value = value[len(DEEP_LINK_PREFIX):]
+    elif not allow_bare_code:
+        return None
+    if not value.isdigit() or len(value) > 8:
+        return None
+    code = int(value)
+    return code if 0 < code <= MAX_PRODUCT_CODE else None

@@ -31,9 +31,9 @@ GRANT SELECT ON dbo.facto (Numfact, Codekala, Meg, ordercode, orderdetailcode) T
 GRANT SELECT ON dbo.name_mo (Code, Gcod, l_gey, codetaf) TO shopbot;             -- NO names/phones/addresses/balances
 GRANT SELECT ON dbo.DetailTBL (IDMaster, TabaghehBandiID, Va, Comment) TO shopbot; -- phone lookup R4 (mobiles live HERE, name_mo.mobile is empty)
 GRANT SELECT ON dbo.taf (Code, Cota, codgtaf) TO shopbot;
--- Customer statement (balance formula, reference §3). Phase 2 may add the
--- date/description columns of KOL for the paginated statement - list them here.
-GRANT SELECT ON dbo.KOL (Noa, Codkol, Bed, Bes, Va, Cod_n) TO shopbot;
+-- Customer statement (balance formula, reference §3) + the paginated statement
+-- rows (Phase 2): row id, date, document number and description.
+GRANT SELECT ON dbo.KOL (Noa, Codkol, Bed, Bes, Va, Cod_n, Num_kol, Date1, N_sanad, Sharh) TO shopbot;
 -- ---- WRITE: orders ----
 GRANT INSERT ON dbo.KalaOrder TO shopbot;
 GRANT INSERT ON dbo.KalaOrderDetail TO shopbot;

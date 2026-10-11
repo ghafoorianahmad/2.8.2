@@ -4,14 +4,17 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QDialog,
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
+    QRadioButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -203,12 +206,16 @@ class CustomersPage(BasePage):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         person_code = dialog.person_code
-        if person_code is None:
+        first_name, last_name = dialog.first_name, dialog.last_name
+        if person_code is None and not last_name:
             return
 
-        self.table.set_busy(True, "در حال تأیید مشتری…")
+        busy = "در حال تأیید مشتری…" if person_code else "در حال ساخت شخص در حسابداری…"
+        self.table.set_busy(True, busy)
         run_async(
-            lambda: self.context.api.approve_customer(int(customer["id"]), int(person_code)),
+            lambda: self.context.api.approve_customer(
+                int(customer["id"]), person_code, first_name=first_name, last_name=last_name
+            ),
             on_success=lambda result: self._approved(customer, result),
             on_error=self._approve_failed,
             on_done=lambda: self.table.set_busy(False),
@@ -253,6 +260,34 @@ class CustomersPage(BasePage):
             self.context.mark_offline()
 
 
+#: Letters (any script), spaces, ZWNJ, hyphen, dot and apostrophe: Bale profile
+#: names may hold emoji or symbols that must not reach the accounting software.
+_NAME_RE = re.compile(r"^[^\W\d_]+(?:[ \u200c\-.'][^\W\d_]+)*$")
+MAX_NAME_PART = 50
+
+
+def split_name(full_name: str) -> tuple[str, str]:
+    """A suggestion for (first, last) from a profile name; symbols removed."""
+    words = [w for w in re.split(r"\s+", str(full_name or "")) if w]
+    words = ["".join(ch for ch in w if ch.isalpha() or ch in "\u200c-.'") for w in words]
+    words = [w for w in words if w]
+    if not words:
+        return "", ""
+    if len(words) == 1:
+        return words[0], ""
+    return words[0], " ".join(words[1:])
+
+
+def name_problem(first: str, last: str) -> str:
+    """'' when the name may be written to the accounting software."""
+    if not last:
+        return "نام خانوادگی را وارد کنید."
+    for part in (first, last):
+        if part and (len(part) > MAX_NAME_PART or not _NAME_RE.match(part)):
+            return "نام فقط می‌تواند حروف، فاصله و نیم‌فاصله داشته باشد (بدون شکلک، عدد یا نماد)."
+    return ""
+
+
 def _matches(customer: dict, needle: str) -> bool:
     if not needle:
         return True
@@ -266,13 +301,16 @@ def _matches(customer: dict, needle: str) -> bool:
 # dialogs
 # --------------------------------------------------------------------------
 class ApproveCustomerDialog(QDialog):
-    """تأیید مشتری: نمایش اطلاعات، ورود کد شخص و پیشنهاد تطبیق با موبایل."""
+    """تأیید مشتری: اتصال به شخص موجود (کد شخص، با پیشنهاد تطبیق موبایل) یا
+    ساخت شخص جدید در حسابداری با نامی که اینجا اصلاح می‌شود."""
 
     def __init__(self, context: AppContext, customer: dict, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.context = context
         self.customer = customer
         self.person_code: Optional[int] = None
+        self.first_name = ""
+        self.last_name = ""
 
         self.setWindowTitle("تأیید مشتری")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -283,7 +321,8 @@ class ApproveCustomerDialog(QDialog):
         root.setSpacing(16)
         root.addWidget(widgets.label("تأیید مشتری", size=14, bold=True))
         root.addWidget(widgets.label(
-            "برای تأیید، کد شخص مشتری در نرم‌افزار حسابداری را وارد کنید.",
+            "مشتری را به شخص موجود در حسابداری وصل کنید، یا اگر در حسابداری نیست، "
+            "شخص جدید بسازید.",
             name="Muted", wrap=True,
         ))
 
@@ -304,7 +343,20 @@ class ApproveCustomerDialog(QDialog):
         info.body.addLayout(form)
         root.addWidget(info)
 
+        mode_row = QHBoxLayout()
+        self.mode_link = QRadioButton("اتصال به شخص موجود")
+        self.mode_create = QRadioButton("ساخت شخص جدید در حسابداری")
+        self._modes = QButtonGroup(self)
+        self._modes.addButton(self.mode_link)
+        self._modes.addButton(self.mode_create)
+        self.mode_link.setChecked(True)
+        mode_row.addWidget(self.mode_link)
+        mode_row.addWidget(self.mode_create)
+        mode_row.addStretch(1)
+        root.addLayout(mode_row)
+
         code_panel = widgets.Panel("کد شخص در حسابداری")
+        self.code_panel = code_panel
         code_row = QHBoxLayout()
         code_row.setSpacing(10)
         self.code_input = QSpinBox()
@@ -332,6 +384,27 @@ class ApproveCustomerDialog(QDialog):
         code_panel.body.addLayout(suggestion_row)
         root.addWidget(code_panel)
 
+        # New person: the Bale profile name is only a suggestion; staff fix it
+        # (it may be a nickname or emoji) before it is written to accounting.
+        self.create_panel = widgets.Panel("نام شخص جدید در حسابداری")
+        first, last = split_name(str(customer.get("name") or ""))
+        name_form = QFormLayout()
+        name_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.first_name_input = QLineEdit(first)
+        self.first_name_input.setMaxLength(MAX_NAME_PART)
+        self.last_name_input = QLineEdit(last)
+        self.last_name_input.setMaxLength(MAX_NAME_PART)
+        name_form.addRow(widgets.label("نام"), self.first_name_input)
+        name_form.addRow(widgets.label("نام خانوادگی"), self.last_name_input)
+        self.create_panel.body.addLayout(name_form)
+        self.create_panel.body.addWidget(widgets.label(
+            "شخص با همین نام و شمارهٔ موبایل تأییدشدهٔ مشتری در حسابداری ساخته می‌شود. "
+            "اگر شماره قبلاً در حسابداری باشد، به همان شخص وصل می‌شود.",
+            name="Muted", wrap=True,
+        ))
+        root.addWidget(self.create_panel)
+        self.mode_link.toggled.connect(self._mode_changed)
+
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
         self.error_label.setVisible(False)
         root.addWidget(self.error_label)
@@ -346,7 +419,18 @@ class ApproveCustomerDialog(QDialog):
 
         self._suggested_code: Optional[int] = None
         self._suggested_name = ""
+        self._mode_changed()
         QTimer.singleShot(0, self._fetch_suggestion)
+
+    @property
+    def creating(self) -> bool:
+        return self.mode_create.isChecked()
+
+    def _mode_changed(self, *_args) -> None:
+        self.code_panel.setVisible(not self.creating)
+        self.create_panel.setVisible(self.creating)
+        self.confirm_button.setText("ساخت شخص و تأیید" if self.creating else "تأیید مشتری")
+        self.error_label.setVisible(False)
 
     # ---- suggestion ------------------------------------------------------
     def _fetch_suggestion(self) -> None:
@@ -379,6 +463,9 @@ class ApproveCustomerDialog(QDialog):
         self.suggestion_label.setText(message)
         self.suggestion_label.setStyleSheet(f"color: {theme.TEXT_MUTED};")
         self.use_suggestion.setVisible(False)
+        # nobody in accounting has this mobile: a new person is the usual case
+        if not self.code_input.value():
+            self.mode_create.setChecked(True)
 
     def _suggestion_failed(self, message: str, _kind: str) -> None:
         self._no_suggestion(f"بررسی تطبیق انجام نشد: {message}")
@@ -388,7 +475,25 @@ class ApproveCustomerDialog(QDialog):
             self.code_input.setValue(self._suggested_code)
 
     # ---- submit ----------------------------------------------------------
+    def _show_error(self, message: str, widget: QWidget) -> None:
+        self.error_label.setText(message)
+        self.error_label.setVisible(True)
+        widget.setProperty("error", "true")
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+
     def _submit(self) -> None:
+        if self.creating:
+            first = " ".join(self.first_name_input.text().split())
+            last = " ".join(self.last_name_input.text().split())
+            problem = name_problem(first, last)
+            if problem:
+                self._show_error(problem, self.last_name_input)
+                return
+            self.person_code = None
+            self.first_name, self.last_name = first, last
+            self.accept()
+            return
         code = int(self.code_input.value())
         if code <= 0:
             self.error_label.setText("کد شخص را وارد کنید (عدد بزرگ‌تر از صفر).")

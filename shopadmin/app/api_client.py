@@ -119,6 +119,20 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"order in status (\w+); receipt not expected", re.I),
      "این سفارش در وضعیت «{0}» است و فیش برای آن پذیرفته نمی‌شود."),
     (re.compile(r"user is not approved", re.I), "این مشتری هنوز تأیید نشده است."),
+    (re.compile(r"customer is not approved yet", re.I),
+     "مشتری این سفارش هنوز تأیید نشده است؛ اول مشتری را تأیید کنید."),
+    (re.compile(r"accounting writes are disabled; the person was not created", re.I),
+     "ثبت در حسابداری خاموش است (حالت آزمایشی)؛ شخص ساخته نشد. "
+     "می‌توانید مشتری را به یک کد شخص موجود وصل کنید."),
+    (re.compile(r"last_name is required", re.I), "برای ساخت شخص، نام خانوادگی لازم است."),
+    (re.compile(r"mobile belongs to several persons", re.I),
+     "این شماره در حسابداری به چند شخص تعلق دارد؛ کد شخص درست را دستی وارد کنید."),
+    (re.compile(r"accounting is busy", re.I), "حسابداری مشغول است؛ چند لحظه بعد دوباره تلاش کنید."),
+    (re.compile(r"order in status (\w+); cannot ship", re.I),
+     "این سفارش در وضعیت «{0}» است و هنوز قابل ارسال نیست."),
+    (re.compile(r"no receipt image", re.I), "برای این سفارش تصویر رسیدی ذخیره نشده است."),
+    (re.compile(r"order exceeds the limit for customers awaiting approval", re.I),
+     "سفارش از سقف مجاز مشتری تأییدنشده بیشتر است."),
     (re.compile(r"user not found", re.I), "مشتری یافت نشد."),
     (re.compile(r"order not found", re.I), "سفارش یافت نشد."),
     (re.compile(r"product (\d+) is not available for sale", re.I),
@@ -495,10 +509,15 @@ class ShopApiClient:
             raise
         return payload if isinstance(payload, dict) else None
 
-    def approve_customer(self, user_id: int, person_code: int) -> dict:
-        return self._request(
-            "POST", f"/admin/users/{int(user_id)}/approve", json_body={"person_code": int(person_code)}
-        )
+    def approve_customer(self, user_id: int, person_code: Optional[int],
+                         *, first_name: str = "", last_name: str = "") -> dict:
+        """Link to an existing person, or (``person_code=None``) create one in
+        the accounting software with the given, staff-corrected name."""
+        if person_code is not None:
+            body: dict[str, Any] = {"person_code": int(person_code)}
+        else:
+            body = {"first_name": first_name or None, "last_name": last_name}
+        return self._request("POST", f"/admin/users/{int(user_id)}/approve", json_body=body)
 
     def reject_customer(self, user_id: int, reason: str = "") -> dict:
         return self._request(
@@ -524,6 +543,34 @@ class ShopApiClient:
 
     def expire_orders(self) -> dict:
         return self._request("POST", "/admin/orders/expire") or {}
+
+    def ship_order(self, order_id: int) -> dict:
+        return self._request("POST", f"/admin/orders/{int(order_id)}/ship")
+
+    def receipt_image(self, order_id: int) -> Optional[bytes]:
+        """``GET /admin/orders/{id}/receipt`` — the stored receipt image, or None."""
+        if not self.base_url:
+            raise ApiConnectionError("آدرس سرور فروشگاه تنظیم نشده است. به صفحهٔ تنظیمات بروید.")
+        path = f"/admin/orders/{int(order_id)}/receipt"
+        try:
+            response = self._http().get(path, headers=self._headers())
+        except httpx.HTTPError as exc:
+            log.warning("shopapi connection error: GET %s (%s)", path, type(exc).__name__)
+            raise ApiConnectionError(raw=str(exc)) from exc
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            self._handle(response, "GET", path)
+        content_type = response.headers.get("content-type", "")
+        if not content_type.startswith("image/"):
+            raise ApiError(MSG_BAD_RESPONSE, kind="decode")
+        return response.content
+
+    def shop_state(self) -> dict:
+        return self._request("GET", "/admin/shop/state") or {"closed": False}
+
+    def set_shop_closed(self, closed: bool) -> dict:
+        return self._request("PUT", "/admin/shop/state", json_body={"closed": bool(closed)}) or {}
 
     def list_groups(self) -> list[dict]:
         payload = self._request("GET", "/groups")

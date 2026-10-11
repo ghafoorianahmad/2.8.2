@@ -18,6 +18,8 @@ ORDERS_VIEW = "orders.view"
 ORDERS_APPROVE_PAYMENT = "orders.approve_payment"
 ORDERS_REJECT_PAYMENT = "orders.reject_payment"
 ORDERS_UPLOAD_RECEIPT = "orders.upload_receipt"
+ORDERS_SHIP = "orders.ship"
+SHOP_STATE = "shop.state"            # open / close the shop (closed mode)
 PRODUCTS_VIEW = "products.view"
 REPORTS_VIEW = "reports.view"
 REPORTS_EXPORT = "reports.export"
@@ -53,6 +55,7 @@ PERMISSIONS: dict[str, frozenset[str]] = {
             CUSTOMERS_VIEW,
             ORDERS_VIEW,
             ORDERS_UPLOAD_RECEIPT,
+            ORDERS_SHIP,
             PRODUCTS_VIEW,
             REPORTS_VIEW,
             REPORTS_EXPORT,
@@ -71,11 +74,13 @@ PERMISSIONS: dict[str, frozenset[str]] = {
             ORDERS_APPROVE_PAYMENT,
             ORDERS_REJECT_PAYMENT,
             ORDERS_UPLOAD_RECEIPT,
+            ORDERS_SHIP,
             PRODUCTS_VIEW,
             REPORTS_VIEW,
             REPORTS_EXPORT,
             SETTINGS_VIEW,
             SETTINGS_EDIT_GENERAL,
+            SHOP_STATE,
             SETTINGS_CHANGE_OWN_PASSWORD,
             SETTINGS_VIEW_LOG,
         }
@@ -90,12 +95,14 @@ PERMISSIONS: dict[str, frozenset[str]] = {
             ORDERS_APPROVE_PAYMENT,
             ORDERS_REJECT_PAYMENT,
             ORDERS_UPLOAD_RECEIPT,
+            ORDERS_SHIP,
             PRODUCTS_VIEW,
             REPORTS_VIEW,
             REPORTS_EXPORT,
             SETTINGS_VIEW,
             SETTINGS_EDIT_CONNECTION,
             SETTINGS_EDIT_GENERAL,
+            SHOP_STATE,
             SETTINGS_CHANGE_OWN_PASSWORD,
             SETTINGS_VIEW_LOG,
             USERS_VIEW,

@@ -25,6 +25,10 @@ class FakeReader:
         self.groups = groups if groups is not None else []
         self.person_codes = set(person_codes or [])
         self.persons = persons or {}
+        #: recipe R5: {codlp: {"ordered", "invoiced"}}; a missing codlp = deleted
+        self.invoices: dict = {}
+        #: KOL rows for the statement: {person_code: [row, ...]} oldest first
+        self.ledger: dict = {}
 
     def list_groups(self):
         return self.groups
@@ -69,7 +73,20 @@ class FakeReader:
         return code in self.person_codes
 
     def find_person_by_mobile(self, mobile):
+        if getattr(self, "down", False):
+            raise RuntimeError("accounting down")
         return self.persons.get(mobile)
+
+    def invoice_progress(self, codlps):
+        return {c: self.invoices[c] for c in codlps if c in self.invoices}
+
+    def customer_statement(self, person_code, max_rows=2000):
+        rows = list(self.ledger.get(person_code, []))
+        return {
+            "rows": rows[-max_rows:],
+            "total_debit": sum(r["debit"] for r in rows),
+            "total_credit": sum(r["credit"] for r in rows),
+        }
 
 
 class FakeWriter:
@@ -87,6 +104,20 @@ class FakeWriter:
         self._lock = threading.Lock()
         self._counter = 1000
         self._by_order: dict[int, int] = {}
+
+    #: what create_person returns: None = a new committed person 8001, 8002, ...
+    person_result = None
+    _next_person = 8000
+
+    def create_person(self, first_name, last_name, mobile, address="", dry_run=None):
+        from app.accounting_writer import PersonResult
+
+        self.calls.append(("create_person", first_name, last_name, mobile))
+        if self.person_result is not None:
+            return self.person_result
+        self._next_person += 1
+        return PersonResult(person_code=self._next_person, committed=self.committed,
+                            rolled_back=not self.committed)
 
     def write_order(self, our_order_id, person_code, items, dry_run=None):
         with self._lock:

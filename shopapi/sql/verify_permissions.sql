@@ -40,6 +40,8 @@ UNION ALL SELECT 'SELECT Kala.Geyk (0)',          HAS_PERMS_BY_NAME('dbo.Kala', 
 UNION ALL SELECT 'SELECT DetailTBL.Comment (1)',  HAS_PERMS_BY_NAME('dbo.DetailTBL', 'OBJECT', 'SELECT', 'Comment', 'COLUMN')
 UNION ALL SELECT 'SELECT name_mo.Name (0)',       HAS_PERMS_BY_NAME('dbo.name_mo', 'OBJECT', 'SELECT', 'Name', 'COLUMN')
 UNION ALL SELECT 'SELECT KOL.Bed (1)',            HAS_PERMS_BY_NAME('dbo.KOL', 'OBJECT', 'SELECT', 'Bed', 'COLUMN')
+UNION ALL SELECT 'SELECT KOL.Sharh (1)',          HAS_PERMS_BY_NAME('dbo.KOL', 'OBJECT', 'SELECT', 'Sharh', 'COLUMN')
+UNION ALL SELECT 'SELECT KOL.Date1 (1)',          HAS_PERMS_BY_NAME('dbo.KOL', 'OBJECT', 'SELECT', 'Date1', 'COLUMN')
 UNION ALL SELECT 'SELECT setting (0)',            HAS_PERMS_BY_NAME('dbo.setting', 'OBJECT', 'SELECT')
 UNION ALL SELECT 'SELECT Telegram_Setting (0)',   HAS_PERMS_BY_NAME('dbo.Telegram_Setting', 'OBJECT', 'SELECT')
 UNION ALL SELECT 'SELECT api_online_setting (0)', HAS_PERMS_BY_NAME('dbo.api_online_setting', 'OBJECT', 'SELECT')

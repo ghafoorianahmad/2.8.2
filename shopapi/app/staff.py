@@ -30,14 +30,18 @@ P_VIEW = "view"                          # customers, orders, products, events, 
 P_CUSTOMERS_DECIDE = "customers.decide"  # match person, approve / reject customer
 P_PAYMENTS_DECIDE = "payments.decide"    # approve / reject payment
 P_ORDERS_EXPIRE = "orders.expire"
+P_ORDERS_SHIP = "orders.ship"            # mark an order as shipped
+P_SHOP_STATE = "shop.state"              # open / close the shop (closed mode)
 P_STAFF_MANAGE = "staff.manage"
 P_SERVER_MANAGE = "server.manage"
 
-_WORKFLOW = {P_VIEW, P_CUSTOMERS_DECIDE, P_PAYMENTS_DECIDE, P_ORDERS_EXPIRE}
+_WORKFLOW = {
+    P_VIEW, P_CUSTOMERS_DECIDE, P_PAYMENTS_DECIDE, P_ORDERS_EXPIRE, P_ORDERS_SHIP, P_SHOP_STATE,
+}
 
 PERMISSIONS: dict[str, frozenset[str]] = {
     ROLE_VIEWER: frozenset({P_VIEW}),
-    ROLE_OPERATOR: frozenset({P_VIEW}),
+    ROLE_OPERATOR: frozenset({P_VIEW, P_ORDERS_SHIP}),
     ROLE_ADMIN: frozenset(_WORKFLOW),
     ROLE_SUPER_ADMIN: frozenset(_WORKFLOW | {P_STAFF_MANAGE, P_SERVER_MANAGE}),
     ROLE_SERVICE: frozenset(_WORKFLOW),

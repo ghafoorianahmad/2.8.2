@@ -78,6 +78,12 @@ class Settings:
     max_name_len: int = 80
     http_timeout: float = 15.0
     product_page_size: int = 5
+    #: Receipt images (photo or JPEG/PNG file) up to this size, and at most
+    #: RECEIPT_RATE_COUNT uploads per RECEIPT_RATE_WINDOW seconds per customer.
+    receipt_max_bytes: int = 5 * 1024 * 1024
+    receipt_rate_count: int = 5
+    receipt_rate_window: float = 600.0
+    statement_page_size: int = 8
     #: List out-of-stock products too (marked "ناموجود"); they cannot be ordered.
     show_out_of_stock: bool = True
     #: Operator copy of messages.fa.json ("" = built-in texts only).
@@ -103,6 +109,10 @@ class Settings:
             max_name_len=_env_int("MAX_NAME_LEN", 80),
             http_timeout=_env_float("HTTP_TIMEOUT", 15.0),
             product_page_size=_env_int("PRODUCT_PAGE_SIZE", 5),
+            receipt_max_bytes=_env_int("RECEIPT_MAX_BYTES", 5 * 1024 * 1024),
+            receipt_rate_count=_env_int("RECEIPT_RATE_COUNT", 5),
+            receipt_rate_window=_env_float("RECEIPT_RATE_WINDOW", 600.0),
+            statement_page_size=_env_int("STATEMENT_PAGE_SIZE", 8),
             show_out_of_stock=_env_bool("SHOW_OUT_OF_STOCK", True),
             messages_file=_env("BOT_MESSAGES_FILE", ""),
         )

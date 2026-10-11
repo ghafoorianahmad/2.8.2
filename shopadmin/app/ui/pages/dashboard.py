@@ -6,6 +6,8 @@ from datetime import date, datetime, timedelta
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
+from ...api_client import ApiError
+from ...permissions import SHOP_STATE
 from ...persian import format_int, format_money, format_shamsi, to_persian_digits
 from ...statuses import (
     ORDER_APPROVED,
@@ -53,6 +55,19 @@ class DashboardPage(BasePage):
         self.card_receipts.clicked.connect(lambda: self._go("orders", ORDER_RECEIPT_UPLOADED))
         self.card_today.clicked.connect(lambda: self._go("orders", ORDER_WRITTEN))
 
+        # Closed mode: the bot keeps taking orders and tells customers they will
+        # be reviewed when the shop reopens (REQUIREMENTS §7).
+        shop_panel = widgets.Panel("وضعیت فروشگاه")
+        shop_row = QHBoxLayout()
+        self.shop_state_label = widgets.label("…", bold=True)
+        shop_row.addWidget(self.shop_state_label, 1)
+        self.shop_toggle = widgets.button("", on_click=self._toggle_shop)
+        self.shop_toggle.setVisible(False)
+        shop_row.addWidget(self.shop_toggle)
+        shop_panel.body.addLayout(shop_row)
+        self.body.addWidget(shop_panel)
+        self._shop_closed: bool | None = None
+
         chart_panel = widgets.Panel("سفارش‌های ۷ روز اخیر")
         self.chart = widgets.BarChart()
         chart_panel.body.addWidget(self.chart)
@@ -88,6 +103,7 @@ class DashboardPage(BasePage):
                 "written": api.list_orders(ORDER_WRITTEN),
                 "products": api.list_products(page=1, page_size=1),
                 "info": api.system_info(),
+                "shop": _shop_state(api),
             }
 
         self.run(work, on_success=self._render, on_error=self._fail)
@@ -121,6 +137,7 @@ class DashboardPage(BasePage):
             hint=f"از {to_persian_digits(len(written) + len(approved))} سفارش تأییدشده",
         )
         self.card_products.set_value(format_int(products.get("total", 0)))
+        self._render_shop_state(data.get("shop"))
 
         all_orders = list(receipts) + list(approved) + list(written)
         self.chart.set_data(orders_per_day(all_orders))
@@ -153,12 +170,61 @@ class DashboardPage(BasePage):
         self.table._empty_widget = None if orders else self.table._empty_widget
         self.table._refresh_states()
 
+    # ------------------------------------------------------------------ shop state
+    def _render_shop_state(self, state: object) -> None:
+        if not isinstance(state, dict):
+            self._shop_closed = None
+            self.shop_state_label.setText("وضعیت باز/بسته از سرور خوانده نشد.")
+            self.shop_toggle.setVisible(False)
+            return
+        closed = bool(state.get("closed"))
+        self._shop_closed = closed
+        if closed:
+            self.shop_state_label.setText(
+                "🔒 فروشگاه بسته است — ربات سفارش می‌گیرد و می‌گوید پس از بازگشایی بررسی می‌شود."
+            )
+            self.shop_toggle.setText("باز کردن فروشگاه")
+        else:
+            self.shop_state_label.setText("✅ فروشگاه باز است.")
+            self.shop_toggle.setText("بستن فروشگاه")
+        self.shop_toggle.setVisible(self.context.can(SHOP_STATE))
+
+    def _toggle_shop(self) -> None:
+        if self._shop_closed is None:
+            return
+        closing = not self._shop_closed
+        question = ("فروشگاه بسته شود؟ ربات همچنان سفارش می‌گیرد و به مشتری می‌گوید "
+                    "پس از بازگشایی بررسی می‌شود." if closing else "فروشگاه باز شود؟")
+        if not widgets.confirm(self, "وضعیت فروشگاه", question):
+            return
+        self.shop_toggle.setEnabled(False)
+        self.run(
+            lambda: self.context.api.set_shop_closed(closing),
+            on_success=self._shop_toggled,
+            on_error=lambda message, kind: (
+                self.shop_toggle.setEnabled(True), self.default_error(message, kind)
+            ),
+        )
+
+    def _shop_toggled(self, state: object) -> None:
+        self.shop_toggle.setEnabled(True)
+        self.context.audit("shop_state", f"closed={bool((state or {}).get('closed'))}")
+        self._render_shop_state(state)
+
     # ------------------------------------------------------------------ nav
     def _go(self, page_key: str, filter_key: str = "") -> None:
         window = self.window()
         navigate = getattr(window, "navigate", None)
         if callable(navigate):
             navigate(page_key, filter_key)
+
+
+def _shop_state(api) -> dict | None:
+    """Closed-mode flag; None when this server build has no such endpoint."""
+    try:
+        return api.shop_state()
+    except ApiError:
+        return None
 
 
 def orders_per_day(orders: list[dict], days: int = 7, today: date | None = None) -> list[tuple[str, int]]:

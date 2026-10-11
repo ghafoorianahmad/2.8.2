@@ -101,10 +101,31 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON staff_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_items_order ON order_items(order_id);
+
+CREATE TABLE IF NOT EXISTS shop_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL DEFAULT ''
+);
 """
+
+#: Columns added after the first release: (table, column, declaration).
+#: SQLite cannot alter a CHECK, so tracking lives in extra columns, not statuses.
+MIGRATIONS = (
+    ("orders", "invoice_state", "TEXT"),        # NULL | 'partial' | 'full'
+    ("orders", "invoiced_qty", "REAL"),
+    ("orders", "invoiced_at", "TEXT"),
+    ("orders", "shipped_at", "TEXT"),
+    ("payments", "file_name", "TEXT"),          # stored receipt image (receipts dir)
+    ("payments", "content_type", "TEXT"),
+    ("payments", "created_at", "TEXT"),
+)
 
 # Orders in these statuses hold a stock reservation.
 RESERVING_STATUSES = ("awaiting_payment", "receipt_uploaded")
+#: Orders that still count against a pending customer's limits.
+OPEN_STATUSES = ("awaiting_payment", "receipt_uploaded", "approved")
 
 
 class OwnDB:
@@ -118,7 +139,14 @@ class OwnDB:
         self._lock = threading.RLock()
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._migrate()
             self._conn.commit()
+
+    def _migrate(self) -> None:
+        for table, column, decl in MIGRATIONS:
+            existing = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     # ---- low level ----
     def _fetchone(self, sql: str, params: tuple = ()) -> dict | None:
@@ -184,6 +212,28 @@ class OwnDB:
             self._commit()
             return self.get_user_by_id(user_id)
 
+    def update_user_contact(self, user_id: int, name: str | None = None,
+                            phone: str | None = None) -> dict:
+        with self._lock:
+            if name:
+                self._conn.execute("UPDATE users SET name=? WHERE id=?", (name, user_id))
+            if phone:
+                self._conn.execute("UPDATE users SET phone=? WHERE id=?", (phone, user_id))
+            self._commit()
+            return self.get_user_by_id(user_id)
+
+    def open_order_totals(self, user_id: int) -> tuple[float, float]:
+        """(sum of totals, sum of quantities) of the user's open orders."""
+        with self._lock:
+            row = self._fetchone(
+                "SELECT COALESCE(SUM(o.total),0) AS total, "
+                "COALESCE((SELECT SUM(oi.qty) FROM order_items oi JOIN orders o2 "
+                "ON o2.id = oi.order_id WHERE o2.user_id=? AND o2.status IN (?,?,?)),0) AS qty "
+                "FROM orders o WHERE o.user_id=? AND o.status IN (?,?,?)",
+                (user_id,) + OPEN_STATUSES + (user_id,) + OPEN_STATUSES,
+            )
+            return float(row["total"]), float(row["qty"])
+
     def set_user_status(self, user_id: int, status_value: str) -> dict:
         with self._lock:
             self._conn.execute(
@@ -223,12 +273,15 @@ class OwnDB:
     def get_order(self, order_id: int) -> dict | None:
         with self._lock:
             order = self._fetchone(
-                "SELECT o.*, u.person_code AS user_person_code "
+                "SELECT o.*, u.person_code AS user_person_code, u.status AS user_status, "
+                "EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id "
+                "AND p.file_name IS NOT NULL) AS has_receipt "
                 "FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id=?",
                 (order_id,),
             )
             if order is None:
                 return None
+            order["customer_pending"] = order.get("user_status") != "approved"
             order["items"] = self._fetchall(
                 "SELECT kala_code, name, qty, unit_price FROM order_items "
                 "WHERE order_id=? ORDER BY id",
@@ -279,11 +332,67 @@ class OwnDB:
             self._commit()
             return self.get_order(order_id)
 
-    def add_payment(self, order_id: int, receipt_ref: str, status_value: str = "submitted") -> None:
+    def add_payment(self, order_id: int, receipt_ref: str, status_value: str = "submitted",
+                    file_name: str | None = None, content_type: str | None = None) -> None:
         with self._lock:
             self._conn.execute(
-                "INSERT INTO payments (order_id, receipt_ref, status) VALUES (?,?,?)",
-                (order_id, receipt_ref, status_value),
+                "INSERT INTO payments (order_id, receipt_ref, status, file_name, content_type, "
+                "created_at) VALUES (?,?,?,?,?,?)",
+                (order_id, receipt_ref, status_value, file_name, content_type, now_iso()),
+            )
+            self._commit()
+
+    def latest_receipt_file(self, order_id: int) -> dict | None:
+        with self._lock:
+            return self._fetchone(
+                "SELECT file_name, content_type FROM payments WHERE order_id=? "
+                "AND file_name IS NOT NULL ORDER BY id DESC LIMIT 1",
+                (order_id,),
+            )
+
+    # ---- tracking (invoice / shipping) ----
+    def orders_awaiting_invoice(self, limit: int = 200) -> list[dict]:
+        """Orders written to accounting whose invoice is not complete yet."""
+        with self._lock:
+            return self._fetchall(
+                "SELECT id, accounting_order_no, invoice_state FROM orders "
+                "WHERE status='written' AND accounting_order_no IS NOT NULL "
+                "AND COALESCE(invoice_state,'') <> 'full' AND shipped_at IS NULL "
+                "ORDER BY id LIMIT ?",
+                (limit,),
+            )
+
+    def set_invoice_state(self, order_id: int, state: str, invoiced_qty: float) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE orders SET invoice_state=?, invoiced_qty=?, invoiced_at=?, updated_at=? "
+                "WHERE id=?",
+                (state, invoiced_qty, now_iso(), now_iso(), order_id),
+            )
+            self._commit()
+
+    def set_shipped(self, order_id: int) -> dict:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE orders SET shipped_at=?, updated_at=? WHERE id=?",
+                (now_iso(), now_iso(), order_id),
+            )
+            self._commit()
+            return self.get_order(order_id)
+
+    # ---- shop state (closed mode) ----
+    def get_state(self, key: str, default: str = "") -> str:
+        with self._lock:
+            row = self._fetchone("SELECT value FROM shop_state WHERE key=?", (key,))
+            return row["value"] if row else default
+
+    def set_state(self, key: str, value: str, actor: str = "") -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO shop_state (key, value, updated_at, updated_by) VALUES (?,?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+                "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+                (key, value, now_iso(), actor),
             )
             self._commit()
 

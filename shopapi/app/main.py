@@ -1,6 +1,8 @@
 """FastAPI application entry point."""
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import math
 import sqlite3
 from contextlib import asynccontextmanager
@@ -11,7 +13,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from . import deps
+from . import deps, tracking
 from .db_own import OwnDB
 from .routers import admin, auth, public, server_admin, staff_admin
 
@@ -45,7 +47,18 @@ async def lifespan(app: FastAPI):
     # Ensure the own SQLite database file/schema exists at startup.
     settings = deps.get_settings()
     OwnDB(settings.sqlite_path)
-    yield
+    # Invoice tracking (R5): written orders -> "invoiced" events for the bots.
+    task = asyncio.create_task(
+        tracking.invoice_sync_loop(
+            settings, lambda: deps.get_db(settings), lambda: deps.get_reader(settings)
+        )
+    )
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 def create_app() -> FastAPI:

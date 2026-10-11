@@ -35,6 +35,10 @@ shopadmin/.tools/
 # --- temporary test folders ------------------------------------------------
 .installtest/
 .keyringtest/
+.pytest_tmp/
+
+# --- customer payment receipts (personal data) -----------------------------
+receipts/
 
 # --- OS / editor ------------------------------------------------------------
 Thumbs.db

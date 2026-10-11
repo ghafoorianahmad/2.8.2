@@ -1,0 +1,220 @@
+"""Phase 2 (Bale): deep links, receipts as photo or file, statement, closed mode,
+order tracking messages."""
+from __future__ import annotations
+
+from app import texts
+
+from .conftest import (
+    CUSTOMER_CHAT,
+    own_contact,
+    push_callback,
+    push_message,
+)
+
+
+def _callbacks(api, chat_id):
+    return [cb for row in api.buttons_for(chat_id) for _, cb in row]
+
+
+async def _order_and_wait_for_receipt(engine):
+    await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+    await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "grp:1")
+    await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "prod:101")
+    await push_callback(engine, "bale", 4, CUSTOMER_CHAT, "add:101:1")
+    await push_callback(engine, "bale", 5, CUSTOMER_CHAT, "checkout")
+
+
+# ---- deep link / product code ----------------------------------------------
+def test_start_with_product_parameter_opens_the_product(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start kala_104")
+        body = bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        assert "کالای د" in body and "4,000" in body
+        assert "add:104:1" in _callbacks(bot_apis["bale"], CUSTOMER_CHAT)
+        await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "add:104:1")
+        assert engine.store.cart_list("bale", CUSTOMER_CHAT)[0]["kala_code"] == 104
+
+    env(scenario)
+
+
+def test_deep_link_survives_registration(env, bot_apis, shopapi):
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start kala_101")
+        assert texts.ASK_CONTACT in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        await push_message(engine, "bale", 2, CUSTOMER_CHAT, text="hello")      # refused
+        await push_message(engine, "bale", 3, CUSTOMER_CHAT, contact=own_contact(CUSTOMER_CHAT))
+        assert "کالای الف" in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+
+    env(scenario)
+
+
+def test_typed_product_code_is_the_fallback(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="kala_102")
+        assert "کالای ب" in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        await push_message(engine, "bale", 2, CUSTOMER_CHAT, text="۱۰۴")
+        assert "کالای د" in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        await push_message(engine, "bale", 3, CUSTOMER_CHAT, text="999")
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.PRODUCT_NOT_FOUND
+
+    env(scenario)
+
+
+def test_out_of_stock_deep_link_shows_unavailable(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start kala_103")
+        assert texts.OUT_OF_STOCK in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        assert not any(cb.startswith("add:") for cb in _callbacks(bot_apis["bale"], CUSTOMER_CHAT))
+
+    env(scenario)
+
+
+# ---- receipts ----------------------------------------------------------------
+def test_receipt_as_image_document(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        await _order_and_wait_for_receipt(engine)
+        await push_message(engine, "bale", 6, CUSTOMER_CHAT, document={
+            "file_id": "DOC", "mime_type": "image/png", "file_size": 1000})
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.RECEIPT_RECEIVED
+        order = next(iter(shopapi.orders.values()))
+        assert order["status"] == "receipt_uploaded" and order["receipt_ref"] == "DOC"
+
+    env(scenario)
+
+
+def test_receipt_rejections(env, settings, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        await _order_and_wait_for_receipt(engine)
+        order = next(iter(shopapi.orders.values()))
+        await push_message(engine, "bale", 6, CUSTOMER_CHAT, document={
+            "file_id": "PDF", "mime_type": "application/pdf"})
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.RECEIPT_EXPECTED_PHOTO
+        await push_message(engine, "bale", 7, CUSTOMER_CHAT, document={
+            "file_id": "BIG", "mime_type": "image/jpeg", "file_size": 6 * 1024 * 1024})
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.RECEIPT_TOO_LARGE
+        # declared small, but the bytes are not an image
+        bot_apis["bale"].file_bytes = b"<html>"
+        await push_message(engine, "bale", 8, CUSTOMER_CHAT, photo=[{"file_id": "P"}])
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.RECEIPT_EXPECTED_PHOTO
+        # getFile reports a size over the limit: not downloaded at all
+        bot_apis["bale"].file_size = 6 * 1024 * 1024
+        downloads = bot_apis["bale"].methods().count("download")
+        await push_message(engine, "bale", 9, CUSTOMER_CHAT, photo=[{"file_id": "P"}])
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.RECEIPT_TOO_LARGE
+        assert bot_apis["bale"].methods().count("download") == downloads
+        # Bot API unreachable
+        bot_apis["bale"].file_size = None
+        bot_apis["bale"].raise_on.add("getFile")
+        await push_message(engine, "bale", 10, CUSTOMER_CHAT, photo=[{"file_id": "P"}])
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.RECEIPT_DOWNLOAD_FAILED
+        assert order["status"] == "awaiting_payment"
+
+    env(scenario)
+
+
+def test_receipt_rate_limit(env, settings, bot_apis, shopapi):
+    settings.receipt_rate_count = 2
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        await _order_and_wait_for_receipt(engine)
+        bot_apis["bale"].file_bytes = b"not an image"
+        for i in range(2):
+            await push_message(engine, "bale", 10 + i, CUSTOMER_CHAT, photo=[{"file_id": "P"}])
+        await push_message(engine, "bale", 20, CUSTOMER_CHAT, photo=[{"file_id": "P"}])
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.RECEIPT_RATE_LIMITED
+
+    env(scenario)
+
+
+# ---- statement -----------------------------------------------------------------
+def test_statement_is_paginated(env, settings, bot_apis, shopapi):
+    settings.statement_page_size = 1
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+    shopapi.statement = {
+        "balance": 700, "side": "debtor", "total": 2, "page": 1, "page_size": 1,
+        "items": [{"date": "1405/07/19", "kind": "فاکتور فروش", "doc_no": "2672", "debit": 700,
+                   "credit": 0, "balance": 700, "side": "debtor", "description": ""}],
+    }
+
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+        await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "stmt:1")
+        body = bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        assert "1405/07/19" in body and "2672" in body and texts.SIDE_DEBTOR in body
+        assert "stmt:2" in _callbacks(bot_apis["bale"], CUSTOMER_CHAT)
+        await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "stmt:2")
+        assert shopapi.statement_requests[-1]["page"] == "2"
+
+    env(scenario)
+
+
+# ---- closed mode -------------------------------------------------------------
+def test_closed_shop_still_takes_orders_with_notice(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+    shopapi.closed = True
+
+    async def scenario(engine, adapters, api):
+        await _order_and_wait_for_receipt(engine)
+        assert texts.SHOP_CLOSED_NOTICE in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        assert len(shopapi.orders) == 1
+
+    env(scenario)
+
+
+def test_open_shop_has_no_notice(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        await _order_and_wait_for_receipt(engine)
+        assert texts.SHOP_CLOSED_NOTICE not in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+
+    env(scenario)
+
+
+# ---- tracking ----------------------------------------------------------------
+def test_invoiced_and_shipped_are_told_to_the_customer(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        order = await api.create_order("bale", CUSTOMER_CHAT, [{"kala_code": 101, "qty": 1}])
+        await engine.notify_customers_from_events()          # first run: position only
+        shopapi.add_event("order_partially_invoiced", order["id"])
+        shopapi.add_event("order_invoiced", order["id"])
+        shopapi.add_event("order_shipped", order["id"])
+        shopapi.add_event("order_shipped", order["id"])       # duplicate: told once
+        sent = await engine.notify_customers_from_events()
+        assert sent == 3
+        got = bot_apis["bale"].texts(CUSTOMER_CHAT)
+        oid = order["id"]
+        assert texts.ORDER_PARTIALLY_INVOICED.format(order_id=oid) in got
+        assert texts.ORDER_INVOICED.format(order_id=oid) in got
+        assert got.count(texts.ORDER_SHIPPED.format(order_id=oid)) == 1
+
+    env(scenario)
+
+
+def test_my_orders_shows_tracking_step(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        order = await api.create_order("bale", CUSTOMER_CHAT, [{"kala_code": 101, "qty": 1}])
+        shopapi.orders[order["id"]].update(status="written", invoice_state="full")
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+        await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "orders")
+        assert texts.ORDER_STATUS_FA["invoiced"] in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        shopapi.orders[order["id"]]["shipped_at"] = "t"
+        await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "orders")
+        assert texts.ORDER_STATUS_FA["shipped"] in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+
+    env(scenario)

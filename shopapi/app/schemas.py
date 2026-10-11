@@ -74,6 +74,7 @@ class OrderItemOut(BaseModel):
 
 class OrderOut(BaseModel):
     id: int
+    user_id: Optional[int] = None
     status: str
     price_level: int
     total: float
@@ -82,14 +83,58 @@ class OrderOut(BaseModel):
     created_at: str
     items: list[OrderItemOut]
     payment_instructions: Optional[str] = None
+    #: None | "partial" | "full" (recipe R5, synced from Facto.ordercode)
+    invoice_state: Optional[str] = None
+    invoiced_at: Optional[str] = None
+    shipped_at: Optional[str] = None
+    has_receipt: bool = False
+    #: The customer is not approved yet: the order is written to accounting
+    #: only after approval.
+    customer_pending: bool = False
 
 
 class ReceiptIn(BaseModel):
-    receipt_ref: str = Field(min_length=1)
+    receipt_ref: str = Field(min_length=1, max_length=512)
+    #: The image itself (JPEG/PNG, base64). Optional for old clients.
+    data_b64: Optional[str] = Field(None, max_length=8_000_000)
 
 
 class ApproveUserIn(BaseModel):
-    person_code: int = Field(gt=0)
+    #: Link to this existing person; omit to create a new person (recipe §5.1).
+    person_code: Optional[int] = Field(None, gt=0)
+    #: Name for the new person - staff correct the Bale profile name here.
+    first_name: Optional[str] = Field(None, max_length=50)
+    last_name: Optional[str] = Field(None, max_length=50)
+
+
+class ShopStateIn(BaseModel):
+    closed: bool
+
+
+class ShopStateOut(BaseModel):
+    closed: bool
+    updated_at: Optional[str] = None
+
+
+class StatementItem(BaseModel):
+    date: str
+    kind: str
+    doc_no: str
+    debit: float
+    credit: float
+    balance: float
+    side: str
+    description: str
+
+
+class StatementOut(BaseModel):
+    balance: float
+    #: "debtor" (owes the shop) | "creditor" | "zero"
+    side: str
+    total: int
+    page: int
+    page_size: int
+    items: list[StatementItem]
 
 
 class RejectIn(BaseModel):

@@ -90,6 +90,10 @@ class FakeShopApi:
         }
         self.settings_puts: list[dict] = []
         self.restarts = 0
+        #: order id -> stored receipt image
+        self.receipts: dict[int, bytes] = {}
+        self.shop_closed = False
+        self.approve_bodies: list[dict] = []
 
     # ---- helpers used by tests ------------------------------------------
     def add_staff(self, username: str, password: str = OWNER_PASSWORD, role: str = "operator",
@@ -286,10 +290,19 @@ class FakeShopApi:
 
         if path.startswith("/admin/users/") and path.endswith("/approve"):
             user_id = int(path.split("/")[3])
+            self.approve_bodies.append(body)
             for customer in self.customers:
                 if customer["id"] == user_id:
+                    code = body.get("person_code")
+                    if code is None:
+                        # create a person (recipe 5.1): only when writes are enabled
+                        if not self.write_enabled:
+                            return detail(
+                                409, "Accounting writes are disabled; the person was not created")
+                        code = 9000 + user_id
+                        customer["name"] = f"{body.get('first_name') or ''} {body['last_name']}".strip()
                     customer["status"] = "approved"
-                    customer["person_code"] = body.get("person_code")
+                    customer["person_code"] = code
                     return reply(200, customer)
             return detail(404, "User not found")
 
@@ -316,6 +329,30 @@ class FakeShopApi:
                         return detail(409, f"Order in status {order['status']}; cannot approve")
                     order["status"] = "written"
                     order["accounting_order_no"] = 5001
+                    return reply(200, order)
+            return detail(404, "Order not found")
+
+        if path == "/admin/shop/state":
+            if request.method == "PUT":
+                if user["role"] not in ("super_admin", "admin"):
+                    return detail(403, "Not permitted for this account")
+                self.shop_closed = bool(body.get("closed"))
+            return reply(200, {"closed": self.shop_closed})
+
+        if path.startswith("/admin/orders/") and path.endswith("/receipt"):
+            data = self.receipts.get(int(path.split("/")[3]))
+            if data is None:
+                return detail(404, "No receipt image")
+            return httpx.Response(200, content=data, headers={"content-type": "image/png"},
+                                  request=request)
+
+        if path.startswith("/admin/orders/") and path.endswith("/ship"):
+            order_id = int(path.split("/")[3])
+            for order in self.orders:
+                if order["id"] == order_id:
+                    if order["status"] not in ("approved", "written"):
+                        return detail(409, f"Order in status {order['status']}; cannot ship")
+                    order["shipped_at"] = TS
                     return reply(200, order)
             return detail(404, "Order not found")
 

@@ -84,6 +84,19 @@ class Settings:
     bank_account_text: str = ""
     max_order_qty: int = 10000
     allow_shared_person_code: bool = False
+    #: Customers awaiting approval may order up to these limits; the totals
+    #: include their other open orders (REQUIREMENTS §3). 0 = may not order.
+    pending_max_order_total: float = 50_000_000
+    pending_max_order_items: int = 3
+
+    # --- Receipts / tracking ---
+    receipt_max_bytes: int = 5 * 1024 * 1024
+    #: "" = a ``receipts`` folder next to the SQLite file.
+    receipts_dir: str = ""
+    #: How often orders written to accounting are checked for invoices (0 = off).
+    invoice_sync_seconds: int = 300
+    #: Most recent KOL rows read for a customer statement.
+    statement_max_rows: int = 2000
 
     # --- API keys ---
     bot_api_key: str = ""
@@ -134,6 +147,12 @@ class Settings:
             bank_account_text=_env("BANK_ACCOUNT_TEXT", ""),
             max_order_qty=_env_int("MAX_ORDER_QTY", 10000),
             allow_shared_person_code=_env_bool("ALLOW_SHARED_PERSON_CODE", False),
+            pending_max_order_total=float(_env_int("PENDING_MAX_ORDER_TOTAL", 50_000_000)),
+            pending_max_order_items=_env_int("PENDING_MAX_ORDER_ITEMS", 3),
+            receipt_max_bytes=_env_int("RECEIPT_MAX_BYTES", 5 * 1024 * 1024),
+            receipts_dir=_env("RECEIPTS_DIR", ""),
+            invoice_sync_seconds=_env_int("INVOICE_SYNC_SECONDS", 300),
+            statement_max_rows=_env_int("STATEMENT_MAX_ROWS", 2000),
             bot_api_key=_env("BOT_API_KEY", ""),
             site_api_key=_env("SITE_API_KEY", ""),
             admin_api_key=_env("ADMIN_API_KEY", ""),
@@ -164,6 +183,14 @@ class Settings:
     def price_level_for(self, channel: str) -> int:
         # Staff browse the catalogue at the bot price level (what customers see).
         return self.price_level_bot if channel in ("bot", "staff") else self.price_level_site
+
+    def receipts_path(self) -> Path | None:
+        """Folder for receipt images; None for an in-memory database (tests)."""
+        if self.receipts_dir:
+            return Path(self.receipts_dir)
+        if self.sqlite_path == ":memory:":
+            return None
+        return Path(self.sqlite_path).resolve().parent / "receipts"
 
     def write_allowed(self) -> bool:
         allowed = {h.lower() for h in self.accounting_allowed_hosts}

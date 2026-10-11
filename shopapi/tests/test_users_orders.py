@@ -13,7 +13,10 @@ def test_registration_is_idempotent(client, reader):
     assert first.json()["status"] == "pending"
 
 
-def test_pending_user_cannot_order(client, reader):
+def test_pending_user_cannot_order_when_limit_is_zero(client, reader, settings):
+    # With a cap the pending customer may order (tests in test_phase2.py);
+    # PENDING_MAX_ORDER_ITEMS=0 turns that off.
+    settings.pending_max_order_items = 0
     seed_products(reader)
     client.post("/users/register", json={
         "platform": "bale", "chat_id": "111", "name": "Ali", "phone": "09120000000",

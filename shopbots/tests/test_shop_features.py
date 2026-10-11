@@ -94,11 +94,11 @@ def test_braces_in_shop_values_do_not_break_formatting(tmp_path):
 # ============================ commands / screens ============================
 def test_myid_works_for_anyone_in_any_state(env, bot_apis):
     async def scenario(engine, adapters, api):
-        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")  # -> asks name
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")  # -> asks contact
         await push_message(engine, "bale", 2, CUSTOMER_CHAT, text="/myid")
         assert CUSTOMER_CHAT in bot_apis["bale"].last_text(CUSTOMER_CHAT)
         # still in the registration step afterwards
-        assert engine.store.get_conversation("bale", CUSTOMER_CHAT)[0] == "await_name"
+        assert engine.store.get_conversation("bale", CUSTOMER_CHAT)[0] == "await_contact"
         await push_message(engine, "bale", 3, CUSTOMER_CHAT, text="/myid@asrertebatat2_bot")
         assert bot_apis["bale"].last_text(CUSTOMER_CHAT) == texts.MY_ID.format(chat_id=CUSTOMER_CHAT)
 
@@ -111,7 +111,14 @@ def test_start_restarts_registration_with_welcome(env, bot_apis):
         await push_message(engine, "bale", 2, CUSTOMER_CHAT, text="علی رضایی")
         await push_message(engine, "bale", 3, CUSTOMER_CHAT, text="/start")
         assert bot_apis["bale"].last_text(CUSTOMER_CHAT).startswith(texts.WELCOME)
-        assert engine.store.get_conversation("bale", CUSTOMER_CHAT)[0] == "await_name"
+        assert engine.store.get_conversation("bale", CUSTOMER_CHAT)[0] == "await_contact"
+
+
+def test_conversation_left_in_old_registration_state_continues_with_contact(env, bot_apis):
+    async def scenario(engine, adapters, api):
+        engine.store.set_conversation("bale", CUSTOMER_CHAT, "await_phone", {"name": "x"})
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="09121234567")
+        assert bot_apis["bale"].last_text(CUSTOMER_CHAT) == texts.CONTACT_BUTTON_ONLY
 
     env(scenario)
 
@@ -122,7 +129,7 @@ def test_main_menu_has_support_and_info(env, bot_apis, shopapi):
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
         callbacks = _callbacks(bot_apis["bale"], CUSTOMER_CHAT)
-        assert callbacks == ["groups", "search", "cart", "orders", "support", "info"]
+        assert callbacks == ["groups", "search", "cart", "orders", "stmt:1", "support", "info"]
         await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "info")
         assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.SHOP_INFO
         await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "support")
@@ -131,18 +138,27 @@ def test_main_menu_has_support_and_info(env, bot_apis, shopapi):
     env(scenario)
 
 
-def test_pending_customer_can_still_see_support_and_info(env, bot_apis, shopapi):
+def test_pending_customer_sees_menu_without_statement(env, bot_apis, shopapi):
     shopapi.add_user("bale", CUSTOMER_CHAT, status="pending")
 
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
-        assert bot_apis["bale"].last_text(CUSTOMER_CHAT).endswith(texts.STILL_PENDING)
-        assert _callbacks(bot_apis["bale"], CUSTOMER_CHAT) == ["support", "info"]
+        assert texts.STILL_PENDING in bot_apis["bale"].last_text(CUSTOMER_CHAT)
+        assert _callbacks(bot_apis["bale"], CUSTOMER_CHAT) == [
+            "groups", "search", "cart", "orders", "support", "info"]
         await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "info")
         assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.SHOP_INFO
-        # but the catalogue stays closed until approval
-        await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "groups")
-        assert bot_apis["bale"].answered[-1]["text"] == texts.STILL_PENDING
+
+
+def test_rejected_customer_only_sees_support_and_info(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="rejected")
+
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+        assert bot_apis["bale"].last_text(CUSTOMER_CHAT).endswith(texts.REJECTED_USER)
+        assert _callbacks(bot_apis["bale"], CUSTOMER_CHAT) == ["support", "info"]
+        await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "groups")
+        assert bot_apis["bale"].answered[-1]["text"] == texts.REJECTED_USER
 
     env(scenario)
 

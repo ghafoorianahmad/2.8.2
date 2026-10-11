@@ -4,8 +4,10 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog,
+    QScrollArea,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -17,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...permissions import ORDERS_APPROVE_PAYMENT, ORDERS_REJECT_PAYMENT
+from ...permissions import ORDERS_APPROVE_PAYMENT, ORDERS_REJECT_PAYMENT, ORDERS_SHIP
 from ...persian import (
     format_money,
     format_qty,
@@ -275,6 +277,7 @@ class OrderDetailDialog(QDialog):
         right.addWidget(_kv("سطح قیمت", price_level_label(order.get("price_level", 0))))
         right.addWidget(_kv("شمارهٔ حسابداری", to_persian_digits(order.get("accounting_order_no"))
                             if order.get("accounting_order_no") else "—"))
+        right.addWidget(_kv("پیگیری", tracking_fa(order)))
         grid.addLayout(right)
         grid.addLayout(left)
         grid.addStretch(1)
@@ -326,7 +329,20 @@ class OrderDetailDialog(QDialog):
             to_persian_digits(receipt_ref) if receipt_ref else "فیشی ثبت نشده است", bold=bool(receipt_ref)
         ))
         ref_row.addStretch(1)
+        self.receipt_button = widgets.button(
+            "نمایش تصویر رسید", icon_name="receipt", on_click=self._show_receipt
+        )
+        self.receipt_button.setEnabled(bool(order.get("has_receipt")))
+        if not order.get("has_receipt"):
+            self.receipt_button.setToolTip("تصویری از رسید روی سرور ذخیره نشده است")
+        ref_row.addWidget(self.receipt_button)
         ref_panel.body.addLayout(ref_row)
+        if order.get("customer_pending"):
+            ref_panel.body.addWidget(widgets.label(
+                "مشتری این سفارش هنوز تأیید نشده است؛ پرداخت پس از تأیید مشتری قابل تأیید است.",
+                color=theme.WARNING_TEXT,
+                wrap=True,
+            ))
         root.addWidget(ref_panel)
 
         # ---- actions -----------------------------------------------------
@@ -353,8 +369,22 @@ class OrderDetailDialog(QDialog):
             self.approve_button.setToolTip(tip)
             self.reject_button.setToolTip(tip)
 
+        self.ship_button = widgets.button(
+            "ثبت ارسال", icon_name="check", on_click=self._ship
+        )
+        can_ship = context.can(ORDERS_SHIP)
+        shippable = order.get("status") in SHIPPABLE and not order.get("shipped_at")
+        self.ship_button.setEnabled(can_ship and shippable)
+        if not can_ship:
+            self.ship_button.setToolTip("نقش شما اجازهٔ ثبت ارسال را ندارد")
+        elif order.get("shipped_at"):
+            self.ship_button.setToolTip("این سفارش قبلاً ارسال شده است")
+        elif not shippable:
+            self.ship_button.setToolTip("فقط سفارش پرداخت‌شده و تأییدشده قابل ارسال است")
+
         actions.addWidget(self.approve_button)
         actions.addWidget(self.reject_button)
+        actions.addWidget(self.ship_button)
         actions.addStretch(1)
         close = widgets.button("بستن", on_click=self.reject)
         actions.addWidget(close)
@@ -458,6 +488,85 @@ class OrderDetailDialog(QDialog):
         self.context.audit("reject_payment", f"order id={self.order.get('id')}")
         self.context.data_changed.emit()
         self.accept()
+
+    def _ship(self) -> None:
+        order_id = int(self.order["id"])
+        if not widgets.confirm(
+            self, "ثبت ارسال",
+            f"سفارش {to_persian_digits(order_id)} ارسال شد؟ به مشتری در بله خبر داده می‌شود.",
+        ):
+            return
+        self.ship_button.setEnabled(False)
+        run_async(
+            lambda: self.context.api.ship_order(order_id),
+            on_success=self._shipped,
+            on_error=lambda message, kind: (
+                self.ship_button.setEnabled(True), self._show_error(message)
+            ),
+        )
+
+    def _shipped(self, _result: object) -> None:
+        self.changed = True
+        self.context.audit("order_ship", f"order id={self.order.get('id')}")
+        self.context.data_changed.emit()
+        self.accept()
+
+    def _show_receipt(self) -> None:
+        order_id = int(self.order["id"])
+        self.receipt_button.setEnabled(False)
+        run_async(
+            lambda: self.context.api.receipt_image(order_id),
+            on_success=self._got_receipt,
+            on_error=lambda message, _kind: self._show_error(message),
+            on_done=lambda: self.receipt_button.setEnabled(True),
+        )
+
+    def _got_receipt(self, data: object) -> None:
+        pixmap = QPixmap()
+        if not isinstance(data, (bytes, bytearray)) or not pixmap.loadFromData(bytes(data)):
+            self._show_error("تصویر رسید پیدا نشد یا قابل نمایش نیست.")
+            return
+        ReceiptImageDialog(pixmap, to_persian_digits(self.order.get("id", "")), self).exec()
+
+
+#: Paid orders that may be marked as shipped (server: SHIPPABLE_STATUSES).
+SHIPPABLE = (ORDER_APPROVED, ORDER_WRITTEN)
+
+
+def tracking_fa(order: dict) -> str:
+    """The furthest step after payment: shipped > invoiced > partially invoiced."""
+    if order.get("shipped_at"):
+        return f"ارسال شده ({format_shamsi(order.get('shipped_at'))})"
+    if order.get("invoice_state") == "full":
+        return "فاکتور شده"
+    if order.get("invoice_state") == "partial":
+        return "بخشی فاکتور شده"
+    return "—"
+
+
+class ReceiptImageDialog(QDialog):
+    """تصویر رسید پرداخت که مشتری در بله فرستاده است."""
+
+    def __init__(self, pixmap: QPixmap, order_label: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"رسید سفارش {order_label}")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.resize(640, 760)
+        root = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        image = QLabel()
+        image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image.setPixmap(pixmap.scaledToWidth(
+            min(pixmap.width(), 600), Qt.TransformationMode.SmoothTransformation
+        ))
+        scroll.setWidget(image)
+        root.addWidget(scroll, 1)
+        close = widgets.button("بستن", on_click=self.accept)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(close)
+        root.addLayout(row)
 
 
 def _kv(key: str, value: str) -> QWidget:

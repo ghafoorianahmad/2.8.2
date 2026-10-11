@@ -11,6 +11,7 @@ produced only by `utils.log_event` (platform, update id, event type).
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from . import texts
@@ -21,12 +22,21 @@ from .core import (
     STATUS_REJECTED,
     CartService,
     CatalogService,
+    ContactProblem,
     CustomerService,
     OrderService,
     ReceiptOutcome,
+    parse_product_ref,
 )
 from .core.cart import clamp_qty
-from .platforms import BotApiError, PlatformAdapter, contact_keyboard, inline_keyboard, reply_keyboard
+from .platforms import (
+    BotApiError,
+    PlatformAdapter,
+    contact_keyboard,
+    inline_keyboard,
+    remove_keyboard,
+    reply_keyboard,
+)
 from .ratelimit import RateLimiter
 from .shopapi import (
     ShopApiClient,
@@ -46,8 +56,10 @@ from .utils import (
 
 # --- conversation states ----------------------------------------------------
 STATE_NONE = ""
-STATE_AWAIT_NAME = "await_name"
-STATE_AWAIT_PHONE = "await_phone"
+STATE_AWAIT_CONTACT = "await_contact"
+#: States of the old name -> typed-phone registration; a conversation left in
+#: one of them continues as contact-only registration.
+LEGACY_REGISTRATION_STATES = frozenset({"await_name", "await_phone"})
 STATE_AWAIT_SEARCH = "await_search"
 STATE_AWAIT_RECEIPT = "await_receipt"
 STATE_ADMIN_PERSON_CODE = "admin_person_code"
@@ -76,6 +88,7 @@ CALLBACK_ARG_COUNTS: dict[str, int] = {
     "adrp": 1,
     "adst": 1,
     "rcpt": 1,
+    "stmt": 1,
     "pg": 2,
     "qty": 2,
     "add": 2,
@@ -86,8 +99,20 @@ ADMIN_ACTIONS = frozenset({"addu", "adru", "adap", "adrp", "adsug", "adst"})
 PUBLIC_ACTIONS = frozenset({"support", "info", "contact"})
 #: shopapi event kinds that mean "tell the customer" (decisions made in ShopAdmin too).
 CUSTOMER_EVENT_KINDS = frozenset(
-    {"customer_approved", "customer_rejected", "payment_approved", "payment_rejected"}
+    {
+        "customer_approved", "customer_rejected", "payment_approved", "payment_rejected",
+        "order_partially_invoiced", "order_invoiced", "order_shipped",
+    }
 )
+#: order event kind -> customer message (tracking: invoiced / shipped)
+ORDER_EVENT_TEXTS = {
+    "payment_approved": "PAYMENT_APPROVED",
+    "payment_rejected": "PAYMENT_REJECTED",
+    "order_partially_invoiced": "ORDER_PARTIALLY_INVOICED",
+    "order_invoiced": "ORDER_INVOICED",
+    "order_shipped": "ORDER_SHIPPED",
+}
+SHOP_STATE_TTL = 60.0
 EVENT_CURSOR_KEY = "shopapi_event_cursor"
 MAX_CALLBACK_LEN = 64
 MAX_CALLBACK_ARG = 1_000_000_000
@@ -152,8 +177,15 @@ class BotEngine:
             show_out_of_stock=settings.show_out_of_stock,
         )
         self.cart = CartService(store)
-        self.orders = OrderService(api, store, self.cart)
+        self.orders = OrderService(
+            api, store, self.cart, receipt_max_bytes=settings.receipt_max_bytes
+        )
         self.customers = CustomerService(api, max_name_len=settings.max_name_len)
+        #: receipts are downloaded and stored: a stricter per-customer limit
+        self.receipt_limiter = RateLimiter(
+            settings.receipt_rate_count, settings.receipt_rate_window
+        )
+        self._shop_state: tuple[float, bool] | None = None
 
     # ================= update entry point =================================
     async def handle_update(self, platform: str, update: dict) -> bool:
@@ -208,14 +240,18 @@ class BotEngine:
             chat = message.get("chat") or {}
             if chat.get("id") is None:
                 return None
+            sender = message.get("from") if isinstance(message.get("from"), dict) else {}
             return {
                 "type": "message",
                 "chat_id": chat.get("id"),
                 "chat_type": chat.get("type"),
                 "message_id": message.get("message_id"),
+                "from_id": sender.get("id"),
+                "sender": sender,
                 "text": message.get("text") or message.get("caption"),
                 "contact": message.get("contact"),
                 "photo": message.get("photo"),
+                "document": message.get("document"),
             }
         if isinstance(update.get("callback_query"), dict):
             callback = update["callback_query"]
@@ -327,8 +363,8 @@ class BotEngine:
             await self._send_text(adapter, chat_id, texts.TEXT_TOO_LONG)
             return
         text = shorten(normalize_digits(raw_text), self.settings.max_input_len)
-        contact = event.get("contact")
         photo = event.get("photo")
+        document = event.get("document")
         state, data = self.store.get_conversation(platform, chat_id)
 
         is_admin = self.settings.is_admin_chat(platform, chat_id)
@@ -350,18 +386,21 @@ class BotEngine:
             await self._admin_person_code(adapter, platform, chat_id, text, data)
             return
 
-        # /start always restarts, even in the middle of registration
+        # /start always restarts, even in the middle of registration.
+        # "/start kala_289" is the site's deep link to a product.
         if command in ("/start", "/menu"):
             self.store.clear_conversation(platform, chat_id)
-            await self._customer_entry(adapter, platform, chat_id, welcome=command == "/start")
+            args = text.split()[1:]
+            product_code = parse_product_ref(args[0]) if args else None
+            await self._customer_entry(
+                adapter, platform, chat_id, welcome=command == "/start",
+                product_code=product_code,
+            )
             return
 
-        # registration states (the user may not exist in shopapi yet)
-        if state == STATE_AWAIT_NAME:
-            await self._registration_name(adapter, platform, chat_id, text)
-            return
-        if state == STATE_AWAIT_PHONE:
-            await self._registration_phone(adapter, platform, chat_id, text, contact)
+        # registration (the user may not exist in shopapi yet): contact only
+        if state == STATE_AWAIT_CONTACT or state in LEGACY_REGISTRATION_STATES:
+            await self._registration_contact(adapter, platform, chat_id, event, data)
             return
 
         # text-only platforms: a typed button label acts as a callback
@@ -371,11 +410,13 @@ class BotEngine:
             return
 
         user = await self.api.get_user(platform, chat_id)
-        if user is None:
-            await self._begin_registration(adapter, platform, chat_id)
+        status = self.customers.status_of(user)
+        if status == STATUS_NEW:
+            product_code = parse_product_ref(text)
+            await self._begin_registration(adapter, platform, chat_id, product_code=product_code)
             return
-        if user.get("status") != "approved":
-            await self._show_not_approved(adapter, platform, chat_id, user)
+        if status == STATUS_REJECTED:
+            await self._show_not_approved(adapter, platform, chat_id, status)
             return
 
         if state == STATE_AWAIT_SEARCH and text:
@@ -383,31 +424,43 @@ class BotEngine:
             await self._show_products(adapter, platform, chat_id, q=text, group=None, page=1)
             return
         if state == STATE_AWAIT_RECEIPT:
-            if photo:
-                await self._save_receipt(adapter, platform, chat_id, photo, data)
+            if photo or document:
+                await self._save_receipt(adapter, platform, chat_id, photo, document, data)
             else:
                 await self._send_text(adapter, chat_id, texts.RECEIPT_EXPECTED_PHOTO)
             return
-        if photo:
+        if photo or document:
             # a receipt outside the receipt step: let the customer pick the order
             await self._show_orders(adapter, platform, chat_id)
             return
 
+        # "kala_289" or a bare product code (fallback when a deep link lost its parameter)
+        product_code = parse_product_ref(text, allow_bare_code=True)
+        if product_code is not None:
+            await self._show_product_by_code(adapter, platform, chat_id, product_code)
+            return
+
         # any other text: back to the main menu
-        await self._show_main_menu(adapter, platform, chat_id)
+        await self._show_main_menu(adapter, platform, chat_id, status=status)
 
     async def _customer_entry(
-        self, adapter: PlatformAdapter, platform: str, chat_id: str, *, welcome: bool = True
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, *, welcome: bool = True,
+        product_code: int | None = None,
     ) -> None:
         intro = texts.WELCOME if welcome else None
         status = await self.customers.status(platform, chat_id)
         if status == STATUS_NEW:
-            await self._begin_registration(adapter, platform, chat_id, intro=intro)
+            await self._begin_registration(
+                adapter, platform, chat_id, intro=intro, product_code=product_code
+            )
             return
-        if status != STATUS_APPROVED:
+        if status == STATUS_REJECTED:
             await self._show_not_approved(adapter, platform, chat_id, status, intro=intro)
             return
-        await self._show_main_menu(adapter, platform, chat_id, intro=intro)
+        if product_code is not None:
+            await self._show_product_by_code(adapter, platform, chat_id, product_code)
+            return
+        await self._show_main_menu(adapter, platform, chat_id, intro=intro, status=status)
 
     async def _show_not_approved(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, status: str,
@@ -419,65 +472,87 @@ class BotEngine:
         rows = [[(texts.BTN_SUPPORT, "support"), (texts.BTN_INFO, "info")]]
         await self._send_options(adapter, platform, chat_id, body, rows, state=STATE_NONE, data={})
 
-    # ================= registration =======================================
+    # ================= registration (REQUIREMENTS §3) =====================
     async def _begin_registration(
-        self, adapter: PlatformAdapter, platform: str, chat_id: str, *, intro: str | None = None
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, *,
+        intro: str | None = None, product_code: int | None = None,
     ) -> None:
-        self.store.set_conversation(platform, chat_id, STATE_AWAIT_NAME, {})
-        body = f"{intro}\n\n{texts.ASK_NAME}" if intro else texts.ASK_NAME
-        await self._send_text(adapter, chat_id, body)
+        """Ask for the contact - only the share-contact button is accepted.
+        A deep-linked product is remembered and shown after registration."""
+        data = {"product": int(product_code)} if product_code else {}
+        self.store.set_conversation(platform, chat_id, STATE_AWAIT_CONTACT, data)
+        body = f"{intro}\n\n{texts.ASK_CONTACT}" if intro else texts.ASK_CONTACT
+        await self._send_text(adapter, chat_id, body, contact_keyboard(texts.BTN_SHARE_CONTACT))
 
-    async def _registration_name(
-        self, adapter: PlatformAdapter, platform: str, chat_id: str, text: str
+    async def _registration_contact(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, event: dict, data: dict
     ) -> None:
-        name = self.customers.valid_name(text)
-        if name is None:
-            await self._send_text(adapter, chat_id, texts.NAME_INVALID)
-            return
-        self.store.set_conversation(platform, chat_id, STATE_AWAIT_PHONE, {"name": name})
-        if adapter.supports_contact_button:
+        verified = self.customers.verify_contact(
+            event.get("contact"), event.get("from_id"), event.get("sender")
+        )
+        if verified.problem is not ContactProblem.NONE:
+            message = {
+                ContactProblem.NOT_OWN: texts.CONTACT_NOT_OWN,
+                ContactProblem.NOT_MOBILE: texts.CONTACT_NOT_MOBILE,
+            }.get(verified.problem, texts.CONTACT_BUTTON_ONLY)
+            # keep the state (and a deep-linked product) and offer the button again
+            self.store.set_conversation(platform, chat_id, STATE_AWAIT_CONTACT, data or {})
             await self._send_text(
-                adapter,
-                chat_id,
-                texts.ASK_PHONE_WITH_BUTTON,
-                contact_keyboard(texts.BTN_SHARE_CONTACT),
+                adapter, chat_id, message, contact_keyboard(texts.BTN_SHARE_CONTACT)
             )
-        else:
-            await self._send_text(adapter, chat_id, texts.ASK_PHONE)
-
-    async def _registration_phone(
-        self,
-        adapter: PlatformAdapter,
-        platform: str,
-        chat_id: str,
-        text: str,
-        contact: dict | None,
-    ) -> None:
-        phone = self.customers.phone_from(text, contact)
-        if not phone:
-            await self._send_text(adapter, chat_id, texts.PHONE_INVALID)
             return
-        _state, data = self.store.get_conversation(platform, chat_id)
-        await self.customers.register(platform, chat_id, str(data.get("name") or ""), phone)
+        user = await self.customers.register(platform, chat_id, verified)
+        status = self.customers.status_of(user if isinstance(user, dict) else None)
         self.store.clear_conversation(platform, chat_id)
-        await self._send_text(adapter, chat_id, texts.REGISTERED_PENDING)
+        if status == STATUS_REJECTED:
+            await self._send_text(adapter, chat_id, texts.REJECTED_USER, remove_keyboard())
+            return
+        done = texts.REGISTERED_APPROVED if status == STATUS_APPROVED else texts.REGISTERED_PENDING
+        await self._send_text(adapter, chat_id, done, remove_keyboard())
+        product_code = (data or {}).get("product")
+        if isinstance(product_code, int) and product_code > 0:
+            await self._show_product_by_code(adapter, platform, chat_id, product_code)
+            return
+        await self._show_main_menu(adapter, platform, chat_id, status=status)
 
     # ================= customer screens ===================================
-    def _main_menu_rows(self):
-        return [
+    def _main_menu_rows(self, approved: bool = True):
+        rows = [
             [(texts.BTN_GROUPS, "groups"), (texts.BTN_SEARCH, "search")],
             [(texts.BTN_CART, "cart"), (texts.BTN_ORDERS, "orders")],
-            [(texts.BTN_SUPPORT, "support"), (texts.BTN_INFO, "info")],
         ]
+        if approved:
+            # the statement belongs to a verified, linked customer only
+            rows.append([(texts.BTN_STATEMENT, "stmt:1")])
+        rows.append([(texts.BTN_SUPPORT, "support"), (texts.BTN_INFO, "info")])
+        return rows
 
     async def _show_main_menu(
-        self, adapter: PlatformAdapter, platform: str, chat_id: str, *, intro: str | None = None
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, *,
+        intro: str | None = None, status: str | None = None,
     ) -> None:
-        body = f"{intro}\n\n{texts.MAIN_MENU}" if intro else texts.MAIN_MENU
+        if status is None:
+            status = await self.customers.status(platform, chat_id)
+        parts = [intro] if intro else []
+        if status != STATUS_APPROVED:
+            parts.append(texts.STILL_PENDING)
+        parts.append(texts.MAIN_MENU)
         await self._send_options(
-            adapter, platform, chat_id, body, self._main_menu_rows(),
-            state=STATE_NONE, data={},
+            adapter, platform, chat_id, "\n\n".join(parts),
+            self._main_menu_rows(status == STATUS_APPROVED), state=STATE_NONE, data={},
         )
+
+    async def _shop_closed(self) -> bool:
+        """Closed mode (set in ShopAdmin), cached for a minute; unknown = open."""
+        now = time.monotonic()
+        if self._shop_state is not None and now - self._shop_state[0] < SHOP_STATE_TTL:
+            return self._shop_state[1]
+        try:
+            closed = bool((await self.api.shop_state()).get("closed"))
+        except ShopApiError:
+            closed = False
+        self._shop_state = (now, closed)
+        return closed
 
     async def _show_static(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, text: str
@@ -586,6 +661,23 @@ class BotEngine:
             state=STATE_NONE, data=data, edit_message_id=edit_message_id,
         )
 
+    async def _show_product_by_code(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int
+    ) -> None:
+        """A product opened from a deep link or a typed code (not from a list)."""
+        product = await self.catalog.product(code)
+        if product is None:
+            await self._send_options(
+                adapter, platform, chat_id, texts.PRODUCT_NOT_FOUND,
+                [[(texts.BTN_SEARCH, "search"), (texts.BTN_MENU, "menu")]],
+                state=STATE_NONE, data={},
+            )
+            return
+        self.store.set_conversation(
+            platform, chat_id, STATE_NONE, {"pcache": {str(product.code): product.as_cache()}}
+        )
+        await self._show_product(adapter, platform, chat_id, product.code, 1)
+
     async def _add_to_cart(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int, qty: int,
         callback_id=None,
@@ -662,6 +754,10 @@ class BotEngine:
         order_id = order.get("id")
         total = fmt_num(order.get("total"))
         parts = [texts.CHECKOUT_OK.format(order_id=order_id, total=total)]
+        if order.get("customer_pending"):
+            parts.append(texts.PENDING_ORDER_NOTE)
+        if await self._shop_closed():
+            parts.append(texts.SHOP_CLOSED_NOTICE)
         parts.append(
             self._payment_text(order_id, total, order.get("payment_instructions"))
         )
@@ -686,15 +782,26 @@ class BotEngine:
         return texts.PAYMENT_INSTRUCTIONS.format(order_id=order_id, total=total)
 
     async def _save_receipt(
-        self, adapter: PlatformAdapter, platform: str, chat_id: str, photo, data: dict
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, photo, document,
+        data: dict,
     ) -> None:
         order_id = (data or {}).get("order_id")
-        result = await self.orders.attach_receipt(platform, chat_id, order_id, photo)
+        if not self.receipt_limiter.allow(platform, chat_id):
+            await self._send_text(adapter, chat_id, texts.RECEIPT_RATE_LIMITED)
+            return
+        result = await self.orders.attach_receipt(
+            platform, chat_id, order_id, photo, document, download=adapter.download_file_ref
+        )
         if result.outcome is ReceiptOutcome.NO_ORDER:
             await self._send_text(adapter, chat_id, texts.NO_ORDER_FOR_RECEIPT)
             return
-        if result.outcome is ReceiptOutcome.NOT_A_PHOTO:
-            await self._send_text(adapter, chat_id, texts.RECEIPT_EXPECTED_PHOTO)
+        retry = {
+            ReceiptOutcome.NOT_A_PHOTO: texts.RECEIPT_EXPECTED_PHOTO,
+            ReceiptOutcome.TOO_LARGE: texts.RECEIPT_TOO_LARGE,
+            ReceiptOutcome.DOWNLOAD_FAILED: texts.RECEIPT_DOWNLOAD_FAILED,
+        }.get(result.outcome)
+        if retry:
+            await self._send_text(adapter, chat_id, retry)
             return
         if result.outcome in (ReceiptOutcome.NOT_AWAITING, ReceiptOutcome.REJECTED):
             self.store.clear_conversation(platform, chat_id)
@@ -725,7 +832,7 @@ class BotEngine:
         for order in orders:
             lines.append(
                 texts.ORDER_LINE.format(
-                    order_id=order.get("id"), status=texts.status_fa(order.get("status")),
+                    order_id=order.get("id"), status=texts.status_fa(self._tracking_status(order)),
                     total=fmt_num(order.get("total")),
                 )
             )
@@ -736,6 +843,63 @@ class BotEngine:
         rows.append([(texts.BTN_MENU, "menu")])
         await self._send_options(
             adapter, platform, chat_id, "\n".join(lines), rows, state=STATE_NONE, data={},
+        )
+
+    @staticmethod
+    def _tracking_status(order: dict) -> str:
+        """The furthest step of an order: shipped > invoiced > its status."""
+        if order.get("shipped_at"):
+            return "shipped"
+        if order.get("invoice_state") == "full":
+            return "invoiced"
+        if order.get("invoice_state") == "partial":
+            return "partially_invoiced"
+        return str(order.get("status") or "")
+
+    async def _show_statement(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, page: int,
+        edit_message_id=None,
+    ) -> None:
+        """Account statement from the accounting ledger (approved customers only)."""
+        page = max(1, int(page))
+        size = max(1, int(self.settings.statement_page_size))
+        result = await self.api.get_statement(platform, chat_id, page=page, page_size=size)
+        menu = [[(texts.BTN_MENU, "menu")]]
+        if not isinstance(result, dict):
+            await self._send_options(
+                adapter, platform, chat_id, texts.STATEMENT_EMPTY, menu, state=STATE_NONE, data={}
+            )
+            return
+        sides = {"debtor": texts.SIDE_DEBTOR, "creditor": texts.SIDE_CREDITOR,
+                 "zero": texts.SIDE_ZERO}
+        total = int(result.get("total") or 0)
+        pages = max(1, (total + size - 1) // size)
+        lines = [texts.STATEMENT_TITLE.format(
+            page=page, pages=pages, balance=fmt_num(result.get("balance")),
+            side=sides.get(str(result.get("side")), ""),
+        )]
+        items = [it for it in (result.get("items") or []) if isinstance(it, dict)]
+        if not items:
+            lines.append(texts.STATEMENT_EMPTY)
+        for it in items:
+            lines.append(texts.STATEMENT_LINE.format(
+                date=it.get("date") or "", kind=it.get("kind") or "",
+                doc_no=it.get("doc_no") or "", debit=fmt_num(it.get("debit")),
+                credit=fmt_num(it.get("credit")), balance=fmt_num(it.get("balance")),
+                side=sides.get(str(it.get("side")), ""),
+            ))
+        rows = []
+        nav = []
+        if page > 1:
+            nav.append((texts.BTN_PREV, f"stmt:{page - 1}"))
+        if page < pages:
+            nav.append((texts.BTN_NEXT, f"stmt:{page + 1}"))
+        if nav:
+            rows.append(nav)
+        rows += menu
+        await self._send_options(
+            adapter, platform, chat_id, "\n".join(lines), rows, state=STATE_NONE, data={},
+            edit_message_id=edit_message_id,
         )
 
     async def _ask_receipt(
@@ -797,17 +961,23 @@ class BotEngine:
             return
 
         user = await self.api.get_user(platform, chat_id)
-        if user is None:
+        status = self.customers.status_of(user)
+        if status == STATUS_NEW:
             await self._answer_callback(adapter, callback_id)
             await self._begin_registration(adapter, platform, chat_id)
             return
-        if user.get("status") != "approved":
-            await self._answer_callback(adapter, callback_id, texts.STILL_PENDING)
+        if status == STATUS_REJECTED:
+            await self._answer_callback(adapter, callback_id, texts.REJECTED_USER)
+            return
+        # customers awaiting approval may browse and order (within shopapi's
+        # limits); only the statement needs an approved, linked account
+        if action == "stmt" and status != STATUS_APPROVED:
+            await self._answer_callback(adapter, callback_id, texts.STATEMENT_ONLY_APPROVED, True)
             return
 
         if action == "menu":
             await self._answer_callback(adapter, callback_id)
-            await self._show_main_menu(adapter, platform, chat_id)
+            await self._show_main_menu(adapter, platform, chat_id, status=status)
         elif action == "groups":
             await self._answer_callback(adapter, callback_id)
             await self._show_groups(adapter, platform, chat_id)
@@ -862,6 +1032,11 @@ class BotEngine:
         elif action == "search":
             await self._answer_callback(adapter, callback_id)
             await self._ask_search(adapter, platform, chat_id)
+        elif action == "stmt":
+            await self._answer_callback(adapter, callback_id)
+            await self._show_statement(
+                adapter, platform, chat_id, args[0], edit_message_id=message_id
+            )
         else:  # pragma: no cover - parse_callback already restricts actions
             await self._answer_callback(adapter, callback_id, texts.BAD_CALLBACK)
 
@@ -1000,9 +1175,9 @@ class BotEngine:
                 self.store.get_receipt(ref_id)
                 or self.store.get_notice("order", ref_id)
                 or self.store.get_notice("neworder", ref_id)
+                or await self._find_order_chat(ref_id)
             )
-            template = texts.PAYMENT_APPROVED if kind == "payment_approved" else texts.PAYMENT_REJECTED
-            text = template.format(order_id=ref_id)
+            text = getattr(texts, ORDER_EVENT_TEXTS[kind]).format(order_id=ref_id)
         self.store.mark_announced(
             marker, ref_id, str((target or {}).get("platform") or ""),
             (target or {}).get("chat_id") or "",
@@ -1013,15 +1188,23 @@ class BotEngine:
         return True
 
     async def _find_user_chat(self, user_id: int) -> dict | None:
-        for status_filter in ("approved", "rejected"):
-            try:
-                users = await self.api.admin_list_users(status_filter)
-            except ShopApiError:
-                return None
-            for user in users:
-                if isinstance(user, dict) and user.get("id") == user_id:
-                    return {"platform": user.get("platform"), "chat_id": user.get("chat_id")}
+        try:
+            user = await self.api.admin_get_user(int(user_id))
+        except ShopApiError:
+            return None
+        if isinstance(user, dict) and user.get("chat_id"):
+            return {"platform": user.get("platform"), "chat_id": user.get("chat_id")}
         return None
+
+    async def _find_order_chat(self, order_id: int) -> dict | None:
+        """The customer's chat for an order the bot has no notice of (e.g. an
+        order invoiced long after the bot's own records)."""
+        try:
+            order = await self.api.admin_get_order(int(order_id))
+        except ShopApiError:
+            return None
+        user_id = order.get("user_id") if isinstance(order, dict) else None
+        return await self._find_user_chat(int(user_id)) if user_id else None
 
     def _items_text(self, order: dict) -> str:
         items = [it for it in (order.get("items") or []) if isinstance(it, dict)]
@@ -1090,7 +1273,7 @@ class BotEngine:
     async def _admin_order_status(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, order_id: int
     ) -> None:
-        order = await self.api.get_order(order_id)
+        order = await self.api.admin_get_order(order_id)
         if not order:
             await self._send_text(adapter, chat_id, texts.ADMIN_UNKNOWN_ORDER.format(order_id=order_id))
             return

@@ -168,7 +168,7 @@ def test_role_matrix(client, reader, role, can_view, can_decide):
     add_staff(client, owner, "member", role)
     token = login(client, "member").json()["token"]
     client.post("/users/register", headers=h("bot"), json={
-        "platform": "bale", "chat_id": "5", "name": "C", "phone": "0912"})
+        "platform": "bale", "chat_id": "5", "name": "C", "phone": "09120000005"})
     user_id = client.get("/users/bale/5", headers=h("bot")).json()["id"]
 
     assert (client.get("/admin/users", headers=bearer(token)).status_code == 200) == can_view
@@ -185,7 +185,7 @@ def test_staff_actions_are_audited_with_username(client, db, reader):
     seed_products(reader)
     token = owner_token(client)
     client.post("/users/register", headers=h("bot"), json={
-        "platform": "bale", "chat_id": "9", "name": "C", "phone": "0912"})
+        "platform": "bale", "chat_id": "9", "name": "C", "phone": "09120000005"})
     uid = client.get("/users/bale/9", headers=h("bot")).json()["id"]
     client.post(f"/admin/users/{uid}/approve", headers=bearer(token), json={"person_code": 7001})
     actors = {(r["actor"], r["action"]) for r in db.list_audit()}
@@ -310,7 +310,7 @@ def test_event_feed(client, reader):
                      "receipt_uploaded"]
     # Re-registering an existing customer is not a new event.
     client.post("/users/register", headers=h("bot"), json={
-        "platform": "bale", "chat_id": "77", "name": "Ali", "phone": "0912"})
+        "platform": "bale", "chat_id": "77", "name": "Ali", "phone": "09120000005"})
     again = client.get(f"/admin/events?after={feed['last_id']}", headers=bearer(token)).json()
     assert again["items"] == [] and again["last_id"] == feed["last_id"]
 

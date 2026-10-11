@@ -238,6 +238,85 @@ class AccountingReader:
             conn.close()
         return [int(r[0]) for r in rows]
 
+    def invoice_progress(self, codlps: list[int]) -> dict[int, dict]:
+        """Recipe R5 for our written orders: {Codlp: {"ordered", "invoiced"}}.
+
+        An order missing from the result no longer exists in accounting (the
+        software deletes an order to cancel it).
+        """
+        codlps = [int(c) for c in codlps]
+        if not codlps:
+            return {}
+        db = self._db()
+        conn = self.connection()
+        try:
+            rows = self._rows(
+                conn.execute(
+                    f"SELECT h.Codlp, "
+                    f"(SELECT SUM(d.Meg) FROM {db}.dbo.KalaOrderDetail d "
+                    f"WHERE d.Codlp_ = h.Codlp) AS OrderedQty, "
+                    f"(SELECT SUM(f.Meg) FROM {db}.dbo.facto f "
+                    f"WHERE f.ordercode = h.Codlp) AS InvoicedQty "
+                    f"FROM {db}.dbo.KalaOrder h "
+                    f"WHERE h.Codlp IN ({self._in_placeholders(codlps)})",
+                    codlps,
+                )
+            )
+        finally:
+            conn.close()
+        return {
+            int(r["Codlp"]): {
+                "ordered": float(r["OrderedQty"] or 0),
+                "invoiced": float(r["InvoicedQty"] or 0),
+            }
+            for r in rows
+        }
+
+    def customer_statement(self, person_code: int, max_rows: int = 2000) -> dict:
+        """A customer's ledger rows (KOL, reference §3), oldest first.
+
+        Same filter as the verified balance formula. Only the newest
+        ``max_rows`` rows are read; the caller's running balance then starts
+        from the balance carried over from the older rows (``opening``).
+        """
+        db = self._db()
+        where = (
+            f"FROM {db}.dbo.KOL WHERE Noa = 'm' AND Codkol = ? "
+            f"AND NOT (Va = N'غ' AND Cod_n IN (-1003, -1005))"
+        )
+        conn = self.connection()
+        try:
+            rows = self._rows(
+                conn.execute(
+                    f"SELECT TOP {int(max_rows)} Num_kol, Date1, Va, N_sanad, Bed, Bes, Sharh "
+                    f"{where} ORDER BY Date1 DESC, Num_kol DESC",
+                    person_code,
+                )
+            )
+            totals = conn.execute(
+                f"SELECT SUM(ISNULL(Bed,0)) AS bed, SUM(ISNULL(Bes,0)) AS bes {where}",
+                person_code,
+            ).fetchone()
+        finally:
+            conn.close()
+        rows.reverse()
+        return {
+            "rows": [
+                {
+                    "id": int(r["Num_kol"]),
+                    "date": str(r["Date1"] or "").strip(),
+                    "kind": str(r["Va"] or "").strip(),
+                    "doc_no": str(r["N_sanad"] or "").strip(),
+                    "debit": float(r["Bed"] or 0),
+                    "credit": float(r["Bes"] or 0),
+                    "description": str(r["Sharh"] or "").strip(),
+                }
+                for r in rows
+            ],
+            "total_debit": float(totals[0] or 0) if totals else 0.0,
+            "total_credit": float(totals[1] or 0) if totals else 0.0,
+        }
+
     # ---- internals ----
     def _stock(self, conn, codes: list[int]) -> dict[int, float]:
         db = self._db()

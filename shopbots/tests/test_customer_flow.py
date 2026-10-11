@@ -1,63 +1,125 @@
 """Customer flow: registration, approval gate, browsing, cart, checkout, receipt."""
 from __future__ import annotations
 
+import base64
+
 from app import texts
 
-from .conftest import CUSTOMER_CHAT, OTHER_CHAT, push_callback, push_message
+from .conftest import CUSTOMER_CHAT, OTHER_CHAT, own_contact, push_callback, push_message
 
 
-def test_registration_asks_name_then_phone_and_registers(env, bot_apis, shopapi):
+def test_registration_is_contact_only_and_registers(env, bot_apis, shopapi):
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
-        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == f"{texts.WELCOME}\n\n{texts.ASK_NAME}"
-
-        await push_message(engine, "bale", 2, CUSTOMER_CHAT, text="علی رضایی")
-        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.ASK_PHONE_WITH_BUTTON
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == f"{texts.WELCOME}\n\n{texts.ASK_CONTACT}"
         keyboard = bot_apis["bale"].sent[-1]["reply_markup"]["keyboard"]
         assert keyboard[0][0]["request_contact"] is True
 
-        # Persian digits in the input must be accepted
-        await push_message(engine, "bale", 3, CUSTOMER_CHAT, text="۰۹۱۲۱۲۳۴۵۶۷")
-        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.REGISTERED_PENDING
+        await push_message(engine, "bale", 2, CUSTOMER_CHAT,
+                           contact=own_contact(CUSTOMER_CHAT, "+989121234567"))
+        texts_sent = bot_apis["bale"].texts(CUSTOMER_CHAT)
+        assert texts.REGISTERED_PENDING in texts_sent
+        assert bot_apis["bale"].sent[-2]["reply_markup"] == {"remove_keyboard": True}
         return shopapi.users[("bale", CUSTOMER_CHAT)]
 
     user = env(scenario)
     assert user["phone"] == "09121234567"
+    assert user["name"] == "Ali Rezaei"          # from the contact, not asked
     assert user["status"] == "pending"
 
 
-def test_invalid_phone_is_rejected(env, bot_apis, shopapi):
+def test_typed_number_is_never_accepted(env, bot_apis, shopapi):
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
-        await push_message(engine, "bale", 2, CUSTOMER_CHAT, text="علی")
-        await push_message(engine, "bale", 3, CUSTOMER_CHAT, text="12345")
-        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.PHONE_INVALID
+        # Persian or Latin digits: typed numbers are refused, the button is offered again
+        await push_message(engine, "bale", 2, CUSTOMER_CHAT, text="۰۹۱۲۱۲۳۴۵۶۷")
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.CONTACT_BUTTON_ONLY
+        assert bot_apis["bale"].sent[-1]["reply_markup"]["keyboard"][0][0]["request_contact"]
         assert ("bale", CUSTOMER_CHAT) not in shopapi.users
 
     env(scenario)
 
 
-def test_contact_button_registers_international_number(env, bot_apis, shopapi):
+def test_someone_elses_contact_is_refused(env, bot_apis, shopapi):
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
-        await push_message(engine, "bale", 2, CUSTOMER_CHAT, text="سارا")
-        await push_message(
-            engine, "bale", 3, CUSTOMER_CHAT, contact={"phone_number": "+989121234567"}
-        )
-        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.REGISTERED_PENDING
-        assert shopapi.users[("bale", CUSTOMER_CHAT)]["phone"] == "09121234567"
+        await push_message(engine, "bale", 2, CUSTOMER_CHAT,
+                           contact=own_contact(OTHER_CHAT))           # forwarded card
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.CONTACT_NOT_OWN
+        await push_message(engine, "bale", 3, CUSTOMER_CHAT,
+                           contact={"phone_number": "09121234567"})  # no user_id at all
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.CONTACT_NOT_OWN
+        await push_message(engine, "bale", 4, CUSTOMER_CHAT, from_id=OTHER_CHAT,
+                           contact=own_contact(CUSTOMER_CHAT))        # sender differs
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.CONTACT_NOT_OWN
+        assert ("bale", CUSTOMER_CHAT) not in shopapi.users
 
     env(scenario)
 
 
-def test_pending_user_is_blocked(env, bot_apis, shopapi):
+def test_non_iranian_mobile_is_refused(env, bot_apis, shopapi):
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+        await push_message(engine, "bale", 2, CUSTOMER_CHAT,
+                           contact=own_contact(CUSTOMER_CHAT, "+14155550100"))
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.CONTACT_NOT_MOBILE
+        assert ("bale", CUSTOMER_CHAT) not in shopapi.users
+
+    env(scenario)
+
+
+def test_known_customer_is_approved_at_once(env, bot_apis, shopapi):
+    shopapi.known_phones["09121234567"] = 7001
+
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+        await push_message(engine, "bale", 2, CUSTOMER_CHAT, contact=own_contact(CUSTOMER_CHAT))
+        assert texts.REGISTERED_APPROVED in bot_apis["bale"].texts(CUSTOMER_CHAT)
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.MAIN_MENU
+        callbacks = [cb for row in bot_apis["bale"].buttons_for(CUSTOMER_CHAT) for _, cb in row]
+        assert "stmt:1" in callbacks
+
+    env(scenario)
+    assert shopapi.users[("bale", CUSTOMER_CHAT)]["person_code"] == 7001
+
+
+def test_contact_name_falls_back_to_profile(env, bot_apis, shopapi):
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+        await push_message(engine, "bale", 2, CUSTOMER_CHAT,
+                           contact={"phone_number": "09121234567", "user_id": int(CUSTOMER_CHAT)})
+
+    env(scenario)
+    assert shopapi.users[("bale", CUSTOMER_CHAT)]["name"] == "Bale User"
+
+
+def test_pending_user_can_browse_but_not_see_statement(env, bot_apis, shopapi):
     shopapi.add_user("bale", CUSTOMER_CHAT, status="pending")
 
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="سلام")
-        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.STILL_PENDING
+        body = bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        assert body.startswith(texts.STILL_PENDING) and body.endswith(texts.MAIN_MENU)
+        callbacks = [cb for row in bot_apis["bale"].buttons_for(CUSTOMER_CHAT) for _, cb in row]
+        assert "groups" in callbacks and "stmt:1" not in callbacks
         await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "groups")
-        assert bot_apis["bale"].answered[-1]["text"] == texts.STILL_PENDING
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.GROUPS_TITLE
+        await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "stmt:1")
+        assert bot_apis["bale"].answered[-1]["text"] == texts.STATEMENT_ONLY_APPROVED
+
+    env(scenario)
+
+
+def test_pending_user_order_gets_note(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="pending")
+
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+        await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "grp:1")
+        await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "prod:101")
+        await push_callback(engine, "bale", 4, CUSTOMER_CHAT, "add:101:1")
+        await push_callback(engine, "bale", 5, CUSTOMER_CHAT, "checkout")
+        assert texts.PENDING_ORDER_NOTE in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
 
     env(scenario)
 
@@ -182,7 +244,8 @@ def test_checkout_and_receipt_upload(env, bot_apis, shopapi):
         assert order["status"] == "awaiting_payment"
         assert order["_chat_id"] == CUSTOMER_CHAT
 
-        # the customer sends a photo: the largest size is stored and sent as the receipt ref
+        # the customer sends a photo: the largest size is downloaded and sent
+        # to shopapi with its ref (the image is kept for ShopAdmin)
         await push_message(
             engine, "bale", 6, CUSTOMER_CHAT,
             photo=[{"file_id": "SMALL"}, {"file_id": "LARGE"}],
@@ -190,6 +253,7 @@ def test_checkout_and_receipt_upload(env, bot_apis, shopapi):
         assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.RECEIPT_RECEIVED
         assert order["status"] == "receipt_uploaded"
         assert order["receipt_ref"] == "LARGE"
+        assert base64.b64decode(order["_receipt_b64"]) == bot_apis["bale"].file_bytes
         assert engine.store.get_receipt(order["id"])["file_ref"] == "LARGE"
 
     env(scenario)
