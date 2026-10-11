@@ -25,6 +25,7 @@ from ..permissions import (
     CUSTOMERS_VIEW,
     DASHBOARD_VIEW,
     ORDERS_VIEW,
+    PRICELIST_VIEW,
     PRODUCTS_VIEW,
     REPORTS_VIEW,
     SERVER_MANAGE,
@@ -37,6 +38,7 @@ from .context import AppContext
 from .pages.customers import CustomersPage
 from .pages.dashboard import DashboardPage
 from .pages.orders import OrdersPage
+from .pages.pricelist import PriceListPage
 from .pages.products import ProductsPage
 from .pages.reports import ReportsPage
 from .pages.server import ServerPage
@@ -49,6 +51,7 @@ NAV_ITEMS = (
     ("customers", "مشتریان", "customers", CUSTOMERS_VIEW),
     ("orders", "سفارش‌ها", "orders", ORDERS_VIEW),
     ("products", "محصولات", "products", PRODUCTS_VIEW),
+    ("pricelist", "لیست قیمت", "receipt", PRICELIST_VIEW),
     ("reports", "گزارش‌ها", "reports", REPORTS_VIEW),
     ("settings", "تنظیمات", "settings", SETTINGS_VIEW),
     ("users", "کاربران سیستم", "users", USERS_VIEW),
@@ -344,6 +347,7 @@ class MainWindow(QMainWindow):
             "customers": CustomersPage,
             "orders": OrdersPage,
             "products": ProductsPage,
+            "pricelist": PriceListPage,
             "reports": ReportsPage,
             "settings": SettingsPage,
             "users": UsersPage,

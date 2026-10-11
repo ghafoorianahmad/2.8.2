@@ -110,16 +110,24 @@ class AccountingReader:
         page_size: int = 20,
         level: int = 3,
         our_reservations: dict[int, float] | None = None,
+        include_codes: set[int] | None = None,
     ) -> dict:
+        """``include_codes``: products priced from the distributor list; they are
+        returned without the price/stock filters (the API prices them)."""
         col = price_column(level)
         our_res = our_reservations or {}
+        extra = sorted(int(c) for c in (include_codes or ()))[:1000]
         conn = self.connection()
         try:
             db = self._db()
+            where = f"{col} > 0"
+            if extra:
+                where = f"({col} > 0 OR Code IN ({self._in_placeholders(extra)}))"
             products = self._rows(
                 conn.execute(
                     f"SELECT Code, Name, Gcod, {col} AS unit_price, pic "
-                    f"FROM {db}.dbo.Kala WHERE active = 1 AND {col} > 0 ORDER BY Code"
+                    f"FROM {db}.dbo.Kala WHERE active = 1 AND {where} ORDER BY Code",
+                    *([extra] if extra else []),
                 )
             )
             codes = [p["Code"] for p in products]
@@ -138,14 +146,14 @@ class AccountingReader:
             avail = compute_available(
                 stock.get(code, 0.0), open_res.get(code, 0.0), our_res.get(code, 0.0)
             )
-            if in_stock and avail <= 0:
+            if in_stock and avail <= 0 and code not in extra:
                 continue
             items.append(
                 {
                     "code": code,
                     "name": p["Name"],
                     "group": p["Gcod"],
-                    "unit_price": float(p["unit_price"]),
+                    "unit_price": float(p["unit_price"] or 0),
                     "available_qty": avail,
                     "image": p["pic"] if p["pic"] is not None else None,
                 }

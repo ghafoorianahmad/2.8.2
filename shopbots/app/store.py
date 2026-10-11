@@ -33,10 +33,11 @@ CREATE TABLE IF NOT EXISTS carts (
     platform TEXT NOT NULL,
     chat_id TEXT NOT NULL,
     kala_code INTEGER NOT NULL,
+    variant_id INTEGER NOT NULL DEFAULT 0,   -- phone color (0 = none)
     name TEXT NOT NULL,
     qty REAL NOT NULL,
     unit_price REAL NOT NULL,
-    PRIMARY KEY (platform, chat_id, kala_code)
+    PRIMARY KEY (platform, chat_id, kala_code, variant_id)
 );
 
 CREATE TABLE IF NOT EXISTS admin_notices (
@@ -77,8 +78,23 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         with self._lock:
+            self._migrate_carts()
             self._conn.executescript(SCHEMA)
             self._conn.commit()
+
+    def _migrate_carts(self) -> None:
+        """Carts of an older version have no color column: rename the table so
+        SCHEMA recreates it, then copy the rows (SQLite cannot change a key)."""
+        columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(carts)")}
+        if not columns or "variant_id" in columns:
+            return
+        self._conn.execute("ALTER TABLE carts RENAME TO carts_old")
+        self._conn.executescript(SCHEMA)
+        self._conn.execute(
+            "INSERT INTO carts (platform, chat_id, kala_code, variant_id, name, qty, unit_price) "
+            "SELECT platform, chat_id, kala_code, 0, name, qty, unit_price FROM carts_old"
+        )
+        self._conn.execute("DROP TABLE carts_old")
 
     # ---- low level -------------------------------------------------------
     def _fetchone(self, sql: str, params: tuple = ()) -> dict | None:
@@ -151,35 +167,42 @@ class Store:
         name: str,
         qty: float,
         unit_price: float,
+        variant_id: int = 0,
     ) -> None:
         with self._lock:
             self._conn.execute(
-                "INSERT INTO carts (platform, chat_id, kala_code, name, qty, unit_price) "
-                "VALUES (?,?,?,?,?,?) "
-                "ON CONFLICT(platform, chat_id, kala_code) DO UPDATE SET "
+                "INSERT INTO carts (platform, chat_id, kala_code, variant_id, name, qty, "
+                "unit_price) VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(platform, chat_id, kala_code, variant_id) DO UPDATE SET "
                 "qty=carts.qty+excluded.qty, name=excluded.name, unit_price=excluded.unit_price",
-                (platform, str(chat_id), int(kala_code), name, float(qty), float(unit_price)),
+                (platform, str(chat_id), int(kala_code), int(variant_id or 0), name,
+                 float(qty), float(unit_price)),
             )
             self._conn.commit()
 
     def cart_set_qty(
-        self, platform: str, chat_id: str | int, kala_code: int, qty: float
+        self, platform: str, chat_id: str | int, kala_code: int, qty: float,
+        variant_id: int = 0,
     ) -> None:
         with self._lock:
             if qty <= 0:
-                self.cart_remove(platform, chat_id, kala_code)
+                self.cart_remove(platform, chat_id, kala_code, variant_id)
                 return
             self._conn.execute(
-                "UPDATE carts SET qty=? WHERE platform=? AND chat_id=? AND kala_code=?",
-                (float(qty), platform, str(chat_id), int(kala_code)),
+                "UPDATE carts SET qty=? WHERE platform=? AND chat_id=? AND kala_code=? "
+                "AND variant_id=?",
+                (float(qty), platform, str(chat_id), int(kala_code), int(variant_id or 0)),
             )
             self._conn.commit()
 
-    def cart_remove(self, platform: str, chat_id: str | int, kala_code: int) -> None:
+    def cart_remove(
+        self, platform: str, chat_id: str | int, kala_code: int, variant_id: int = 0
+    ) -> None:
         with self._lock:
             self._conn.execute(
-                "DELETE FROM carts WHERE platform=? AND chat_id=? AND kala_code=?",
-                (platform, str(chat_id), int(kala_code)),
+                "DELETE FROM carts WHERE platform=? AND chat_id=? AND kala_code=? "
+                "AND variant_id=?",
+                (platform, str(chat_id), int(kala_code), int(variant_id or 0)),
             )
             self._conn.commit()
 
@@ -193,8 +216,8 @@ class Store:
     def cart_list(self, platform: str, chat_id: str | int) -> list[dict]:
         with self._lock:
             return self._fetchall(
-                "SELECT kala_code, name, qty, unit_price FROM carts "
-                "WHERE platform=? AND chat_id=? ORDER BY kala_code",
+                "SELECT kala_code, variant_id, name, qty, unit_price FROM carts "
+                "WHERE platform=? AND chat_id=? ORDER BY kala_code, variant_id",
                 (platform, str(chat_id)),
             )
 

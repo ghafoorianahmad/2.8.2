@@ -97,10 +97,25 @@ class Settings:
     #: Most recent KOL rows read for a customer statement.
     statement_max_rows: int = 2000
 
+    # --- Distributor price list / Telegram worker (REQUIREMENTS §4–6) ---
+    #: PDF prices are thousand Toman -> Rial.
+    pricelist_unit_rial: int = 10_000
+    #: Added to نقد when روال is empty: 500,000 Toman = 5,000,000 Rial.
+    pricelist_cash_surcharge_rial: int = 5_000_000
+    #: A mapped price moving more than this (percent) holds the new list.
+    pricelist_max_change_pct: float = 15.0
+    #: Phone prices older than this are not sold (inquiry only); 0 = no limit.
+    pricelist_max_age_hours: int = 72
+    pricelist_max_bytes: int = 10 * 1024 * 1024
+    #: "" = a ``pricelists`` folder next to the SQLite file (PDF copies).
+    pricelists_dir: str = ""
+
     # --- API keys ---
     bot_api_key: str = ""
     site_api_key: str = ""
     admin_api_key: str = ""
+    #: The Telegram price/proxy worker (shoptg); loopback only, worker endpoints only.
+    worker_api_key: str = ""
     #: BOT/ADMIN keys are accepted only from this machine (the bots run in the
     #: same process). LAN clients sign in as staff instead. SITE key is exempt
     #: (a future site relay calls from outside).
@@ -151,9 +166,16 @@ class Settings:
             receipts_dir=_env("RECEIPTS_DIR", ""),
             invoice_sync_seconds=_env_int("INVOICE_SYNC_SECONDS", 300),
             statement_max_rows=_env_int("STATEMENT_MAX_ROWS", 2000),
+            pricelist_unit_rial=_env_int("PRICELIST_UNIT_RIAL", 10_000),
+            pricelist_cash_surcharge_rial=_env_int("PRICELIST_CASH_SURCHARGE_RIAL", 5_000_000),
+            pricelist_max_change_pct=float(_env("PRICELIST_MAX_CHANGE_PCT", "15") or 15),
+            pricelist_max_age_hours=_env_int("PRICELIST_MAX_AGE_HOURS", 72),
+            pricelist_max_bytes=_env_int("PRICELIST_MAX_BYTES", 10 * 1024 * 1024),
+            pricelists_dir=_env("PRICELISTS_DIR", ""),
             bot_api_key=_env("BOT_API_KEY", ""),
             site_api_key=_env("SITE_API_KEY", ""),
             admin_api_key=_env("ADMIN_API_KEY", ""),
+            worker_api_key=_env("WORKER_API_KEY", ""),
             service_keys_local_only=_env_bool("SERVICE_KEYS_LOCAL_ONLY", True),
             staff_session_hours=_env_int("STAFF_SESSION_HOURS", 12),
             staff_remember_days=_env_int("STAFF_REMEMBER_DAYS", 7),
@@ -189,6 +211,14 @@ class Settings:
         if self.sqlite_path == ":memory:":
             return None
         return Path(self.sqlite_path).resolve().parent / "receipts"
+
+    def pricelists_path(self) -> Path | None:
+        """Folder for copies of imported price-list PDFs; None for in-memory DBs."""
+        if self.pricelists_dir:
+            return Path(self.pricelists_dir)
+        if self.sqlite_path == ":memory:":
+            return None
+        return Path(self.sqlite_path).resolve().parent / "pricelists"
 
     def write_allowed(self) -> bool:
         allowed = {h.lower() for h in self.accounting_allowed_hosts}

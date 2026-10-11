@@ -44,7 +44,8 @@
     "BTN_PAY_REJECT": "❌ رد پرداخت",
     "BTN_ORDER_STATUS": "📋 وضعیت سفارش",
     "BTN_USE_SUGGESTED": "✔️ کد پیشنهادی",
-    "BTN_STATEMENT": "📒 گردش حساب"
+    "BTN_STATEMENT": "📒 گردش حساب",
+    "BTN_INQUIRY": "📨 استعلام قیمت"
   },
 
   "messages": {
@@ -142,7 +143,22 @@
     "STATEMENT_ONLY_APPROVED": "گردش حساب پس از تأیید حساب شما در دسترس است.",
     "SIDE_DEBTOR": "بدهکار",
     "SIDE_CREDITOR": "بستانکار",
-    "SIDE_ZERO": "تسویه"
+    "SIDE_ZERO": "تسویه",
+
+    "PRODUCT_LINE_COLORS": "• {name}\n   🎨 {colors} رنگ — قیمت پس از انتخاب رنگ — {stock}",
+    "CHOOSE_COLOR": "«{name}»\n🎨 رنگ را انتخاب کنید؛ قیمت بعد از انتخاب رنگ نمایش داده می‌شود.",
+    "PRODUCT_COLOR_DETAIL": "«{name}»\nرنگ: {color}\nقیمت: {price} {currency}\nتعداد: {qty}",
+    "COLOR_CHANGED": "🔄 رنگ به «{color}» تغییر کرد؛ قیمت جدید: {price} {currency}",
+    "COLOR_UNAVAILABLE": "«{name}»\nرنگ: {color}\n❌ این رنگ فعلاً قیمت ندارد. با «استعلام قیمت» به فروشگاه خبر بدهید تا با شما تماس بگیرند.",
+    "COLOR_NO_COLORS": "قیمت این کالا فعلاً در دسترس نیست. با «استعلام قیمت» به فروشگاه خبر بدهید.",
+    "COLOR_GONE": "این رنگ دیگر در لیست نیست؛ لطفاً دوباره انتخاب کنید.",
+    "INQUIRY_SENT": "📨 استعلام شما ثبت شد؛ فروشگاه به‌زودی پاسخ می‌دهد.",
+    "INQUIRY_NOTICE": "📨 استعلام قیمت\nکالا: {product}\nرنگ: {color}\nمشتری: {name}",
+    "PRICELIST_HELD_NOTICE": "⚠️ لیست قیمت جدید پخش‌کننده نگه داشته شد (شمارهٔ {list_id}).\nتغییر قیمت زیاد یا ردیف‌های گم‌شده؛ قیمت‌های قبلی همچنان فعال است.\nدر برنامهٔ مدیریت › لیست قیمت بررسی و تأیید یا رد کنید.",
+    "PRICELIST_FAILED_NOTICE": "⚠️ لیست قیمت جدید خوانده نشد (شمارهٔ {list_id})؛ احتمالاً قالب PDF عوض شده است.\nقیمت‌های قبلی فعال ماند.",
+    "PROXIES_DEAD_NOTICE": "⚠️ هیچ پراکسی تلگرام کار نمی‌کند؛ لیست قیمت به‌روز نمی‌شود.\nدر برنامهٔ مدیریت › لیست قیمت › پراکسی‌ها یک پراکسی سالم وارد کنید.",
+    "TG_LOGIN_NOTICE": "⚠️ ورود حساب تلگرام فروشگاه باطل شده است؛ اسکریپت ورود (shoptg) را دوباره روی سرور اجرا کنید.",
+    "TG_UNREACHABLE_NOTICE": "⚠️ اتصال به تلگرام برقرار نیست؛ لیست قیمت به‌روز نمی‌شود."
   },
 
   "order_status": {
@@ -174,6 +190,13 @@
     "NEW_ORDER_NOTICE / NEW_RECEIPT_NOTICE": "{order_id} {total} {items}",
     "ADMIN_UNKNOWN_ORDER": "{order_id}",
     "ADMIN_ACTION_FAILED": "{reason}",
-    "ADMIN_PENDING_SUMMARY": "{users} {orders}"
+    "ADMIN_PENDING_SUMMARY": "{users} {orders}",
+    "PRODUCT_LINE_COLORS": "{name} {colors} {stock}",
+    "CHOOSE_COLOR": "{name}",
+    "PRODUCT_COLOR_DETAIL": "{name} {color} {price} {qty}",
+    "COLOR_CHANGED": "{color} {price}",
+    "COLOR_UNAVAILABLE": "{name} {color}",
+    "INQUIRY_NOTICE": "{product} {color} {name}",
+    "PRICELIST_HELD_NOTICE / PRICELIST_FAILED_NOTICE": "{list_id}"
   }
 }

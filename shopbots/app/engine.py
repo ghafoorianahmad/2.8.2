@@ -93,6 +93,14 @@ CALLBACK_ARG_COUNTS: dict[str, int] = {
     "qty": 2,
     "add": 2,
     "adsug": 2,
+    # phone colors (REQUIREMENTS §4): product, color [, qty]
+    "col": 2,
+    "vqty": 3,
+    "vadd": 3,
+    "vinc": 2,
+    "vdec": 2,
+    "vdel": 2,
+    "inq": 2,
 }
 ADMIN_ACTIONS = frozenset({"addu", "adru", "adap", "adrp", "adsug", "adst"})
 #: Screens anyone may open, even before registration is approved.
@@ -111,6 +119,15 @@ ORDER_EVENT_TEXTS = {
     "order_partially_invoiced": "ORDER_PARTIALLY_INVOICED",
     "order_invoiced": "ORDER_INVOICED",
     "order_shipped": "ORDER_SHIPPED",
+}
+#: shopapi event kinds that mean "tell the owner" (admin chats) -> text key.
+OWNER_EVENT_TEXTS = {
+    "pricelist_held": "PRICELIST_HELD_NOTICE",
+    "pricelist_failed": "PRICELIST_FAILED_NOTICE",
+    "proxies_all_dead": "PROXIES_DEAD_NOTICE",
+    "telegram_login_required": "TG_LOGIN_NOTICE",
+    "telegram_unreachable": "TG_UNREACHABLE_NOTICE",
+    "price_inquiry": "INQUIRY_NOTICE",
 }
 SHOP_STATE_TTL = 60.0
 EVENT_CURSOR_KEY = "shopapi_event_cursor"
@@ -610,12 +627,20 @@ class BotEngine:
             for product in result.items:
                 code = product.code
                 cache[str(code)] = product.as_cache()
-                lines.append(
-                    texts.PRODUCT_LINE.format(
-                        name=product.name, price=fmt_num(product.price),
-                        stock=_stock_label(product.in_stock),
+                if product.has_colors:
+                    lines.append(
+                        texts.PRODUCT_LINE_COLORS.format(
+                            name=product.name, colors=fmt_num(len(product.colors)),
+                            stock=_stock_label(product.in_stock),
+                        )
                     )
-                )
+                else:
+                    lines.append(
+                        texts.PRODUCT_LINE.format(
+                            name=product.name, price=fmt_num(product.price),
+                            stock=_stock_label(product.in_stock),
+                        )
+                    )
                 label = shorten(product.name, 40) or str(code)
                 rows.append([(label if product.in_stock else f"❌ {label}", f"prod:{code}")])
             nav = []
@@ -646,6 +671,10 @@ class BotEngine:
         product = (data.get("pcache") or {}).get(str(code))
         if not product:
             await self._send_text(adapter, chat_id, texts.NO_PRODUCTS)
+            return
+        if product.get("colors") is not None:
+            await self._show_colors(adapter, platform, chat_id, code, product, data,
+                                    edit_message_id=edit_message_id)
             return
         qty = clamp_qty(qty)
         in_stock = float(product.get("qty") or 0) > 0
@@ -696,7 +725,8 @@ class BotEngine:
     ) -> None:
         _state, data = self.store.get_conversation(platform, chat_id)
         product = (data.get("pcache") or {}).get(str(code))
-        if not product:
+        if not product or product.get("colors") is not None:
+            # a phone is added only with a color (vadd)
             await self._answer_callback(adapter, callback_id, texts.BAD_CALLBACK)
             return
         if product["qty"] <= 0:
@@ -705,6 +735,152 @@ class BotEngine:
         self.cart.add(platform, chat_id, code, product["name"], qty, product["price"])
         await self._answer_callback(adapter, callback_id, texts.QTY_ADDED)
         await self._show_cart(adapter, platform, chat_id)
+
+    # ---- phones: color first, then the price (REQUIREMENTS §4) ----------------
+    @staticmethod
+    def _color_rows(code: int, colors: list[dict], current: int = 0) -> list:
+        rows, row = [], []
+        for c in colors:
+            if int(c["id"]) == int(current):
+                continue
+            mark = "🎨" if c.get("available") else "❌"
+            row.append((f"{mark} {shorten(str(c.get('name') or ''), 20)}", f"col:{code}:{c['id']}"))
+            if len(row) == 2:
+                rows.append(row)
+                row = []
+        if row:
+            rows.append(row)
+        return rows
+
+    async def _show_colors(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int,
+        product: dict, data: dict, edit_message_id=None,
+    ) -> None:
+        """A phone: the colors as buttons; no price until one is picked."""
+        colors = product.get("colors") or []
+        if not colors:
+            await self._send_options(
+                adapter, platform, chat_id,
+                f"«{product['name']}»\n{texts.COLOR_NO_COLORS}",
+                [[(texts.BTN_INQUIRY, f"inq:{code}:0")], [(texts.BTN_MENU, "menu")]],
+                state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+            )
+            return
+        rows = self._color_rows(code, colors)
+        rows.append([(texts.BTN_MENU, "menu")])
+        await self._send_options(
+            adapter, platform, chat_id, texts.CHOOSE_COLOR.format(name=product["name"]), rows,
+            state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+        )
+
+    async def _show_color(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int,
+        color_id: int, qty: int, *, callback_id=None, edit_message_id=None,
+        refresh: bool = True,
+    ) -> None:
+        """The price of one color. Picking another color announces its price."""
+        _state, data = self.store.get_conversation(platform, chat_id)
+        cache = dict(data.get("pcache") or {})
+        product = cache.get(str(code))
+        if refresh or not product:
+            # Prices are read when the color is picked, never from an old screen.
+            fresh = await self.catalog.product(code)
+            if fresh is None:
+                await self._answer_callback(adapter, callback_id, texts.PRODUCT_NOT_FOUND)
+                return
+            product = fresh.as_cache()
+            cache[str(code)] = product
+        colors = product.get("colors") or []
+        color = next((c for c in colors if int(c["id"]) == int(color_id)), None)
+        if color is None:
+            await self._answer_callback(adapter, callback_id, texts.COLOR_GONE)
+            data["pcache"] = cache
+            await self._show_colors(adapter, platform, chat_id, code, product, data,
+                                    edit_message_id=edit_message_id)
+            return
+
+        selected = dict(data.get("color_sel") or {})
+        previous = int(selected.get(str(code)) or 0)
+        selected[str(code)] = int(color_id)
+        data = {**data, "pcache": cache, "color_sel": selected}
+        name = product["name"]
+        others = self._color_rows(code, colors, current=color_id)
+
+        if not color.get("available") or not color.get("price"):
+            await self._answer_callback(adapter, callback_id)
+            rows = [[(texts.BTN_INQUIRY, f"inq:{code}:{color_id}")], *others,
+                    [(texts.BTN_MENU, "menu")]]
+            await self._send_options(
+                adapter, platform, chat_id,
+                texts.COLOR_UNAVAILABLE.format(name=name, color=color["name"]), rows,
+                state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+            )
+            return
+
+        qty = clamp_qty(qty)
+        price = fmt_num(color["price"])
+        body = texts.PRODUCT_COLOR_DETAIL.format(
+            name=name, color=color["name"], price=price, qty=fmt_num(qty),
+        )
+        changed = bool(previous) and previous != int(color_id)
+        if changed:
+            notice = texts.COLOR_CHANGED.format(color=color["name"], price=price)
+            body = f"{notice}\n\n{body}"
+            await self._answer_callback(adapter, callback_id, notice)
+        else:
+            await self._answer_callback(adapter, callback_id)
+        rows = [
+            [
+                (texts.BTN_MINUS, f"vqty:{code}:{color_id}:{max(1, qty - 1)}"),
+                (texts.BTN_PLUS, f"vqty:{code}:{color_id}:{qty + 1}"),
+            ],
+            [(f"{texts.BTN_ADD} ({fmt_num(qty)})", f"vadd:{code}:{color_id}:{qty}")],
+            *others,
+            [(texts.BTN_MENU, "menu")],
+        ]
+        await self._send_options(
+            adapter, platform, chat_id, body, rows,
+            state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+        )
+
+    async def _add_color_to_cart(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int,
+        color_id: int, qty: int, callback_id=None,
+    ) -> None:
+        _state, data = self.store.get_conversation(platform, chat_id)
+        product = (data.get("pcache") or {}).get(str(code)) or {}
+        color = next((c for c in product.get("colors") or []
+                      if int(c["id"]) == int(color_id)), None)
+        if color is None:
+            await self._answer_callback(adapter, callback_id, texts.BAD_CALLBACK)
+            return
+        if not color.get("available") or not color.get("price"):
+            await self._answer_callback(adapter, callback_id, texts.OUT_OF_STOCK)
+            return
+        # shopapi prices the order again at checkout (the list may change).
+        self.cart.add(platform, chat_id, code, f"{product['name']} — {color['name']}", qty,
+                      color["price"], int(color_id))
+        await self._answer_callback(adapter, callback_id, texts.QTY_ADDED)
+        await self._show_cart(adapter, platform, chat_id)
+
+    async def _send_inquiry(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int,
+        color_id: int, callback_id=None,
+    ) -> None:
+        marker = f"inq:{code}:{color_id}"
+        _state, data = self.store.get_conversation(platform, chat_id)
+        if marker in (data.get("inquired") or []):
+            await self._answer_callback(adapter, callback_id, texts.INQUIRY_SENT)
+            return
+        try:
+            await self.api.create_inquiry(platform, chat_id, code, color_id or None)
+        except ShopApiError:
+            await self._answer_callback(adapter, callback_id, texts.SERVICE_UNAVAILABLE, True)
+            return
+        data = {**data, "inquired": [*(data.get("inquired") or [])[-19:], marker]}
+        self.store.set_conversation(platform, chat_id, _state, data)
+        await self._answer_callback(adapter, callback_id, texts.INQUIRY_SENT)
+        await self._send_text(adapter, chat_id, texts.INQUIRY_SENT)
 
     async def _show_cart(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
         items = self.cart.items(platform, chat_id)
@@ -718,11 +894,21 @@ class BotEngine:
         rows = []
         for item in items:
             code = item["kala_code"]
+            color_id = int(item.get("variant_id") or 0)
             lines.append(
                 texts.CART_LINE.format(
                     name=item["name"], qty=fmt_num(item["qty"]), price=fmt_num(item["unit_price"])
                 )
             )
+            if color_id:
+                rows.append(
+                    [
+                        (texts.BTN_MINUS, f"vdec:{code}:{color_id}"),
+                        (texts.BTN_PLUS, f"vinc:{code}:{color_id}"),
+                        (texts.BTN_REMOVE, f"vdel:{code}:{color_id}"),
+                    ]
+                )
+                continue
             rows.append(
                 [
                     (texts.BTN_MINUS, f"cdec:{code}"),
@@ -739,18 +925,19 @@ class BotEngine:
 
     async def _cart_change(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int, delta: float,
-        callback_id=None,
+        callback_id=None, color_id: int = 0,
     ) -> None:
-        if not self.cart.change(platform, chat_id, code, delta):
+        if not self.cart.change(platform, chat_id, code, delta, color_id):
             await self._answer_callback(adapter, callback_id, texts.BAD_CALLBACK)
             return
         await self._answer_callback(adapter, callback_id)
         await self._show_cart(adapter, platform, chat_id)
 
     async def _cart_remove(
-        self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int, callback_id=None
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int, callback_id=None,
+        color_id: int = 0,
     ) -> None:
-        self.cart.remove(platform, chat_id, code)
+        self.cart.remove(platform, chat_id, code, color_id)
         await self._answer_callback(adapter, callback_id, texts.CART_REMOVED)
         await self._show_cart(adapter, platform, chat_id)
 
@@ -1019,6 +1206,28 @@ class BotEngine:
             await self._add_to_cart(
                 adapter, platform, chat_id, args[0], args[1], callback_id
             )
+        elif action == "col":
+            await self._show_color(
+                adapter, platform, chat_id, args[0], args[1], 1,
+                callback_id=callback_id, edit_message_id=message_id,
+            )
+        elif action == "vqty":
+            await self._show_color(
+                adapter, platform, chat_id, args[0], args[1], args[2],
+                callback_id=callback_id, edit_message_id=message_id, refresh=False,
+            )
+        elif action == "vadd":
+            await self._add_color_to_cart(
+                adapter, platform, chat_id, args[0], args[1], args[2], callback_id
+            )
+        elif action == "vinc":
+            await self._cart_change(adapter, platform, chat_id, args[0], 1, callback_id, args[1])
+        elif action == "vdec":
+            await self._cart_change(adapter, platform, chat_id, args[0], -1, callback_id, args[1])
+        elif action == "vdel":
+            await self._cart_remove(adapter, platform, chat_id, args[0], callback_id, args[1])
+        elif action == "inq":
+            await self._send_inquiry(adapter, platform, chat_id, args[0], args[1], callback_id)
         elif action == "cart":
             await self._answer_callback(adapter, callback_id)
             await self._show_cart(adapter, platform, chat_id)
@@ -1171,8 +1380,37 @@ class BotEngine:
             if kind in CUSTOMER_EVENT_KINDS and ref_id is not None:
                 if await self._notify_decision(kind, int(ref_id)):
                     sent += 1
+            elif kind in OWNER_EVENT_TEXTS:
+                if await self._notify_owner(kind, ref_id, int(event.get("id") or 0)):
+                    sent += 1
         self.store.set_value(EVENT_CURSOR_KEY, str(int(feed.get("last_id") or raw)))
         return sent
+
+    async def _notify_owner(self, kind: str, ref_id, event_id: int) -> bool:
+        """Price-list / proxy / inquiry alerts to the admin chats, once each."""
+        marker = f"owner:{kind}"
+        key = int(ref_id) if ref_id is not None else event_id
+        if self.store.is_announced(marker, key):
+            return False
+        self.store.mark_announced(marker, key, "", "")
+        if not self.settings.admin_targets(tuple(self.adapters.keys())):
+            return False
+        template = getattr(texts, OWNER_EVENT_TEXTS[kind])
+        if kind == "price_inquiry":
+            try:
+                inquiry = await self.api.admin_get_inquiry(int(ref_id))
+            except ShopApiError:
+                inquiry = None
+            inquiry = inquiry if isinstance(inquiry, dict) else {}
+            text = template.format(
+                product=inquiry.get("product_name") or "-",
+                color=inquiry.get("color") or "-",
+                name=inquiry.get("customer_name") or "-",
+            )
+        else:
+            text = template.format(list_id=ref_id if ref_id is not None else "-")
+        await self._broadcast_admin(text, [])
+        return True
 
     async def _notify_decision(self, kind: str, ref_id: int) -> bool:
         """Message the customer about one decision, at most once."""

@@ -231,6 +231,8 @@ def approve_payment(
         items = db.get_order_items(order_id)
         merged: dict[int, float] = {}
         for it in items:
+            if it.get("variant_id") is not None:
+                continue   # phone colors: availability came from the price list
             merged[it["kala_code"]] = merged.get(it["kala_code"], 0.0) + it["qty"]
 
         # Re-check availability excluding this order's own reservation.

@@ -268,6 +268,24 @@ class ShopApiClient:
             "GET", f"/admin/users/{int(user_id)}", key=self._settings.admin_api_key
         )
 
+    async def create_inquiry(
+        self, platform: str, chat_id: str | int, kala_code: int, variant_id: int | None
+    ) -> dict | None:
+        """Inquiry for a phone color without a price (REQUIREMENTS §4)."""
+        body: dict[str, Any] = {
+            "platform": platform, "chat_id": str(chat_id), "kala_code": int(kala_code),
+        }
+        if variant_id:
+            body["variant_id"] = int(variant_id)
+        return await self._request(
+            "POST", "/inquiries", key=self._settings.bot_api_key, json_body=body
+        )
+
+    async def admin_get_inquiry(self, inquiry_id: int) -> dict | None:
+        return await self._request(
+            "GET", f"/admin/inquiries/{int(inquiry_id)}", key=self._settings.admin_api_key
+        )
+
     async def admin_get_order(self, order_id: int) -> dict | None:
         return await self._request(
             "GET", f"/orders/{int(order_id)}", key=self._settings.admin_api_key

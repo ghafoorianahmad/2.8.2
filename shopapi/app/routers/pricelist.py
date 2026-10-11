@@ -1,0 +1,501 @@
+"""Distributor price list, row mapping, proxy pool, inquiries (REQUIREMENTS §4–6).
+
+``/admin/...``: signed-in staff (ShopAdmin) or the server-local service key.
+``/worker/...``: only the Telegram worker key (WORKER_API_KEY, loopback only).
+Proxy secrets are returned in full only to the worker; staff see a mask.
+"""
+from __future__ import annotations
+
+import base64
+import binascii
+from datetime import datetime, timedelta
+from typing import Literal, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
+
+from .. import deps
+from ..accounting_reader import AccountingReader
+from ..config import Settings
+from ..db_own import OwnDB
+from ..pricelist.importer import ImportResult, import_pdf
+from ..pricelist.repo import PriceListRepo
+from ..proxypool import ProxyLink, ProxyPool, masked_secret, parse_proxy_link
+from ..security import Identity, require_permission, require_worker
+from ..staff import P_PRICELIST, P_PROXIES, P_VIEW
+from ..util import now_utc
+
+router = APIRouter()
+
+CAN_VIEW = Depends(require_permission(P_VIEW))
+CAN_PRICELIST = Depends(require_permission(P_PRICELIST))
+CAN_PROXIES = Depends(require_permission(P_PROXIES))
+WORKER = Depends(require_worker)
+
+#: Worker-side state kept on the server (cursor of the channel, last collection).
+WORKER_STATE_PREFIX = "worker:"
+WORKER_STATE_KEYS = frozenset({
+    "tg_price_last_id", "tg_proxy_collected_at", "tg_proxy_last_ids", "tg_status",
+})
+#: Alerts the worker may raise (each at most once per ALERT_REPEAT).
+WORKER_ALERTS = frozenset({"telegram_login_required", "telegram_unreachable"})
+ALERT_REPEAT = timedelta(hours=6)
+
+
+# ---- models -----------------------------------------------------------------
+class PdfIn(BaseModel):
+    data_b64: str = Field(min_length=8)
+    source_ref: str = Field(default="", max_length=200)
+    posted_at: Optional[str] = Field(default=None, max_length=40)
+
+
+class ImportOut(BaseModel):
+    outcome: str
+    list_id: Optional[int] = None
+    list_date: str = ""
+    row_count: int = 0
+    reasons: list[str] = []
+
+
+class MappingIn(BaseModel):
+    row_key: str = Field(min_length=1, max_length=400)
+    action: Literal["map", "ignore"]
+    kala_code: Optional[int] = Field(default=None, gt=0)
+    color_label: str = Field(default="", max_length=60)
+
+
+class IgnoreIn(BaseModel):
+    row_keys: list[str] = Field(min_length=1, max_length=500)
+
+
+class DecideIn(BaseModel):
+    reason: str = Field(default="", max_length=300)
+
+
+class ProxyIn(BaseModel):
+    link: str = Field(min_length=10, max_length=1000)
+    main: bool = False
+
+
+class ProxyStateIn(BaseModel):
+    state: Literal["probation", "main", "disabled"]
+
+
+class ProxyResult(BaseModel):
+    id: int
+    ok: bool
+    latency_ms: Optional[int] = Field(default=None, ge=0, le=600_000)
+
+
+class ProxyReportIn(BaseModel):
+    results: list[ProxyResult] = Field(max_length=500)
+
+
+class CandidatesIn(BaseModel):
+    links: list[str] = Field(max_length=2000)
+    source: str = Field(default="channel", max_length=100)
+
+
+class WorkerStateIn(BaseModel):
+    key: str
+    value: str = Field(max_length=4000)
+
+
+class WorkerAlertIn(BaseModel):
+    kind: str
+
+
+# ---- helpers ----------------------------------------------------------------
+def _decode_pdf(data_b64: str, settings: Settings) -> bytes:
+    if len(data_b64) > settings.pricelist_max_bytes * 4 // 3 + 8:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "PDF too large")
+    try:
+        data = base64.b64decode(data_b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid base64") from None
+    if len(data) > settings.pricelist_max_bytes:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "PDF too large")
+    if not data.startswith(b"%PDF"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Not a PDF file")
+    return data
+
+
+def _import_out(result: ImportResult) -> ImportOut:
+    return ImportOut(**result.__dict__)
+
+
+def _proxy_out(p: dict, *, with_secret: bool) -> dict:
+    out = {
+        key: p.get(key) for key in (
+            "id", "host", "port", "source", "state", "added_at", "promoted_at", "retired_at",
+            "last_ok_at", "last_fail_at", "last_checked_at", "last_latency_ms",
+            "good_days", "checked_days", "bad_streak", "stability", "failing_now",
+        )
+    }
+    out["kind"] = ProxyLink(p["host"], p["port"], p["secret"]).kind
+    if with_secret:
+        out["secret"] = p["secret"]
+    else:
+        out["secret_masked"] = masked_secret(p["secret"])
+    if out.get("stability") is not None:
+        out["stability"] = round(float(out["stability"]), 3)
+    return out
+
+
+def _alert_once(db: OwnDB, kind: str, actor: str) -> bool:
+    """Add an event ``kind`` unless one was added within ALERT_REPEAT."""
+    key = f"alert_at:{kind}"
+    last = db.get_state(key, "")
+    now = now_utc()
+    if last:
+        try:
+            if now - datetime.fromisoformat(last) < ALERT_REPEAT:
+                return False
+        except ValueError:
+            pass
+    db.set_state(key, now.isoformat(timespec="seconds"), actor)
+    db.add_event(kind, None, actor)
+    return True
+
+
+# ---- price lists (staff) ----------------------------------------------------------
+@router.get("/admin/pricelists")
+def list_pricelists(
+    limit: int = Query(50, ge=1, le=500),
+    db: OwnDB = Depends(deps.get_db),
+    _: Identity = CAN_VIEW,
+) -> list[dict]:
+    return PriceListRepo(db).list_lists(limit)
+
+
+@router.post("/admin/pricelists", response_model=ImportOut)
+def upload_pricelist(
+    payload: PdfIn,
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+    who: Identity = CAN_PRICELIST,
+) -> ImportOut:
+    """Manual upload (ShopAdmin): also the fallback while Telegram is down."""
+    data = _decode_pdf(payload.data_b64, settings)
+    result = import_pdf(db, settings, data, source="manual",
+                        source_ref=payload.source_ref, actor=who.actor)
+    return _import_out(result)
+
+
+@router.get("/admin/pricelists/rows")
+def pricelist_rows(
+    filter: Literal["unmapped", "mapped", "ignored", "all"] = Query("all"),
+    section: Optional[str] = Query(None, max_length=100),
+    list_id: Optional[int] = Query(None),
+    db: OwnDB = Depends(deps.get_db),
+    _: Identity = CAN_VIEW,
+) -> dict:
+    """Rows of the newest list (active or held) with their mapping state.
+    Ignored rows never come back as unmapped on a new list (same row key)."""
+    repo = PriceListRepo(db)
+    plist = repo.get_list(list_id) if list_id else repo.latest_list()
+    if plist is None:
+        return {"list": None, "sections": [], "rows": [], "counts": {}}
+    rows = repo.rows(plist["id"])
+    sections = list(dict.fromkeys(r["section"] for r in rows))
+    counts = {
+        "unmapped": sum(1 for r in rows if r["action"] is None),
+        "mapped": sum(1 for r in rows if r["action"] == "map"),
+        "ignored": sum(1 for r in rows if r["action"] == "ignore"),
+        "all": len(rows),
+    }
+    if section:
+        rows = [r for r in rows if r["section"] == section]
+    if filter == "unmapped":
+        rows = [r for r in rows if r["action"] is None]
+    elif filter == "mapped":
+        rows = [r for r in rows if r["action"] == "map"]
+    elif filter == "ignored":
+        rows = [r for r in rows if r["action"] == "ignore"]
+    return {"list": plist, "sections": sections, "rows": rows, "counts": counts}
+
+
+@router.get("/admin/pricelists/{list_id}")
+def get_pricelist(
+    list_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    _: Identity = CAN_VIEW,
+) -> dict:
+    repo = PriceListRepo(db)
+    plist = repo.get_list(list_id)
+    if plist is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Price list not found")
+    return {**plist, "rows": repo.rows(list_id)}
+
+
+@router.post("/admin/pricelists/{list_id}/approve")
+def approve_pricelist(
+    list_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_PRICELIST,
+) -> dict:
+    """A held list becomes the active one (staff checked the big changes)."""
+    repo = PriceListRepo(db)
+    plist = repo.get_list(list_id)
+    if plist is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Price list not found")
+    if plist["status"] != "held":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Price list is {plist['status']}")
+    active = repo.active_list()
+    if active is not None and plist["list_date"] < active["list_date"]:
+        raise HTTPException(status.HTTP_409_CONFLICT, "A newer price list is already active")
+    repo.activate(list_id, who.actor)
+    db.audit(who.actor, "pricelist_approve", f"list id={list_id}")
+    db.add_event("pricelist_imported", list_id, who.actor)
+    return repo.get_list(list_id)
+
+
+@router.post("/admin/pricelists/{list_id}/reject")
+def reject_pricelist(
+    list_id: int,
+    payload: DecideIn | None = None,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_PRICELIST,
+) -> dict:
+    repo = PriceListRepo(db)
+    plist = repo.get_list(list_id)
+    if plist is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Price list not found")
+    if plist["status"] != "held":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Price list is {plist['status']}")
+    reason = (payload.reason if payload else "") or None
+    repo.set_status(list_id, "rejected", who.actor, reason)
+    db.audit(who.actor, "pricelist_reject", f"list id={list_id}")
+    return repo.get_list(list_id)
+
+
+# ---- mappings (staff) -------------------------------------------------------------
+def _row_in_known_lists(repo: PriceListRepo, row_key: str) -> dict | None:
+    for plist in (repo.latest_list(), repo.active_list()):
+        if plist is not None:
+            row = repo.rows_by_key(plist["id"]).get(row_key)
+            if row is not None:
+                return row
+    return None
+
+
+@router.get("/admin/price-mappings")
+def list_mappings(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_VIEW) -> list[dict]:
+    return PriceListRepo(db).list_mappings()
+
+
+@router.put("/admin/price-mappings")
+def put_mapping(
+    payload: MappingIn,
+    db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    settings: Settings = Depends(deps.get_settings),
+    who: Identity = CAN_PRICELIST,
+) -> dict:
+    """Map a PDF row to one of our products (with the color customers see), or
+    ignore it (not sold here). Overwrites an earlier decision for the row."""
+    repo = PriceListRepo(db)
+    row = _row_in_known_lists(repo, payload.row_key)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Row not found in the current list")
+    kala_code = None
+    if payload.action == "map":
+        if payload.kala_code is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "kala_code is required")
+        found = reader.get_products_for_order(
+            [payload.kala_code], settings.price_level_bot, {}
+        ).get(payload.kala_code)
+        if found is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Product not found in accounting (or inactive)")
+        kala_code = payload.kala_code
+    mapping = repo.upsert_mapping(
+        row_key=payload.row_key, action=payload.action, kala_code=kala_code,
+        color_label=payload.color_label.strip() if payload.action == "map" else "",
+        section=row["section"], description=row["description"], kind=row["kind"],
+        color=row["color"], actor=who.actor,
+    )
+    db.audit(who.actor, f"price_mapping_{payload.action}",
+             f"mapping id={mapping['id']} kala={kala_code or '-'}")
+    return mapping
+
+
+@router.post("/admin/price-mappings/ignore")
+def ignore_rows(
+    payload: IgnoreIn,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_PRICELIST,
+) -> dict:
+    """Ignore several rows at once (products this shop does not sell)."""
+    repo = PriceListRepo(db)
+    done = 0
+    for key in dict.fromkeys(payload.row_keys):
+        row = _row_in_known_lists(repo, key)
+        if row is None:
+            continue
+        repo.upsert_mapping(
+            row_key=key, action="ignore", kala_code=None, color_label="",
+            section=row["section"], description=row["description"], kind=row["kind"],
+            color=row["color"], actor=who.actor,
+        )
+        done += 1
+    db.audit(who.actor, "price_mapping_ignore", f"rows={done}")
+    return {"ignored": done}
+
+
+@router.delete("/admin/price-mappings/{mapping_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_mapping(
+    mapping_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_PRICELIST,
+) -> None:
+    if not PriceListRepo(db).delete_mapping(mapping_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mapping not found")
+    db.audit(who.actor, "price_mapping_delete", f"mapping id={mapping_id}")
+
+
+# ---- inquiries (staff / bot service key) --------------------------------------------
+@router.get("/admin/inquiries")
+def list_inquiries(
+    limit: int = Query(100, ge=1, le=500),
+    db: OwnDB = Depends(deps.get_db),
+    _: Identity = CAN_VIEW,
+) -> list[dict]:
+    return PriceListRepo(db).list_inquiries(limit)
+
+
+@router.get("/admin/inquiries/{inquiry_id}")
+def get_inquiry(
+    inquiry_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    _: Identity = CAN_VIEW,
+) -> dict:
+    inquiry = PriceListRepo(db).get_inquiry(inquiry_id)
+    if inquiry is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Inquiry not found")
+    return inquiry
+
+
+# ---- proxies (staff) ----------------------------------------------------------------
+@router.get("/admin/proxies")
+def list_proxies(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_PROXIES) -> list[dict]:
+    return [_proxy_out(p, with_secret=False) for p in ProxyPool(db).list_all()]
+
+
+@router.post("/admin/proxies", status_code=status.HTTP_201_CREATED)
+def add_proxy(
+    payload: ProxyIn,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_PROXIES,
+) -> dict:
+    """Manual entry (also the way out when every stored proxy is dead)."""
+    link = parse_proxy_link(payload.link)
+    if link is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid proxy link")
+    row, created = ProxyPool(db).add(link, "manual", state="main" if payload.main else "probation")
+    if not created and payload.main and row["state"] != "main":
+        row = ProxyPool(db).set_state(row["id"], "main")
+    db.audit(who.actor, "proxy_add", f"proxy id={row['id']}")
+    return {**_proxy_out(row, with_secret=False), "created": created}
+
+
+@router.post("/admin/proxies/{proxy_id}/state")
+def set_proxy_state(
+    proxy_id: int,
+    payload: ProxyStateIn,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_PROXIES,
+) -> dict:
+    pool = ProxyPool(db)
+    if pool.get(proxy_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Proxy not found")
+    row = pool.set_state(proxy_id, payload.state)
+    db.audit(who.actor, "proxy_state", f"proxy id={proxy_id} state={payload.state}")
+    return _proxy_out(row, with_secret=False)
+
+
+@router.delete("/admin/proxies/{proxy_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_proxy(
+    proxy_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_PROXIES,
+) -> None:
+    if not ProxyPool(db).delete(proxy_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Proxy not found")
+    db.audit(who.actor, "proxy_delete", f"proxy id={proxy_id}")
+
+
+# ---- worker ---------------------------------------------------------------------------
+@router.post("/worker/pricelists", response_model=ImportOut)
+def worker_pricelist(
+    payload: PdfIn,
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+    _: str = WORKER,
+) -> ImportOut:
+    data = _decode_pdf(payload.data_b64, settings)
+    result = import_pdf(db, settings, data, source="telegram", source_ref=payload.source_ref,
+                        posted_at=payload.posted_at, actor="worker")
+    return _import_out(result)
+
+
+@router.get("/worker/state")
+def worker_get_state(db: OwnDB = Depends(deps.get_db), _: str = WORKER) -> dict:
+    return {key: db.get_state(WORKER_STATE_PREFIX + key, "") for key in sorted(WORKER_STATE_KEYS)}
+
+
+@router.put("/worker/state")
+def worker_put_state(
+    payload: WorkerStateIn, db: OwnDB = Depends(deps.get_db), _: str = WORKER
+) -> dict:
+    if payload.key not in WORKER_STATE_KEYS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown key")
+    db.set_state(WORKER_STATE_PREFIX + payload.key, payload.value, "worker")
+    return {"key": payload.key, "value": payload.value}
+
+
+@router.get("/worker/proxies")
+def worker_proxies(db: OwnDB = Depends(deps.get_db), _: str = WORKER) -> list[dict]:
+    """Usable proxies, best first, with secrets (the worker connects with them)."""
+    return [_proxy_out(p, with_secret=True) for p in ProxyPool(db).ranked()]
+
+
+@router.post("/worker/proxies/report")
+def worker_proxy_report(
+    payload: ProxyReportIn, db: OwnDB = Depends(deps.get_db), _: str = WORKER
+) -> dict:
+    pool = ProxyPool(db)
+    recorded = sum(1 for r in payload.results if pool.record(r.id, r.ok, r.latency_ms))
+    changes = pool.evaluate()
+    for proxy_id, state in changes:
+        db.audit("worker", "proxy_auto_state", f"proxy id={proxy_id} state={state}")
+    alerted = pool.should_alert_all_dead()
+    if alerted:
+        db.add_event("proxies_all_dead", None, "worker")
+    return {"recorded": recorded, "changes": [list(c) for c in changes], "all_dead": alerted}
+
+
+@router.post("/worker/proxies/candidates")
+def worker_proxy_candidates(
+    payload: CandidatesIn, db: OwnDB = Depends(deps.get_db), _: str = WORKER
+) -> dict:
+    pool = ProxyPool(db)
+    added = invalid = 0
+    for raw in payload.links:
+        link = parse_proxy_link(raw)
+        if link is None:
+            invalid += 1
+            continue
+        _, created = pool.add(link, payload.source)
+        added += int(created)
+    return {"added": added, "invalid": invalid}
+
+
+@router.post("/worker/alerts")
+def worker_alert(
+    payload: WorkerAlertIn, db: OwnDB = Depends(deps.get_db), _: str = WORKER
+) -> dict:
+    if payload.kind not in WORKER_ALERTS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown alert")
+    return {"sent": _alert_once(db, payload.kind, "worker")}
+

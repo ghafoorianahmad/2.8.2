@@ -17,19 +17,69 @@ def normalize_search(text: str | None) -> str:
 
 
 @dataclass(frozen=True)
+class Color:
+    """One color of a phone priced from the distributor list (shopapi variant)."""
+    id: int
+    name: str
+    price: float | None      # Rial; None = no price -> inquiry only
+    available: bool
+
+
+@dataclass(frozen=True)
 class Product:
     code: int
     name: str
     price: float
     available: float
+    #: Phones: the colors (price after the customer picks one). Empty = none.
+    colors: tuple[Color, ...] = ()
 
     @property
     def in_stock(self) -> bool:
         return self.available > 0
 
+    @property
+    def has_colors(self) -> bool:
+        return bool(self.colors)
+
+    def color(self, color_id: int) -> Color | None:
+        return next((c for c in self.colors if c.id == int(color_id)), None)
+
     def as_cache(self) -> dict:
         """The shape kept in the conversation between screens."""
-        return {"name": self.name, "price": self.price, "qty": self.available}
+        cache = {"name": self.name, "price": self.price, "qty": self.available}
+        if self.colors:
+            cache["colors"] = [
+                {"id": c.id, "name": c.name, "price": c.price, "available": c.available}
+                for c in self.colors
+            ]
+        return cache
+
+
+def _colors(raw) -> tuple[Color, ...]:
+    if not isinstance(raw, list):
+        return ()
+    out = []
+    for v in raw:
+        if not isinstance(v, dict) or v.get("id") is None:
+            continue
+        price = v.get("unit_price")
+        out.append(Color(
+            id=int(v["id"]), name=str(v.get("color") or ""),
+            price=float(price) if price else None,
+            available=bool(v.get("available")) and bool(price),
+        ))
+    return tuple(out)
+
+
+def _product(it: dict, code=None) -> Product:
+    return Product(
+        code=int(it.get("code") or code),
+        name=str(it.get("name") or ""),
+        price=float(it.get("unit_price") or 0),
+        available=float(it.get("available_qty") or 0),
+        colors=_colors(it.get("variants")),
+    )
 
 
 @dataclass
@@ -59,14 +109,9 @@ class CatalogService:
             in_stock=not self.show_out_of_stock,
         )
         items = [
-            Product(
-                code=it.get("code"),
-                name=str(it.get("name") or ""),
-                price=float(it.get("unit_price") or 0),
-                available=float(it.get("available_qty") or 0),
-            )
+            _product(it)
             for it in (result.get("items") or [])
-            if isinstance(it, dict)
+            if isinstance(it, dict) and it.get("code") is not None
         ]
         total = int(result.get("total") or 0)
         pages = max(1, (total + self.page_size - 1) // self.page_size)
@@ -77,12 +122,7 @@ class CatalogService:
         found = await self.api.get_product(int(code))
         if not isinstance(found, dict):
             return None
-        return Product(
-            code=int(found.get("code") or code),
-            name=str(found.get("name") or ""),
-            price=float(found.get("unit_price") or 0),
-            available=float(found.get("available_qty") or 0),
-        )
+        return _product(found, code)
 
 
 #: Deep-link payload from the site: ``/start kala_289`` (REQUIREMENTS §7).

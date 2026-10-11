@@ -11,8 +11,12 @@ from .. import deps, receipts
 from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
+from ..pricelist import catalog as phone_catalog
+from ..pricelist.repo import PriceListRepo
 from ..schemas import (
     GroupOut,
+    InquiryIn,
+    InquiryOut,
     OrderCreate,
     OrderItemOut,
     OrderOut,
@@ -88,15 +92,23 @@ def products(
 ) -> dict:
     level = settings.price_level_for(role)
     our_res = db.pending_reservations()
-    return reader.list_products(
-        q=q,
-        group=group,
-        in_stock=in_stock,
-        page=page,
-        page_size=page_size,
-        level=level,
-        our_reservations=our_res,
+    phones = phone_catalog.load(db, settings)
+    if not phones.codes:
+        return reader.list_products(
+            q=q, group=group, in_stock=in_stock, page=page, page_size=page_size,
+            level=level, our_reservations=our_res,
+        )
+    # Phones are priced here, so filtering and paging happen after the overlay.
+    everything = reader.list_products(
+        q=q, group=group, in_stock=in_stock, page=1, page_size=1_000_000,
+        level=level, our_reservations=our_res, include_codes=phones.codes,
     )
+    items = [phones.overlay(it) for it in everything["items"]]
+    if in_stock:
+        items = [it for it in items if it["available_qty"] > 0]
+    start = (page - 1) * page_size
+    return {"total": len(items), "page": page, "page_size": page_size,
+            "items": items[start:start + page_size]}
 
 
 @router.get("/products/{code}", response_model=ProductOut)
@@ -110,16 +122,53 @@ def product(
     """One product (deep link ``kala_<code>``), also when out of stock."""
     level = settings.price_level_for(role)
     found = reader.get_products_for_order([code], level, db.pending_reservations()).get(code)
-    if found is None or not found.get("unit_price") or found["unit_price"] <= 0:
+    phones = phone_catalog.load(db, settings)
+    if found is not None and phones.has(code):
+        # Also when every color is out: the customer may still send an inquiry.
+        found = phones.overlay({**found, "code": code})
+    elif found is None or not found.get("unit_price") or found["unit_price"] <= 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Product not found")
     return ProductOut(
         code=code,
         name=found["name"],
         group=found.get("group"),
-        unit_price=found["unit_price"],
+        unit_price=found["unit_price"] or 0.0,
         available_qty=found["available_qty"],
         image=found.get("image"),
+        priced_by=found.get("priced_by", "accounting"),
+        variants=found.get("variants"),
     )
+
+
+@router.post("/inquiries", response_model=InquiryOut, status_code=status.HTTP_201_CREATED)
+def create_inquiry(
+    payload: InquiryIn,
+    role: str = Depends(get_api_identity),
+    reader: AccountingReader = Depends(deps.get_reader),
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+) -> InquiryOut:
+    """Inquiry for an unavailable item (REQUIREMENTS §4): no order and no price,
+    only a note to the shop with the product and the color."""
+    user = db.get_user_by_platform(payload.platform, payload.chat_id)
+    if user is None or user["status"] == "rejected":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    level = settings.price_level_for(role)
+    found = reader.get_products_for_order([payload.kala_code], level, {}).get(payload.kala_code)
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Product not found")
+    color = ""
+    if payload.variant_id is not None:
+        variant = phone_catalog.load(db, settings).variant(payload.kala_code, payload.variant_id)
+        if variant is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown color")
+        color = variant["color"]
+    inquiry = PriceListRepo(db).add_inquiry(
+        user["id"], payload.kala_code, payload.variant_id, str(found["name"] or ""), color
+    )
+    db.audit(role, "inquiry_create", f"inquiry id={inquiry['id']}")
+    db.add_event("price_inquiry", inquiry["id"], role)
+    return InquiryOut(**{**inquiry, "customer_name": None})
 
 
 @router.get("/shop/state", response_model=ShopStateOut)
@@ -173,10 +222,12 @@ def get_user(
     return UserOut(**user)
 
 
-def _merge_items(items) -> dict[int, float]:
-    merged: dict[int, float] = {}
+def _merge_items(items) -> dict[tuple[int, int | None], float]:
+    """Quantities per (product, color); a color is None for normal products."""
+    merged: dict[tuple[int, int | None], float] = {}
     for it in items:
-        merged[it.kala_code] = merged.get(it.kala_code, 0.0) + it.qty
+        key = (it.kala_code, it.variant_id)
+        merged[key] = merged.get(key, 0.0) + it.qty
     return merged
 
 
@@ -197,15 +248,17 @@ def create_order(
 
     merged = _merge_items(payload.items)
     level = settings.price_level_for(role)
+    phones = phone_catalog.load(db, settings)
 
     # Serialize availability-check + reservation: without this lock two
     # concurrent orders can both pass the check and oversell the same stock.
     with db.reservation_guard():
         our_res = db.pending_reservations()
-        detail = reader.get_products_for_order(list(merged.keys()), level, our_res)
+        codes = list(dict.fromkeys(code for code, _ in merged))
+        detail = reader.get_products_for_order(codes, level, our_res)
 
         items_out: list[OrderItemOut] = []
-        for kala_code, qty in merged.items():
+        for (kala_code, variant_id), qty in merged.items():
             if qty > settings.max_order_qty:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -213,6 +266,36 @@ def create_order(
                     f"{settings.max_order_qty}",
                 )
             prod = detail.get(kala_code)
+            if phones.has(kala_code):
+                # Phone: priced per color from the active list, read now
+                # (REQUIREMENTS §4), sold on the distributor's availability.
+                if prod is None:
+                    raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                        f"Product {kala_code} is not available for sale")
+                if variant_id is None:
+                    raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                        f"Choose a color for product {kala_code}")
+                variant = phones.variant(kala_code, variant_id)
+                if variant is None:
+                    raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                        f"Unknown color for product {kala_code}")
+                if not variant["available"]:
+                    raise HTTPException(status.HTTP_409_CONFLICT,
+                                        f"Color not available for product {kala_code}")
+                items_out.append(
+                    OrderItemOut(
+                        kala_code=kala_code,
+                        name=f"{prod['name']} — {variant['color']}",
+                        qty=qty,
+                        unit_price=variant["unit_price"],
+                        variant_id=variant_id,
+                        variant=variant["color"],
+                    )
+                )
+                continue
+            if variant_id is not None:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                    f"Product {kala_code} has no colors")
             if prod is None or prod.get("unit_price") is None or prod["unit_price"] <= 0:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                     f"Product {kala_code} is not available for sale")
@@ -249,7 +332,8 @@ def create_order(
             level,
             total,
             reserve_until,
-            [(it.kala_code, it.name, it.qty, it.unit_price) for it in items_out],
+            [(it.kala_code, it.name, it.qty, it.unit_price, it.variant_id, it.variant)
+             for it in items_out],
         )
     db.audit(role, "order_create", f"order id={order['id']}")
     db.add_event("order_created", order["id"], role)

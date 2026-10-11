@@ -32,6 +32,8 @@ P_PAYMENTS_DECIDE = "payments.decide"    # approve / reject payment
 P_ORDERS_EXPIRE = "orders.expire"
 P_ORDERS_SHIP = "orders.ship"            # mark an order as shipped
 P_SHOP_STATE = "shop.state"              # open / close the shop (closed mode)
+P_PRICELIST = "pricelist.manage"        # upload / approve price lists, map rows
+P_PROXIES = "proxies.manage"             # Telegram proxy pool
 P_STAFF_MANAGE = "staff.manage"
 P_SERVER_MANAGE = "server.manage"
 
@@ -42,8 +44,10 @@ _WORKFLOW = {
 PERMISSIONS: dict[str, frozenset[str]] = {
     ROLE_VIEWER: frozenset({P_VIEW}),
     ROLE_OPERATOR: frozenset({P_VIEW, P_ORDERS_SHIP}),
-    ROLE_ADMIN: frozenset(_WORKFLOW),
-    ROLE_SUPER_ADMIN: frozenset(_WORKFLOW | {P_STAFF_MANAGE, P_SERVER_MANAGE}),
+    ROLE_ADMIN: frozenset(_WORKFLOW | {P_PRICELIST}),
+    ROLE_SUPER_ADMIN: frozenset(
+        _WORKFLOW | {P_PRICELIST, P_PROXIES, P_STAFF_MANAGE, P_SERVER_MANAGE}
+    ),
     ROLE_SERVICE: frozenset(_WORKFLOW),
 }
 

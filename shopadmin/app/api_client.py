@@ -12,6 +12,7 @@ the UI can show it verbatim, with no English text and no stack traces.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import re
 import ssl
@@ -599,6 +600,63 @@ class ShopApiClient:
         if not isinstance(payload, dict):
             raise ApiError(MSG_BAD_RESPONSE, kind="decode")
         return payload
+
+    # ---- distributor price list / mapping / proxies (Phase 3) -----------------
+    def list_pricelists(self, limit: int = 50) -> list[dict]:
+        return list(self._request("GET", "/admin/pricelists", params={"limit": limit}) or [])
+
+    def upload_pricelist(self, data: bytes, file_name: str = "") -> dict:
+        """Manual upload of a distributor PDF (also the fallback when Telegram is down)."""
+        body = {"data_b64": base64.b64encode(data).decode("ascii"),
+                "source_ref": (file_name or "")[:200]}
+        return self._request("POST", "/admin/pricelists", json_body=body) or {}
+
+    def approve_pricelist(self, list_id: int) -> dict:
+        return self._request("POST", f"/admin/pricelists/{int(list_id)}/approve") or {}
+
+    def reject_pricelist(self, list_id: int, reason: str = "") -> dict:
+        return self._request(
+            "POST", f"/admin/pricelists/{int(list_id)}/reject", json_body={"reason": reason}
+        ) or {}
+
+    def pricelist_rows(self, *, filter_key: str = "all", section: str | None = None) -> dict:
+        payload = self._request(
+            "GET", "/admin/pricelists/rows", params={"filter": filter_key, "section": section}
+        )
+        if not isinstance(payload, dict):
+            raise ApiError(MSG_BAD_RESPONSE, kind="decode")
+        return payload
+
+    def map_price_row(self, row_key: str, kala_code: int, color_label: str = "") -> dict:
+        return self._request("PUT", "/admin/price-mappings", json_body={
+            "row_key": row_key, "action": "map", "kala_code": int(kala_code),
+            "color_label": color_label,
+        }) or {}
+
+    def ignore_price_rows(self, row_keys: list[str]) -> dict:
+        return self._request(
+            "POST", "/admin/price-mappings/ignore", json_body={"row_keys": list(row_keys)}
+        ) or {}
+
+    def delete_price_mapping(self, mapping_id: int) -> None:
+        self._request("DELETE", f"/admin/price-mappings/{int(mapping_id)}")
+
+    def list_inquiries(self, limit: int = 100) -> list[dict]:
+        return list(self._request("GET", "/admin/inquiries", params={"limit": limit}) or [])
+
+    def list_proxies(self) -> list[dict]:
+        return list(self._request("GET", "/admin/proxies") or [])
+
+    def add_proxy(self, link: str, main: bool = False) -> dict:
+        return self._request("POST", "/admin/proxies",
+                             json_body={"link": link.strip(), "main": bool(main)}) or {}
+
+    def set_proxy_state(self, proxy_id: int, state: str) -> dict:
+        return self._request("POST", f"/admin/proxies/{int(proxy_id)}/state",
+                             json_body={"state": state}) or {}
+
+    def delete_proxy(self, proxy_id: int) -> None:
+        self._request("DELETE", f"/admin/proxies/{int(proxy_id)}")
 
     def test_connection(self) -> SystemInfo:
         """Health check + system info (needs a signed-in session)."""

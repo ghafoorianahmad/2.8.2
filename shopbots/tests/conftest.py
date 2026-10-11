@@ -165,6 +165,8 @@ class FakeShopApi:
         self.closed = False
         self.statement: dict | None = None
         self.statement_requests: list[dict] = []
+        self.order_bodies: list[dict] = []
+        self.inquiries: list[dict] = []
         self._next_user = 1
         self._next_order = 1
 
@@ -231,9 +233,21 @@ class FakeShopApi:
         if method == "GET" and path.startswith("/products/"):
             code = int(path.split("/")[2])
             product = next((p for p in self.products if p["code"] == code), None)
-            if product is None or product["unit_price"] <= 0:
+            if product is None or (product["unit_price"] <= 0 and product.get("variants") is None):
                 return self._err(404, "Product not found")
             return self._ok(product)
+
+        if method == "POST" and path == "/inquiries":
+            inquiry = {"id": len(self.inquiries) + 1, **body}
+            self.inquiries.append(inquiry)
+            return httpx.Response(201, json=inquiry)
+
+        if method == "GET" and path.startswith("/admin/inquiries/"):
+            inquiry_id = int(path.split("/")[3])
+            if inquiry_id > len(self.inquiries):
+                return self._err(404, "Inquiry not found")
+            return self._ok({"id": inquiry_id, "product_name": "گوشی آزمایشی",
+                             "color": "آبی", "customer_name": "علی"})
 
         if method == "GET" and path.startswith("/users/") and path.endswith("/statement"):
             parts = path.split("/")
@@ -374,8 +388,24 @@ class FakeShopApi:
                 return self._err(403, "User is not approved")
             items = []
             total = 0.0
+            self.order_bodies.append(body)
             for line in body.get("items", []):
                 product = next((p for p in self.products if p["code"] == line["kala_code"]), None)
+                if product is not None and product.get("variants") is not None:
+                    color = next((v for v in product["variants"]
+                                  if v["id"] == line.get("variant_id")), None)
+                    if color is None:
+                        return self._err(422, "Choose a color")
+                    if not color["available"]:
+                        return self._err(409, "Color not available")
+                    items.append({
+                        "kala_code": line["kala_code"],
+                        "name": f"{product['name']} — {color['color']}", "qty": line["qty"],
+                        "unit_price": color["unit_price"], "variant_id": color["id"],
+                        "variant": color["color"],
+                    })
+                    total += float(line["qty"]) * float(color["unit_price"])
+                    continue
                 if product is None or product["unit_price"] <= 0:
                     return self._err(422, f"Product {line['kala_code']} is not available for sale")
                 if product["available_qty"] < line["qty"]:

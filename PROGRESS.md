@@ -2,6 +2,23 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## Phase 3 (part 1, no Telegram login) — 2026-10-12 — IN PROGRESS (stopped at the usage limit)
+
+### Done
+- **shopapi** (218 tests ✓): PDF parser `app/pricelist/parser.py` (sample: 195 rows, 15 sections, date 1405/07/19; scrambled Persian matched by letter multiset); pricing `pricing.py` (روال×10,000; else نقد×10,000+5,000,000 Rial; none = inquiry); import with safety `importer.py` (duplicate / older / failed / held on >15% mapped change or most mapped rows missing; PDF copy in `pricelists/`); tables price_lists, price_list_rows, price_mappings (map|ignore by row key), inquiries, proxies, proxy_days; `routers/pricelist.py` (`/admin/pricelists*`, `/admin/price-mappings*`, `/admin/inquiries*`, `/admin/proxies*`, `/worker/*`); `WORKER_API_KEY` (loopback, /worker only); permissions `pricelist.manage` (admin, super) and `proxies.manage` (super); products/orders with per-color variants (mapped rows only; phones sold on list availability; stale list > `PRICELIST_MAX_AGE_HOURS` = inquiry only); proxy pool `app/proxypool.py` (stability ranking, probation→main, retire after N bad days, never below 3, outage days ignored, all-dead alert).
+- **shopbots** (114 tests ✓): color picker (price only after a color is picked; changing color announces the new price; the price is re-read from shopapi on each pick), cart lines per color (cart table migrated), inquiry button, owner alerts for pricelist_held/failed, proxies_all_dead, telegram_login_required/unreachable, price_inquiry.
+- **shopadmin**: API client methods, permissions, new page `ui/pages/pricelist.py` (rows + mapping dialog + ignore + section/brand filter + search; lists + PDF upload + approve/reject held; proxies), registered in the sidebar.
+
+### Not done / next session
+- shopadmin: `tests/test_ui.py::test_sidebar_shows_users_for_the_super_admin` fails after adding the sidebar entry (probably an exact nav list). The full shopadmin suite was not completed; no tests for the new page yet.
+- **shoptg worker not started**: Telethon login script (DPAPI-encrypted session + NTFS ACL), worker loop (channel every 30 min, PDFs → `/worker/pricelists`, weekly proxy collection, health checks/failover), tests with a fake gateway, its own venv.
+- pdfplumber was installed into `shopapi\.venv` with the regular Python 3.12 (`pip --target`). The Store-Python venvs cannot write files from the Claude app, and pip needs `--use-deprecated=legacy-certs`. Add pdfplumber to the ShopSystem PyInstaller build (Phase 4). The launcher's `--init-config` must generate `WORKER_API_KEY`.
+
+### For the live Telegram day (do not paste secrets in chat)
+1. From my.telegram.org (logged in as the shop account): `api_id`, `api_hash` → type them yourself into `%ProgramData%\ShopServer\.env` (`TG_API_ID=`, `TG_API_HASH=`), or into `shoptg\.env` for the dev test.
+2. The shop phone, to receive the login code. Have the 2FA password ready if set. Both are typed only into the login script's hidden prompt in your own PowerShell.
+3. At least one working MTProto proxy link (enter it in ShopAdmin › لیست قیمت › پراکسی‌ها, "مستقیم در فهرست اصلی"), plus the usernames of the proxy channels the account follows.
+
 ## Live test session after Phase 2 (2026-10-11) — DONE
 
 No new features, except the deep-link fallback the user approved after the start parameter proved unreliable.

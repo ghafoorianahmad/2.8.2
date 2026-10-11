@@ -32,6 +32,7 @@ def _role_for_key(settings: Settings, api_key: str) -> str | None:
         ("bot", settings.bot_api_key),
         ("site", settings.site_api_key),
         ("admin", settings.admin_api_key),
+        ("worker", settings.worker_api_key),
     )
     supplied = api_key.encode("utf-8")
     matched: str | None = None
@@ -52,7 +53,7 @@ def _resolve_key(request: Request, settings: Settings, api_key: str) -> str:
     role = _role_for_key(settings, api_key)
     if role is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid API key")
-    if role in ("bot", "admin") and settings.service_keys_local_only and not is_local_request(request):
+    if role in ("bot", "admin", "worker") and settings.service_keys_local_only and not is_local_request(request):
         # The bot/admin keys live only on the server; from the LAN they are as
         # good as a leaked secret, so they are refused even when correct.
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key not accepted from this address")
@@ -67,7 +68,27 @@ def get_api_identity(
     """Resolve the X-API-Key header to a channel role: bot, site or admin."""
     if not api_key:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing X-API-Key header")
-    return _resolve_key(request, settings, api_key)
+    role = _resolve_key(request, settings, api_key)
+    if role == ROLE_WORKER:
+        # The Telegram worker is not a sales channel: /worker/* only.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this key")
+    return role
+
+
+ROLE_WORKER = "worker"
+
+
+def require_worker(
+    request: Request,
+    api_key: str | None = Security(API_KEY_HEADER),
+    settings: Settings = Depends(get_settings),
+) -> str:
+    """The Telegram price/proxy worker (WORKER_API_KEY, loopback only)."""
+    if not api_key:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing X-API-Key header")
+    if _resolve_key(request, settings, api_key) != ROLE_WORKER:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this key")
+    return ROLE_WORKER
 
 
 @dataclass(frozen=True)
@@ -136,6 +157,8 @@ def get_identity(
         role = _resolve_key(request, settings, api_key)
         if role == "admin":
             return Identity(kind="service", role=ROLE_SERVICE, username="service")
+        if role == ROLE_WORKER:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this key")
         return Identity(kind="channel", role=role, username=role)
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign-in required")
 

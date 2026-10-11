@@ -13,6 +13,14 @@ class GroupOut(BaseModel):
     name: str
 
 
+class VariantOut(BaseModel):
+    """One color of a phone priced from the distributor list (mapped rows only)."""
+    id: int
+    color: str
+    unit_price: Optional[float] = None   # Rial; None = no price (inquiry only)
+    available: bool
+
+
 class ProductOut(BaseModel):
     code: int
     name: str
@@ -20,6 +28,9 @@ class ProductOut(BaseModel):
     unit_price: float
     available_qty: float
     image: Optional[str] = None
+    #: "accounting" (price level, stock) or "pricelist" (per color, see variants).
+    priced_by: str = "accounting"
+    variants: Optional[list[VariantOut]] = None
 
 
 class ProductPage(BaseModel):
@@ -57,6 +68,8 @@ class OrderItemIn(BaseModel):
     # Positive, finite and absolutely bounded so a client cannot reserve an
     # absurd amount (NaN/Infinity are rejected by FiniteFloat).
     qty: FiniteFloat = Field(gt=0, le=1_000_000)
+    #: Required for products priced from the distributor list (the color).
+    variant_id: Optional[int] = Field(default=None, gt=0)
 
 
 class OrderCreate(BaseModel):
@@ -70,6 +83,8 @@ class OrderItemOut(BaseModel):
     name: str
     qty: float
     unit_price: float
+    variant_id: Optional[int] = None
+    variant: Optional[str] = None
 
 
 class OrderOut(BaseModel):
@@ -204,3 +219,21 @@ class BootstrapIn(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     full_name: str = Field("", max_length=100)
     password: str = Field(min_length=1, max_length=128)
+
+
+class InquiryIn(BaseModel):
+    platform: Platform
+    chat_id: str = Field(min_length=1)
+    kala_code: int = Field(gt=0)
+    variant_id: Optional[int] = Field(default=None, gt=0)
+
+
+class InquiryOut(BaseModel):
+    id: int
+    user_id: int
+    kala_code: int
+    mapping_id: Optional[int] = None
+    product_name: str = ""
+    color: str = ""
+    created_at: str
+    customer_name: Optional[str] = None

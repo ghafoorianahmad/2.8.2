@@ -1,0 +1,332 @@
+"""MTProto proxy pool (REQUIREMENTS §6): parse links, rank by stability, promote
+and retire. Pure policy + our SQLite; the Telegram worker (shoptg) does the
+actual checks and reports results here.
+
+Rules:
+* a proxy's history is kept per UTC day: a day is *good* when it had at least
+  as many successful checks as failures, *bad* when it had only failures;
+* rank = tier (main before probation), then "failing right now" last, then a
+  stability score (good days + 1) / (checked days + 2) over the last 30 days —
+  long proven proxies outrank a new proxy with a few lucky days (§6: stability,
+  not freshness);
+* probation -> main after PROMOTE_GOOD_DAYS good days with stability >=
+  PROMOTE_MIN_STABILITY;
+* probation proxies are dropped after PROBATION_DROP_BAD_DAYS bad days in a
+  row, main proxies only after RETIRE_BAD_DAYS, and never below MIN_MAIN_KEEP
+  main proxies (chicken-and-egg);
+* a day on which *no* proxy worked is our own outage (internet down, Telegram
+  blocked harder): it never counts against a proxy;
+* nothing is deleted automatically: retired proxies stay in the table.
+"""
+from __future__ import annotations
+
+import base64
+import binascii
+import re
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Callable
+from urllib.parse import parse_qs, unquote, urlsplit
+
+from .db_own import OwnDB
+from .util import now_utc
+
+WINDOW_DAYS = 30
+PROMOTE_GOOD_DAYS = 3
+PROMOTE_MIN_STABILITY = 0.7
+PROBATION_DROP_BAD_DAYS = 3
+RETIRE_BAD_DAYS = 5
+MIN_MAIN_KEEP = 3
+#: All proxies failing for this long -> "all proxies dead" alert (once per ALERT_REPEAT).
+ALL_DEAD_AFTER = timedelta(minutes=10)
+ALERT_REPEAT = timedelta(hours=6)
+ALERT_STATE_KEY = "proxies_dead_alert_at"
+
+ACTIVE_STATES = ("main", "probation")
+PROXY_STATES = ("probation", "main", "retired", "disabled")
+
+_HOST = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9\-.]*[A-Za-z0-9])?$")
+_LINK = re.compile(
+    r"(?:tg://proxy\?|(?:https?://)?(?:www\.)?(?:t|telegram)\.me/proxy\?)[^\s<>\"')\]]+",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class ProxyLink:
+    host: str
+    port: int
+    secret: str          # lowercase hex
+
+    @property
+    def kind(self) -> str:
+        """'ee' = fake-TLS, 'dd' = randomized padding, 'plain' = classic."""
+        if self.secret.startswith("ee"):
+            return "ee"
+        if self.secret.startswith("dd"):
+            return "dd"
+        return "plain"
+
+    def as_link(self) -> str:
+        return f"tg://proxy?server={self.host}&port={self.port}&secret={self.secret}"
+
+
+def normalize_secret(raw: str) -> str | None:
+    """Hex (any case) or base64/base64url -> lowercase hex; None if invalid."""
+    value = (raw or "").strip()
+    if not value:
+        return None
+    if re.fullmatch(r"[0-9a-fA-F]+", value) and len(value) % 2 == 0:
+        data = bytes.fromhex(value)
+    else:
+        padded = value.replace("-", "+").replace("_", "/")
+        padded += "=" * (-len(padded) % 4)
+        try:
+            data = base64.b64decode(padded, validate=True)
+        except (binascii.Error, ValueError):
+            return None
+    if len(data) < 16:
+        return None
+    if data[:1] in (b"\xdd",) and len(data) != 17:
+        return None
+    if data[:1] not in (b"\xdd", b"\xee") and len(data) != 16:
+        return None
+    return data.hex()
+
+
+def parse_proxy_link(text: str) -> ProxyLink | None:
+    """``tg://proxy?server=..&port=..&secret=..`` or the t.me/proxy form."""
+    value = (text or "").strip()
+    if not value:
+        return None
+    if value.lower().startswith(("t.me/", "telegram.me/", "www.t.me/")):
+        value = "https://" + value
+    parts = urlsplit(value)
+    if parts.scheme.lower() == "tg":
+        if parts.netloc.lower() != "proxy":
+            return None
+    elif parts.scheme.lower() in ("http", "https"):
+        if parts.netloc.lower() not in ("t.me", "www.t.me", "telegram.me") or \
+                parts.path.rstrip("/").lower() != "/proxy":
+            return None
+    else:
+        return None
+    query = parse_qs(parts.query)
+    host = unquote((query.get("server") or [""])[0]).strip()
+    port_raw = (query.get("port") or [""])[0].strip()
+    secret = normalize_secret(unquote((query.get("secret") or [""])[0]))
+    if not host or not _HOST.match(host) or not port_raw.isdigit() or secret is None:
+        return None
+    port = int(port_raw)
+    if not 0 < port < 65536:
+        return None
+    return ProxyLink(host.lower(), port, secret)
+
+
+def extract_proxy_links(text: str) -> list[ProxyLink]:
+    """All valid proxy links in a message (channel post), without duplicates."""
+    found: list[ProxyLink] = []
+    for match in _LINK.finditer(text or ""):
+        link = parse_proxy_link(match.group(0).rstrip(".,;"))
+        if link is not None and link not in found:
+            found.append(link)
+    return found
+
+
+def _day(at: datetime) -> str:
+    return at.date().isoformat()
+
+
+class ProxyPool:
+    def __init__(self, db: OwnDB, clock: Callable[[], datetime] = now_utc):
+        self.db = db
+        self.clock = clock
+
+    # ---- storage ------------------------------------------------------------
+    def get(self, proxy_id: int) -> dict | None:
+        with self.db._lock:
+            return self.db._fetchone("SELECT * FROM proxies WHERE id=?", (int(proxy_id),))
+
+    def add(self, link: ProxyLink, source: str, *, state: str = "probation") -> tuple[dict, bool]:
+        """Add a proxy (new ones start on probation). Returns (row, created)."""
+        if state not in ("probation", "main"):
+            raise ValueError("state")
+        with self.db._lock:
+            existing = self.db._fetchone(
+                "SELECT * FROM proxies WHERE host=? AND port=? AND secret=?",
+                (link.host, link.port, link.secret),
+            )
+            if existing is not None:
+                return existing, False
+            ts = self.clock().isoformat(timespec="seconds")
+            cur = self.db._conn.execute(
+                "INSERT INTO proxies (host, port, secret, source, state, added_at, promoted_at) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (link.host, link.port, link.secret, source[:100], state, ts,
+                 ts if state == "main" else None),
+            )
+            self.db._commit()
+            return self.get(cur.lastrowid), True
+
+    def set_state(self, proxy_id: int, state: str) -> dict | None:
+        if state not in PROXY_STATES:
+            raise ValueError("state")
+        with self.db._lock:
+            ts = self.clock().isoformat(timespec="seconds")
+            self.db._conn.execute(
+                "UPDATE proxies SET state=?, "
+                "promoted_at=CASE WHEN ?='main' THEN ? ELSE promoted_at END, "
+                "retired_at=CASE WHEN ?='retired' THEN ? ELSE retired_at END WHERE id=?",
+                (state, state, ts, state, ts, int(proxy_id)),
+            )
+            self.db._commit()
+        return self.get(proxy_id)
+
+    def delete(self, proxy_id: int) -> bool:
+        with self.db._lock:
+            cur = self.db._conn.execute("DELETE FROM proxies WHERE id=?", (int(proxy_id),))
+            self.db._commit()
+            return cur.rowcount > 0
+
+    def record(self, proxy_id: int, ok: bool, latency_ms: int | None = None,
+               at: datetime | None = None) -> bool:
+        """One health-check result. False when the proxy is unknown."""
+        at = at or self.clock()
+        ts = at.isoformat(timespec="seconds")
+        with self.db._lock:
+            if self.get(proxy_id) is None:
+                return False
+            column = "ok" if ok else "fail"
+            self.db._conn.execute(
+                f"INSERT INTO proxy_days (proxy_id, day, {column}) VALUES (?,?,1) "
+                f"ON CONFLICT(proxy_id, day) DO UPDATE SET {column}={column}+1",
+                (int(proxy_id), _day(at)),
+            )
+            if ok:
+                self.db._conn.execute(
+                    "UPDATE proxies SET last_ok_at=?, last_checked_at=?, last_latency_ms=? "
+                    "WHERE id=?",
+                    (ts, ts, int(latency_ms) if latency_ms is not None else None, int(proxy_id)),
+                )
+            else:
+                self.db._conn.execute(
+                    "UPDATE proxies SET last_fail_at=?, last_checked_at=? WHERE id=?",
+                    (ts, ts, int(proxy_id)),
+                )
+            self.db._commit()
+            return True
+
+    # ---- statistics -----------------------------------------------------------
+    def _days(self) -> dict[int, dict[str, tuple[int, int]]]:
+        since = _day(self.clock() - timedelta(days=WINDOW_DAYS))
+        with self.db._lock:
+            rows = self.db._fetchall(
+                "SELECT proxy_id, day, ok, fail FROM proxy_days WHERE day > ?", (since,)
+            )
+        out: dict[int, dict[str, tuple[int, int]]] = {}
+        for r in rows:
+            out.setdefault(int(r["proxy_id"]), {})[r["day"]] = (int(r["ok"]), int(r["fail"]))
+        return out
+
+    @staticmethod
+    def _network_up_days(days: dict[int, dict[str, tuple[int, int]]]) -> set[str]:
+        """Days on which at least one proxy worked (otherwise: our own outage)."""
+        return {day for per in days.values() for day, (ok, _) in per.items() if ok > 0}
+
+    @staticmethod
+    def _stats(per_day: dict[str, tuple[int, int]], up_days: set[str]) -> dict:
+        good = sum(1 for ok, fail in per_day.values() if ok > 0 and ok >= fail)
+        checked = sum(1 for ok, fail in per_day.values() if ok + fail > 0)
+        # Consecutive bad days, newest first, ignoring our own outage days.
+        streak = 0
+        for day in sorted(per_day, reverse=True):
+            ok, fail = per_day[day]
+            if day not in up_days:
+                continue
+            if ok == 0 and fail > 0:
+                streak += 1
+            elif ok > 0:
+                break
+        return {
+            "good_days": good,
+            "checked_days": checked,
+            "bad_streak": streak,
+            "stability": (good + 1) / (checked + 2),
+        }
+
+    def list_all(self) -> list[dict]:
+        """Every proxy with its statistics, ranked (active ones first)."""
+        with self.db._lock:
+            proxies = self.db._fetchall("SELECT * FROM proxies")
+        days = self._days()
+        up = self._network_up_days(days)
+        for p in proxies:
+            p.update(self._stats(days.get(p["id"], {}), up))
+            p["failing_now"] = bool(
+                p["last_fail_at"] and (not p["last_ok_at"] or p["last_fail_at"] > p["last_ok_at"])
+            )
+        tier = {"main": 0, "probation": 1, "disabled": 2, "retired": 3}
+        proxies.sort(key=lambda p: (
+            tier.get(p["state"], 9), p["failing_now"], -p["stability"], -p["good_days"], p["id"],
+        ))
+        return proxies
+
+    def ranked(self) -> list[dict]:
+        """Usable proxies, best first: what the worker tries, in this order."""
+        return [p for p in self.list_all() if p["state"] in ACTIVE_STATES]
+
+    # ---- policy ----------------------------------------------------------------
+    def evaluate(self) -> list[tuple[int, str]]:
+        """Apply promotion / retirement. Returns [(proxy_id, new_state)]."""
+        proxies = self.list_all()
+        changes: list[tuple[int, str]] = []
+        main_count = sum(1 for p in proxies if p["state"] == "main")
+        for p in proxies:
+            if p["state"] == "probation":
+                if (p["good_days"] >= PROMOTE_GOOD_DAYS
+                        and p["stability"] >= PROMOTE_MIN_STABILITY and p["bad_streak"] == 0):
+                    changes.append((p["id"], "main"))
+                    main_count += 1
+                elif p["bad_streak"] >= PROBATION_DROP_BAD_DAYS:
+                    changes.append((p["id"], "retired"))
+        # Worst main proxies first, never below MIN_MAIN_KEEP.
+        for p in sorted((p for p in proxies if p["state"] == "main"),
+                        key=lambda p: (-p["bad_streak"], p["stability"])):
+            if p["bad_streak"] >= RETIRE_BAD_DAYS and main_count > MIN_MAIN_KEEP:
+                changes.append((p["id"], "retired"))
+                main_count -= 1
+        for proxy_id, state in changes:
+            self.set_state(proxy_id, state)
+        return changes
+
+    def all_dead(self) -> bool:
+        """Every usable proxy is failing and none worked for ALL_DEAD_AFTER."""
+        usable = self.ranked()
+        if not usable:
+            return True
+        if not all(p["failing_now"] for p in usable):
+            return False
+        limit = (self.clock() - ALL_DEAD_AFTER).isoformat(timespec="seconds")
+        return all(not p["last_ok_at"] or p["last_ok_at"] < limit for p in usable)
+
+    def should_alert_all_dead(self) -> bool:
+        """True at most once per ALERT_REPEAT while all proxies are dead."""
+        if not self.all_dead():
+            if self.db.get_state(ALERT_STATE_KEY, ""):
+                self.db.set_state(ALERT_STATE_KEY, "", "system:proxypool")
+            return False
+        last = self.db.get_state(ALERT_STATE_KEY, "")
+        now = self.clock()
+        if last:
+            try:
+                if now - datetime.fromisoformat(last) < ALERT_REPEAT:
+                    return False
+            except ValueError:
+                pass
+        self.db.set_state(ALERT_STATE_KEY, now.isoformat(timespec="seconds"), "system:proxypool")
+        return True
+
+
+def masked_secret(secret: str) -> str:
+    """For staff screens: the kind and the last 4 hex digits only."""
+    return f"{secret[:2]}…{secret[-4:]}" if len(secret) > 8 else "…"

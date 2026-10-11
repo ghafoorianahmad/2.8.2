@@ -108,6 +108,95 @@ CREATE TABLE IF NOT EXISTS shop_state (
     updated_at TEXT NOT NULL,
     updated_by TEXT NOT NULL DEFAULT ''
 );
+
+-- Distributor price lists (REQUIREMENTS §5). Prices in the PDF unit
+-- (thousand Toman); price_rial = the customer price after the §4 rules.
+CREATE TABLE IF NOT EXISTS price_lists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_date TEXT NOT NULL DEFAULT '',
+    sha256 TEXT NOT NULL UNIQUE,
+    source TEXT NOT NULL,
+    source_ref TEXT NOT NULL DEFAULT '',
+    posted_at TEXT,
+    status TEXT NOT NULL CHECK (status IN
+        ('active','held','rejected','superseded','failed')),
+    reason TEXT NOT NULL DEFAULT '',
+    row_count INTEGER NOT NULL DEFAULT 0,
+    file_name TEXT,
+    created_at TEXT NOT NULL,
+    activated_at TEXT,
+    decided_at TEXT,
+    decided_by TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS price_list_rows (
+    list_id INTEGER NOT NULL REFERENCES price_lists(id) ON DELETE CASCADE,
+    row_key TEXT NOT NULL,
+    block INTEGER NOT NULL,
+    section TEXT NOT NULL,
+    description TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    color TEXT NOT NULL,
+    naghd INTEGER,
+    raval INTEGER,
+    price_rial INTEGER,
+    PRIMARY KEY (list_id, row_key)
+);
+
+-- PDF row (by key) -> our product + display color, or "ignore" (not sold).
+CREATE TABLE IF NOT EXISTS price_mappings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    row_key TEXT NOT NULL UNIQUE,
+    action TEXT NOT NULL CHECK (action IN ('map','ignore')),
+    kala_code INTEGER,
+    color_label TEXT NOT NULL DEFAULT '',
+    section TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT '',
+    color TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL DEFAULT '',
+    CHECK (action = 'ignore' OR kala_code IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_mappings_kala ON price_mappings(kala_code);
+
+-- "Order/inquiry for an unavailable item" (REQUIREMENTS §4).
+CREATE TABLE IF NOT EXISTS inquiries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    kala_code INTEGER NOT NULL,
+    mapping_id INTEGER,
+    product_name TEXT NOT NULL DEFAULT '',
+    color TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+-- MTProto proxy pool (REQUIREMENTS §6).
+CREATE TABLE IF NOT EXISTS proxies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    secret TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL CHECK (state IN ('probation','main','retired','disabled')),
+    added_at TEXT NOT NULL,
+    promoted_at TEXT,
+    retired_at TEXT,
+    last_ok_at TEXT,
+    last_fail_at TEXT,
+    last_checked_at TEXT,
+    last_latency_ms INTEGER,
+    UNIQUE (host, port, secret)
+);
+
+CREATE TABLE IF NOT EXISTS proxy_days (
+    proxy_id INTEGER NOT NULL REFERENCES proxies(id) ON DELETE CASCADE,
+    day TEXT NOT NULL,
+    ok INTEGER NOT NULL DEFAULT 0,
+    fail INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (proxy_id, day)
+);
 """
 
 #: Columns added after the first release: (table, column, declaration).
@@ -120,6 +209,8 @@ MIGRATIONS = (
     ("payments", "file_name", "TEXT"),          # stored receipt image (receipts dir)
     ("payments", "content_type", "TEXT"),
     ("payments", "created_at", "TEXT"),
+    ("order_items", "variant_id", "INTEGER"),   # price_mappings.id (phone color)
+    ("order_items", "variant", "TEXT"),         # the color shown to the customer
 )
 
 # Orders in these statuses hold a stock reservation.
@@ -251,7 +342,7 @@ class OwnDB:
         reserve_until: str,
         items: list[tuple[int, str, float, float]],
     ) -> dict:
-        """items: list of (kala_code, name, qty, unit_price)."""
+        """items: (kala_code, name, qty, unit_price[, variant_id, variant])."""
         with self._lock:
             ts = now_iso()
             self._conn.execute(
@@ -261,11 +352,14 @@ class OwnDB:
             )
             row = self._conn.execute("SELECT last_insert_rowid() AS id").fetchone()
             order_id = row["id"]
-            for kala_code, name, qty, unit_price in items:
+            for item in items:
+                kala_code, name, qty, unit_price = item[:4]
+                variant_id = item[4] if len(item) > 4 else None
+                variant = item[5] if len(item) > 5 else None
                 self._conn.execute(
-                    "INSERT INTO order_items (order_id, kala_code, name, qty, unit_price) "
-                    "VALUES (?,?,?,?,?)",
-                    (order_id, kala_code, name, qty, unit_price),
+                    "INSERT INTO order_items (order_id, kala_code, name, qty, unit_price, "
+                    "variant_id, variant) VALUES (?,?,?,?,?,?,?)",
+                    (order_id, kala_code, name, qty, unit_price, variant_id, variant),
                 )
             self._commit()
             return self.get_order(order_id)
@@ -283,7 +377,7 @@ class OwnDB:
                 return None
             order["customer_pending"] = order.get("user_status") != "approved"
             order["items"] = self._fetchall(
-                "SELECT kala_code, name, qty, unit_price FROM order_items "
+                "SELECT kala_code, name, qty, unit_price, variant_id, variant FROM order_items "
                 "WHERE order_id=? ORDER BY id",
                 (order_id,),
             )
@@ -292,7 +386,7 @@ class OwnDB:
     def get_order_items(self, order_id: int) -> list[dict]:
         with self._lock:
             return self._fetchall(
-                "SELECT kala_code, name, qty, unit_price FROM order_items "
+                "SELECT kala_code, name, qty, unit_price, variant_id, variant FROM order_items "
                 "WHERE order_id=? ORDER BY id",
                 (order_id,),
             )

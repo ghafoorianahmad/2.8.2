@@ -31,6 +31,9 @@ SETTINGS_VIEW_LOG = "settings.view_log"
 USERS_VIEW = "users.view"
 USERS_MANAGE = "users.manage"
 SERVER_MANAGE = "server.manage"
+PRICELIST_VIEW = "pricelist.view"        # distributor lists, mapping (read only)
+PRICELIST_MANAGE = "pricelist.manage"    # upload, approve/reject, map/ignore rows
+PROXIES_MANAGE = "proxies.manage"        # Telegram proxy pool
 
 ALL_ROLES = (ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_OPERATOR, ROLE_VIEWER)
 
@@ -40,6 +43,7 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     ROLE_VIEWER: frozenset(
         {
             DASHBOARD_VIEW,
+            PRICELIST_VIEW,
             CUSTOMERS_VIEW,
             ORDERS_VIEW,
             PRODUCTS_VIEW,
@@ -52,6 +56,7 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     ROLE_OPERATOR: frozenset(
         {
             DASHBOARD_VIEW,
+            PRICELIST_VIEW,
             CUSTOMERS_VIEW,
             ORDERS_VIEW,
             ORDERS_UPLOAD_RECEIPT,
@@ -67,6 +72,7 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     ROLE_ADMIN: frozenset(
         {
             DASHBOARD_VIEW,
+            PRICELIST_VIEW,
             CUSTOMERS_VIEW,
             CUSTOMERS_APPROVE,
             CUSTOMERS_REJECT,
@@ -81,6 +87,7 @@ PERMISSIONS: dict[str, frozenset[str]] = {
             SETTINGS_VIEW,
             SETTINGS_EDIT_GENERAL,
             SHOP_STATE,
+            PRICELIST_MANAGE,
             SETTINGS_CHANGE_OWN_PASSWORD,
             SETTINGS_VIEW_LOG,
         }
@@ -88,6 +95,7 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     ROLE_SUPER_ADMIN: frozenset(
         {
             DASHBOARD_VIEW,
+            PRICELIST_VIEW,
             CUSTOMERS_VIEW,
             CUSTOMERS_APPROVE,
             CUSTOMERS_REJECT,
@@ -108,6 +116,8 @@ PERMISSIONS: dict[str, frozenset[str]] = {
             USERS_VIEW,
             USERS_MANAGE,
             SERVER_MANAGE,
+            PRICELIST_MANAGE,
+            PROXIES_MANAGE,
         }
     ),
 }
