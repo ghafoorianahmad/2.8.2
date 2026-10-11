@@ -25,6 +25,7 @@ ShopAdmin.exe ─────────────HTTP+ADMIN_API_KEY───
 استقرار: PC سرور (کنار SQL Server) = `ShopSystem.exe` + ODBC Driver 17؛ PCهای کارمندان = فقط `ShopAdmin.exe` با آدرس راه دور (استقرار چندکاره هنوز عملاً تست نشده).
 
 ## مستندات مرجع
+- **`SAZEH_DB_REFERENCE.md`** (2026-10-10) — مرجع کامل DB «سازه حساب»: نقشهٔ جدول‌ها، READ/WRITE recipe تست‌شده، پاسخ سؤال‌های باز، حداقل دسترسی، پروتکل آزمایش GUI. ابزارها: `research_tools/` (`sazeh_snapshot.py` برای diff قبل/بعد، `recipes/`).
 - `shopapi/README.md` (مدل ایمنی، endpointها، رفتن به production)، `shopapi/NOTES.md` (واقعیت‌های اسکیما: قیمت‌ها `Gey/Geycf/gey3/gey4/gey5`، موجودی `SUM(Megv)-SUM(Megs)` از `kardex_an`، فقط سطح ۱ در نسخهٔ تست کاتالوگ واقعی دارد ← `PRICE_LEVEL_*=1`)، `shopapi/REVIEW.md` (بازبینی امنیتی).
 - `shopbots/README.md`, `shopbots/NOTES.md` (۱۰ سؤال باز دربارهٔ تفاوت‌های بله).
 - `shopadmin/CLAUDE.md` (وضعیت نصب‌کننده با جزئیات)، `shopadmin/NOTES.md`, `shopadmin/README.txt` (راهنمای کاربر)، `shopadmin/installer/`.
@@ -56,6 +57,7 @@ build_all.bat        # (ریشه) بیلد کامل به ترتیب درست: Sh
 ## کارهای پیش رو (backlog)
 
 ### ۰. دستورات جدید کاربر
+- [ ] **(2026-10-10، از `SAZEH_DB_REFERENCE.md` §9/§11) یافته‌هایی که باید در shopapi اصلاح شوند:** (۱) `find_person_by_mobile` روی `name_mo.mobile` کار می‌کند ولی آن ستون در همهٔ ردیف‌ها خالی است ← باید از `DetailTBL` (نوع ۱ و ۳) بخواند؛ (۲) `ACCOUNTING_STATUS_CODE=6808` در `TabaghehBandi` وجود ندارد ← `0` و پس از آزمایش GUI؛ (۳) تولید `Codlp` با `sp_getapplock`؛ (۴) فرمول رزرو با `va=0` و `orderdetailcode`؛ (۵) `create_api_user.sql` را با نسخهٔ حداقل‌دسترسی `research_tools/recipes/grant_shopbot_2008r2.sql` جایگزین کنید (فعلاً SELECT روی `setting`/`TabaghehBandi` می‌دهد که رمز پیامک/یادداشت شخصی دارند)؛ (۶) آزمایش GUI گام‌های G1‑G4 (§10) برای تعیین `Status` واقعی.
 - [x] (2026-10-07) ربات تلگرام آمادهٔ production برای «عصر ارتباطات ۲» (بله دست نخورد؛ موتور مشترک است پس متن‌های جدید در بله هم دیده می‌شوند):
   - خوشامد با نام فروشگاه؛ منو: گروه‌ها، جستجو، سبد، سفارش‌های من، پشتیبانی، آدرس/ساعت کاری؛ لیست کالا = نام + قیمت سطح ۱ + «موجود/ناموجود» (بدون تعداد؛ ناموجود قابل سفارش نیست).
   - `/myid` (همه، در هر وضعیت)، `/help`؛ `/start` وسط ثبت‌نام هم از نو شروع می‌کند. مشتری در انتظار تأیید فقط پشتیبانی/آدرس می‌بیند.
@@ -143,3 +145,11 @@ build_all.bat        # (ریشه) بیلد کامل به ترتیب درست: Sh
 - [ ] فقط برای «عصر ارتباطات ۲» یا فروش به فروشگاه‌های دیگر؟
 - [ ] یک PC یا سرور + چند کلاینت؟
 - [ ] سرویس فقط هم‌زمان با ShopAdmin، یا همیشه روشن (پیشنهاد: Scheduled Task هنگام بوت) تا ربات‌ها ۲۴ ساعته جواب دهند؟
+
+## پوشهٔ خروجی (`E:\Outputs\ShopSystem\`)
+بعد از هر بیلد تازه (`build_all.bat` ← `shopadmin\dist\installer\ShopServerSetup.exe` و `ShopAdminSetup.exe`):
+1. هر دو installer را به `E:\Outputs\ShopSystem\` **کپی** کن (هرگز move نکن؛ داخل این پوشهٔ پروژه چیزی را پاک یا جابه‌جا نکن). هنگام کپی نسخه و تاریخ را به نام اضافه کن: `ShopServerSetup_<MyAppVersion>_<YYYY-MM-DD>.exe` و `ShopAdminSetup_<MyAppVersion>_<YYYY-MM-DD>.exe` (نسخه از `shopadmin/installer/ShopAdmin.iss`).
+2. در `E:\Outputs\ShopSystem\` فقط جفت جدیدترین + **یک** جفت قبلی بماند؛ قدیمی‌ترها فقط از همان پوشهٔ Outputs پاک شوند.
+3. `E:\Outputs\ShopSystem\README_FA.txt` را به‌روز کن: نام فایل‌ها، نسخه، تاریخ (میلادی + شمسی)، commit، SHA-256، روش نصب، و نسخهٔ قبلی نگه‌داشته‌شده.
+4. ردیف ShopSystem در `E:\Outputs\README_FA.txt` را به‌روز کن.
+5. هرگز `.env`، `*.db` یا `*.log` را در Outputs کپی نکن.
