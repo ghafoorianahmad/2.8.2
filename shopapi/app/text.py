@@ -50,3 +50,20 @@ def mask_name(name: str | None) -> str:
     if not name:
         return ""
     return name[0] + "*" * (len(name) - 1)
+
+
+def mobile_key(phone: str | None) -> str | None:
+    """The last 10 digits of an Iranian mobile number (``9xxxxxxxxx``, ASCII).
+
+    This is the matching key of recipe R4 (``RIGHT(DetailTBL.Comment, 10)``).
+    Accepts 09…, +989…, 00989…, 989… and 9… with spaces/dashes and Persian or
+    Arabic digits. Returns None for anything that is not a mobile number.
+    """
+    digits = "".join(ch for ch in normalize_fa(phone) if ch in "0123456789")
+    if len(digits) < 10:
+        return None
+    key = digits[-10:]
+    prefix = digits[:-10]
+    if prefix not in ("", "0", "98", "098", "0098") or not key.startswith("9"):
+        return None
+    return key

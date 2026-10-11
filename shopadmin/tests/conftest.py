@@ -86,7 +86,7 @@ class FakeShopApi:
         self.tls_fingerprint = ":".join(["AB"] * 32)
         self.server_settings: dict[str, str] = {
             "BANK_ACCOUNT_TEXT": "حساب قدیم", "RESERVE_HOURS": "12",
-            "ALLOW_SHARED_PERSON_CODE": "false", "TELEGRAM_TOKEN": "123:secret", "BALE_TOKEN": "",
+            "ALLOW_SHARED_PERSON_CODE": "false", "BALE_TOKEN": "123:secret",
         }
         self.settings_puts: list[dict] = []
         self.restarts = 0
@@ -359,7 +359,7 @@ class FakeShopApi:
         if path == "/admin/server/settings" and request.method == "GET":
             out = {}
             for key, value in self.server_settings.items():
-                secret = key.endswith("TOKEN") or key == "PROXY_URL"
+                secret = key.endswith("TOKEN")
                 out[key] = {"secret": True, "set": bool(value)} if secret else \
                     {"secret": False, "value": value}
             return reply(200, {"settings": out})

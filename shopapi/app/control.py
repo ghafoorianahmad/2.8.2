@@ -78,7 +78,7 @@ def provider_status() -> dict[str, dict]:
 # settings that a super admin may change remotely
 # --------------------------------------------------------------------------
 _TOKEN_RE = re.compile(r"^\d{4,15}:[A-Za-z0-9_-]{20,100}$")
-_CHAT_IDS_RE = re.compile(r"^((bale|telegram):)?-?\d{1,20}$")
+_CHAT_IDS_RE = re.compile(r"^(bale:)?-?\d{1,20}$")
 _WAREHOUSES_RE = re.compile(r"^\d{1,9}$")
 
 
@@ -103,7 +103,7 @@ def _text(max_len: int) -> Callable[[str], Optional[str]]:
 def _chat_ids(value: str) -> Optional[str]:
     parts = [p.strip() for p in value.split(",") if p.strip()]
     if not all(_CHAT_IDS_RE.match(p) for p in parts):
-        return "use entries like telegram:123456 or bale:123456, separated by commas"
+        return "use entries like bale:123456, separated by commas"
     return None
 
 
@@ -114,12 +114,6 @@ def _warehouses(value: str) -> Optional[str]:
 
 def _token(value: str) -> Optional[str]:
     return None if value == "" or _TOKEN_RE.match(value) else "does not look like a bot token"
-
-
-def _proxy(value: str) -> Optional[str]:
-    if value == "" or re.match(r"^(http|https|socks5h?)://[^\s]{3,200}$", value):
-        return None
-    return "must start with http://, https:// or socks5://"
 
 
 #: key -> (validator, secret). Everything NOT listed here — the accounting
@@ -140,9 +134,8 @@ EDITABLE: dict[str, tuple[Callable[[str], Optional[str]], bool]] = {
     "ADMIN_CHAT_IDS": (_chat_ids, False),
     "ADMIN_SWEEP_SECONDS": (_int_range(10, 3600), False),
     "BALE_TOKEN": (_token, True),
-    "TELEGRAM_TOKEN": (_token, True),
-    "TELEGRAM_PROXY": (_proxy, True),
-    "PROXY_URL": (_proxy, True),   # older name; TELEGRAM_PROXY wins when both are set
+    # TELEGRAM_TOKEN / TELEGRAM_PROXY / PROXY_URL were removed with the old
+    # Telegram Bot-API channel (2026-10-11): they are refused as unknown keys.
 }
 
 

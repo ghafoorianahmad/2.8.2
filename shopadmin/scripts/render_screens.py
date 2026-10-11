@@ -63,13 +63,13 @@ def seed(fake: FakeShopApi) -> None:
         moment = datetime.now(timezone.utc) - timedelta(hours=hours, days=days)
         return moment.isoformat(timespec="seconds")
 
-    fake.add_customer(name="زهرا محمدی", platform="telegram", phone="09121234567",
+    fake.add_customer(name="زهرا محمدی", platform="bale", phone="09121234567",
                       created_at=ago(hours=3))
     fake.add_customer(name="علی رضایی", platform="bale", phone="09351112233",
                       created_at=ago(hours=9))
     fake.add_customer(name="مریم حسینی", platform="web", phone="09199887766",
                       created_at=ago(days=1))
-    fake.add_customer(name="رضا کریمی", platform="telegram", phone="09121110000",
+    fake.add_customer(name="رضا کریمی", platform="bale", phone="09121110000",
                       status="approved", person_code=7001, created_at=ago(days=4))
     fake.add_customer(name="سارا احمدی", platform="bale", phone="09362223344",
                       status="rejected", created_at=ago(days=9))

@@ -1,5 +1,10 @@
 # REVIEW.md — security & correctness review of `shopapi`
 
+> **2026-10-11 (Phase 1):** superseded in part — the writer now uses `sp_getapplock`
+> (not `UPDLOCK, HOLDLOCK`), the person lookup uses recipe R4 on `DetailTBL` and
+> returns the code only (no masked name), `Status` defaults to `0`, and
+> `sql/create_api_user.sql` is the least-privilege script (no `TabaghehBandi`).
+
 Reviewer role: skeptical senior security/correctness reviewer.
 Scope: the existing project only. No features added. `ACCOUNTING_WRITE_ENABLED`
 stays `false` by default. No SQL Server was contacted during this review (all

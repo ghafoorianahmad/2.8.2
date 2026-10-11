@@ -1,7 +1,7 @@
-"""Entry point: run the Bale bot and the Telegram bot in one process.
+"""Entry point: run the Bale bot.
 
-    python -m app.main            # run both bots (whichever tokens are set)
-    python -m app.main --dry-run  # start both adapters, no network calls
+    python -m app.main            # run the bot (BALE_TOKEN must be set)
+    python -m app.main --dry-run  # start the adapter, no network calls
     python -m app.main --check    # print a token-free configuration summary
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import logging
 from .config import Settings
 from .engine import BotEngine
 from .logging_setup import configure_logging, silence_noisy_loggers
-from .platforms import BaleAdapter, PlatformAdapter, TelegramAdapter
+from .platforms import BaleAdapter, PlatformAdapter
 from .polling import admin_sweep_loop, poll_platform
 from .shopapi import ShopApiClient
 from .store import Store
@@ -32,13 +32,6 @@ def build_adapters(settings: Settings) -> dict[str, PlatformAdapter]:
     if settings.bale_token:
         adapters["bale"] = BaleAdapter(
             token=settings.bale_token, api_base=settings.bale_api_base, timeout=timeout
-        )
-    if settings.telegram_token:
-        adapters["telegram"] = TelegramAdapter(
-            token=settings.telegram_token,
-            api_base=settings.telegram_api_base,
-            timeout=timeout,
-            proxy_url=settings.proxy_for("telegram"),
         )
     return adapters
 
@@ -93,7 +86,7 @@ async def run(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="shopbots", description="Bale + Telegram bots for shopapi")
+    parser = argparse.ArgumentParser(prog="shopbots", description="Bale bot for shopapi")
     parser.add_argument("--dry-run", action="store_true", help="start adapters without network calls")
     parser.add_argument("--check", action="store_true", help="validate configuration and exit")
     parser.add_argument("--log-level", default="INFO")
@@ -110,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if not settings.enabled_platforms():
-        print("No bot token configured. Set BALE_TOKEN and/or TELEGRAM_TOKEN (see .env.example).")
+        print("No bot token configured. Set BALE_TOKEN (see .env.example).")
         return 2
 
     asyncio.run(run(settings, dry_run=args.dry_run))

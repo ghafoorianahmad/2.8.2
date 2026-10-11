@@ -39,13 +39,13 @@ def test_invalid_phone_is_rejected(env, bot_apis, shopapi):
 
 def test_contact_button_registers_international_number(env, bot_apis, shopapi):
     async def scenario(engine, adapters, api):
-        await push_message(engine, "telegram", 1, CUSTOMER_CHAT, text="/start")
-        await push_message(engine, "telegram", 2, CUSTOMER_CHAT, text="سارا")
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+        await push_message(engine, "bale", 2, CUSTOMER_CHAT, text="سارا")
         await push_message(
-            engine, "telegram", 3, CUSTOMER_CHAT, contact={"phone_number": "+989121234567"}
+            engine, "bale", 3, CUSTOMER_CHAT, contact={"phone_number": "+989121234567"}
         )
-        assert bot_apis["telegram"].last_text_any(CUSTOMER_CHAT) == texts.REGISTERED_PENDING
-        assert shopapi.users[("telegram", CUSTOMER_CHAT)]["phone"] == "09121234567"
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.REGISTERED_PENDING
+        assert shopapi.users[("bale", CUSTOMER_CHAT)]["phone"] == "09121234567"
 
     env(scenario)
 

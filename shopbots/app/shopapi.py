@@ -68,7 +68,7 @@ class ShopApiClient:
                 # Trust exactly the server's own self-signed certificate.
                 verify = ssl.create_default_context(cafile=self._settings.shopapi_ca_file)
             # trust_env=False: shopapi is local - never route it through a proxy
-            # (TELEGRAM_PROXY is Telegram-only; HTTP(S)_PROXY variables are ignored).
+            # (HTTP(S)_PROXY variables of the Windows account are ignored).
             self._client = httpx.AsyncClient(
                 timeout=self._settings.http_timeout, verify=verify, trust_env=False
             )

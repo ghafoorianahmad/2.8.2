@@ -1,5 +1,10 @@
 # NOTES.md — shopbots build log
 
+> **2026-10-11 (Phase 1):** Bale is the only channel. The Telegram Bot-API adapter,
+> `TELEGRAM_TOKEN`/`TELEGRAM_PROXY`/`PROXY_URL` and `socksio` were removed; the
+> shop logic moved to `app/core/` so a future channel is a thin adapter.
+> Telegram mentions below are history.
+
 ## Work order and status
 
 | Step | Status |
@@ -7,7 +12,7 @@
 | 1. Skeleton, venv, `requirements.txt`, `.env.example` | done |
 | 2. `config.py`, `texts.py`, `utils.py` | done |
 | 3. `store.py` (SQLite bot state) | done |
-| 4. `platforms/` (adapter interface + Bale + Telegram) | done |
+| 4. `platforms/` (adapter interface + Bale; Telegram removed 2026-10-11) | done |
 | 5. `shopapi.py` client | done |
 | 6. `engine.py` (customer + admin flows) + `ratelimit.py` | done |
 | 7. `polling.py` + `main.py` (two tasks, backoff, admin sweep) | done |
@@ -48,8 +53,8 @@ starts both adapters with fake tokens and exits 0.
   the photo, and so it can be re-sent as the `receipt_ref` to shopapi. A file id
   is only sent to admins on the **same** platform (a Telegram file id is useless
   to Bale).
-- **Admin identity.** `ADMIN_CHAT_IDS` accepts `telegram:123` / `bale:456` and a
-  bare `123`. The chat id is re-checked on **every** admin action, including
+- **Admin identity.** `ADMIN_CHAT_IDS` accepts `bale:456` and a bare `123`
+  (entries for other platforms are ignored). The chat id is re-checked on **every** admin action, including
   callbacks; buttons alone are never trusted.
 - **shopapi contract.** `POST /orders/{id}/receipt` is called with
   `?platform=&chat_id=` because shopapi requires ownership proof for non-admin
@@ -85,8 +90,7 @@ starts both adapters with fake tokens and exits 0.
    path.
 8. **Message length** and the photo `file_id` re-use across chats.
 9. **Rate limits / API errors** returned by Bale (`ok:false` descriptions).
-10. **Proxy.** Telegram must run through `PROXY_URL`; Bale must work without it —
-    confirm on the real network.
+10. **No proxy.** Bale must work without any proxy — confirm on the real network.
 
 ## Known limitations
 

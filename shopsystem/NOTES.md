@@ -99,7 +99,7 @@ single writer, so mixing them produces `database is locked`.
 | Subsystem | Where | On crash |
 | --- | --- | --- |
 | API (uvicorn) | background thread `shopapi` | logs the traceback, restarts up to 5 times with 5→30 s backoff; the bots keep polling |
-| Bots (Bale + Telegram + admin sweep) | background thread `shopbots` running `asyncio.run(...)` | logs, restarts up to 10 times; the API keeps serving |
+| Bots (Bale + admin sweep) | background thread `shopbots` running `asyncio.run(...)` | logs, restarts up to 10 times; the API keeps serving |
 
 The main thread only supervises: it waits until **both** threads are dead, so a
 crash in one never takes the process down. `SystemExit` (e.g. "port already in
@@ -241,7 +241,7 @@ pydantic 2.13.5, pyodbc 5.3.0, httpx 0.28.1, python-dotenv 1.2.4.
 
    `app.log` was created next to the exe and contains the shopapi startup lines,
    the uvicorn access log and the graceful bots warning
-   `bots: no BALE_TOKEN / TELEGRAM_TOKEN configured - running the API only`.
+   `bots: no BALE_TOKEN configured - running the API only`.
    The console printed the required banner verbatim.
 5. Started **without** `.env`, the exe prints the three recovery steps, records
    them in `app.log`, keeps the window open for a double-click and exits with

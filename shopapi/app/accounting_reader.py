@@ -3,9 +3,8 @@
 Every query is parameterized and SQL Server 2008 R2 compatible (no OFFSET/FETCH,
 STRING_AGG, CONCAT, TRY_CONVERT, IIF or THROW). Only column names, counts and
 aggregates are used for stock/reservation math. Product tables (Kala, Gkala) are
-read for names; name_mo is used only for existence checks (COUNT) and mobile
-matching, where the name is masked inside SQL so the raw value never enters this
-process.
+read for names; name_mo/DetailTBL are used only for existence checks (COUNT) and
+mobile matching (recipe R4), which return person codes only - never names.
 """
 from __future__ import annotations
 
@@ -14,21 +13,27 @@ from typing import Optional
 import pyodbc
 
 from .config import Settings
-from .text import normalize_fa
+from .text import mobile_key, normalize_fa
 from .util import quote_identifier
 
 # Price levels -> Kala sale-price columns. Geya/Geyk/Geym are NOT sale prices.
 PRICE_COLUMNS = {1: "Gey", 2: "Geycf", 3: "gey3", 4: "gey4", 5: "gey5"}
 FORBIDDEN_PRICE_COLUMNS = ("Geya", "Geyk", "Geym")
 
-# normalize_fa mappings, mirrored as a SQL REPLACE chain for server-side matching.
-_NORMALIZE_PAIRS = [
-    ("٠", "0"), ("١", "1"), ("٢", "2"), ("٣", "3"), ("٤", "4"),
-    ("٥", "5"), ("٦", "6"), ("٧", "7"), ("٨", "8"), ("٩", "9"),
-    ("۰", "0"), ("۱", "1"), ("۲", "2"), ("۳", "3"), ("۴", "4"),
-    ("۵", "5"), ("۶", "6"), ("۷", "7"), ("۸", "8"), ("۹", "9"),
-    ("ي", "ی"), ("ك", "ک"),
-]
+
+def person_codes_by_mobile_sql(db: str) -> str:
+    """Recipe R4: person codes whose mobile (DetailTBL types 1 and 3) ends in the
+    given 10 digits. TOP 2 so a caller can tell a unique match from a shared
+    number. ``name_mo.mobile``/``Tel1`` are empty in the real data - never use them.
+    """
+    return (
+        f"SELECT TOP 2 n.Code FROM {db}.dbo.DetailTBL d "
+        f"JOIN {db}.dbo.name_mo n ON n.Code = d.IDMaster "
+        f"WHERE d.Va = 0 AND d.TabaghehBandiID IN (1, 3) "
+        f"AND LEN(RTRIM(d.Comment)) BETWEEN 10 AND 14 "
+        f"AND RIGHT(RTRIM(d.Comment), 10) = ? "
+        f"GROUP BY n.Code ORDER BY n.Code"
+    )
 
 
 def price_column(level: int) -> str:
@@ -46,13 +51,6 @@ def compute_available(stock: float, open_reservation: float, our_reservation: fl
     """
     available = stock - open_reservation - our_reservation
     return available if available > 0 else 0.0
-
-
-def _normalize_sql(column: str) -> str:
-    expr = column
-    for src, dst in _NORMALIZE_PAIRS:
-        expr = f"REPLACE({expr}, N'{src}', N'{dst}')"
-    return expr
 
 
 class AccountingReader:
@@ -97,7 +95,7 @@ class AccountingReader:
         db = self._db()
         conn = self.connection()
         try:
-            rows = self._rows(conn.execute(f"SELECT Code, Name FROM {db}.dbo.Gkala ORDER BY Code"))
+            rows = self._rows(conn.execute(f"SELECT Code, Name FROM {db}.dbo.Gkala WHERE Code > 0 ORDER BY Code"))
         finally:
             conn.close()
         return [{"code": r["Code"], "name": r["Name"]} for r in rows]
@@ -217,24 +215,28 @@ class AccountingReader:
             conn.close()
 
     def find_person_by_mobile(self, mobile: str) -> Optional[dict]:
-        """Return only the person code and a masked name, matched by exact
-        normalized mobile number. The name is masked inside SQL."""
-        db = self._db()
+        """The single person whose mobile matches (recipe R4), as ``{"code": …}``.
+
+        Returns None when the input is not a mobile number, nothing matches, or
+        the number is shared by more than one person (manual approval decides).
+        Only the code is read; names are not readable by the least-privilege user.
+        """
+        key = mobile_key(mobile)
+        if key is None:
+            return None
+        codes = self.person_codes_by_mobile(key)
+        if len(codes) != 1:
+            return None
+        return {"code": codes[0], "masked_name": None}
+
+    def person_codes_by_mobile(self, key: str) -> list[int]:
+        """Up to two person codes for a 10-digit mobile key (see mobile_key)."""
         conn = self.connection()
         try:
-            normalized = _normalize_sql("mobile")
-            sql = (
-                f"SELECT TOP 1 Code, "
-                f"CASE WHEN LEN(Name) <= 1 THEN Name ELSE LEFT(Name,1) + "
-                f"REPLICATE('*', LEN(Name)-1) END AS masked_name "
-                f"FROM {db}.dbo.name_mo WHERE {normalized} = ? ORDER BY Code"
-            )
-            row = conn.execute(sql, normalize_fa(mobile)).fetchone()
+            rows = conn.execute(person_codes_by_mobile_sql(self._db()), key).fetchall()
         finally:
             conn.close()
-        if row is None:
-            return None
-        return {"code": int(row[0]), "masked_name": row[1]}
+        return [int(r[0]) for r in rows]
 
     # ---- internals ----
     def _stock(self, conn, codes: list[int]) -> dict[int, float]:
@@ -252,27 +254,29 @@ class AccountingReader:
         return {r["Codekala"]: float(r["stock"]) for r in rows}
 
     def _open_reservation(self, conn, codes: list[int]) -> dict[int, float]:
+        """Open (not yet invoiced) quantity of open sales orders, recipe R2.
+
+        Per order line: ordered - invoiced (facto matched on ordercode +
+        orderdetailcode + Codekala), clamped at 0, only for headers with va=0.
+        Deleted (cancelled) orders simply have no rows any more.
+        """
         db = self._db()
         ph = self._in_placeholders(codes)
-        ordered = self._rows(
+        rows = self._rows(
             conn.execute(
-                f"SELECT Codekala, SUM(ISNULL(Meg,0)) AS ordered "
-                f"FROM {db}.dbo.KalaOrderDetail WHERE Codekala IN ({ph}) GROUP BY Codekala",
+                f"SELECT d.Codekala, "
+                f"SUM(CASE WHEN ISNULL(d.Meg,0) - ISNULL(f.Meg,0) > 0 "
+                f"THEN ISNULL(d.Meg,0) - ISNULL(f.Meg,0) ELSE 0 END) AS open_qty "
+                f"FROM {db}.dbo.KalaOrderDetail d "
+                f"JOIN {db}.dbo.KalaOrder h ON h.Codlp = d.Codlp_ AND ISNULL(h.va,0) = 0 "
+                f"LEFT JOIN (SELECT ordercode, orderdetailcode, Codekala, SUM(Meg) AS Meg "
+                f"FROM {db}.dbo.facto WHERE ISNULL(ordercode,0) > 0 "
+                f"GROUP BY ordercode, orderdetailcode, Codekala) f "
+                f"ON f.ordercode = d.Codlp_ AND f.orderdetailcode = d.Num "
+                f"AND f.Codekala = d.Codekala "
+                f"WHERE d.Codekala IN ({ph}) GROUP BY d.Codekala",
                 codes,
             )
         )
-        fulfilled = self._rows(
-            conn.execute(
-                f"SELECT Codekala, SUM(ISNULL(Meg,0)) AS fulfilled "
-                f"FROM {db}.dbo.facto WHERE Codekala IN ({ph}) "
-                f"AND ISNULL(ordercode,0) > 0 GROUP BY Codekala",
-                codes,
-            )
-        )
-        ordered_map = {r["Codekala"]: float(r["ordered"]) for r in ordered}
-        fulfilled_map = {r["Codekala"]: float(r["fulfilled"]) for r in fulfilled}
-        out: dict[int, float] = {}
-        for code in codes:
-            open_qty = ordered_map.get(code, 0.0) - fulfilled_map.get(code, 0.0)
-            out[code] = open_qty if open_qty > 0 else 0.0
-        return out
+        open_map = {r["Codekala"]: float(r["open_qty"] or 0) for r in rows}
+        return {code: max(open_map.get(code, 0.0), 0.0) for code in codes}

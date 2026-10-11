@@ -23,7 +23,7 @@ class BotApiError(Exception):
         super().__init__(f"{method}: {description}")
         self.method = method
         self.description = description
-        #: True when the Bot API was not reached at all (network / proxy down).
+        #: True when the Bot API was not reached at all (network down).
         self.network = network
 
 

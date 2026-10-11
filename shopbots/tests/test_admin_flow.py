@@ -28,8 +28,7 @@ def test_sweep_announces_pending_user_once(env, bot_apis, shopapi):
         assert f"adru:{user['id']}" in callbacks
         assert f"adsug:{user['id']}:7001" in callbacks
 
-        # every admin chat was notified, and a second sweep announces nothing again
-        assert any(texts.NEW_USER_NOTICE.splitlines()[0] in t for t in bot_apis["telegram"].texts(ADMIN_CHAT))
+        # a second sweep announces nothing again
         second = await engine.admin_sweep()
         assert second == {"users": 0, "orders": 0, "notified": 0}
 
@@ -96,8 +95,6 @@ def test_sweep_announces_receipt_with_photo_and_admin_approves(env, bot_apis, sh
         assert str(order["id"]) in notice
         assert "2,000" in notice
         assert bot_apis["bale"].photos[-1]["photo"] == "RECEIPT-FILE"
-        # the Telegram admin cannot see a Bale file id
-        assert all(p.get("photo") != "RECEIPT-FILE" for p in bot_apis["telegram"].photos)
 
         await push_callback(engine, "bale", 20, ADMIN_CHAT, f"adap:{order['id']}")
         assert shopapi.orders[order["id"]]["status"] == "written"
@@ -156,8 +153,7 @@ def test_admin_callback_from_a_non_admin_chat_is_refused(env, bot_apis, shopapi)
     env(scenario)
 
 
-def test_admin_callback_from_a_bale_chat_is_not_a_telegram_admin(env, bot_apis, shopapi):
-    """The same numeric chat id on the other platform is a different principal."""
+def test_admin_callback_from_the_admin_bale_chat_is_accepted(env, bot_apis, shopapi):
     shopapi.add_user("bale", OTHER_CHAT, status="approved", person_code=7001)
 
     async def scenario(engine, adapters, api):

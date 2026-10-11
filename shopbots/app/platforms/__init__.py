@@ -1,8 +1,9 @@
 """Platform adapters.
 
-Both Bale and Telegram speak the same Bot API method names and JSON shapes, so
-the HTTP part lives in one place and only the base URL and the per-platform
-feature flags differ.
+Bale speaks the Telegram-style Bot API (same method names and JSON shapes), so
+the HTTP part lives in HttpBotAdapter and a channel only sets its base URL and
+feature flags. Adding a channel = one thin adapter here; the business logic
+lives in app/core and app/engine.
 """
 from __future__ import annotations
 
@@ -17,7 +18,6 @@ from .base import (
     reply_keyboard,
 )
 from .bale import BaleAdapter
-from .telegram import TelegramAdapter
 
 __all__ = [
     "BotApiError",
@@ -25,7 +25,6 @@ __all__ = [
     "PlatformAdapter",
     "InlineButtonRow",
     "BaleAdapter",
-    "TelegramAdapter",
     "contact_keyboard",
     "inline_keyboard",
     "remove_keyboard",

@@ -1,5 +1,4 @@
 httpx
-socksio        # SOCKS5 proxy support for Telegram (TELEGRAM_PROXY=socks5://...)
 pydantic
 python-dotenv
 pytest

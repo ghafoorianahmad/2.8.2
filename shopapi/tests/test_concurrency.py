@@ -1,7 +1,7 @@
 """Concurrency: no overselling and no duplicate accounting order numbers.
 
 The fake accounting layer allocates Codlp under a lock and is idempotent per
-order id, mirroring the real writer's UPDLOCK/HOLDLOCK + Sharhlp behavior.
+order id, mirroring the real writer's sp_getapplock + Sharhlp behavior.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def _product_reader(stock: float) -> FakeReader:
 
 
 def _order_body(qty: float = 1) -> dict:
-    return {"platform": "telegram", "chat_id": "111",
+    return {"platform": "bale", "chat_id": "111",
             "items": [{"kala_code": 200, "qty": qty}]}
 
 
@@ -43,7 +43,7 @@ def _upload_receipt(client, order_id):
     return client.post(
         f"/orders/{order_id}/receipt",
         json={"receipt_ref": "R-1"},
-        params={"platform": "telegram", "chat_id": "111"},
+        params={"platform": "bale", "chat_id": "111"},
         headers=h("bot"),
     )
 

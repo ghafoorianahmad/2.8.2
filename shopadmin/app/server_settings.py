@@ -20,16 +20,13 @@ SETTINGS_FA: dict[str, tuple[str, str, str]] = {
     "PRICE_LEVEL_SITE": ("سطح قیمت سایت (۱ تا ۵)", "", "int"),
     "STOCK_WAREHOUSES": ("انبارهای موجودی", "کد انبارها با کاما؛ خالی = همهٔ انبارها.", "text"),
     "ALLOW_SHARED_PERSON_CODE": ("اجازهٔ کد شخص مشترک", "دو مشتری به یک شخص حسابداری وصل شوند.", "bool"),
-    "ADMIN_CHAT_IDS": ("گفت‌وگوهای مدیران در ربات", "مثلاً telegram:123456,bale:654321 — اعلان و تأیید داخل ربات.", "text"),
+    "ADMIN_CHAT_IDS": ("گفت‌وگوهای مدیران در ربات", "مثلاً bale:654321 — اعلان و تأیید داخل ربات بله.", "text"),
     "ADMIN_SWEEP_SECONDS": ("بررسی موارد جدید در ربات (ثانیه)", "", "int"),
     "STAFF_SESSION_HOURS": ("مدت ورود کارکنان (ساعت)", "", "int"),
     "STAFF_REMEMBER_DAYS": ("مدت «مرا به خاطر بسپار» (روز)", "", "int"),
     "LOGIN_MAX_ATTEMPTS": ("تعداد تلاش ناموفق تا قفل", "", "int"),
     "LOGIN_LOCK_MINUTES": ("مدت قفل حساب (دقیقه)", "", "int"),
     "BALE_TOKEN": ("توکن ربات بله", "فقط برای تغییر وارد کنید؛ مقدار فعلی هرگز نمایش داده نمی‌شود.", "secret"),
-    "TELEGRAM_TOKEN": ("توکن ربات تلگرام", "فقط برای تغییر وارد کنید؛ مقدار فعلی هرگز نمایش داده نمی‌شود.", "secret"),
-    "TELEGRAM_PROXY": ("پراکسی تلگرام", "مثلاً socks5://127.0.0.1:10808 — فقط برای تلگرام.", "secret"),
-    "PROXY_URL": ("پراکسی تلگرام (نام قدیمی)", "اگر TELEGRAM_PROXY پر باشد این نادیده گرفته می‌شود.", "secret"),
 }
 
 _PROBLEMS = (
@@ -39,9 +36,8 @@ _PROBLEMS = (
     (re.compile(r"must be a single line"), "باید یک خط باشد"),
     (re.compile(r"cannot be changed remotely"), "از راه دور قابل تغییر نیست"),
     (re.compile(r"does not look like a bot token"), "شبیه توکن ربات نیست"),
-    (re.compile(r"use entries like"), "به شکل telegram:123456 یا bale:123456 و با کاما جدا کنید"),
+    (re.compile(r"use entries like"), "به شکل bale:123456 و با کاما جدا کنید"),
     (re.compile(r"use warehouse codes"), "کد انبارها را با کاما جدا کنید"),
-    (re.compile(r"must start with"), "باید با http:// یا https:// یا socks5:// شروع شود"),
 )
 
 

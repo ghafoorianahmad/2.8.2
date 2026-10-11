@@ -72,7 +72,7 @@ class Settings:
     accounting_allowed_hosts: tuple[str, ...] = _DEFAULT_ALLOWED_HOSTS
 
     # --- Accounting config values ---
-    accounting_status_code: int = 6808
+    accounting_status_code: int = 0  # 6808 does not exist (reference §9.2); confirm with GUI test G2
     accounting_usercode: int = 1
     accounting_anbarcode: int = 1
     stock_warehouses: tuple[int, ...] = ()
@@ -124,7 +124,7 @@ class Settings:
             accounting_query_timeout=_env_int("ACCOUNTING_QUERY_TIMEOUT", 15),
             accounting_write_enabled=_env_bool("ACCOUNTING_WRITE_ENABLED", False),
             accounting_allowed_hosts=allowed,
-            accounting_status_code=_env_int("ACCOUNTING_STATUS_CODE", 6808),
+            accounting_status_code=_env_int("ACCOUNTING_STATUS_CODE", 0),
             accounting_usercode=_env_int("ACCOUNTING_USERCODE", 1),
             accounting_anbarcode=_env_int("ACCOUNTING_ANBARCODE", 1),
             stock_warehouses=_env_int_list("STOCK_WAREHOUSES"),

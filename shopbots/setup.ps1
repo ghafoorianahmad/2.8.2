@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    One-time setup for shopbots (Bale + Telegram) on Windows.
+    One-time setup for shopbots (Bale) on Windows.
 
 .DESCRIPTION
     Creates .venv, installs requirements.txt and creates a local .env from
@@ -77,4 +77,4 @@ Write-Host "Setup complete." -ForegroundColor Green
 Write-Host "Next steps:"
 Write-Host "  .\run.ps1 -Check      # show which platforms and how many admins are configured"
 Write-Host "  .\run.ps1 -DryRun     # start both bots without touching the network"
-Write-Host "  .\run.ps1             # run for real (needs BALE_TOKEN / TELEGRAM_TOKEN)"
+Write-Host "  .\run.ps1             # run for real (needs BALE_TOKEN)"

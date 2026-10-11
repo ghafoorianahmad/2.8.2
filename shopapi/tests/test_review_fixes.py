@@ -72,7 +72,7 @@ def test_quantity_bounds(client, reader):
     seed_products(reader)
     register_and_approve(client)
     url = "/orders"
-    payload = {"platform": "telegram", "chat_id": "111",
+    payload = {"platform": "bale", "chat_id": "111",
                "items": [{"kala_code": 101, "qty": 1}]}
 
     for bad_qty in (0, -1, 2_000_000):
@@ -85,7 +85,7 @@ def test_quantity_bounds(client, reader):
 
     # NaN / Infinity must be rejected (raw JSON, since these are not valid JSON numbers)
     for token in ("NaN", "Infinity"):
-        raw = ('{"platform":"telegram","chat_id":"111","items":'
+        raw = ('{"platform":"bale","chat_id":"111","items":'
                f'[{{"kala_code":101,"qty":{token}}}]}}')
         r = client.post(url, content=raw,
                         headers={**h("bot"), "Content-Type": "application/json"})
@@ -115,9 +115,9 @@ def test_person_code_cannot_be_reused(client, reader, settings):
     register_and_approve(client, chat_id="111", person_code=7001)
 
     client.post("/users/register", json={
-        "platform": "telegram", "chat_id": "222", "name": "Bob", "phone": "09121111111",
+        "platform": "bale", "chat_id": "222", "name": "Bob", "phone": "09121111111",
     }, headers=h("bot"))
-    u2 = client.get("/users/telegram/222", headers=h("bot")).json()
+    u2 = client.get("/users/bale/222", headers=h("bot")).json()
 
     clash = client.post(f"/admin/users/{u2['id']}/approve",
                         json={"person_code": 7001}, headers=h("admin"))
@@ -155,12 +155,12 @@ def test_receipt_upload_requires_order_ownership(client, reader):
     register_and_approve(client, chat_id="111")
     register_and_approve(client, chat_id="222", phone="09121111111")
     order = client.post("/orders", json={
-        "platform": "telegram", "chat_id": "111",
+        "platform": "bale", "chat_id": "111",
         "items": [{"kala_code": 101, "qty": 1}],
     }, headers=h("bot")).json()
 
     other = client.post(f"/orders/{order['id']}/receipt", json={"receipt_ref": "R-2"},
-                        params={"platform": "telegram", "chat_id": "222"}, headers=h("bot"))
+                        params={"platform": "bale", "chat_id": "222"}, headers=h("bot"))
     assert other.status_code == 404
 
     no_proof = client.post(f"/orders/{order['id']}/receipt", json={"receipt_ref": "R-3"},
@@ -168,13 +168,13 @@ def test_receipt_upload_requires_order_ownership(client, reader):
     assert no_proof.status_code == 404
 
     owner = client.post(f"/orders/{order['id']}/receipt", json={"receipt_ref": "R-1"},
-                        params={"platform": "telegram", "chat_id": "111"}, headers=h("bot"))
+                        params={"platform": "bale", "chat_id": "111"}, headers=h("bot"))
     assert owner.status_code == 200
     assert owner.json()["status"] == "receipt_uploaded"
 
     # admin may act on any order
     order2 = client.post("/orders", json={
-        "platform": "telegram", "chat_id": "111",
+        "platform": "bale", "chat_id": "111",
         "items": [{"kala_code": 101, "qty": 1}],
     }, headers=h("bot")).json()
     admin_ok = client.post(f"/orders/{order2['id']}/receipt", json={"receipt_ref": "R-4"},
@@ -188,11 +188,11 @@ def test_approve_payment_dry_run_is_not_marked_written(client, reader, writer):
     writer.committed = False  # simulates ACCOUNTING_WRITE_ENABLED=false
     register_and_approve(client)
     order = client.post("/orders", json={
-        "platform": "telegram", "chat_id": "111",
+        "platform": "bale", "chat_id": "111",
         "items": [{"kala_code": 101, "qty": 1}],
     }, headers=h("bot")).json()
     client.post(f"/orders/{order['id']}/receipt", json={"receipt_ref": "R-1"},
-                params={"platform": "telegram", "chat_id": "111"}, headers=h("bot"))
+                params={"platform": "bale", "chat_id": "111"}, headers=h("bot"))
 
     r = client.post(f"/admin/orders/{order['id']}/approve-payment", headers=h("admin"))
     assert r.status_code == 200
@@ -211,11 +211,11 @@ def test_approve_payment_idempotent_replay_is_marked_written(client, reader, wri
     seed_products(reader)
     register_and_approve(client)
     order = client.post("/orders", json={
-        "platform": "telegram", "chat_id": "111",
+        "platform": "bale", "chat_id": "111",
         "items": [{"kala_code": 101, "qty": 1}],
     }, headers=h("bot")).json()
     client.post(f"/orders/{order['id']}/receipt", json={"receipt_ref": "R-1"},
-                params={"platform": "telegram", "chat_id": "111"}, headers=h("bot"))
+                params={"platform": "bale", "chat_id": "111"}, headers=h("bot"))
 
     # The header already exists in the accounting DB from an earlier real write.
     writer.committed = False
@@ -235,6 +235,6 @@ def test_writer_takes_lock_before_idempotency_check():
     writer.write_order(1, 7001, [(101, 1.0, 100.0)])
 
     sqls = [sql.upper() for sql, _ in conn.executed]
-    updlock_idx = next(i for i, s in enumerate(sqls) if "UPDLOCK" in s)
+    lock_idx = next(i for i, s in enumerate(sqls) if "SP_GETAPPLOCK" in s)
     sharhlp_idx = next(i for i, s in enumerate(sqls) if "SHARHLP" in s and "SELECT" in s)
-    assert updlock_idx < sharhlp_idx
+    assert lock_idx < sharhlp_idx

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Start the Bale bot and the Telegram bot in one process.
+    Start the Bale bot.
 
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 -Check
@@ -38,7 +38,7 @@ if ($DryRun) { $appArgs += "--dry-run" }
 if ($DryRun) {
     Write-Host "shopbots dry run: adapters start, no network call is made." -ForegroundColor Green
 } else {
-    Write-Host "shopbots is starting (Bale + Telegram, whichever tokens are set)." -ForegroundColor Green
+    Write-Host "shopbots is starting (Bale)." -ForegroundColor Green
     Write-Host "  shopapi : see SHOPAPI_BASE_URL in .env"
     Write-Host "  logs    : platform, update id and event type only - never tokens, names or phones"
     Write-Host "  press Ctrl+C to stop"

@@ -81,10 +81,10 @@ def test_server_page_shows_status(server_context, admin_qapp, fake_api):
 def test_secrets_are_never_prefilled(server_context, admin_qapp):
     page = _open_page(server_context, admin_qapp)
     try:
-        token_field = page._inputs["TELEGRAM_TOKEN"]
+        token_field = page._inputs["BALE_TOKEN"]
         assert token_field.text() == ""
         assert "تنظیم شده" in token_field.placeholderText()
-        assert "تنظیم نشده" in page._inputs["BALE_TOKEN"].placeholderText()
+        assert "TELEGRAM_TOKEN" not in page._inputs
         assert page._inputs["BANK_ACCOUNT_TEXT"].text() == "حساب قدیم"
     finally:
         page.close()

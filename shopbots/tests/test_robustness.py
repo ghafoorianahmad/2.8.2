@@ -8,6 +8,8 @@ import pytest
 
 from app import texts
 from app.engine import parse_callback
+from app import config
+from app.config import Settings
 from app.main import build_adapters, run
 from app.polling import poll_platform
 from app.ratelimit import RateLimiter
@@ -18,7 +20,6 @@ from .conftest import (
     ADMIN_CHAT,
     BALE_TOKEN,
     CUSTOMER_CHAT,
-    TELEGRAM_TOKEN,
     bot_env,
     message_update,
     push_callback,
@@ -79,13 +80,11 @@ def test_the_same_update_is_handled_only_once(env, bot_apis, shopapi):
 
 def test_last_update_id_is_persisted_per_platform(env, settings, bot_apis, shopapi):
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
-    shopapi.add_user("telegram", CUSTOMER_CHAT, status="approved", person_code=7001)
 
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 10, CUSTOMER_CHAT, text="/start")
-        await push_message(engine, "telegram", 4, CUSTOMER_CHAT, text="/start")
         assert engine.store.get_last_update_id("bale") == 10
-        assert engine.store.get_last_update_id("telegram") == 4
+        assert engine.store.get_last_update_id("other") == 0
         # a restart keeps the offsets
         fresh = Store(":memory:")
         assert fresh.get_last_update_id("bale") == 0
@@ -177,79 +176,31 @@ def test_shopapi_error_status_is_translated(env, bot_apis, shopapi):
     env(scenario)
 
 
-# ---- platform isolation ----------------------------------------------------
-def test_one_platform_failing_does_not_stop_the_other(settings, store, shopapi, bot_apis):
-    shopapi.add_user("telegram", CUSTOMER_CHAT, status="approved", person_code=7001)
-    bot_apis["bale"].raise_on = {"getUpdates"}
-    bot_apis["telegram"].updates = [message_update(1, CUSTOMER_CHAT, text="/start")]
-
-    async def scenario():
-        async with bot_env(settings, store, shopapi, bot_apis) as (engine, adapters, api):
-            bale_stop = asyncio.Event()
-            sleeps: list[float] = []
-
-            async def bale_sleep(seconds):
-                sleeps.append(seconds)
-                await asyncio.sleep(0.001)
-                if len(sleeps) >= 3:
-                    bale_stop.set()
-
-            bale_task = asyncio.create_task(
-                poll_platform(
-                    platform="bale", adapter=adapters["bale"], engine=engine,
-                    store=store, settings=settings, stop_event=bale_stop, sleep=bale_sleep,
-                )
-            )
-
-            telegram_stop = asyncio.Event()
-            telegram_task = asyncio.create_task(
-                poll_platform(
-                    platform="telegram", adapter=adapters["telegram"], engine=engine,
-                    store=store, settings=settings, stop_event=telegram_stop,
-                    sleep=lambda seconds: asyncio.sleep(0.001),
-                )
-            )
-
-            # let both pollers run for a moment
-            await asyncio.sleep(0.2)
-            assert bot_apis["telegram"].sent, "telegram must keep working while bale is down"
-            telegram_stop.set()
-
-            await asyncio.wait_for(telegram_task, timeout=5)
-            await asyncio.wait_for(bale_task, timeout=5)
-
-            # telegram kept working while bale was down
-            assert bot_apis["telegram"].last_text(CUSTOMER_CHAT).endswith(texts.MAIN_MENU)
-            # bale backed off exponentially and never stopped the process
-            assert sleeps[0] == 1.0
-            assert sleeps[1] == 2.0
-            assert len(bot_apis["bale"].calls) >= 3
-
-    asyncio.run(scenario())
-
-
-def test_dry_run_starts_both_adapters_with_fake_tokens(env, settings, store, shopapi, bot_apis):
+# ---- single channel: Bale (REQUIREMENTS §2) --------------------------------
+def test_dry_run_starts_the_bale_adapter_with_a_fake_token(env, settings, store, shopapi, bot_apis):
     real_adapters = build_adapters(settings)
-    assert set(real_adapters) == {"bale", "telegram"}
+    assert set(real_adapters) == {"bale"}
     assert real_adapters["bale"].platform == "bale"
-    assert real_adapters["telegram"].platform == "telegram"
 
     async def scenario(engine, adapters, api):
         result = await run(settings, dry_run=True, adapters=adapters, store=store, api=api)
-        assert result == {"platforms": ["bale", "telegram"], "dry_run": True}
+        assert result == {"platforms": ["bale"], "dry_run": True}
         assert bot_apis["bale"].calls == []       # dry run made no network call
-        assert bot_apis["telegram"].calls == []
 
     env(scenario)
 
 
-def test_proxy_applies_only_to_telegram(settings):
-    settings.proxy_url = "socks5://127.0.0.1:1080"
-    assert settings.proxy_for("bale") is None
-    assert settings.proxy_for("telegram") == "socks5://127.0.0.1:1080"
-    adapters = build_adapters(settings)
-    assert adapters["telegram"].proxy_url == "socks5://127.0.0.1:1080"
-    assert not hasattr(adapters["bale"], "proxy_url")
+def test_old_telegram_settings_are_ignored(monkeypatch):
+    """TELEGRAM_TOKEN / TELEGRAM_PROXY / PROXY_URL in an old .env start nothing."""
+    monkeypatch.setattr(config, "_load_dotenv", lambda: None)  # never read the real .env
+    monkeypatch.setenv("BALE_TOKEN", "")
+    monkeypatch.setenv("TELEGRAM_TOKEN", "123:fake")
+    monkeypatch.setenv("TELEGRAM_PROXY", "socks5://127.0.0.1:10808")
+    monkeypatch.setenv("PROXY_URL", "http://127.0.0.1:10808")
+    settings = Settings.from_env()
+    assert settings.enabled_platforms() == ()
+    assert build_adapters(settings) == {}
+    assert not any("telegram" in name or "proxy" in name for name in vars(settings))
 
 
 # ---- privacy ---------------------------------------------------------------
@@ -280,9 +231,7 @@ def test_no_token_or_phone_ever_reaches_the_logs(
     blob = "\n".join(record.getMessage() for record in caplog.records)
     assert caplog.records, "expected some log output"
     assert BALE_TOKEN not in blob
-    assert TELEGRAM_TOKEN not in blob
     assert "09121234567" not in blob
-    assert "TELEGRAM_TOKEN" not in blob
 
 
 def test_bot_api_error_never_contains_the_token(settings, bot_apis, shopapi):
@@ -305,8 +254,7 @@ def test_bot_api_error_never_contains_the_token(settings, bot_apis, shopapi):
 def test_admin_chat_matching_is_platform_aware(settings):
     settings.admin_chat_ids = ("bale:9001", "12345")
     assert settings.is_admin_chat("bale", "9001") is True
-    assert settings.is_admin_chat("telegram", "9001") is False
-    assert settings.is_admin_chat("telegram", "12345") is True   # unprefixed = any platform
+    assert settings.is_admin_chat("bale", "12345") is True       # unprefixed = any platform
     assert settings.is_admin_chat("bale", "9999") is False
     assert settings.is_admin_chat("bale", ADMIN_CHAT) is True
     assert settings.is_admin_chat("bale", CUSTOMER_CHAT) is False
@@ -314,10 +262,15 @@ def test_admin_chat_matching_is_platform_aware(settings):
 
 def test_admin_targets_expand_for_enabled_platforms(settings):
     settings.admin_chat_ids = ("bale:1", "999")
-    assert settings.admin_targets(("bale", "telegram")) == [
-        ("bale", "1"), ("bale", "999"), ("telegram", "999"),
-    ]
-    assert settings.admin_targets(("telegram",)) == [("telegram", "999")]
+    assert settings.admin_targets(("bale",)) == [("bale", "1"), ("bale", "999")]
+    assert settings.admin_targets(()) == []
+
+
+def test_leftover_telegram_admin_entries_are_ignored(settings):
+    settings.admin_chat_ids = ("telegram:9001", "bale:42")
+    assert settings.admin_entries() == [("bale", "42")]
+    assert settings.is_admin_chat("bale", "9001") is False
+    assert settings.admin_targets(("bale",)) == [("bale", "42")]
 
 
 def test_admin_sweep_is_a_noop_without_admins(env, settings, bot_apis, shopapi):

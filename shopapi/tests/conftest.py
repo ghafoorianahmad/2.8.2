@@ -76,7 +76,7 @@ class FakeWriter:
     """Fake accounting writer.
 
     Mirrors the two properties the API relies on: a unique Codlp per order
-    (allocated under a lock, as the real UPDLOCK/HOLDLOCK does) and idempotency
+    (allocated under a lock, as the real sp_getapplock does) and idempotency
     per order id (as the real Sharhlp='API-<id>' check does). `committed=False`
     simulates a dry-run (rolled back).
     """
@@ -101,7 +101,7 @@ class FakeWriter:
             person_code=person_code,
             datelp="1405/07/13",
             mablp=0,
-            status_code=6808,
+            status_code=0,
             usercode=1,
             anbarcode=1,
             items=items,
@@ -171,7 +171,7 @@ def seed_products(reader):
     reader.groups = [{"code": 1, "name": "Group 1"}, {"code": 2, "name": "Group 2"}]
 
 
-def register_and_approve(client, platform="telegram", chat_id="111", person_code=7001,
+def register_and_approve(client, platform="bale", chat_id="111", person_code=7001,
                          phone="09120000000"):
     client.post("/users/register", json={
         "platform": platform, "chat_id": chat_id, "name": "Ali", "phone": phone,

@@ -168,8 +168,8 @@ def test_role_matrix(client, reader, role, can_view, can_decide):
     add_staff(client, owner, "member", role)
     token = login(client, "member").json()["token"]
     client.post("/users/register", headers=h("bot"), json={
-        "platform": "telegram", "chat_id": "5", "name": "C", "phone": "0912"})
-    user_id = client.get("/users/telegram/5", headers=h("bot")).json()["id"]
+        "platform": "bale", "chat_id": "5", "name": "C", "phone": "0912"})
+    user_id = client.get("/users/bale/5", headers=h("bot")).json()["id"]
 
     assert (client.get("/admin/users", headers=bearer(token)).status_code == 200) == can_view
     r = client.post(f"/admin/users/{user_id}/approve", headers=bearer(token),
@@ -271,7 +271,7 @@ def test_staff_can_browse_catalogue_but_not_place_orders(client, reader):
     assert client.get("/products", headers=bearer(token)).status_code == 200
     assert client.get("/groups", headers=bearer(token)).status_code == 200
     r = client.post("/orders", headers=bearer(token), json={
-        "platform": "telegram", "chat_id": "1", "items": [{"kala_code": 101, "qty": 1}]})
+        "platform": "bale", "chat_id": "1", "items": [{"kala_code": 101, "qty": 1}]})
     assert r.status_code == 401
 
 
@@ -301,8 +301,8 @@ def test_event_feed(client, reader):
     assert start["items"] == []
     register_and_approve(client, chat_id="77")
     order = client.post("/orders", headers=h("bot"), json={
-        "platform": "telegram", "chat_id": "77", "items": [{"kala_code": 101, "qty": 1}]}).json()
-    client.post(f"/orders/{order['id']}/receipt?platform=telegram&chat_id=77",
+        "platform": "bale", "chat_id": "77", "items": [{"kala_code": 101, "qty": 1}]}).json()
+    client.post(f"/orders/{order['id']}/receipt?platform=bale&chat_id=77",
                 headers=h("bot"), json={"receipt_ref": "photo"})
     feed = client.get(f"/admin/events?after={start['last_id']}", headers=bearer(token)).json()
     kinds = [e["kind"] for e in feed["items"]]
@@ -310,7 +310,7 @@ def test_event_feed(client, reader):
                      "receipt_uploaded"]
     # Re-registering an existing customer is not a new event.
     client.post("/users/register", headers=h("bot"), json={
-        "platform": "telegram", "chat_id": "77", "name": "Ali", "phone": "0912"})
+        "platform": "bale", "chat_id": "77", "name": "Ali", "phone": "0912"})
     again = client.get(f"/admin/events?after={feed['last_id']}", headers=bearer(token)).json()
     assert again["items"] == [] and again["last_id"] == feed["last_id"]
 

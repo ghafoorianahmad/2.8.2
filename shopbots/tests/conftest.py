@@ -14,12 +14,11 @@ import pytest
 
 from app.config import Settings
 from app.engine import BotEngine
-from app.platforms import BaleAdapter, TelegramAdapter
+from app.platforms import BaleAdapter
 from app.shopapi import ShopApiClient
 from app.store import Store
 
 BALE_TOKEN = "TESTTOKEN-BALE-000"
-TELEGRAM_TOKEN = "TESTTOKEN-TG-000"
 BOT_KEY = "test-bot-key"
 ADMIN_KEY = "test-admin-key"
 ADMIN_CHAT = "9001"
@@ -419,10 +418,8 @@ def settings():
         bot_api_key=BOT_KEY,
         admin_api_key=ADMIN_KEY,
         bale_token=BALE_TOKEN,
-        telegram_token=TELEGRAM_TOKEN,
         bale_api_base="https://bale.test",
-        telegram_api_base="https://telegram.test",
-        admin_chat_ids=(f"bale:{ADMIN_CHAT}", f"telegram:{ADMIN_CHAT}"),
+        admin_chat_ids=(f"bale:{ADMIN_CHAT}",),
         sqlite_path=":memory:",
         poll_timeout=1,
         admin_sweep_seconds=30,
@@ -434,7 +431,7 @@ def settings():
 
 @pytest.fixture
 def bot_apis():
-    return {"bale": FakeBotApi(), "telegram": FakeBotApi()}
+    return {"bale": FakeBotApi()}
 
 
 @pytest.fixture
@@ -453,7 +450,6 @@ async def bot_env(settings, store, shopapi, bot_apis, rate_limiter=None):
     adapters = {}
     for platform, adapter_cls, base, token in (
         ("bale", BaleAdapter, settings.bale_api_base, settings.bale_token),
-        ("telegram", TelegramAdapter, settings.telegram_api_base, settings.telegram_token),
     ):
         client = httpx.AsyncClient(transport=httpx.MockTransport(bot_apis[platform].handler))
         clients.append(client)

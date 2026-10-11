@@ -1,7 +1,9 @@
 """Shared conversation engine: routing, customer flow, admin flow.
 
 The engine is platform agnostic — it only talks to a PlatformAdapter and to the
-shopapi client. Prices always come from shopapi; a user can never supply one.
+shop core (`app/core`: catalog, cart, orders, customers), which talks to shopapi.
+The engine owns states, texts and keyboards; the core owns the shop rules.
+Prices always come from shopapi; a user can never supply one.
 
 Privacy: this module never logs names, phones or message text. Log lines are
 produced only by `utils.log_event` (platform, update id, event type).
@@ -13,12 +15,22 @@ from typing import Any
 
 from . import texts
 from .config import Settings
+from .core import (
+    STATUS_APPROVED,
+    STATUS_NEW,
+    STATUS_REJECTED,
+    CartService,
+    CatalogService,
+    CustomerService,
+    OrderService,
+    ReceiptOutcome,
+)
+from .core.cart import clamp_qty
 from .platforms import BotApiError, PlatformAdapter, contact_keyboard, inline_keyboard, reply_keyboard
 from .ratelimit import RateLimiter
 from .shopapi import (
     ShopApiClient,
     ShopApiError,
-    ShopApiRejected,
     ShopApiUnavailable,
     format_admin_error,
 )
@@ -28,7 +40,6 @@ from .utils import (
     log_event,
     mask_phone,
     normalize_digits,
-    normalize_mobile,
     parse_int,
     shorten,
 )
@@ -80,7 +91,6 @@ CUSTOMER_EVENT_KINDS = frozenset(
 EVENT_CURSOR_KEY = "shopapi_event_cursor"
 MAX_CALLBACK_LEN = 64
 MAX_CALLBACK_ARG = 1_000_000_000
-MAX_QTY = 1000
 
 
 def parse_callback(data: Any) -> tuple[str, list[int]] | None:
@@ -136,6 +146,14 @@ class BotEngine:
             settings.rate_limit_messages, settings.rate_limit_window
         )
         self.logger = logger or logging.getLogger("shopbots.engine")
+        # channel-independent shop logic (app/core)
+        self.catalog = CatalogService(
+            api, page_size=settings.product_page_size,
+            show_out_of_stock=settings.show_out_of_stock,
+        )
+        self.cart = CartService(store)
+        self.orders = OrderService(api, store, self.cart)
+        self.customers = CustomerService(api, max_name_len=settings.max_name_len)
 
     # ================= update entry point =================================
     async def handle_update(self, platform: str, update: dict) -> bool:
@@ -382,20 +400,20 @@ class BotEngine:
         self, adapter: PlatformAdapter, platform: str, chat_id: str, *, welcome: bool = True
     ) -> None:
         intro = texts.WELCOME if welcome else None
-        user = await self.api.get_user(platform, chat_id)
-        if user is None:
+        status = await self.customers.status(platform, chat_id)
+        if status == STATUS_NEW:
             await self._begin_registration(adapter, platform, chat_id, intro=intro)
             return
-        if user.get("status") != "approved":
-            await self._show_not_approved(adapter, platform, chat_id, user, intro=intro)
+        if status != STATUS_APPROVED:
+            await self._show_not_approved(adapter, platform, chat_id, status, intro=intro)
             return
         await self._show_main_menu(adapter, platform, chat_id, intro=intro)
 
     async def _show_not_approved(
-        self, adapter: PlatformAdapter, platform: str, chat_id: str, user: dict,
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, status: str,
         *, intro: str | None = None,
     ) -> None:
-        body = texts.REJECTED_USER if user.get("status") == "rejected" else texts.STILL_PENDING
+        body = texts.REJECTED_USER if status == STATUS_REJECTED else texts.STILL_PENDING
         if intro:
             body = f"{intro}\n\n{body}"
         rows = [[(texts.BTN_SUPPORT, "support"), (texts.BTN_INFO, "info")]]
@@ -412,8 +430,8 @@ class BotEngine:
     async def _registration_name(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, text: str
     ) -> None:
-        name = (text or "").strip()
-        if len(name) < 2 or len(name) > self.settings.max_name_len or name.startswith("/"):
+        name = self.customers.valid_name(text)
+        if name is None:
             await self._send_text(adapter, chat_id, texts.NAME_INVALID)
             return
         self.store.set_conversation(platform, chat_id, STATE_AWAIT_PHONE, {"name": name})
@@ -435,17 +453,12 @@ class BotEngine:
         text: str,
         contact: dict | None,
     ) -> None:
-        phone = ""
-        if isinstance(contact, dict) and contact.get("phone_number"):
-            phone = normalize_mobile(contact.get("phone_number"))
-        if not phone:
-            phone = normalize_mobile(text)
+        phone = self.customers.phone_from(text, contact)
         if not phone:
             await self._send_text(adapter, chat_id, texts.PHONE_INVALID)
             return
         _state, data = self.store.get_conversation(platform, chat_id)
-        name = str(data.get("name") or "").strip() or "مشتری"
-        await self.api.register_user(platform, chat_id, name, phone)
+        await self.customers.register(platform, chat_id, str(data.get("name") or ""), phone)
         self.store.clear_conversation(platform, chat_id)
         await self._send_text(adapter, chat_id, texts.REGISTERED_PENDING)
 
@@ -474,7 +487,7 @@ class BotEngine:
         )
 
     async def _show_groups(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
-        groups = await self.api.get_groups()
+        groups = await self.catalog.groups()
         if not groups:
             await self._send_options(
                 adapter, platform, chat_id, texts.NO_GROUPS, [[(texts.BTN_MENU, "menu")]],
@@ -498,40 +511,26 @@ class BotEngine:
         page: int = 1,
         edit_message_id=None,
     ) -> None:
-        page = max(1, int(page or 1))
-        page_size = max(1, int(self.settings.product_page_size))
-        result = await self.api.get_products(
-            q=q, group=group, page=page, page_size=page_size,
-            in_stock=not self.settings.show_out_of_stock,
-        )
-        items = [it for it in (result.get("items") or []) if isinstance(it, dict)]
-        total = int(result.get("total") or 0)
-        pages = max(1, (total + page_size - 1) // page_size)
+        result = await self.catalog.products(q=q, group=group, page=page)
+        page, pages = result.page, result.pages
 
         cache: dict[str, dict] = {}
         rows: list = []
-        if not items:
+        if not result.items:
             body = texts.NO_PRODUCTS
         else:
             lines = [texts.PRODUCTS_TITLE.format(page=page, pages=pages)]
-            for it in items:
-                code = it.get("code")
-                name = str(it.get("name") or "")
-                price = it.get("unit_price") or 0
-                available = it.get("available_qty") or 0
-                cache[str(code)] = {
-                    "name": name,
-                    "price": float(price),
-                    "qty": float(available),
-                }
-                in_stock = float(available) > 0
+            for product in result.items:
+                code = product.code
+                cache[str(code)] = product.as_cache()
                 lines.append(
                     texts.PRODUCT_LINE.format(
-                        name=name, price=fmt_num(price), stock=_stock_label(in_stock)
+                        name=product.name, price=fmt_num(product.price),
+                        stock=_stock_label(product.in_stock),
                     )
                 )
-                label = shorten(name, 40) or str(code)
-                rows.append([(label if in_stock else f"❌ {label}", f"prod:{code}")])
+                label = shorten(product.name, 40) or str(code)
+                rows.append([(label if product.in_stock else f"❌ {label}", f"prod:{code}")])
             nav = []
             group_arg = int(group) if group is not None else 0
             if page > 1:
@@ -561,7 +560,7 @@ class BotEngine:
         if not product:
             await self._send_text(adapter, chat_id, texts.NO_PRODUCTS)
             return
-        qty = max(1, min(int(qty or 1), MAX_QTY))
+        qty = clamp_qty(qty)
         in_stock = float(product.get("qty") or 0) > 0
         body = texts.PRODUCT_DETAIL.format(
             name=product["name"], price=fmt_num(product["price"]),
@@ -599,13 +598,12 @@ class BotEngine:
         if product["qty"] <= 0:
             await self._answer_callback(adapter, callback_id, texts.OUT_OF_STOCK)
             return
-        qty = max(1, min(int(qty or 1), MAX_QTY))
-        self.store.cart_add(platform, chat_id, code, product["name"], qty, product["price"])
+        self.cart.add(platform, chat_id, code, product["name"], qty, product["price"])
         await self._answer_callback(adapter, callback_id, texts.QTY_ADDED)
         await self._show_cart(adapter, platform, chat_id)
 
     async def _show_cart(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
-        items = self.store.cart_list(platform, chat_id)
+        items = self.cart.items(platform, chat_id)
         if not items:
             await self._send_options(
                 adapter, platform, chat_id, texts.CART_EMPTY, [[(texts.BTN_MENU, "menu")]],
@@ -614,7 +612,6 @@ class BotEngine:
             return
         lines = [texts.CART_TITLE]
         rows = []
-        total = 0.0
         for item in items:
             code = item["kala_code"]
             lines.append(
@@ -622,7 +619,6 @@ class BotEngine:
                     name=item["name"], qty=fmt_num(item["qty"]), price=fmt_num(item["unit_price"])
                 )
             )
-            total += float(item["qty"]) * float(item["unit_price"])
             rows.append(
                 [
                     (texts.BTN_MINUS, f"cdec:{code}"),
@@ -630,7 +626,7 @@ class BotEngine:
                     (texts.BTN_REMOVE, f"cdel:{code}"),
                 ]
             )
-        lines.append(texts.CART_TOTAL.format(total=fmt_num(total)))
+        lines.append(texts.CART_TOTAL.format(total=fmt_num(self.cart.total(items))))
         rows.append([(texts.BTN_CHECKOUT, "checkout")])
         rows.append([(texts.BTN_CLEAR_CART, "cclear"), (texts.BTN_MENU, "menu")])
         await self._send_options(
@@ -641,39 +637,28 @@ class BotEngine:
         self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int, delta: float,
         callback_id=None,
     ) -> None:
-        items = {int(it["kala_code"]): it for it in self.store.cart_list(platform, chat_id)}
-        item = items.get(int(code))
-        if item is None:
+        if not self.cart.change(platform, chat_id, code, delta):
             await self._answer_callback(adapter, callback_id, texts.BAD_CALLBACK)
             return
-        new_qty = float(item["qty"]) + float(delta)
-        if new_qty <= 0:
-            self.store.cart_remove(platform, chat_id, int(code))
-        else:
-            self.store.cart_set_qty(platform, chat_id, int(code), min(new_qty, MAX_QTY))
         await self._answer_callback(adapter, callback_id)
         await self._show_cart(adapter, platform, chat_id)
 
     async def _cart_remove(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int, callback_id=None
     ) -> None:
-        self.store.cart_remove(platform, chat_id, int(code))
+        self.cart.remove(platform, chat_id, code)
         await self._answer_callback(adapter, callback_id, texts.CART_REMOVED)
         await self._show_cart(adapter, platform, chat_id)
 
     async def _checkout(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
-        items = self.store.cart_list(platform, chat_id)
-        if not items:
+        result = await self.orders.checkout(platform, chat_id)
+        if result.empty_cart:
             await self._send_text(adapter, chat_id, texts.CART_EMPTY)
             return
-        payload = [
-            {"kala_code": int(it["kala_code"]), "qty": float(it["qty"])} for it in items
-        ]
-        order = await self.api.create_order(platform, chat_id, payload)
+        order = result.order
         if not order:
             await self._send_text(adapter, chat_id, texts.SERVICE_UNAVAILABLE)
             return
-        self.store.cart_clear(platform, chat_id)
         order_id = order.get("id")
         total = fmt_num(order.get("total"))
         parts = [texts.CHECKOUT_OK.format(order_id=order_id, total=total)]
@@ -704,36 +689,31 @@ class BotEngine:
         self, adapter: PlatformAdapter, platform: str, chat_id: str, photo, data: dict
     ) -> None:
         order_id = (data or {}).get("order_id")
-        file_ref = None
-        if isinstance(photo, list) and photo:
-            last = photo[-1]
-            if isinstance(last, dict):
-                file_ref = last.get("file_id")
-        if not order_id:
+        result = await self.orders.attach_receipt(platform, chat_id, order_id, photo)
+        if result.outcome is ReceiptOutcome.NO_ORDER:
             await self._send_text(adapter, chat_id, texts.NO_ORDER_FOR_RECEIPT)
             return
-        if not file_ref:
+        if result.outcome is ReceiptOutcome.NOT_A_PHOTO:
             await self._send_text(adapter, chat_id, texts.RECEIPT_EXPECTED_PHOTO)
             return
-        try:
-            order = await self.api.upload_receipt(int(order_id), str(file_ref), platform, chat_id)
-        except ShopApiRejected as exc:
+        if result.outcome in (ReceiptOutcome.NOT_AWAITING, ReceiptOutcome.REJECTED):
             self.store.clear_conversation(platform, chat_id)
-            message = texts.ORDER_NOT_AWAITING if exc.status == 409 else exc.message_fa
+            message = (texts.ORDER_NOT_AWAITING if result.outcome is ReceiptOutcome.NOT_AWAITING
+                       else result.message_fa)
             await self._send_text(adapter, chat_id, message)
             return
-        self.store.save_receipt(int(order_id), platform, chat_id, str(file_ref))
+        order = result.order
         self.store.clear_conversation(platform, chat_id)
         await self._send_options(
             adapter, platform, chat_id, texts.RECEIPT_RECEIVED, [[(texts.BTN_MENU, "menu")]],
         )
         # tell the admins right away instead of waiting for the next sweep
-        if isinstance(order, dict) and not self.store.is_announced("order", int(order_id)):
+        if order is not None and not self.store.is_announced("order", int(order_id)):
             await self._announce_order(order)
             self.store.mark_announced("order", int(order_id), platform, chat_id)
 
     async def _show_orders(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
-        orders = await self.api.list_user_orders(platform, chat_id)
+        orders = await self.orders.list_for(platform, chat_id)
         if not orders:
             await self._send_options(
                 adapter, platform, chat_id, texts.ORDERS_EMPTY, [[(texts.BTN_MENU, "menu")]],
@@ -742,14 +722,14 @@ class BotEngine:
             return
         lines = [texts.ORDERS_TITLE]
         rows = []
-        for order in orders[:10]:
+        for order in orders:
             lines.append(
                 texts.ORDER_LINE.format(
                     order_id=order.get("id"), status=texts.status_fa(order.get("status")),
                     total=fmt_num(order.get("total")),
                 )
             )
-            if order.get("status") == "awaiting_payment" and order.get("id") is not None:
+            if self.orders.awaits_payment(order):
                 rows.append(
                     [(f"{texts.BTN_SEND_RECEIPT} ({order.get('id')})", f"rcpt:{order.get('id')}")]
                 )

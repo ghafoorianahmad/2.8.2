@@ -39,13 +39,16 @@
 1. **TabaghehBandi code 6808 does not exist** in this copy. TabaghehBandi here
    contains free-text notes with personal/financial data (names, phone numbers,
    cheque amounts), not a clean order-status table. The single existing
-   KalaOrder row uses `Status=6808`, so the default `ACCOUNTING_STATUS_CODE=6808`
-   is kept, but the premise "6808 is the TabaghehBandi code of تایید" could NOT
-   be confirmed. The writer writes the configured integer and does NOT read
-   TabaghehBandi to validate it (avoids selecting personal data). Flag for the
-   production DBA.
-2. name_mo.mobile may hold non-normalized digits; `normalize_fa` + a SQL REPLACE
-   chain are used for exact matching.
+   KalaOrder row uses `Status=6808`. Since 2026-10-11 the default is
+   `ACCOUNTING_STATUS_CODE=0` ("no status"; counted in the software's reserve
+   column, SAZEH_DB_REFERENCE §4.5) until GUI test G2 shows what the software
+   itself writes. The writer does NOT read TabaghehBandi.
+2. `name_mo.mobile`/`Tel1` are EMPTY in every row. Mobile matching uses recipe R4
+   (`DetailTBL`, TabaghehBandiID 1 and 3, last 10 digits; `text.mobile_key`).
+   A number shared by 2+ persons is "no match" (manual approval). Creating a
+   person (`AccountingWriter.create_person`) re-runs R4 under the
+   `shop:name_mo` app lock and links to the existing person instead of
+   creating a duplicate (the DB has no unique constraint on phones).
 3. "NOT NULL" columns: only `KalaOrder.Codlp` is NOT NULL. The spec's empty-
    string rule is still enforced for `sharh`/`field1..8`/`tavasot`.
 

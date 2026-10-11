@@ -199,8 +199,8 @@ def main() -> int:
         from app.accounting_writer import DETAIL_COLUMNS, HEADER_COLUMNS
         print("\nWOULD INSERT KalaOrder:")
         print("  ", dict(zip(HEADER_COLUMNS, [
-            res.accounting_order_no, person, res.datelp, res.mablp, f"API-{oid}", -100, 0, "", 0, 0, 0,
-            res.status_code, 0, res.usercode, 0, 0])))
+            res.accounting_order_no, person, res.datelp, res.mablp, f"API-{oid}", -100, 0, "", 0, 0,
+            res.status_code, 0, res.usercode, 0, 0, 0])))
         print("WOULD INSERT KalaOrderDetail:")
         for i, it in enumerate(res.items, 1):
             print("  ", dict(zip(DETAIL_COLUMNS, [i, res.accounting_order_no, it["codekala"], it["meg"],
@@ -242,6 +242,11 @@ def _rows_for(conn, codlp: int):
     return head, detail
 
 
+def _expected_status() -> int:
+    from app.config import Settings
+    return Settings.from_env().accounting_status_code
+
+
 def real_write_checks(bot, admin, chat_id, stamp, oid, body, response, picks, person) -> int:
     ok = response.status_code == 200 and body.get("status") == "written" and body.get("accounting_order_no")
     record("3b approve-payment REAL write -> written", bool(ok),
@@ -254,9 +259,9 @@ def real_write_checks(bot, admin, chat_id, stamp, oid, body, response, picks, pe
     try:
         head, detail = _rows_for(conn, codlp)
         h = head[0] if head else None
-        good = (len(head) == 1 and h.Codnlp == person and h.Sharhlp == f"API-{oid}" and h.Status == 6808
+        good = (len(head) == 1 and h.Codnlp == person and h.Sharhlp == f"API-{oid}" and h.Status == _expected_status()
                 and h.Codf == -100 and h.usercode == 1 and float(h.Mablp) == float(body["total"]))
-        record("4a KalaOrder header (Status 6808, Codf -100, usercode 1, Mablp = total)", good, "")
+        record("4a KalaOrder header (Status per config, Codf -100, usercode 1, Mablp = total)", good, "")
         if h is not None:
             print("   KalaOrder:", {k: getattr(h, k) for k in HEADER_SHOWN})
         texts_ok = all(getattr(d, f) == "" for d in detail for f in TEXT_COLUMNS)

@@ -22,7 +22,7 @@ def env_file(tmp_path):
         "# shop server\n"
         "ACCOUNTING_SERVER=.\\SQLEXPRESS\n"
         "BANK_ACCOUNT_TEXT=old text\n"
-        "TELEGRAM_TOKEN=123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcd\n",
+        "BALE_TOKEN=123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcd\n",
         encoding="utf-8",
     )
     control.set_files(env_file=path, log_file=tmp_path / "app.log")
@@ -70,8 +70,8 @@ def test_settings_hide_secrets(client, env_file):
     owner = owner_token(client)
     settings = client.get("/admin/server/settings", headers=bearer(owner)).json()["settings"]
     assert settings["BANK_ACCOUNT_TEXT"] == {"secret": False, "value": "old text"}
-    assert settings["TELEGRAM_TOKEN"] == {"secret": True, "set": True}
-    assert settings["BALE_TOKEN"] == {"secret": True, "set": False}
+    assert settings["BALE_TOKEN"] == {"secret": True, "set": True}
+    assert "TELEGRAM_TOKEN" not in settings
     assert "ABCDEFGH" not in str(settings)
     assert "ACCOUNTING_SERVER" not in settings
 
@@ -106,9 +106,12 @@ def test_settings_update_keeps_other_lines(client, env_file, db):
     ("RESERVE_HOURS", "abc"),
     ("PRICE_LEVEL_BOT", "9"),
     ("BALE_TOKEN", "not-a-token"),
-    ("ADMIN_CHAT_IDS", "telegram:12; rm -rf"),
+    ("ADMIN_CHAT_IDS", "bale:12; rm -rf"),
+    ("ADMIN_CHAT_IDS", "telegram:12"),
     ("BANK_ACCOUNT_TEXT", "line1\nINJECTED=1"),
-    ("PROXY_URL", "ftp://x"),
+    ("PROXY_URL", "socks5://127.0.0.1:10808"),
+    ("TELEGRAM_PROXY", "socks5://127.0.0.1:10808"),
+    ("TELEGRAM_TOKEN", "123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcd"),
 ])
 def test_dangerous_or_invalid_settings_are_refused(client, env_file, key, value):
     owner = owner_token(client)

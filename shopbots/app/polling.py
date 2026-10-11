@@ -37,12 +37,10 @@ async def poll_platform(
     dry_run: bool = False,
     sleep: SleepFn = asyncio.sleep,
 ) -> None:
-    proxy = getattr(adapter, "proxy_label", None)
-    via = f" proxy={proxy}" if proxy else ""
     if dry_run:
-        logger.info("platform=%s started dry_run=true%s", platform, via)
+        logger.info("platform=%s started dry_run=true", platform)
         return
-    logger.info("platform=%s started%s", platform, via)
+    logger.info("platform=%s started", platform)
     health.mark_started(platform)
     backoff = 1.0
     failures = 0

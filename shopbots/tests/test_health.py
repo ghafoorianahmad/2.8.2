@@ -49,7 +49,7 @@ def test_poll_records_errors_then_ok():
 
 def test_snapshot_is_a_copy():
     health.reset()
-    health.mark_started("telegram")
+    health.mark_started("bale")
     snap = health.snapshot()
-    snap["telegram"]["running"] = False
-    assert health.snapshot()["telegram"]["running"] is True
+    snap["bale"]["running"] = False
+    assert health.snapshot()["bale"]["running"] is True

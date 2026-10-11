@@ -234,13 +234,8 @@ def wire_control(info: dict, *, supervised: bool) -> None:
     def bots_status() -> dict:
         from shopbots_app import health
 
-        configured = [name for name, key in (("bale", "BALE_TOKEN"), ("telegram", "TELEGRAM_TOKEN"))
-                      if os.environ.get(key, "").strip()]
-        from shopbots_app.config import describe_proxy
-
-        proxy = os.environ.get("TELEGRAM_PROXY", "").strip() or os.environ.get("PROXY_URL", "").strip()
-        return {"configured": configured, "platforms": health.snapshot(),
-                "telegram_proxy": describe_proxy(proxy)}
+        configured = ["bale"] if os.environ.get("BALE_TOKEN", "").strip() else []
+        return {"configured": configured, "platforms": health.snapshot()}
 
     control.register_status_provider("bots", bots_status)
 
@@ -350,7 +345,7 @@ def start_bots(max_restarts: int = 10) -> threading.Thread:
             platforms = settings.enabled_platforms()
             if not platforms:
                 logger.warning(
-                    "bots: no BALE_TOKEN / TELEGRAM_TOKEN configured - running the API only"
+                    "bots: no BALE_TOKEN configured - running the API only"
                 )
                 return
             # the API owns shopapi.db, so the bots keep their own state file
@@ -358,8 +353,6 @@ def start_bots(max_restarts: int = 10) -> threading.Thread:
             prepare_messages_file()
             source = texts.load()
             logger.info("bots: texts from %s", source)
-            if "telegram" in platforms:
-                logger.info("bots: telegram proxy = %s", settings.proxy_label())
             try:
                 logger.info("bots: starting %s", ", ".join(platforms))
                 store = BotStore(settings.sqlite_path)
@@ -582,11 +575,8 @@ SETUP_FIELDS = {
     "api_host": "API_HOST",
     "api_port": "API_PORT",
     "bank_account_text": "BANK_ACCOUNT_TEXT",
-    "telegram_token": "TELEGRAM_TOKEN",
     "bale_token": "BALE_TOKEN",
     "admin_chat_ids": "ADMIN_CHAT_IDS",
-    "proxy_url": "TELEGRAM_PROXY",
-    "telegram_proxy": "TELEGRAM_PROXY",
 }
 
 #: Written once, on the first setup. Existing values are never replaced.
@@ -603,7 +593,7 @@ FIRST_RUN_DEFAULTS = {
     "RESERVE_HOURS": "12",
     "MAX_ORDER_QTY": "10000",
     "ALLOW_SHARED_PERSON_CODE": "false",
-    "ACCOUNTING_STATUS_CODE": "6808",
+    "ACCOUNTING_STATUS_CODE": "0",   # 6808 does not exist (SAZEH_DB_REFERENCE §9.2)
     "ACCOUNTING_USERCODE": "1",
     "ACCOUNTING_ANBARCODE": "1",
     "LOG_LEVEL": "INFO",

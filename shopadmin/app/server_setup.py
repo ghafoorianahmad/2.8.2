@@ -258,7 +258,7 @@ def task_xml(command: list[str], *, run_as_user: str | None) -> str:
         principal = f"<UserId>{SID_SYSTEM}</UserId><RunLevel>HighestAvailable</RunLevel>"
     return f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>Shop server: API and Bale/Telegram bots</Description></RegistrationInfo>
+  <RegistrationInfo><Description>Shop server: API and Bale bot</Description></RegistrationInfo>
   <Triggers><BootTrigger><Enabled>true</Enabled><Delay>PT30S</Delay></BootTrigger></Triggers>
   <Principals><Principal id="Author">{principal}</Principal></Principals>
   <Settings>

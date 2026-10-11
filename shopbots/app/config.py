@@ -14,7 +14,6 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 DEFAULT_BALE_API_BASE = "https://tapi.bale.ai"
-DEFAULT_TELEGRAM_API_BASE = "https://api.telegram.org"
 
 
 def _load_dotenv() -> None:
@@ -46,6 +45,10 @@ def _env_list(key: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in _env(key).split(",") if part.strip())
 
 
+#: Channels this process can run (one adapter each in app/platforms/).
+SUPPORTED_PLATFORMS = ("bale",)
+
+
 @dataclass
 class Settings:
     # --- shopapi ---
@@ -56,13 +59,11 @@ class Settings:
     admin_api_key: str = ""
 
     # --- bots ---
+    # Bale is the only channel (REQUIREMENTS §2). A later channel plugs in as a
+    # new adapter in app/platforms/ on the same core; the old Telegram Bot-API
+    # adapter and its HTTP/SOCKS proxy were removed (2026-10-11).
     bale_token: str = ""
-    telegram_token: str = ""
     bale_api_base: str = DEFAULT_BALE_API_BASE
-    telegram_api_base: str = DEFAULT_TELEGRAM_API_BASE
-    #: Telegram-only proxy: socks5://host:port or http://host:port (TELEGRAM_PROXY,
-    #: falling back to the older PROXY_URL). Never used for shopapi or Bale.
-    proxy_url: str = ""
 
     # --- admins ---
     admin_chat_ids: tuple[str, ...] = ()
@@ -91,10 +92,7 @@ class Settings:
             bot_api_key=_env("BOT_API_KEY", ""),
             admin_api_key=_env("ADMIN_API_KEY", ""),
             bale_token=_env("BALE_TOKEN", ""),
-            telegram_token=_env("TELEGRAM_TOKEN", ""),
             bale_api_base=_env("BALE_API_BASE", DEFAULT_BALE_API_BASE),
-            telegram_api_base=_env("TELEGRAM_API_BASE", DEFAULT_TELEGRAM_API_BASE),
-            proxy_url=_env("TELEGRAM_PROXY", "") or _env("PROXY_URL", ""),
             admin_chat_ids=_env_list("ADMIN_CHAT_IDS"),
             sqlite_path=_env("SQLITE_PATH", str(BASE_DIR / "shopbots.db")),
             poll_timeout=_env_int("POLL_TIMEOUT", 25),
@@ -113,16 +111,18 @@ class Settings:
     def admin_entries(self) -> list[tuple[str | None, str]]:
         """Admin chats as (platform|None, chat_id).
 
-        `ADMIN_CHAT_IDS` accepts `12345` (any platform) and `telegram:12345`
-        / `bale:12345` for an unambiguous target.
+        `ADMIN_CHAT_IDS` accepts `12345` (any platform) and `bale:12345` for an
+        unambiguous target. Entries for other platforms (e.g. a leftover
+        `telegram:12345`) are ignored, never matched against a Bale chat.
         """
         entries: list[tuple[str | None, str]] = []
         for raw in self.admin_chat_ids:
             platform, sep, chat_id = raw.partition(":")
-            if sep and platform.strip().lower() in {"bale", "telegram"} and chat_id.strip():
-                entries.append((platform.strip().lower(), chat_id.strip()))
-            else:
+            platform = platform.strip().lower()
+            if not sep:
                 entries.append((None, raw))
+            elif platform in SUPPORTED_PLATFORMS and chat_id.strip():
+                entries.append((platform, chat_id.strip()))
         return entries
 
     def is_admin_chat(self, platform: str, chat_id: str | int) -> bool:
@@ -144,30 +144,4 @@ class Settings:
         return targets
 
     def enabled_platforms(self) -> tuple[str, ...]:
-        platforms = []
-        if self.bale_token:
-            platforms.append("bale")
-        if self.telegram_token:
-            platforms.append("telegram")
-        return tuple(platforms)
-
-    def proxy_label(self) -> str:
-        """The Telegram proxy without credentials, safe to log."""
-        return describe_proxy(self.proxy_url)
-
-    def proxy_for(self, platform: str) -> str | None:
-        """Only Telegram is proxied; Bale must work without a proxy."""
-        if platform == "telegram" and self.proxy_url:
-            return self.proxy_url
-        return None
-
-
-def describe_proxy(url: str | None) -> str:
-    """scheme://host:port of a proxy URL; user/password are never shown."""
-    if not url:
-        return "none"
-    scheme, sep, rest = url.partition("://")
-    if not sep:
-        scheme, rest = "?", url
-    host = rest.rsplit("@", 1)[-1].split("/", 1)[0]
-    return f"{scheme.lower()}://{host}"
+        return ("bale",) if self.bale_token else ()

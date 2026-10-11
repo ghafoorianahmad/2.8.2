@@ -190,15 +190,11 @@ class ServerSetupWizard(QWidget):
         panel = widgets.Panel("ربات‌ها و پرداخت (اختیاری — بعداً هم از صفحهٔ «سرور فروشگاه» قابل تنظیم است)")
         form = _form()
         self.bank_text = _line("مثلاً: کارت ۶۰۳۷… به نام …", ltr=False)
-        self.telegram_token = _line("از @BotFather", password=True)
         self.bale_token = _line("از ربات سازندهٔ بله", password=True)
-        self.admin_chats = _line("telegram:123456,bale:654321")
-        self.proxy = _line("socks5://127.0.0.1:1080")
+        self.admin_chats = _line("bale:654321")
         form.addRow(widgets.label("متن حساب بانکی:"), self.bank_text)
-        form.addRow(widgets.label("توکن ربات تلگرام:"), self.telegram_token)
         form.addRow(widgets.label("توکن ربات بله:"), self.bale_token)
         form.addRow(widgets.label("گفت‌وگوی مدیران در ربات:"), self.admin_chats)
-        form.addRow(widgets.label("پراکسی تلگرام:"), self.proxy)
         panel.body.addLayout(form)
         return panel
 
@@ -406,10 +402,8 @@ class ServerSetupWizard(QWidget):
         windows_password = self.win_password.text()
         extra = {
             "bank_account_text": self.bank_text.text().strip(),
-            "telegram_token": self.telegram_token.text().strip(),
             "bale_token": self.bale_token.text().strip(),
             "admin_chat_ids": self.admin_chats.text().strip(),
-            "proxy_url": self.proxy.text().strip(),
         }
         admin = (self.admin_username.text().strip(), self.admin_full_name.text().strip(),
                  self.admin_password.text())
