@@ -63,7 +63,7 @@ def test_table_default_widths_fit_the_viewport(admin_qapp):
     table = widgets.DataTable(("شمارهٔ سفارش", "مشتری", "مبلغ کل", "تاریخ ثبت"), key="t1")
     table.resize(420, 300)
     table.show()
-    table.fill([["۱۰۴۱", "یک نام خیلی خیلی طولانی برای مشتری", "۱٬۲۵۰٬۰۰۰ تومان", "۱۴۰۵/۰۷/۱۵"]])
+    table.fill([["۱۰۴۱", "یک نام خیلی خیلی طولانی برای مشتری", "۱٬۲۵۰٬۰۰۰ ریال", "۱۴۰۵/۰۷/۱۵"]])
     _pump(admin_qapp, 5)
     total = sum(table.columnWidth(c) for c in range(table.columnCount()))
     assert total <= table.viewport().width() + 4          # nothing forces a scroll bar

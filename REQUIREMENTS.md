@@ -28,14 +28,16 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
   - Match → auto-approved, linked to `name_mo.Code` (covers ~10,000 existing customers and new in-store customers once entered in the accounting software).
   - No match → "pending approval" queue in shopadmin; on approval create person per recipe §5.1.
 - A customer's data (orders, statement) is reachable ONLY from the Bale account whose verified contact matched. ChatId↔Code stored in our SQLite.
-- Unapproved customers: configurable cap on order amount and item count.
+- Unapproved customers: configurable cap on **item count only** (`PENDING_MAX_ORDER_ITEMS`, counted over their open orders). **No order-amount cap** — prices fluctuate (decision 2026-10-11).
 
 ## 4. Pricing
+- **Unit: all money is in RIAL** everywhere (DB, API, bot texts, shopadmin, reports) — the same unit as the accounting software (`Kala.Gey*`, `KOL`, `KalaOrder*`). No Toman conversion at display time (decision 2026-10-11).
 - **Accessories:** price level 3 (`gey3`) from the accounting DB; only items with stock > 0 are offered.
 - **Phones (and AirPods / Apple Watch in the list):** from the distributor's Telegram channel PDF (§5).
   - Customer price = **"روال"** price unchanged. If روال is empty → **"نقد" + 500,000 Toman**. If both are `...` → unavailable (still allow "order/inquiry for unavailable item").
   - Price is per color: the bot shows the price AFTER the customer picks a color; if the customer changes color, announce the new price.
-  - Confirm the PDF's price unit with me (looks like thousand Toman) before going live.
+  - **PDF price unit = thousand Toman → Rial ×10,000** (confirmed 2026-10-11). E.g. `52,500` in the PDF = 525,000,000 Rial.
+  - "نقد + 500,000 Toman" = نقد (converted) **+ 5,000,000 Rial**.
 - Never cache accounting prices long-term (the software can rewrite `Kala.Gey`); read at order time and store the unit price in `KalaOrderDetail.Gey`.
 
 ## 5. Distributor price list (Telegram channel)
@@ -57,7 +59,7 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 
 ## 7. Bot features (Bale)
 - Browse by group + text search (normalize ی/ي, ک/ك).
-- Deep link from site: open the bot directly on a product (`start` parameter, e.g. `kala_289`). First verify Bale supports start params; fallback = product code the customer sends to the bot.
+- Deep link from site: open the bot directly on a product (`start` parameter, e.g. `kala_289`). **Live test 2026-10-11: Bale passes the start parameter unreliably** (2 of 8 opens; `kala_289` and `289` both arrived once) → keep the deep link, but the fallback is the dependable path: the customer sends the product code shown on the site (`289`, `kala_289`, `کد 289` …).
 - Cart → order per recipe §5.2 (`sp_getapplock`, transaction, `Codf=-100`, `va=0`, `takhfif/avarez=0`, `Status=0` until GUI test G2, `Sharhlp='API-<id>'`, `tavasot=''`, Shamsi date via `dbo.MiladiToShamsi`).
 - Payment: show bank account; customer uploads receipt photo → attached to the order in shopadmin for manual review.
 - Order tracking messages: registered → payment confirmed → invoiced (detected via `Facto.ordercode`, R5/R6) → shipped (set in shopadmin).
@@ -74,7 +76,7 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 ## 9. Website
 - Moves from Cloudflare to **ArvanCloud** (static export of the Next.js site on Arvan Object Storage + CDN; DNS to Arvan).
 - Showcase only: product presentation and specs. **No prices, no stock, no live connection to the server, no data push.**
-- Each product: button "استعلام قیمت و سفارش در بله" (deep link §7) + optional Telegram button later + shop phone number as fallback.
+- Each product: button "استعلام قیمت و سفارش در بله" (opens the bot, §7) **with the product code printed next to it** ("کد کالا: 289 — این کد را در ربات بفرستید") + optional Telegram button later + shop phone number as fallback.
 
 ## 10. Security
 - NO inbound ports to the server from the internet. Long polling only; shopapi on 127.0.0.1.

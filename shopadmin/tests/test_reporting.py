@@ -128,7 +128,7 @@ def test_write_csv_uses_utf8_bom_for_excel(tmp_path):
     text = raw.decode("utf-8-sig")
     assert "شماره سفارش" in text
     assert "مشتری نمونه" in text
-    assert "تومان" in text
+    assert "ریال" in text
 
 
 def test_write_csv_numbers_are_persian_digits(tmp_path):

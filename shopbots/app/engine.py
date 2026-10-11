@@ -387,11 +387,12 @@ class BotEngine:
             return
 
         # /start always restarts, even in the middle of registration.
-        # "/start kala_289" is the site's deep link to a product.
+        # "/start kala_289" is the site's deep link to a product (Bale did not pass
+        # the parameter in the 2026-10-11 live test; typing the code is the fallback).
         if command in ("/start", "/menu"):
             self.store.clear_conversation(platform, chat_id)
             args = text.split()[1:]
-            product_code = parse_product_ref(args[0]) if args else None
+            product_code = parse_product_ref(args[0], allow_bare_code=True) if args else None
             await self._customer_entry(
                 adapter, platform, chat_id, welcome=command == "/start",
                 product_code=product_code,
@@ -400,6 +401,17 @@ class BotEngine:
 
         # registration (the user may not exist in shopapi yet): contact only
         if state == STATE_AWAIT_CONTACT or state in LEGACY_REGISTRATION_STATES:
+            product_code = None if event.get("contact") else parse_product_ref(text, allow_bare_code=True)
+            if product_code is not None:
+                # a product code from the site, typed before registering: keep it
+                self.store.set_conversation(
+                    platform, chat_id, STATE_AWAIT_CONTACT, {**(data or {}), "product": product_code}
+                )
+                await self._send_text(
+                    adapter, chat_id, texts.PRODUCT_AFTER_CONTACT,
+                    contact_keyboard(texts.BTN_SHARE_CONTACT),
+                )
+                return
             await self._registration_contact(adapter, platform, chat_id, event, data)
             return
 
@@ -412,7 +424,7 @@ class BotEngine:
         user = await self.api.get_user(platform, chat_id)
         status = self.customers.status_of(user)
         if status == STATUS_NEW:
-            product_code = parse_product_ref(text)
+            product_code = parse_product_ref(text, allow_bare_code=True)
             await self._begin_registration(adapter, platform, chat_id, product_code=product_code)
             return
         if status == STATUS_REJECTED:

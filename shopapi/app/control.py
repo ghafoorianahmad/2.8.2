@@ -127,7 +127,6 @@ EDITABLE: dict[str, tuple[Callable[[str], Optional[str]], bool]] = {
     "PRICE_LEVEL_SITE": (_int_range(1, 5), False),
     "STOCK_WAREHOUSES": (_warehouses, False),
     "ALLOW_SHARED_PERSON_CODE": (_bool, False),
-    "PENDING_MAX_ORDER_TOTAL": (_int_range(0, 10_000_000_000), False),
     "PENDING_MAX_ORDER_ITEMS": (_int_range(0, 1000), False),
     "INVOICE_SYNC_SECONDS": (_int_range(0, 86400), False),
     "STAFF_SESSION_HOURS": (_int_range(1, 72), False),

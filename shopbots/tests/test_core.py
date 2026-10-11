@@ -251,5 +251,8 @@ def test_product_ref_parsing():
     assert parse_product_ref("KALA_۲۸۹") == 289
     assert parse_product_ref("289") is None
     assert parse_product_ref("289", allow_bare_code=True) == 289
+    for typed in ("kala289", "KALA289", "kala-289", "kala 289", "کد 289", "کد کالا: ۲۸۹", "#289"):
+        assert parse_product_ref(typed) == 289, typed
+    assert parse_product_ref("09121234567", allow_bare_code=True) is None  # a phone, not a code
     for bad in ("kala_", "kala_x", "kala_0", "kala_123456789", "hello", "", None):
         assert parse_product_ref(bad, allow_bare_code=True) is None

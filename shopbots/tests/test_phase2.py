@@ -64,6 +64,41 @@ def test_typed_product_code_is_the_fallback(env, bot_apis, shopapi):
     env(scenario)
 
 
+def test_code_typed_before_registration_is_shown_after_it(env, bot_apis, shopapi):
+    """Bale drops the /start parameter: the customer types the site's code instead."""
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+        assert texts.ASK_CONTACT in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        await push_message(engine, "bale", 2, CUSTOMER_CHAT, text="کد کالا: ۱۰۱")
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.PRODUCT_AFTER_CONTACT
+        await push_message(engine, "bale", 3, CUSTOMER_CHAT, text="09121234567")  # typed phone: refused
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.CONTACT_BUTTON_ONLY
+        await push_message(engine, "bale", 4, CUSTOMER_CHAT, contact=own_contact(CUSTOMER_CHAT))
+        assert "کالای الف" in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+
+    env(scenario)
+
+
+def test_new_user_typing_a_bare_code_keeps_it(env, bot_apis, shopapi):
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="104")
+        assert texts.ASK_CONTACT in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        await push_message(engine, "bale", 2, CUSTOMER_CHAT, contact=own_contact(CUSTOMER_CHAT))
+        assert "کالای د" in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+
+    env(scenario)
+
+
+def test_start_with_bare_code_parameter(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start 104")
+        assert "کالای د" in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+
+    env(scenario)
+
+
 def test_out_of_stock_deep_link_shows_unavailable(env, bot_apis, shopapi):
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
 

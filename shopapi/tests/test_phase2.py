@@ -129,7 +129,6 @@ def test_approve_create_person_shared_mobile_needs_code(client, reader, writer):
 def test_pending_customer_orders_within_limit(client, reader, settings):
     seed_products(reader)
     settings.pending_max_order_items = 3
-    settings.pending_max_order_total = 1000
     register(client)
     r = order(client, items=[{"kala_code": 101, "qty": 2}])
     assert r.status_code == 201
@@ -139,11 +138,13 @@ def test_pending_customer_orders_within_limit(client, reader, settings):
     assert order(client, items=[{"kala_code": 104, "qty": 1}]).status_code == 201
 
 
-def test_pending_customer_amount_limit(client, reader, settings):
+def test_pending_customer_has_no_amount_limit(client, reader, settings):
     seed_products(reader)
-    settings.pending_max_order_total = 150
+    settings.pending_max_order_items = 3
+    reader.products[101]["unit_price"] = 2_000_000_000.0  # Rial; far above the old cap
     register(client)
-    assert order(client, items=[{"kala_code": 101, "qty": 2}]).status_code == 422
+    assert order(client, items=[{"kala_code": 101, "qty": 3}]).status_code == 201
+    assert order(client, items=[{"kala_code": 104, "qty": 1}]).status_code == 422
 
 
 def test_rejected_customer_cannot_order(client, reader):

@@ -2,6 +2,53 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## Live test session after Phase 2 (2026-10-11) — DONE
+
+No new features, except the deep-link fallback the user approved after the start parameter proved unreliable.
+
+### Live results
+**Bale** (`@asr_test_bot`, `shopbots/scripts/check_start_param.py [--formats]`; the token is read from `shopbots/.env`, with `BALE_TOKEN` as a fallback for `BALE_TEST_TOKEN`)
+- ✅ A shared contact carries `contact.user_id` (int) and it **equals `from.id`**. The fields are `first_name`, `phone_number`, `user_id`. Contact-only registration works as built.
+- ⚠ **The `/start` parameter is unreliable.** First run: a bare `/start`. Then, with the chat deleted and 5 variants opened (`kala_289`, `kala289`, `KALA289`, `289`, `kala%5F289`), 8 `/start` messages arrived. Only 2 carried a parameter: `/start 289` and `/start kala_289`; the other 6 were bare. So Bale *can* pass it, but often doesn't. It is unclear when (first open vs. reopen, app vs. web). Both forms that did arrive are handled.
+- → **Fallback (approved), now the main path:** the site shows the product code; the customer sends it to the bot.
+  - Accepted forms: `289`, `kala_289`, `kala289`, `kala-289`, `کد 289`, `کد کالا: ۲۸۹`, `#289`. Persian digits work.
+  - A code sent before registering is kept and the product is shown right after the contact is shared (`PRODUCT_AFTER_CONTACT`).
+  - The welcome and help texts tell customers to send the code.
+  - `/start <code>` still works, in case Bale ever passes the parameter.
+  - Phone-length numbers are never taken as codes.
+  - The site (Phase 6) must print the code next to the "order in Bale" button.
+
+**SQL on `.\SQLEXPRESS` / `hesab5 t`** (`shopapi/scripts/live_db_check_all.ps1` → `live_db_check.py kol|r5|person`)
+- Must be run from a normal PowerShell window. Processes started by the Claude app are refused by SQL shared memory ("access denied", error 5). Only shared memory is enabled on the instance; TCP, named pipes and SQL Browser are off.
+- **KOL statement ✅**
+  - Columns: `Num_kol int`, `Date1 varchar(10)` (`1405/07/19` format), `Va char(1)`, `N_sanad int`, `Bed/Bes money`, `Sharh nvarchar(500)`, `Noa char(1)`, `Codkol int`, `Cod_n int`.
+  - Checked on the 3 persons with the most rows (2139/540/366 rows):
+    - totals = the reference §3 formula;
+    - rows come out oldest first;
+    - the newest running balance = the balance, including when truncated to `STATEMENT_MAX_ROWS` (the carried-over opening balance works);
+    - no fractional amounts.
+  - `Va` codes seen: `8 Z f n t w ^ a r` and a Persian letter. Only `f` has a label; the rest show as «سند».
+- **R5 tracking ⚠ partly verified.** The query runs. Ordered quantities are correct and a missing `Codlp` → `None`. But the test DB has only 3 orders and **no invoice with `ordercode`**, so the partial/full invoiced path still needs GUI test G3.
+- **create_person ✅**
+  - Duplicate check: an existing mobile (also given as `+98…` or with Persian digits) returns `existing=True` with the same code and writes nothing, even with `dry_run=False`.
+  - Dry-run leaves no rows.
+  - Real create: `Code = MAX+1`, `Gcod=4`, `l_gey=1`, `taf(como=13, codgtaf=59, va=1, Cota=Code)` linked through `codetaf`, `DetailTBL(type 3, Va 0, darfn 1)`. R4 then finds it.
+  - No triggers on `name_mo/taf/DetailTBL`.
+  - The test person (09990007731) was deleted afterwards and the row counts were restored. Only the IDENTITY counters of `taf`/`DetailTBL` moved on.
+
+### Decisions applied (REQUIREMENTS §3/§4 updated)
+- **All money is in Rial**, the same unit as the accounting software. The bot's `currency` is now «ریال», as are ShopAdmin `format_money`, the report column and the filter hint. The editable copy `%ProgramData%\ShopServer\messages.fa.json` must be changed by hand if it still says «تومان».
+- **No amount cap for pending customers.** `PENDING_MAX_ORDER_TOTAL` was removed from the API check, config, the remote-editable settings, launcher defaults, ShopAdmin labels and both `.env.example`; old lines in a `.env` are ignored. Only `PENDING_MAX_ORDER_ITEMS` remains.
+- Phase 3: distributor PDF price (thousand Toman) ×10,000 = Rial; "نقد + 500,000 Toman" = +5,000,000 Rial.
+
+### Other
+- `shopbots/.env.example` was restored (it was deleted in the working tree).
+- Tests: shopapi **173** ✓, shopbots **104** ✓ (+3 fallback), shopadmin **377** ✓.
+
+### Pending
+- GUI tests G1–G4, especially G3 (invoice an order) to verify R5 end to end.
+- Installers were not rebuilt; `E:\Outputs` is unchanged.
+
 ## Phase 2 — Bale bot (2026-10-11) — DONE
 
 Rollback point: commit `428016f` (Phase 1). Phase 2 is committed on top of it.
@@ -60,9 +107,9 @@ No Bale **test** token is configured: no `shopbots/.env`, no `BALE_TEST_TOKEN`. 
 - Receipt image travels as base64 JSON (`python-multipart` is not installed; 5 MB → ~6.7 MB request, local only).
 
 ### Pending / for the user
-- **Live checks on `hesab5 t` were not possible:** SQL Server refused the connection from this session (`.\SQLEXPRESS` "instance not found"; shared memory "access denied"). Still to do: KOL column names/types (`Date1`, `N_sanad`, `Sharh`, `Num_kol`) and a real statement, R5 invoice progress, and `create_person` dry-run.
-- Bale: start-parameter test (above); whether Bale's contact includes `user_id` (**required**: without it every contact is refused as "not own"); `getFile` `file_size`; document MIME types.
-- Confirm the price unit of `PENDING_MAX_ORDER_TOTAL` (Rial vs Toman in `Kala.gey3`).
+- ~~Live checks on `hesab5 t`~~ → done in the live test session above.
+- ~~Bale start-parameter / contact `user_id`~~ → see the live test session above. Still open: `getFile` `file_size`; document MIME types.
+- ~~Price unit of `PENDING_MAX_ORDER_TOTAL`~~ → the setting was removed; all money is in Rial.
 - Orders deleted in accounting (cancelled there) are not surfaced yet.
 - Installers/ShopSystem were not rebuilt; `E:\Outputs` unchanged.
 

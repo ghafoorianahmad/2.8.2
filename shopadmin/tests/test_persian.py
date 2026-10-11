@@ -64,7 +64,7 @@ def test_format_int_uses_persian_digits_and_separator():
 
 
 def test_format_money_includes_toman():
-    assert format_money(50000) == "۵۰٬۰۰۰ تومان"
+    assert format_money(50000) == "۵۰٬۰۰۰ ریال"
     assert format_money(50000, with_unit=False) == "۵۰٬۰۰۰"
 
 

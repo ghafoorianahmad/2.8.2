@@ -209,7 +209,7 @@ alteration to any existing route. Covered by two new tests in
 - **Persian digits + Shamsi dates** everywhere, via `app/persian.py`
   (dependency-free Jalali conversion, verified against 11 known date anchors and
   a 20 000-day round-trip).
-- **Money** in تومان with the Persian thousands separator `٬`.
+- **Money** in ریال (same unit as the accounting software) with the Persian thousands separator `٬`.
 - **Async**: every HTTP call runs on a `QThreadPool` worker so the window never
   freezes; a spinner/busy overlay is shown while waiting.
 - **Five shopapi statuses are never invented**: statuses and their Persian

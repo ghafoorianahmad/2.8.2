@@ -1,6 +1,7 @@
 """Catalog: groups and product pages from shopapi (prices never come from a user)."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from ..shopapi import ShopApiClient
@@ -87,6 +88,9 @@ class CatalogService:
 #: Deep-link payload from the site: ``/start kala_289`` (REQUIREMENTS §7).
 DEEP_LINK_PREFIX = "kala_"
 MAX_PRODUCT_CODE = 10_000_000
+#: What a customer may type in front of the code shown on the site:
+#: "kala_289", "kala289", "kala-289", "کد 289", "کد کالا: 289", "#289".
+_CODE_PREFIX = re.compile(r"^(?:kala[\s_\-]*|کد(?:\s*کالا)?\s*[:：]?\s*|#)", re.IGNORECASE)
 
 
 def parse_product_ref(text: str | None, *, allow_bare_code: bool = False) -> int | None:
@@ -94,8 +98,9 @@ def parse_product_ref(text: str | None, *, allow_bare_code: bool = False) -> int
     a message that is only a number counts too (the fallback when the start
     parameter is lost)."""
     value = normalize_digits(text).strip()
-    if value.lower().startswith(DEEP_LINK_PREFIX):
-        value = value[len(DEEP_LINK_PREFIX):]
+    prefixed = _CODE_PREFIX.match(value)
+    if prefixed:
+        value = value[prefixed.end():].strip()
     elif not allow_bare_code:
         return None
     if not value.isdigit() or len(value) > 8:

@@ -149,7 +149,7 @@ class ReportsPage(BasePage):
 
         self.card_orders.set_value(format_int(self._summary["order_count"]))
         self.card_amount.set_value(format_money(self._summary["total_amount"], with_unit=False),
-                                   hint="تومان")
+                                   hint="ریال")
         self.card_customers.set_value(
             format_int(self._summary["new_customers"]),
             hint=f"از {format_int(self._summary['customer_count'])} مشتری",

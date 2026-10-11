@@ -90,9 +90,9 @@ def format_qty(value: object) -> str:
 
 
 def format_money(value: object, with_unit: bool = True) -> str:
-    """Amount in تومان, Persian digits."""
+    """Amount in ریال (the accounting unit), Persian digits."""
     text = format_int(value)
-    return f"{text} تومان" if with_unit else text
+    return f"{text} ریال" if with_unit else text
 
 
 def format_percent(value: float, digits: int = 0) -> str:

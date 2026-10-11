@@ -49,3 +49,4 @@ desktop.ini
 
 # build_exe.bat rescue folder (holds .env during a rebuild)
 .rebuild_keep/
+shopapi/scripts/live_db_check.out.txt

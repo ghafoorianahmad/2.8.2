@@ -233,9 +233,9 @@ def create_order(
         total = sum(round_half_up(it.qty * it.unit_price) for it in items_out)
         if not approved:
             # Customers awaiting approval: capped, counting their other open orders.
-            open_total, open_qty = db.open_order_totals(user["id"])
-            if (open_qty + sum(it.qty for it in items_out) > settings.pending_max_order_items
-                    or open_total + total > settings.pending_max_order_total):
+            _, open_qty = db.open_order_totals(user["id"])
+            # Item count only: prices fluctuate, so there is no amount cap.
+            if open_qty + sum(it.qty for it in items_out) > settings.pending_max_order_items:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Order exceeds the limit for customers awaiting approval",
