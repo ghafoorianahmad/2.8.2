@@ -40,6 +40,27 @@ shopadmin/.tools/
 # --- customer payment receipts (personal data) -----------------------------
 receipts/
 
+# --- runtime data that must never reach git -------------------------------
+# Telethon / Telegram user sessions (full account access)
+*.session
+*.session-journal
+*.session.dpapi
+# server TLS private key / certificates, any key material
+tls/
+*.key
+*.pem
+*.pfx
+*.p12
+# backups (daily zips, encrypted off-site copies)
+backups/
+*.zip
+*.zip.partial
+*.enc
+# price lists downloaded from the distributor channel at runtime
+pricelists/
+# Sazeh DB snapshots (research_tools) may hold real rows
+snapshots/
+
 # --- OS / editor ------------------------------------------------------------
 Thumbs.db
 desktop.ini
