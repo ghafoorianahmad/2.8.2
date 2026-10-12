@@ -2,6 +2,60 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## Phase 6 — website: static showcase, model slugs, ArvanCloud guide (2026-10-12) — DONE; not deployed
+
+Site = `E:\DSH-Workspace\projects\asr-ertebatat-shop` (plain HTML/JS, its own git repo; commit `1524dc1`). The Next.js folder `E:\projects\mobile-shop` is an unused Sep-17 prototype (cart, API routes, admin), and `projects\asr-ertebatat-2-redesign` is an alternative plain-HTML design that did **not** get these changes.
+
+### Decisions (user, 2026-10-12) — added to REQUIREMENTS §9, new §9a, phase 6b
+- **No accounting codes on the site.** `Kala.Code` can change after stocktaking and Sazeh names are inconsistent. Each model has a **permanent slug** (`id` in `products.js`, e.g. `iphone-17-pro`; never renamed or reused). Slugs are model-level because the site shows models, not storage sizes. Storage and color are picked in the bot; storage-level slugs can be added later.
+- Mapping slug ↔ accounting product(s) lives in shopapi/ShopAdmin (one catalog-model table shared with price-list rows), with:
+  - fuzzy suggestions and one-time confirmation by the owner;
+  - a nightly check that hides a model and sends a Bale alert on drift.
+  This is **Phase 6b** (§9a); not started.
+- No order submission from the site; it stays static with no server connection.
+
+### Done (site)
+- Card, detail and order modals show «کد مدل: <slug>».
+- The button «استعلام قیمت و سفارش در بله»:
+  - copies «name + کد مدل: slug» (Clipboard API on HTTPS, textarea fallback);
+  - opens `ble.ir/asrertebatat2_bot?start=m_<slug>`;
+  - has a «کپی» button, the hint «این متن را در ربات بفرستید» and a `tel:09155000432` fallback.
+- The floating action button opens Bale, not Telegram.
+- The Telegram **bot** is hidden everywhere (`data-telegram-bot hidden` + `TELEGRAM_BOT_ENABLED=false` in `site.js`); the channel link is untouched. Telegram claims in the page text and meta descriptions now say Bale.
+- `site.js`: `isSlug`/`SLUG_RE` (starts with a letter, ≤62 chars so `m_`+slug fits Bale/Telegram's 64-char `[A-Za-z0-9_-]` start payload). A numeric or unsafe "slug" is never put in a URL.
+- `tools/check_site.js` (Node, no dependencies; also runs on the unpacked zip) checks:
+  - slug format and uniqueness; no price/stock/code fields;
+  - deep links and copied text, by evaluating the real `site.js` helpers;
+  - no `fetch`/XHR/WebSocket/forms/keys/`shopapi`/price text in served files;
+  - Telegram bot gated; phone fallback present;
+  - every local `src`/`href`/`url()` exists.
+- `DEPLOY_ARVAN_FA.md`: step-by-step Persian guide, checked against docs.arvancloud.ir on 2026-10-12. It covers:
+  - bucket + public-read files, the «وب‌سایت استاتیک» feature (index `index.html`, error `404.html`);
+  - adding the domain to the CDN, NS change at IRNIC (copy MX/TXT from Cloudflare first);
+  - free HTTPS, the bucket «دامنه اختصاصی» (ANAME root + CNAME www, Host Header = static-website host);
+  - cache rules + purge, test checklist, update and rollback (keep Cloudflare for 2 weeks).
+
+### Tests
+- `check_site.js`: **1249 ✓** on the repo and on the unpacked release zip. A mutation run (numeric slug, `fetch`, price text, unhidden Telegram) fails as expected.
+- shopbots **120 ✓** (+1: site slugs, `m_<slug>` and the copied text are never parsed as a Kala code).
+- Headless Chrome (375 px dark/light, 1366 px): no horizontal overflow and no clipped card buttons. Order modal within the viewport. Click flow verified (deep link, copied text, toast, FAB → plain bot link).
+- Found and fixed on the way:
+  - the long Bale label (`nowrap`) widened the modal past the phone screen;
+  - `.order-note` was an existing dashed class, so mine was renamed `.order-intro`;
+  - the card CTA clipped the label at desktop widths.
+
+### Output
+- `E:\Outputs\StoreWebsite\StoreWebsite_2026-10-12.zip`: 179 files, SHA-256 `0EA37F04…7F85C0`. Next to it: `DEPLOY_ARVAN_FA.md` and the README. The previous 2026-10-08 zip is kept.
+
+### Pending / for the user
+1. Deploy to ArvanCloud per `DEPLOY_ARVAN_FA.md` (account + 2FA, IRNIC access; copy the email DNS records from Cloudflare first).
+2. Until Phase 6b, the bot opens at the main menu for `m_<slug>` and pasted text (never a wrong product). Deploying before 6b is safe.
+3. Decide which site goes live: main vs `asr-ertebatat-2-redesign`. If the redesign, port the Phase 6 changes there.
+4. Still open on the site: Telegram channel link, map link, photos for 3 models.
+
+### Next step
+Phase 6b — catalog-model mapping (§9a): table + fuzzy suggestions in ShopAdmin, nightly validation with hide + Bale alert, bot resolution of `m_<slug>` / pasted text / fuzzy name.
+
 ## Phase 5 — security hardening, SECURITY.md, backups (2026-10-12) — DONE in code; nothing installed or applied on the shop server yet
 
 Rollback point: `1867321` (Phase 4). Version **2.2.0**.

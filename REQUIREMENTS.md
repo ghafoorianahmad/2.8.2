@@ -59,7 +59,7 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 
 ## 7. Bot features (Bale)
 - Browse by group + text search (normalize ی/ي, ک/ك).
-- Deep link from site: open the bot directly on a product (`start` parameter, e.g. `kala_289`). **Live test 2026-10-11: Bale passes the start parameter unreliably** (2 of 8 opens; `kala_289` and `289` both arrived once) → keep the deep link, but the fallback is the dependable path: the customer sends the product code shown on the site (`289`, `kala_289`, `کد 289` …).
+- Deep link from site: open the bot directly on a product (`start` parameter; from Phase 6 the site sends `m_<slug>`, see §9/§9a — `kala_<code>` stays supported for old links). **Live test 2026-10-11: Bale passes the start parameter unreliably** (2 of 8 opens; `kala_289` and `289` both arrived once) → keep the deep link, but the fallback is the dependable path: the customer sends the model slug shown on the site (§9a).
 - Cart → order per recipe §5.2 (`sp_getapplock`, transaction, `Codf=-100`, `va=0`, `takhfif/avarez=0`, `Status=0` until GUI test G2, `Sharhlp='API-<id>'`, `tavasot=''`, Shamsi date via `dbo.MiladiToShamsi`).
 - Payment: show bank account; customer uploads receipt photo → attached to the order in shopadmin for manual review.
 - Order tracking messages: registered → payment confirmed → invoiced (detected via `Facto.ordercode`, R5/R6) → shipped (set in shopadmin).
@@ -74,9 +74,16 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 - Health monitoring alerts (Bale + tray): bot down, Bale unreachable, SQL unreachable, price-list hold, all proxies dead.
 
 ## 9. Website
-- Moves from Cloudflare to **ArvanCloud** (static export of the Next.js site on Arvan Object Storage + CDN; DNS to Arvan).
-- Showcase only: product presentation and specs. **No prices, no stock, no live connection to the server, no data push.**
-- Each product: button "استعلام قیمت و سفارش در بله" (opens the bot, §7) **with the product code printed next to it** ("کد کالا: 289 — این کد را در ربات بفرستید") + optional Telegram button later + shop phone number as fallback.
+- Moves from Cloudflare to **ArvanCloud** (static export of the site on Arvan Object Storage + CDN; DNS to Arvan). The site is the plain HTML/JS project `E:\DSH-Workspace\projects\asr-ertebatat-shop` (no build step; decision 2026-10-12 — the old Next.js prototype `E:\projects\mobile-shop` is not used).
+- Showcase only: product presentation and specs. **No prices, no stock, no live connection to the server, no data push, no order submission from the site.**
+- **No accounting codes on the site** (decision 2026-10-12): `Kala.Code` can change after stocktaking and Sazeh Hesab names are entered inconsistently. Each site model has a **permanent slug of our own** (e.g. `iphone-17-pro`; a storage-level slug such as `iphone-17-pro-256` may be added later — slugs are never renamed or reused).
+- Each model: button «استعلام قیمت و سفارش در بله» → copies the model name + slug to the clipboard and opens the Bale bot with a deep link (`start=m_<slug>`); the slug is printed next to the button as the dependable fallback («کد مدل: iphone-17-pro — این متن را در ربات بفرستید»). Telegram button later (same mechanism). Shop phone number as fallback.
+
+## 9a. Catalog model mapping (shopapi / ShopAdmin / bot — decision 2026-10-12)
+- One **catalog model** table in shopapi: slug ↔ accounting product(s) (`Kala`, per storage/color where needed). The distributor price-list rows (§5) map to the same catalog model, so each model is mapped once.
+- ShopAdmin suggests matches with fuzzy, normalized name matching (case, partial names, ی/ي, ک/ك, spacing/ZWNJ, Persian/English digits); the owner confirms once.
+- **Nightly validation** of every mapping: if the mapped product disappears or its name drifts → re-search by name, propose candidates, **hide that model from customers until the owner confirms**, and alert the owner on Bale. Never show a wrong product.
+- The bot resolves what the site sends: deep link `m_<slug>`, a pasted «name + slug» text, a bare slug, or (if the customer edited the text) a fuzzy name match → asks to confirm when ambiguous. Unknown/unmapped/hidden → polite message + shop phone, never a guess.
 
 ## 10. Security
 - NO inbound ports to the server from the internet. Long polling only; shopapi on 127.0.0.1.
@@ -109,5 +116,6 @@ Postal tracking codes, back-in-stock notifications, support chat, broadcast mess
 3. Telegram worker: Telethon login, proxy pool (§6), distributor PDF parser + mapping UI + phone pricing (§4–5).
 4. Services, install/update/rollback scripts, tray app, alerts and health monitoring (§1, §8).
 5. Security hardening + SECURITY.md + backups (§10).
-6. Website: static showcase, deep links, ArvanCloud deployment guide (§9).
+6. Website: static showcase, permanent slugs + copy/deep link, ArvanCloud deployment guide (§9).
+6b. Catalog model mapping, fuzzy suggestions, nightly validation + hide/alert, bot slug/name resolution (§9a).
 7. (Optional) Telegram bot channel on the shared core via proxy pool.
