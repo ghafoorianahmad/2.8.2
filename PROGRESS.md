@@ -2,6 +2,75 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## Phase 6b — catalog-model mapping, fuzzy suggestions, nightly check, bot resolution (2026-10-12) — DONE in code; not tested on SQL or live Bale
+
+### Decisions (user, 2026-10-12)
+- Plan approved with one change to the nightly check (now in REQUIREMENTS §9a):
+  - if the `kala_code` still exists and the new name is still a strong fuzzy match (`MODEL_DRIFT_MIN_SCORE`, default 0.7), the model **stays visible** and the item is only flagged «drifted» in ShopAdmin, with no Bale alert;
+  - the model is hidden and the owner alerted only when the product is missing/inactive or the similarity is below the threshold.
+- Price-list rows reach a model through the same `kala_code` (`price_mappings.kala_code` = `catalog_model_items.kala_code`), so each model is mapped once. One accounting product belongs to one model only.
+
+### Done
+**shopapi**
+- `app/fuzzy.py` — normalized matching:
+  - case, ی/ي, ک/ك, Persian/Arabic digits, ZWNJ/diacritics;
+  - letter/digit split (`17pro`);
+  - Persian↔English model words (آیفون/iphone, پرو/pro, گیگ/gb, «سی» = c, «ای» next to a number = e).
+  - Identity first: numbers, model qualifiers (Pro/Max/Ultra/…, and any single latin letter: 17/17e, 14/14c) and accessory words (قاب/گلس/…) on one side only cost a lot. Colors/units cost little.
+  - `coverage()` ranks suggestions (model name → accounting name). `similarity()` is used for drift. `similarity(model_only=True)` ignores storage/color in a customer's text.
+- Tables `catalog_models` (slug, name, brand, aliases, hidden) and `catalog_model_items` (kala_code UNIQUE, label, confirmed/current name, state ok/drifted/missing, score, candidates JSON).
+- `app/catalog_models.py`: repo, `run_check`, `nightly_loop` (started in the lifespan; once a day after `MODEL_CHECK_HOUR`, default 02:00 server time, -1 = off), `resolve`.
+  - **Nightly check:**
+    - unchanged name → ok;
+    - small change → drifted (visible, no alert);
+    - gone/inactive or below the threshold → missing: candidates (searched by the confirmed name, excluding products already mapped) + model hidden + `model_review` event + **one** Bale message (`owner_alerts`) for newly hidden models only.
+    - A failed or empty accounting read changes nothing. Never re-maps on its own.
+- Reader `product_names()`: `SELECT Code, Name FROM Kala WHERE active = 1`, no user input.
+- `app/routers/catalog.py`:
+  - `/admin/catalog-models`: list + counts + last check; `import` (upsert by slug, site aliases merged, mappings untouched); `check` (now); `{id}` GET/PATCH; `{id}/suggestions`; `{id}/items` POST; `items/{id}` PATCH (relabel/replace) / DELETE; `items/{id}/accept`; `{id}/confirm`.
+  - New permission `catalog.manage` (admin + super admin). Every change is audited.
+  - **Confirm is refused while any item is «missing»**: a code that was reused for another product must be replaced, removed or accepted on its own, never by a model-wide confirm. This was found by a test where the code became a charger.
+  - `GET /catalog/resolve?text=` (bot key) → found (items + labels) / ambiguous (≤3 options) / unavailable / unknown. Products are returned only for a visible, mapped model.
+- `.env.example`: `MODEL_CHECK_HOUR`, `MODEL_DRIFT_MIN_SCORE`, `MODEL_RESOLVE_MIN_SCORE` (0.75).
+
+**shopbots**
+- `looks_like_model_ref` (shape only): `m_<slug>`, «کد مدل»/«كد مدل», a bare hyphenated slug. Resolution itself is on the server.
+- `/start m_<slug>`, a pasted text, a bare slug, or (free text) a strong name match:
+  - one product → open it;
+  - several → label buttons (`kp:<code>`);
+  - ambiguous → model buttons (`mdl:<i>`, slugs kept in the conversation because 64-byte callbacks are too short for a 62-char slug);
+  - hidden/unmapped/unknown → `MODEL_UNAVAILABLE` / `MODEL_UNKNOWN` with the shop phone. Plain chat still goes to the main menu.
+- A model reference sent before registration is kept and shown after the contact (`MODEL_AFTER_CONTACT`).
+- 5 new texts in `messages.fa.json`. An older operator copy in ProgramData falls back to them key by key.
+
+**shopadmin**
+- New page «مدل‌های سایت» (`app/ui/pages/catalog_models.py`; sidebar `catalog`; `catalog.view` for every role, `catalog.manage` for admin/super admin):
+  - banner with the last check and the hidden/unmapped counts;
+  - filters (hidden / drifted / unmapped / ok / all) and search;
+  - «ورود مدل‌ها از سایت…» reads the site's `assets/products.js` as text (never executed): slug, name, brand, aliases;
+  - «بررسی اکنون».
+  - Detail: items with state, current name, similarity and price-list row count. Actions: add (suggestion dialog), replace (nightly candidates first), accept current name, label, delete, aliases, «تأیید و نمایش به مشتری».
+- `model_review` → tray warning, opens the page on the «hidden» filter.
+
+**Other:** `SECURITY.md` website row (an edited/unknown slug gets "not found + phone", never a guess). REQUIREMENTS §9a refinement.
+
+### Tests
+- shopapi **281** ✓ (+36: fuzzy, drift classes, routes/permissions, nightly hide/alert-once/confirm, failed read, loop, resolve paths, aliases, storage/color in customer text).
+- shopbots **128** ✓ (+8). shopadmin **434** ✓ (+15, exit 0). shopsystem **49** ✓, shoptg **47** ✓ (unchanged).
+- The real site catalog (66 models of the redesign `products.js`): every name, alias, `m_<slug>` and copied text resolves to its own model, except 4 aliases the site gives to two models. For those the bot asks, which is the intended behavior:
+  - «شیائومی پوکو» → poco-x6-pro / poco-x7-pro;
+  - «شیائومی ردمی ۱۵» → redmi-15 / redmi-note-15.
+  - The first run found «iPhone 17» vs «17e» ambiguous; fixed (single letters = model identity).
+
+### Pending / for the user
+1. On `hesab5 t` (regular PowerShell, not from the Claude app): start shopapi, import `products.js` in ShopAdmin, check that the suggestions on real Sazeh names make sense, map a few models, run «بررسی اکنون». `product_names()` has not run on real SQL yet.
+2. Bale: `/start m_<slug>` still depends on Bale passing the start parameter (2 of 8 in the live test). The pasted text and the bare slug are the fallback and are handled.
+3. Site data: the two shared aliases above. Make them specific in `products.js` if you prefer that the bot never asks.
+4. Then push the redesign repo (branch `redesign`) and purge the Arvan cache (Phase 6 pending item 1).
+
+### Next step
+Phase 7 (optional): Telegram bot channel on the shared core via the proxy pool, or the live-test items above.
+
 ## Phase 6 — website: static showcase, model slugs, ArvanCloud guide (2026-10-12) — DONE; committed, not pushed
 
 **Live site = `E:\DSH-Workspace\projects\asr-ertebatat-2-redesign`** (GitHub `ghafoorianahmad/asr-ertebatat-2`, branch `redesign`). This was found after the first pass:
@@ -65,7 +134,7 @@ Nothing is pushed: the owner pushes after Phase 6b. The Next.js folder `E:\proje
 1. Push the redesign repo (branch `redesign`, `e98eaef`) after Phase 6b, then purge the Arvan CDN cache and run step 8 of the guide.
    - The live site is already on Arvan Object Storage, so the bucket/DNS steps of `DEPLOY_ARVAN_FA.md` are reference only.
    - Make sure the publish excludes `DEPLOY_ARVAN_FA.md` and `tools/`; the current setup already excludes `design-samples/` and `MISSING_IMAGES.md`.
-2. Until Phase 6b, the bot opens at the main menu for `m_<slug>` and pasted text (never a wrong product).
+2. ~~Until Phase 6b, the bot opens at the main menu for `m_<slug>` and pasted text.~~ Done in Phase 6b.
 3. `asr-ertebatat-shop`'s Phase 6 commits are on local branch `backup-local-2026-10-10`, not `main`; merge or keep as you prefer (not published).
 4. Still open on the site: Telegram channel link, map link, photos for 3 models.
 

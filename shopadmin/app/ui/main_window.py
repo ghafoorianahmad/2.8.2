@@ -22,6 +22,7 @@ from ..logging_setup import get_logger
 from ..paths import APP_VERSION
 from ..persian import to_persian_digits
 from ..permissions import (
+    CATALOG_VIEW,
     CUSTOMERS_VIEW,
     DASHBOARD_VIEW,
     ORDERS_VIEW,
@@ -38,6 +39,7 @@ from .context import AppContext
 from .pages.customers import CustomersPage
 from .pages.dashboard import DashboardPage
 from .pages.orders import OrdersPage
+from .pages.catalog_models import CatalogModelsPage
 from .pages.pricelist import PriceListPage
 from .pages.products import ProductsPage
 from .pages.reports import ReportsPage
@@ -52,6 +54,7 @@ NAV_ITEMS = (
     ("orders", "سفارش‌ها", "orders", ORDERS_VIEW),
     ("products", "محصولات", "products", PRODUCTS_VIEW),
     ("pricelist", "لیست قیمت", "receipt", PRICELIST_VIEW),
+    ("catalog", "مدل‌های سایت", "link", CATALOG_VIEW),
     ("reports", "گزارش‌ها", "reports", REPORTS_VIEW),
     ("settings", "تنظیمات", "settings", SETTINGS_VIEW),
     ("users", "کاربران سیستم", "users", USERS_VIEW),
@@ -348,6 +351,7 @@ class MainWindow(QMainWindow):
             "orders": OrdersPage,
             "products": ProductsPage,
             "pricelist": PriceListPage,
+            "catalog": CatalogModelsPage,
             "reports": ReportsPage,
             "settings": SettingsPage,
             "users": UsersPage,

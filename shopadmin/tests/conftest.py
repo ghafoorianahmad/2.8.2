@@ -101,6 +101,12 @@ class FakeShopApi:
         self.upload_outcome = "active"
         self.proxies: list[dict] = []
         self.proxy_adds: list[dict] = []
+        # ---- Phase 6b: site catalog models ----
+        self.catalog_models: list[dict] = []
+        self.catalog_items: list[dict] = []
+        self.catalog_imports: list[list] = []
+        self.catalog_checks = 0
+        self.catalog_last_check: dict | None = None
 
     # ---- helpers used by tests ------------------------------------------
     def add_staff(self, username: str, password: str = OWNER_PASSWORD, role: str = "operator",
@@ -371,6 +377,9 @@ class FakeShopApi:
                     return reply(200, order)
             return detail(404, "Order not found")
 
+        if path.startswith("/admin/catalog-models"):
+            return self._catalog_admin(request, path, body, user, reply, detail)
+
         if path.startswith(("/admin/pricelists", "/admin/price-mappings", "/admin/proxies")):
             return self._pricelist_admin(request, path, body, user, reply, detail)
 
@@ -493,6 +502,119 @@ class FakeShopApi:
                 return detail(404, "Mapping not found")
             row.update(action=None, kala_code=None, color_label="", mapping_id=None)
             return httpx.Response(204, request=request)
+        return detail(404, "Not Found")
+
+    # ---- Phase 6b helpers / endpoints --------------------------------------
+    def add_catalog_model(self, slug: str, name: str, brand: str = "Apple", *,
+                          hidden: bool = False, aliases: str = "") -> dict:
+        model = {"id": len(self.catalog_models) + 1, "slug": slug, "name": name, "brand": brand,
+                 "aliases": aliases, "hidden": hidden}
+        self.catalog_models.append(model)
+        return model
+
+    def add_catalog_item(self, model_id: int, kala_code: int, name: str, *, label: str = "",
+                         state: str = "ok", current_name: str = "", score=None,
+                         candidates=None) -> dict:
+        item = {"id": len(self.catalog_items) + 1, "model_id": model_id, "kala_code": kala_code,
+                "label": label, "confirmed_name": name, "current_name": current_name or name,
+                "state": state, "score": score, "candidates": candidates or [],
+                "pricelist_rows": 0}
+        self.catalog_items.append(item)
+        return item
+
+    def _catalog_out(self, model: dict) -> dict:
+        items = [i for i in self.catalog_items if i["model_id"] == model["id"]]
+        status = "unmapped" if not items else "review" if model["hidden"] else "ok"
+        return {**model, "status": status, "item_count": len(items),
+                "drifted_count": sum(1 for i in items if i["state"] == "drifted"),
+                "missing_count": sum(1 for i in items if i["state"] == "missing")}
+
+    def _catalog_detail(self, model: dict) -> dict:
+        return {"model": self._catalog_out(model),
+                "items": [i for i in self.catalog_items if i["model_id"] == model["id"]]}
+
+    def _catalog_admin(self, request, path, body, user, reply, detail):
+        method = request.method
+        parts = path.strip("/").split("/")
+        if method != "GET" and user["role"] not in ("super_admin", "admin"):
+            return detail(403, "Not permitted for this account")
+        if path == "/admin/catalog-models" and method == "GET":
+            models = [self._catalog_out(m) for m in self.catalog_models]
+            counts = {k: sum(1 for m in models if m["status"] == k)
+                      for k in ("unmapped", "ok", "review")}
+            counts["drifted"] = sum(1 for m in models if m["drifted_count"])
+            counts["all"] = len(models)
+            return reply(200, {"models": models, "counts": counts,
+                               "last_check": self.catalog_last_check})
+        if path == "/admin/catalog-models/import":
+            self.catalog_imports.append(body["models"])
+            added = 0
+            for m in body["models"]:
+                if not any(x["slug"] == m["slug"] for x in self.catalog_models):
+                    self.add_catalog_model(m["slug"], m["name"], m.get("brand", ""),
+                                           aliases="\n".join(m.get("aliases") or []))
+                    added += 1
+            return reply(200, {"added": added, "updated": 0,
+                               "unchanged": len(body["models"]) - added})
+        if path == "/admin/catalog-models/check":
+            self.catalog_checks += 1
+            hidden = [m["slug"] for m in self.catalog_models if m["hidden"]]
+            self.catalog_last_check = {"at": TS, "checked": len(self.catalog_items), "drifted": 0,
+                                       "missing": 0, "newly_hidden": hidden, "alert_sent": 0}
+            return reply(200, self.catalog_last_check)
+        if parts[2] == "items":
+            item = next((i for i in self.catalog_items if i["id"] == int(parts[3])), None)
+            if item is None:
+                return detail(404, "Item not found")
+            model = next(m for m in self.catalog_models if m["id"] == item["model_id"])
+            if method == "DELETE":
+                self.catalog_items.remove(item)
+            elif parts[-1] == "accept":
+                item.update(state="ok", confirmed_name=item["current_name"], score=1.0)
+            else:
+                if body.get("kala_code"):
+                    product = self.products.get(int(body["kala_code"]))
+                    if product is None:
+                        return detail(422, "Product not found in accounting (or inactive)")
+                    item.update(kala_code=int(body["kala_code"]), confirmed_name=product["name"],
+                                current_name=product["name"], state="ok", candidates=[])
+                if body.get("label") is not None:
+                    item["label"] = body["label"]
+            return reply(200, self._catalog_detail(model))
+        model = next((m for m in self.catalog_models if m["id"] == int(parts[2])), None)
+        if model is None:
+            return detail(404, "Model not found")
+        if len(parts) == 3 and method == "GET":
+            return reply(200, self._catalog_detail(model))
+        if len(parts) == 3 and method == "PATCH":
+            model.update({k: v for k, v in body.items() if k in ("name", "brand", "aliases")})
+            return reply(200, self._catalog_detail(model))
+        if parts[-1] == "suggestions":
+            taken = {i["kala_code"]: next(m["slug"] for m in self.catalog_models
+                                          if m["id"] == i["model_id"])
+                     for i in self.catalog_items}
+            query = (request.url.params.get("q") or model["name"]).lower()
+            rows = [{"code": c, "name": p["name"], "score": 0.9, "taken_by": taken.get(c)}
+                    for c, p in self.products.items()
+                    if any(w in p["name"].lower() for w in query.split())]
+            return reply(200, rows)
+        if parts[-1] == "items" and method == "POST":
+            code = int(body["kala_code"])
+            if any(i["kala_code"] == code for i in self.catalog_items):
+                return detail(409, "Product already mapped to model x")
+            product = self.products.get(code)
+            if product is None:
+                return detail(422, "Product not found in accounting (or inactive)")
+            self.add_catalog_item(model["id"], code, product["name"], label=body.get("label", ""))
+            return reply(201, self._catalog_detail(model))
+        if parts[-1] == "confirm":
+            items = [i for i in self.catalog_items if i["model_id"] == model["id"]]
+            if any(i["state"] == "missing" for i in items):
+                return detail(409, "Replace or remove products missing from accounting")
+            for i in items:
+                i.update(state="ok", confirmed_name=i["current_name"])
+            model["hidden"] = False
+            return reply(200, self._catalog_detail(model))
         return detail(404, "Not Found")
 
     def _server_admin(self, request, path, body, reply, detail):

@@ -26,6 +26,7 @@ from .core import (
     CustomerService,
     OrderService,
     ReceiptOutcome,
+    looks_like_model_ref,
     parse_product_ref,
 )
 from .core.cart import clamp_qty
@@ -101,6 +102,9 @@ CALLBACK_ARG_COUNTS: dict[str, int] = {
     "vdec": 2,
     "vdel": 2,
     "inq": 2,
+    # site models (REQUIREMENTS §9a): a product of the model / one of the options
+    "kp": 1,
+    "mdl": 1,
 }
 ADMIN_ACTIONS = frozenset({"addu", "adru", "adap", "adrp", "adsug", "adst"})
 #: Screens anyone may open, even before registration is approved.
@@ -412,15 +416,28 @@ class BotEngine:
         if command in ("/start", "/menu"):
             self.store.clear_conversation(platform, chat_id)
             args = text.split()[1:]
-            product_code = parse_product_ref(args[0], allow_bare_code=True) if args else None
+            model_ref = args[0] if args and looks_like_model_ref(args[0]) else None
+            product_code = (
+                parse_product_ref(args[0], allow_bare_code=True) if args and not model_ref else None
+            )
             await self._customer_entry(
                 adapter, platform, chat_id, welcome=command == "/start",
-                product_code=product_code,
+                product_code=product_code, model_ref=model_ref,
             )
             return
 
         # registration (the user may not exist in shopapi yet): contact only
         if state == STATE_AWAIT_CONTACT or state in LEGACY_REGISTRATION_STATES:
+            if not event.get("contact") and looks_like_model_ref(text):
+                # a site model code, typed before registering: keep it
+                self.store.set_conversation(
+                    platform, chat_id, STATE_AWAIT_CONTACT, {**(data or {}), "model": text}
+                )
+                await self._send_text(
+                    adapter, chat_id, texts.MODEL_AFTER_CONTACT,
+                    contact_keyboard(texts.BTN_SHARE_CONTACT),
+                )
+                return
             product_code = None if event.get("contact") else parse_product_ref(text, allow_bare_code=True)
             if product_code is not None:
                 # a product code from the site, typed before registering: keep it
@@ -444,8 +461,11 @@ class BotEngine:
         user = await self.api.get_user(platform, chat_id)
         status = self.customers.status_of(user)
         if status == STATUS_NEW:
-            product_code = parse_product_ref(text, allow_bare_code=True)
-            await self._begin_registration(adapter, platform, chat_id, product_code=product_code)
+            model_ref = text if looks_like_model_ref(text) else None
+            product_code = None if model_ref else parse_product_ref(text, allow_bare_code=True)
+            await self._begin_registration(
+                adapter, platform, chat_id, product_code=product_code, model_ref=model_ref
+            )
             return
         if status == STATUS_REJECTED:
             await self._show_not_approved(adapter, platform, chat_id, status)
@@ -472,18 +492,23 @@ class BotEngine:
             await self._show_product_by_code(adapter, platform, chat_id, product_code)
             return
 
+        # a site model (m_<slug>, the copied «name + کد مدل», a slug or a model name)
+        if text and await self._show_model(adapter, platform, chat_id, text):
+            return
+
         # any other text: back to the main menu
         await self._show_main_menu(adapter, platform, chat_id, status=status)
 
     async def _customer_entry(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, *, welcome: bool = True,
-        product_code: int | None = None,
+        product_code: int | None = None, model_ref: str | None = None,
     ) -> None:
         intro = texts.WELCOME if welcome else None
         status = await self.customers.status(platform, chat_id)
         if status == STATUS_NEW:
             await self._begin_registration(
-                adapter, platform, chat_id, intro=intro, product_code=product_code
+                adapter, platform, chat_id, intro=intro, product_code=product_code,
+                model_ref=model_ref,
             )
             return
         if status == STATUS_REJECTED:
@@ -491,6 +516,8 @@ class BotEngine:
             return
         if product_code is not None:
             await self._show_product_by_code(adapter, platform, chat_id, product_code)
+            return
+        if model_ref and await self._show_model(adapter, platform, chat_id, model_ref):
             return
         await self._show_main_menu(adapter, platform, chat_id, intro=intro, status=status)
 
@@ -526,10 +553,13 @@ class BotEngine:
     async def _begin_registration(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, *,
         intro: str | None = None, product_code: int | None = None,
+        model_ref: str | None = None,
     ) -> None:
         """Ask for the contact - only the share-contact button is accepted.
-        A deep-linked product is remembered and shown after registration."""
+        A deep-linked product or site model is remembered and shown after registration."""
         data = {"product": int(product_code)} if product_code else {}
+        if model_ref:
+            data = {"model": str(model_ref)}
         self.store.set_conversation(platform, chat_id, STATE_AWAIT_CONTACT, data)
         body = f"{intro}\n\n{texts.ASK_CONTACT}" if intro else texts.ASK_CONTACT
         await self._send_text(adapter, chat_id, body, contact_keyboard(texts.BTN_SHARE_CONTACT))
@@ -565,6 +595,10 @@ class BotEngine:
         if isinstance(product_code, int) and product_code > 0:
             await self._show_product_by_code(adapter, platform, chat_id, product_code)
             return
+        model_ref = (data or {}).get("model")
+        if isinstance(model_ref, str) and model_ref:
+            if await self._show_model(adapter, platform, chat_id, model_ref):
+                return
         await self._show_main_menu(adapter, platform, chat_id, status=status)
 
     # ================= customer screens ===================================
@@ -741,6 +775,78 @@ class BotEngine:
             platform, chat_id, STATE_NONE, {"pcache": {str(product.code): product.as_cache()}}
         )
         await self._show_product(adapter, platform, chat_id, product.code, 1)
+
+    # ---- site models (REQUIREMENTS §9a) -----------------------------------------
+    async def _show_model(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, text: str,
+    ) -> bool:
+        """Resolve a site model reference and show it. Returns False when the
+        text is not a model at all (the caller shows the main menu). Never
+        guesses: a hidden, unmapped or unknown model -> a polite message + phone."""
+        explicit = looks_like_model_ref(text)
+        try:
+            result = await self.api.resolve_model(text)
+        except ShopApiError:
+            if not explicit:
+                return False
+            raise  # the generic "service unavailable" answer
+        if not isinstance(result, dict):
+            result = {"status": "unknown", "explicit": explicit}
+        status = result.get("status")
+        model = result.get("model") if isinstance(result.get("model"), dict) else {}
+        name = str(model.get("name") or "")
+        if status == "found":
+            items = [i for i in (result.get("items") or [])
+                     if isinstance(i, dict) and str(i.get("kala_code", "")).isdigit()]
+            if len(items) == 1:
+                await self._show_product_by_code(adapter, platform, chat_id, int(items[0]["kala_code"]))
+                return True
+            if items:
+                rows = [[(shorten(str(i.get("label") or name), 30), f"kp:{int(i['kala_code'])}")]
+                        for i in items[:12]]
+                rows.append([(texts.BTN_MENU, "menu")])
+                await self._send_options(
+                    adapter, platform, chat_id, texts.MODEL_PICK_VARIANT.format(name=name),
+                    rows, state=STATE_NONE, data={},
+                )
+                return True
+            status = "unavailable"
+        if status == "ambiguous":
+            options = [o for o in (result.get("options") or [])
+                       if isinstance(o, dict) and o.get("slug")][:3]
+            if options:
+                rows = [[(shorten(str(o.get("name") or o["slug"]), 30), f"mdl:{n}")]
+                        for n, o in enumerate(options)]
+                rows.append([(texts.BTN_SEARCH, "search"), (texts.BTN_MENU, "menu")])
+                await self._send_options(
+                    adapter, platform, chat_id, texts.MODEL_AMBIGUOUS, rows,
+                    state=STATE_NONE, data={"model_opts": [str(o["slug"]) for o in options]},
+                )
+                return True
+            status = "unknown"
+        if status == "unavailable":
+            body = texts.MODEL_UNAVAILABLE.format(name=name or "این مدل")
+        elif explicit or result.get("explicit"):
+            body = texts.MODEL_UNKNOWN
+        else:
+            return False
+        await self._send_options(
+            adapter, platform, chat_id, body,
+            [[(texts.BTN_SEARCH, "search"), (texts.BTN_SUPPORT, "support")],
+             [(texts.BTN_MENU, "menu")]],
+            state=STATE_NONE, data={},
+        )
+        return True
+
+    async def _pick_model_option(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, index: int,
+    ) -> None:
+        _state, data = self.store.get_conversation(platform, chat_id)
+        options = data.get("model_opts") if isinstance(data, dict) else None
+        if not isinstance(options, list) or not 0 <= index < len(options):
+            await self._show_main_menu(adapter, platform, chat_id)
+            return
+        await self._show_model(adapter, platform, chat_id, f"m_{options[index]}")
 
     async def _add_to_cart(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int, qty: int,
@@ -1252,6 +1358,12 @@ class BotEngine:
             await self._cart_remove(adapter, platform, chat_id, args[0], callback_id, args[1])
         elif action == "inq":
             await self._send_inquiry(adapter, platform, chat_id, args[0], args[1], callback_id)
+        elif action == "kp":
+            await self._answer_callback(adapter, callback_id)
+            await self._show_product_by_code(adapter, platform, chat_id, args[0])
+        elif action == "mdl":
+            await self._answer_callback(adapter, callback_id)
+            await self._pick_model_option(adapter, platform, chat_id, args[0])
         elif action == "cart":
             await self._answer_callback(adapter, callback_id)
             await self._show_cart(adapter, platform, chat_id)

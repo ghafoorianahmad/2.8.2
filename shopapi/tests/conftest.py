@@ -59,12 +59,17 @@ class FakeReader:
         return {"total": total, "page": page, "page_size": page_size,
                 "items": items[start:start + page_size]}
 
+    def product_names(self):
+        if getattr(self, "down", False):
+            raise RuntimeError("accounting down")
+        return {code: p["name"] for code, p in self.products.items() if p.get("active", True)}
+
     def get_products_for_order(self, codes, level, our_reservations=None):
         our = our_reservations or {}
         out = {}
         for code in codes:
             p = self.products.get(code)
-            if p is None:
+            if p is None or not p.get("active", True):
                 continue
             avail = max(0.0, p["stock"] - p.get("open", 0.0) - our.get(code, 0.0))
             out[code] = {**p, "code": code, "available_qty": avail}

@@ -168,6 +168,9 @@ class FakeShopApi:
         self.order_bodies: list[dict] = []
         self.inquiries: list[dict] = []
         self.security_reports: list[dict] = []
+        #: site models (REQUIREMENTS §9a): slug -> {name, status, items}
+        self.models: dict[str, dict] = {}
+        self.resolve_texts: list[str] = []
         self._next_user = 1
         self._next_order = 1
 
@@ -197,6 +200,35 @@ class FakeShopApi:
 
     def _order_public(self, order: dict) -> dict:
         return {k: v for k, v in order.items() if not k.startswith("_")}
+
+    def _resolve(self, text: str) -> dict:
+        """A small stand-in for shopapi's resolver: slug forms + exact names."""
+        self.resolve_texts.append(text)
+        value = text.strip()
+        explicit = False
+        slug = None
+        if value.startswith("m_"):
+            slug, explicit = value[2:].lower(), True
+        elif "کد مدل:" in value:
+            slug, explicit = value.split("کد مدل:", 1)[1].strip().lower(), True
+        elif "-" in value and " " not in value:
+            slug, explicit = value.lower(), True
+        model = self.models.get(slug) if slug else None
+        if model is None:
+            first = (value.splitlines() or [""])[0].strip().lower()
+            hits = [s for s, m in self.models.items() if first and first in m["name"].lower()]
+            if len(hits) > 1:
+                return {"status": "ambiguous", "explicit": explicit,
+                        "options": [{"slug": s, "name": self.models[s]["name"]} for s in hits]}
+            if len(hits) == 1:
+                slug, model, explicit = hits[0], self.models[hits[0]], True
+        if model is None:
+            return {"status": "unknown", "explicit": explicit}
+        out = {"status": model.get("status", "found"), "explicit": True,
+               "model": {"slug": slug, "name": model["name"]}}
+        if out["status"] == "found":
+            out["items"] = model["items"]
+        return out
 
     # --- request handler ---
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -456,6 +488,9 @@ class FakeShopApi:
                 if order["_platform"] != platform or order["_chat_id"] != str(chat_id):
                     return self._err(404, "Order not found")
             return self._ok(self._order_public(order))
+
+        if method == "GET" and path == "/catalog/resolve":
+            return self._ok(self._resolve(params.get("text", "")))
 
         if method == "POST" and path == "/security/report":
             self.security_reports.append(json.loads(request.content or b"{}"))

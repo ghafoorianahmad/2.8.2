@@ -37,6 +37,11 @@ def _env_int(key: str, default: int) -> int:
     return int(raw) if raw else default
 
 
+def _env_float(key: str, default: float) -> float:
+    raw = _env(key)
+    return float(raw) if raw else default
+
+
 def _env_int_list(key: str) -> tuple[int, ...]:
     raw = _env(key).replace(" ", "")
     if not raw:
@@ -106,6 +111,14 @@ class Settings:
     tg_status_stale_minutes: int = 20
     #: Most recent KOL rows read for a customer statement.
     statement_max_rows: int = 2000
+
+    # --- Site catalog models (REQUIREMENTS §9a) ---
+    #: Server-local hour of the nightly mapping check; -1 = off.
+    model_check_hour: int = 2
+    #: A renamed product stays visible (only "drifted") at or above this name similarity.
+    model_drift_min_score: float = 0.7
+    #: The bot accepts a fuzzy model-name match at or above this similarity.
+    model_resolve_min_score: float = 0.75
 
     # --- Distributor price list / Telegram worker (REQUIREMENTS §4–6) ---
     #: PDF prices are thousand Toman -> Rial.
@@ -179,6 +192,9 @@ class Settings:
             health_fail_threshold=max(1, _env_int("HEALTH_FAIL_THRESHOLD", 2)),
             tg_status_stale_minutes=max(5, _env_int("TG_STATUS_STALE_MINUTES", 20)),
             statement_max_rows=_env_int("STATEMENT_MAX_ROWS", 2000),
+            model_check_hour=_env_int("MODEL_CHECK_HOUR", 2),
+            model_drift_min_score=_env_float("MODEL_DRIFT_MIN_SCORE", 0.7),
+            model_resolve_min_score=_env_float("MODEL_RESOLVE_MIN_SCORE", 0.75),
             pricelist_unit_rial=_env_int("PRICELIST_UNIT_RIAL", 10_000),
             pricelist_cash_surcharge_rial=_env_int("PRICELIST_CASH_SURCHARGE_RIAL", 5_000_000),
             pricelist_max_change_pct=float(_env("PRICELIST_MAX_CHANGE_PCT", "15") or 15),

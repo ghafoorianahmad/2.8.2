@@ -133,6 +133,23 @@ MAX_PRODUCT_CODE = 10_000_000
 _CODE_PREFIX = re.compile(r"^(?:kala[\s_\-]*|کد(?:\s*کالا)?\s*[:：]?\s*|#)", re.IGNORECASE)
 
 
+#: Site model references (REQUIREMENTS §9a): ``m_<slug>`` (deep link), the
+#: copied «name + کد مدل: slug» text, or a bare slug with a hyphen. Only the
+#: shape is checked here; shopapi resolves the model.
+_MODEL_DEEP = re.compile(r"^m_[A-Za-z0-9-]{1,62}$")
+_MODEL_LABEL = re.compile(r"[کك]د\s*مدل")
+_MODEL_SLUG = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$")
+MAX_MODEL_TEXT = 400
+
+
+def looks_like_model_ref(text: str | None) -> bool:
+    value = normalize_digits(text).strip()
+    if not value or len(value) > MAX_MODEL_TEXT:
+        return False
+    return bool(_MODEL_DEEP.match(value) or _MODEL_LABEL.search(value)
+                or (len(value) <= 62 and _MODEL_SLUG.match(value.lower())))
+
+
 def parse_product_ref(text: str | None, *, allow_bare_code: bool = False) -> int | None:
     """``kala_289`` (also as a /start parameter) -> 289; with ``allow_bare_code``
     a message that is only a number counts too (the fallback when the start

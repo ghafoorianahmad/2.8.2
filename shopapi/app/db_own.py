@@ -197,6 +197,43 @@ CREATE TABLE IF NOT EXISTS proxy_days (
     fail INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (proxy_id, day)
 );
+
+-- Site catalog models (REQUIREMENTS §9a): permanent slug -> accounting products.
+-- hidden = 1: the nightly check lost a product; customers never see the model
+-- until the owner confirms it again.
+CREATE TABLE IF NOT EXISTS catalog_models (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    brand TEXT NOT NULL DEFAULT '',
+    aliases TEXT NOT NULL DEFAULT '',
+    hidden INTEGER NOT NULL DEFAULT 0,
+    hidden_reason TEXT NOT NULL DEFAULT '',
+    hidden_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL DEFAULT ''
+);
+
+-- One accounting product per row; a product belongs to one model only.
+-- state: ok | drifted (name changed a little, still shown) | missing (gone or
+-- renamed beyond recognition; the model is hidden). candidates = JSON.
+CREATE TABLE IF NOT EXISTS catalog_model_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id INTEGER NOT NULL REFERENCES catalog_models(id) ON DELETE CASCADE,
+    kala_code INTEGER NOT NULL UNIQUE,
+    label TEXT NOT NULL DEFAULT '',
+    confirmed_name TEXT NOT NULL,
+    current_name TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'ok' CHECK (state IN ('ok','drifted','missing')),
+    score REAL,
+    candidates TEXT NOT NULL DEFAULT '[]',
+    sort INTEGER NOT NULL DEFAULT 0,
+    confirmed_at TEXT NOT NULL,
+    confirmed_by TEXT NOT NULL DEFAULT '',
+    checked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_model_items_model ON catalog_model_items(model_id);
 """
 
 #: Columns added after the first release: (table, column, declaration).

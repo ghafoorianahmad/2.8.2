@@ -13,9 +13,9 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from . import deps, monitor, tracking
+from . import catalog_models, deps, monitor, tracking
 from .db_own import OwnDB
-from .routers import admin, auth, pricelist, public, server_admin, staff_admin
+from .routers import admin, auth, catalog, pricelist, public, server_admin, staff_admin
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -54,6 +54,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(tracking.invoice_sync_loop(settings, db_factory, reader_factory)),
         # Health monitoring (§8): SQL / bot / Bale / Telegram worker -> events + Bale.
         asyncio.create_task(monitor.health_loop(settings, db_factory, reader_factory)),
+        # Nightly check of the site model mapping (§9a): hide + Bale alert on loss.
+        asyncio.create_task(catalog_models.nightly_loop(settings, db_factory, reader_factory)),
     ]
     try:
         yield
@@ -78,6 +80,7 @@ def create_app() -> FastAPI:
     application.include_router(staff_admin.router)
     application.include_router(server_admin.router)
     application.include_router(pricelist.router)
+    application.include_router(catalog.router)
 
     @application.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:

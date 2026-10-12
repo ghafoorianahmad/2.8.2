@@ -167,6 +167,13 @@ class ShopApiClient:
     async def get_product(self, code: int) -> dict | None:
         return await self._request("GET", f"/products/{int(code)}", key=self._settings.bot_api_key)
 
+    async def resolve_model(self, text: str) -> dict | None:
+        """A site model reference -> found / ambiguous / unavailable / unknown (§9a)."""
+        return await self._request(
+            "GET", "/catalog/resolve", key=self._settings.bot_api_key,
+            params={"text": str(text)[:400]},
+        )
+
     async def shop_state(self) -> dict:
         result = await self._request("GET", "/shop/state", key=self._settings.bot_api_key)
         return result if isinstance(result, dict) else {"closed": False}

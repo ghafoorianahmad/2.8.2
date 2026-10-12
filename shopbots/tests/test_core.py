@@ -260,8 +260,8 @@ def test_product_ref_parsing():
 
 def test_site_model_slugs_are_never_read_as_product_codes():
     # Phase 6 site: deep link m_<slug> and the copied "name + کد مدل: slug" text
-    # (REQUIREMENTS §9). Until the slug mapping (§9a) exists they must fall
-    # through to the normal entry, never resolve to a numeric Kala code.
+    # (REQUIREMENTS §9) go to shopapi's model resolver (§9a, test_phase6b),
+    # never resolve to a numeric Kala code.
     for slug in ("iphone-17-pro", "galaxy-s25-ultra", "redmi-note-14-pro-5g", "poco-x7", "iphone-16e"):
         for sent in (slug, "m_" + slug, "iPhone 17 Pro\nکد مدل: " + slug, "کد مدل: " + slug):
             assert parse_product_ref(sent, allow_bare_code=True) is None, sent

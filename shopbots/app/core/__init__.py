@@ -12,7 +12,14 @@ channel = one adapter in `app/platforms/` (REQUIREMENTS §1).
 from __future__ import annotations
 
 from .cart import MAX_QTY, CartService
-from .catalog import CatalogService, Product, ProductPage, normalize_search, parse_product_ref
+from .catalog import (
+    CatalogService,
+    Product,
+    ProductPage,
+    looks_like_model_ref,
+    normalize_search,
+    parse_product_ref,
+)
 from .customers import (
     STATUS_APPROVED,
     STATUS_NEW,
@@ -36,6 +43,7 @@ __all__ = [
     "CatalogService",
     "Product",
     "ProductPage",
+    "looks_like_model_ref",
     "normalize_search",
     "parse_product_ref",
     "STATUS_APPROVED",

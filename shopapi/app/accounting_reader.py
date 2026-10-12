@@ -168,6 +168,17 @@ class AccountingReader:
             "items": items[start : start + page_size],
         }
 
+    def product_names(self) -> dict[int, str]:
+        """{code: name} of every active product (fuzzy suggestions and the nightly
+        model check, REQUIREMENTS §9a). No user input reaches this query."""
+        db = self._db()
+        conn = self.connection()
+        try:
+            rows = self._rows(conn.execute(f"SELECT Code, Name FROM {db}.dbo.Kala WHERE active = 1"))
+        finally:
+            conn.close()
+        return {int(r["Code"]): (r["Name"] or "").strip() for r in rows if r["Code"] is not None}
+
     def get_products_for_order(
         self,
         codes: list[int],

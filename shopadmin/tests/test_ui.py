@@ -424,7 +424,7 @@ def test_sidebar_shows_users_for_the_super_admin(ui_context, admin_qapp):
     assert "users" in window._nav_buttons
     assert "server" in window._nav_buttons
     assert "pricelist" in window._nav_buttons
-    assert len(window._nav_buttons) == 9
+    assert len(window._nav_buttons) == 10
     window.close()
 
 

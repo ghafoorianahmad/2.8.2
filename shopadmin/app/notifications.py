@@ -42,6 +42,8 @@ SERVER_WARNINGS = {
     "telegram_login_required": "کارگر تلگرام نیاز به ورود دوباره دارد.",
     "telegram_unreachable": "کارگر تلگرام به تلگرام وصل نمی‌شود.",
     "security_alert": "فعالیت مشکوک (ربات یا ورود به کنسول) دیده شد؛ گزارش ممیزی را ببینید.",
+    "model_review": "بررسی شبانه: کالای یک مدل سایت در حسابداری پیدا نشد یا نامش عوض شده؛ "
+                    "مدل تا تأیید شما از دید مشتری پنهان است.",
 }
 
 #: Which page (and filter) a notification opens.
@@ -52,6 +54,7 @@ TARGETS = {
     "pricelist_held": ("pricelist", ""),
     "pricelist_failed": ("pricelist", ""),
     "proxies_all_dead": ("pricelist", ""),
+    "model_review": ("catalog", "review"),
     # the accounting program was opened (sazeh_watch)
     "sazeh_orders": ("orders", "awaiting_payment"),
     "sazeh_customers": ("customers", "pending"),

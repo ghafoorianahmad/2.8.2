@@ -86,6 +86,7 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 - One **catalog model** table in shopapi: slug ↔ accounting product(s) (`Kala`, per storage/color where needed). The distributor price-list rows (§5) map to the same catalog model, so each model is mapped once.
 - ShopAdmin suggests matches with fuzzy, normalized name matching (case, partial names, ی/ي, ک/ك, spacing/ZWNJ, Persian/English digits); the owner confirms once.
 - **Nightly validation** of every mapping: if the mapped product disappears or its name drifts → re-search by name, propose candidates, **hide that model from customers until the owner confirms**, and alert the owner on Bale. Never show a wrong product.
+  - Refinement (user, 2026-10-12): if the `kala_code` still exists and the new name is still a strong fuzzy match to the confirmed name (`MODEL_DRIFT_MIN_SCORE`, default 0.7; e.g. a color or spacing added), the model **stays visible** and the item is only flagged «drifted» in ShopAdmin (no Bale alert). Hide + Bale alert only when the product is missing/inactive or the similarity falls below the threshold. Another storage size, another model (Pro/Max, 17/17e) or an accessory always falls below it.
 - The bot resolves what the site sends: deep link `m_<slug>`, a pasted «name + slug» text, a bare slug, or (if the customer edited the text) a fuzzy name match → asks to confirm when ambiguous. Unknown/unmapped/hidden → polite message + shop phone, never a guess.
 
 ## 10. Security

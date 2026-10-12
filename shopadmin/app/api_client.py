@@ -641,6 +641,56 @@ class ShopApiClient:
     def delete_price_mapping(self, mapping_id: int) -> None:
         self._request("DELETE", f"/admin/price-mappings/{int(mapping_id)}")
 
+    # ---- site catalog models (Phase 6b, REQUIREMENTS §9a) -----------------------
+    def _dict(self, payload) -> dict:
+        if not isinstance(payload, dict):
+            raise ApiError(MSG_BAD_RESPONSE, kind="decode")
+        return payload
+
+    def list_catalog_models(self) -> dict:
+        return self._dict(self._request("GET", "/admin/catalog-models"))
+
+    def import_catalog_models(self, models: list[dict]) -> dict:
+        return self._dict(self._request("POST", "/admin/catalog-models/import",
+                                        json_body={"models": list(models)}))
+
+    def check_catalog_models(self) -> dict:
+        return self._dict(self._request("POST", "/admin/catalog-models/check"))
+
+    def catalog_model(self, model_id: int) -> dict:
+        return self._dict(self._request("GET", f"/admin/catalog-models/{int(model_id)}"))
+
+    def update_catalog_model(self, model_id: int, **fields) -> dict:
+        return self._dict(self._request("PATCH", f"/admin/catalog-models/{int(model_id)}",
+                                        json_body=fields))
+
+    def catalog_suggestions(self, model_id: int, query: str = "", limit: int = 15) -> list[dict]:
+        params = {"limit": limit, "q": query.strip() or None}
+        return list(self._request("GET", f"/admin/catalog-models/{int(model_id)}/suggestions",
+                                  params=params) or [])
+
+    def add_catalog_item(self, model_id: int, kala_code: int, label: str = "") -> dict:
+        return self._dict(self._request(
+            "POST", f"/admin/catalog-models/{int(model_id)}/items",
+            json_body={"kala_code": int(kala_code), "label": label}))
+
+    def update_catalog_item(self, item_id: int, *, kala_code: int | None = None,
+                            label: str | None = None) -> dict:
+        body = {k: v for k, v in (("kala_code", kala_code), ("label", label)) if v is not None}
+        return self._dict(self._request("PATCH", f"/admin/catalog-models/items/{int(item_id)}",
+                                        json_body=body))
+
+    def accept_catalog_item(self, item_id: int) -> dict:
+        return self._dict(self._request("POST",
+                                        f"/admin/catalog-models/items/{int(item_id)}/accept"))
+
+    def delete_catalog_item(self, item_id: int) -> dict:
+        return self._dict(self._request("DELETE", f"/admin/catalog-models/items/{int(item_id)}"))
+
+    def confirm_catalog_model(self, model_id: int) -> dict:
+        return self._dict(self._request("POST",
+                                        f"/admin/catalog-models/{int(model_id)}/confirm"))
+
     def list_inquiries(self, limit: int = 100) -> list[dict]:
         return list(self._request("GET", "/admin/inquiries", params={"limit": limit}) or [])
 
