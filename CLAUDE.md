@@ -12,6 +12,7 @@
 | `shopapi/` | FastAPI؛ تنها جزئی که به SQL Server وصل می‌شود. کالا/گروه/موجودی/قیمت از حسابداری (فقط‌خواندنی)، مشتری/سفارش/رزرو در SQLite خودش، ثبت سفارش تأییدشده در `KalaOrder/KalaOrderDetail` (پیش‌فرض dry-run + ROLLBACK). کلیدها: `BOT_API_KEY`, `SITE_API_KEY`, `ADMIN_API_KEY` (هدر `X-API-Key`). | کامل؛ ۵۵ تست سبز؛ روی `hesab5 t` زنده تست شده |
 | `shopbots/` | ربات بله + تلگرام (long-polling، httpx خام، موتور گفتگوی مشترک). فقط HTTP به shopapi. ادمین‌ها از `ADMIN_CHAT_IDS` تأیید مشتری/فیش را داخل چت انجام می‌دهند. تلگرام با `TELEGRAM_PROXY` (socks5/http). همهٔ متن‌ها/دکمه‌ها/اطلاعات فروشگاه در `app/messages.fa.json` (نسخهٔ قابل ویرایش: `%ProgramData%\ShopServer\messages.fa.json`). | کامل؛ ۷۷ تست سبز؛ **بله با ربات واقعی راستی‌آزمایی نشده** |
 | `shopadmin/` | کنسول دسکتاپ PySide6 (فارسی، RTL، شمسی): داشبورد، مشتریان، سفارش‌ها، محصولات، گزارش CSV/XLSX، تنظیمات، کاربران داخلی. ShopSystem.exe را به‌صورت child process (Job Object) بالا می‌آورد. + نصب‌کنندهٔ Inno Setup. | برنامه کامل (۳۲۳ تست سبز)؛ **نصب‌کننده نیمه‌کاره** |
+| `shoptg/` | کارگر تلگرام (Telethon، حساب کاربری فروشگاه، فقط‌خواندنی): لیست قیمت PDF کانال پخش‌کننده و استخر پراکسی MTProto؛ فقط `/worker/*` با `WORKER_API_KEY`. `login.ps1` و `check_pricelist.ps1` بدون shopapi کار می‌کنند. راهنمای سرور: `SERVER_GUIDE.md`. | کد کامل؛ ۴۷ تست سبز؛ **ورود تلگرام روی سرور انجام نشده** |
 | `shopsystem/` | `launcher.py` → `ShopSystem.exe` (PyInstaller): API + بات‌ها در یک پروسه. پکیج‌های `app` در بیلد به `shopapi_app`/`shopbots_app` تغییر نام می‌دهند. `.env`، `shopapi.db`، `shopbots.db`، `app.log` کنار exe. | بیلد و تست‌شده با دادهٔ واقعی |
 
 **سایت** خارج از این پوشه است: `E:\DSH-Workspace\projects\asr-ertebatat-shop` (HTML ثابت، CLAUDE.md خودش را دارد). فعلاً به shopapi وصل نیست و فقط لینک ربات (`asrertebatat2_bot`) می‌دهد؛ اتصال آینده فقط سمت سرور و بدون کلید در کد مرورگر.
@@ -44,7 +45,9 @@ build_all.bat        # (ریشه) بیلد کامل به ترتیب درست: Sh
 ## git
 ریپوی محلی در همین پوشه (branch `main`، از 2026-10-07). `.gitignore` ریشه `.env`، `*.db`، `*.log`، `.venv`، `build/`، `dist/`، `build_src/`، `*.spec` (PyInstaller در هر بیلد با مسیر مطلق بازمی‌سازد)، `.wheels/`، `.tools/` را بیرون نگه می‌دارد. قبل از هر commit: `git status` و مطمئن شو هیچ `.env`/`.db` stage نشده.
 
-## وضعیت (به‌روز 2026-10-11)
+## وضعیت (به‌روز 2026-10-12)
+
+- **فاز ۳ در کد کامل شد (2026-10-12)؛ جزئیات در `PROGRESS.md`.** جزء جدید `shoptg/` (کارگر تلگرام با Telethon، venv جدا): کانال قیمت هر ۳۰ دقیقه → `/worker/pricelists`، جمع‌آوری هفتگی پراکسی، health check و failover، پشتیبانی fake-TLS (`ee`) که Telethon ندارد، نشست با DPAPI LocalMachine + ACL. بستهٔ سرور: `E:\Outputs\ShopTG\` + `shoptg/SERVER_GUIDE.md`. **ورود تلگرام و تست زنده هنوز انجام نشده** (فقط روی سرور فروشگاه، توسط کاربر). تست‌ها: shopapi ۲۱۸ ✓، shopbots ۱۱۴ ✓، shopadmin ۴۰۱ ✓، shoptg ۴۷ ✓.
 
 - **جلسهٔ آزمون زنده بعد از فاز ۲ (2026-10-11)؛ جزئیات در `PROGRESS.md`.** بله: `contact.user_id` هست و با `from.id` برابر است ✓؛ **پارامتر start نامطمئن است** (۲ از ۸ بار رسید: `kala_289` و `289`) ← fallback: مشتری کد کالا را می‌فرستد (پیش از ثبت‌نام هم نگه داشته می‌شود). SQL روی `hesab5 t`: گردش KOL ✓، `create_person` + بررسی تکراری ✓ (دادهٔ آزمون پاک شد)، R5 فقط بخش بدون فاکتور (فاکتور با `ordercode` در DB تست نیست ← G3). همهٔ مبالغ **ریال**؛ سقف مبلغ مشتری تأییدنشده حذف شد (فقط سقف تعداد). اسکریپت SQL را فقط از PowerShell معمولی اجرا کنید (پروسه‌های اپ Claude را shared memory رد می‌کند). تست‌ها: shopapi ۱۷۳ ✓، shopbots ۱۰۴ ✓، shopadmin ۳۷۷ ✓.
 

@@ -50,3 +50,9 @@ desktop.ini
 # build_exe.bat rescue folder (holds .env during a rebuild)
 .rebuild_keep/
 shopapi/scripts/live_db_check.out.txt
+
+# pytest temp folders created with a basetemp inside a project
+pytest-of-*/
+# shoptg server package (built by shoptg/build_package.ps1)
+shoptg/wheels/
+shoptg/vendor/

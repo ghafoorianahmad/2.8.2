@@ -2,22 +2,114 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
-## Phase 3 (part 1, no Telegram login) — 2026-10-12 — IN PROGRESS (stopped at the usage limit)
+## Phase 3 — Telegram worker, price list, proxy pool (2026-10-12) — DONE in code; live Telegram login pending (on the server)
 
-### Done
-- **shopapi** (218 tests ✓): PDF parser `app/pricelist/parser.py` (sample: 195 rows, 15 sections, date 1405/07/19; scrambled Persian matched by letter multiset); pricing `pricing.py` (روال×10,000; else نقد×10,000+5,000,000 Rial; none = inquiry); import with safety `importer.py` (duplicate / older / failed / held on >15% mapped change or most mapped rows missing; PDF copy in `pricelists/`); tables price_lists, price_list_rows, price_mappings (map|ignore by row key), inquiries, proxies, proxy_days; `routers/pricelist.py` (`/admin/pricelists*`, `/admin/price-mappings*`, `/admin/inquiries*`, `/admin/proxies*`, `/worker/*`); `WORKER_API_KEY` (loopback, /worker only); permissions `pricelist.manage` (admin, super) and `proxies.manage` (super); products/orders with per-color variants (mapped rows only; phones sold on list availability; stale list > `PRICELIST_MAX_AGE_HOURS` = inquiry only); proxy pool `app/proxypool.py` (stability ranking, probation→main, retire after N bad days, never below 3, outage days ignored, all-dead alert).
-- **shopbots** (114 tests ✓): color picker (price only after a color is picked; changing color announces the new price; the price is re-read from shopapi on each pick), cart lines per color (cart table migrated), inquiry button, owner alerts for pricelist_held/failed, proxies_all_dead, telegram_login_required/unreachable, price_inquiry.
-- **shopadmin**: API client methods, permissions, new page `ui/pages/pricelist.py` (rows + mapping dialog + ignore + section/brand filter + search; lists + PDF upload + approve/reject held; proxies), registered in the sidebar.
+Part 1 is WIP commit `db48ce3` (rollback point: `5d7a0cf`). Part 2 is committed on top of it.
 
-### Not done / next session
-- shopadmin: `tests/test_ui.py::test_sidebar_shows_users_for_the_super_admin` fails after adding the sidebar entry (probably an exact nav list). The full shopadmin suite was not completed; no tests for the new page yet.
-- **shoptg worker not started**: Telethon login script (DPAPI-encrypted session + NTFS ACL), worker loop (channel every 30 min, PDFs → `/worker/pricelists`, weekly proxy collection, health checks/failover), tests with a fake gateway, its own venv.
-- pdfplumber was installed into `shopapi\.venv` with the regular Python 3.12 (`pip --target`). The Store-Python venvs cannot write files from the Claude app, and pip needs `--use-deprecated=legacy-certs`. Add pdfplumber to the ShopSystem PyInstaller build (Phase 4). The launcher's `--init-config` must generate `WORKER_API_KEY`.
+### Done — part 1 (shopapi / shopbots / shopadmin)
+- **shopapi**
+  - PDF parser `app/pricelist/parser.py`. On the sample: 195 rows, 15 sections, date 1405/07/19. Scrambled Persian text is matched by its letter multiset.
+  - Pricing `pricing.py`: روال×10,000 Rial; else نقد×10,000 + 5,000,000 Rial; no price = inquiry.
+  - Import with safety checks, `importer.py`. Outcomes: duplicate / older / failed / held. A list is held on a >15% change of a mapped price, or when most mapped rows are missing. A copy of each PDF goes to `pricelists/`.
+  - Tables: `price_lists`, `price_list_rows`, `price_mappings` (map or ignore, by row key), `inquiries`, `proxies`, `proxy_days`.
+  - Routes `/admin/pricelists*`, `/admin/price-mappings*`, `/admin/inquiries*`, `/admin/proxies*` and `/worker/*`. `WORKER_API_KEY` is loopback-only and limited to `/worker/*`.
+  - Permissions: `pricelist.manage` for admin and super admin; `proxies.manage` for super admin only.
+  - Products and orders have per-color variants, from mapped rows only. Phones are sold on list availability. A list older than `PRICELIST_MAX_AGE_HOURS` allows inquiries only.
+  - Proxy pool `app/proxypool.py`: ranked by stability; probation → main; retired after N bad days, but never below 3 main proxies; days when no proxy worked are ignored; all-dead alert.
+- **shopbots**
+  - Color picker: the price shows only after a color is picked. Changing the color announces the new price, re-read from shopapi on each pick.
+  - Cart lines are per color (the cart table was migrated). An inquiry button.
+  - Owner alerts: pricelist held/failed, all proxies dead, Telegram login required/unreachable, price inquiry.
+- **shopadmin**: page «لیست قیمت».
+  - Rows tab: mapping dialog, ignore, section/brand filter, search.
+  - Lists tab: PDF upload, approve/reject a held list.
+  - Proxies tab (super admin only).
 
-### For the live Telegram day (do not paste secrets in chat)
-1. From my.telegram.org (logged in as the shop account): `api_id`, `api_hash` → type them yourself into `%ProgramData%\ShopServer\.env` (`TG_API_ID=`, `TG_API_HASH=`), or into `shoptg\.env` for the dev test.
-2. The shop phone, to receive the login code. Have the 2FA password ready if set. Both are typed only into the login script's hidden prompt in your own PowerShell.
-3. At least one working MTProto proxy link (enter it in ShopAdmin › لیست قیمت › پراکسی‌ها, "مستقیم در فهرست اصلی"), plus the usernames of the proxy channels the account follows.
+### Done — part 2 (this session)
+**A. `shoptg/` — new component: Telegram worker, its own venv, Telethon 1.45**
+- `app/gateway.py` is the only module that uses Telethon. It is read-only: connect, read public channel messages, download, ping. It never joins, posts or marks messages as read.
+- **Fake-TLS (`ee`) proxy support: `app/faketls.py`.**
+  - Telethon 1.x throws away the domain of an `ee` secret and cannot use fake-TLS proxies, which are the most common kind in Iran.
+  - The new connector does the full handshake: a signed 517-byte ClientHello with SNI, verification of the proxy's HMAC, then obfuscated2 inside TLS records.
+  - It is tested against a local fake proxy that checks what mtprotoproxy/mtg check (HMAC, time, SNI) and decrypts the obfuscated2 header (tag `dddddddd`, DC id).
+  - `dd` proxies use RandomizedIntermediate; plain proxies use Intermediate.
+- **Session security: `app/secure_store.py`.**
+  - The StringSession is encrypted with DPAPI **LocalMachine** scope plus app entropy, so the Phase 4 service account can decrypt it on this server only.
+  - The file and folder get an NTFS ACL with inheritance removed: SYSTEM + Administrators full control (by SID, so it works on any Windows language), plus `TG_SERVICE_ACCOUNT` read.
+  - The file is written atomically.
+  - Honest limit: any local administrator can decrypt it. The ACL is what keeps other accounts out.
+- **Worker loop: `app/worker.py`.**
+  - Price channel every 30 min. PDFs newer than the cursor `tg_price_last_id` go to `/worker/pricelists`. The cursor also moves past images and text posts. On the first run only the newest PDF is sent. If shopapi is down, the cursor is not advanced.
+  - Proxy channels weekly: links found in the text, in link entities and in buttons go to `/worker/proxies/candidates`.
+  - Health check every 3 min. On a failure it switches at once to the next proxy: the shopapi ranking first, then `TG_PROXY`, then a direct connection (`TG_ALLOW_DIRECT`).
+  - Every hour it probes up to 15 other proxies in rotation with an **anonymous** client. The shop session is never used for probes: the same auth key from two IPs risks `AUTH_KEY_DUPLICATED`.
+  - Alerts go to `/worker/alerts`: login required (missing or revoked session), unreachable (after 15 min).
+  - A status JSON is kept in `tg_status`. Logs show host:port and kind only, never secrets.
+- **Scripts**
+  - `login.ps1` → `scripts/login.py`: elevated PowerShell only. Phone, code, 2FA password and proxy are all typed into hidden prompts. 3 tries each. Nothing secret is printed.
+  - `check_pricelist.ps1` → `scripts/check_pricelist.py`: read-only and works **without shopapi**. It takes the newest PDF of the price channel, parses it with the vendored parser and prints a summary. `-Save` keeps a copy; `-ProxyChannels` counts proxy links.
+  - `run.ps1 [-Check]`: the check prints names and yes/no only, never values.
+  - `install.ps1`:
+    - creates the venv, installing **offline from the bundled wheels** when the server has Python 3.12 x64, otherwise from PyPI;
+    - creates `.env` and limits it to SYSTEM and Administrators;
+    - creates the data folder `%ProgramData%\ShopServer\shoptg` with the same ACL;
+    - `-Dev` is for this PC.
+  - `build_package.ps1` builds the zip:
+    - app, scripts, ps1 files, guide;
+    - `vendor/pricelist` = shopapi's `parser.py` + `pricing.py`;
+    - 20 wheels for Python 3.12 x64;
+    - an offline-install probe;
+    - a check that no `.env`/db/log/session file is inside.
+- **SERVER_GUIDE.md**: step-by-step guide for the server — copy, install, `.env` by hand, login, read-only test, troubleshooting.
+- **Tests: 47**, using a fake Telethon client and a fake shopapi (httpx MockTransport), no network. They cover:
+  - worker failover, direct fallback, probe rotation, cursor rules, weekly collection, alerts, status;
+  - fake-TLS;
+  - a real DPAPI round trip and the ACL arguments;
+  - the config, and parity of proxy-link parsing with shopapi;
+  - that real Telethon accepts our client options;
+  - the login script (wrong code, 2FA, nothing secret in the output);
+  - the check script on the real sample PDF (195 rows) and on a broken PDF.
+
+**B. shopadmin**
+- The sidebar test now expects 9 entries, including `pricelist`.
+- `tests/test_pricelist.py` (24 tests):
+  - helpers, permissions per role, rows/counts/sections/banner, server-side section filter, local search;
+  - map (dialog), ignore, clear, cancel;
+  - operator read-only; admin without the proxies tab;
+  - lists: approve/reject held, upload (active vs held), non-PDF refused;
+  - proxies: add, toggle, delete; mapping dialog search/pick/validation; no callback errors on any tab.
+- The fake shopapi in `conftest.py` gained the price-list, mapping and proxy endpoints.
+
+**C. Other**
+- The WIP commit had committed pytest temp files (`shopapi/pytest-of-Lenovo/…`). They are now untracked, and `pytest-of-*/`, `shoptg/wheels/` and `shoptg/vendor/` are git-ignored.
+
+### Tests
+- shopapi **218** ✓. Run it with the regular Python 3.12: `PYTHONPATH=.venv\Lib\site-packages`. The Store-Python venv cannot write temp files from the Claude app.
+- shopbots **114** ✓.
+- shopadmin **401** ✓ (exit 0; pytest's summary line is lost at Qt teardown in this sandbox).
+- shoptg **47** ✓.
+
+### Server package
+- `E:\Outputs\ShopTG\shoptg_server_1.0.0_2026-10-12.zip`; SHA-256 is in `E:\Outputs\ShopTG\README_FA.txt`.
+- The guide is `shoptg/SERVER_GUIDE.md`, also inside the zip.
+
+### Pending / for the user (the live Telegram day, on the server)
+1. Install Python 3.12 x64 for all users. Copy and extract the zip to `C:\ShopServer\`, then run `install.ps1` from an elevated PowerShell.
+2. `notepad .env`: type `TG_API_ID`, `TG_API_HASH` and `TG_PROXY` yourself. **Never paste them in chat.**
+3. Run `login.ps1` (hidden prompts), then `check_pricelist.ps1 -Save`. Send me the output; it contains no secrets.
+- **Not verified live:**
+  - fake-TLS against a real proxy (tested only against a local fake proxy built to the protocol);
+  - Telethon reading the channel;
+  - the format of the real channel posts (document MIME type and file name).
+- shopapi is not on the server yet. The worker itself (`run.ps1`) needs shopapi plus `WORKER_API_KEY`, which comes in Phase 4.
+- Phase 4 carry-overs:
+  - pdfplumber in the ShopSystem PyInstaller build;
+  - `--init-config` must generate `WORKER_API_KEY`;
+  - the shoptg service with `TG_SERVICE_ACCOUNT` (read grant on the session; no new login needed);
+  - shopapi's `/admin/server/status` could show `tg_status`.
+
+### Next step
+Phase 4 — services (NSSM or equivalent), install/update/rollback scripts, tray app, alerts and health monitoring (§1, §8).
 
 ## Live test session after Phase 2 (2026-10-11) — DONE
 

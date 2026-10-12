@@ -94,6 +94,13 @@ class FakeShopApi:
         self.receipts: dict[int, bytes] = {}
         self.shop_closed = False
         self.approve_bodies: list[dict] = []
+        # ---- Phase 3: distributor price list / mapping / proxies ----
+        self.pricelists: list[dict] = []
+        self.price_rows: list[dict] = []
+        self.price_uploads: list[dict] = []
+        self.upload_outcome = "active"
+        self.proxies: list[dict] = []
+        self.proxy_adds: list[dict] = []
 
     # ---- helpers used by tests ------------------------------------------
     def add_staff(self, username: str, password: str = OWNER_PASSWORD, role: str = "operator",
@@ -364,6 +371,9 @@ class FakeShopApi:
                     return reply(200, order)
             return detail(404, "Order not found")
 
+        if path.startswith(("/admin/pricelists", "/admin/price-mappings", "/admin/proxies")):
+            return self._pricelist_admin(request, path, body, user, reply, detail)
+
         if path == "/products":
             query = (request.url.params.get("q") or "").strip()
             group = request.url.params.get("group")
@@ -377,6 +387,112 @@ class FakeShopApi:
         if path == "/groups":
             return reply(200, self.groups)
 
+        return detail(404, "Not Found")
+
+    # ---- Phase 3 helpers / endpoints ---------------------------------------
+    def add_price_row(self, description: str, color: str, *, section: str = "iPHONE",
+                      kind: str = "شرکتی", naghd: int | None = 52000, raval: int | None = 52500,
+                      action: str | None = None, kala_code: int | None = None,
+                      color_label: str = "") -> dict:
+        row = {"id": len(self.price_rows) + 1, "section": section, "description": description,
+               "kind": kind, "color": color, "naghd": naghd, "raval": raval,
+               "row_key": f"{description}|{kind}|{color}".lower(),
+               "price_rial": raval * 10_000 if raval else (naghd * 10_000 + 5_000_000 if naghd else None),
+               "action": action, "kala_code": kala_code, "color_label": color_label,
+               "mapping_id": len(self.price_rows) + 101 if action else None}
+        self.price_rows.append(row)
+        return row
+
+    def add_pricelist(self, status: str = "active", list_date: str = "1405/07/19", **kwargs) -> dict:
+        row = {"id": len(self.pricelists) + 1, "list_date": list_date, "source": "telegram",
+               "status": status, "row_count": len(self.price_rows), "created_at": TS,
+               "reason": None}
+        row.update(kwargs)
+        self.pricelists.append(row)
+        return row
+
+    def _pricelist_admin(self, request, path, body, user, reply, detail):
+        method = request.method
+        can_manage = user["role"] in ("super_admin", "admin")
+        parts = path.strip("/").split("/")
+        if path.startswith("/admin/proxies"):
+            if user["role"] != "super_admin":
+                return detail(403, "Not permitted for this account")
+            if path == "/admin/proxies" and method == "GET":
+                return reply(200, self.proxies)
+            if path == "/admin/proxies" and method == "POST":
+                self.proxy_adds.append(body)
+                if "proxy?" not in body.get("link", ""):
+                    return detail(422, "Not a valid proxy link")
+                row = {"id": len(self.proxies) + 1, "host": "new.example", "port": 443,
+                       "kind": "dd", "state": "main" if body.get("main") else "probation",
+                       "stability": 0.5, "good_days": 0, "checked_days": 0,
+                       "last_ok_at": None, "failing_now": False, "secret_masked": "dd…abcd"}
+                self.proxies.append(row)
+                return reply(201, row)
+            proxy = next((p for p in self.proxies if p["id"] == int(parts[2])), None)
+            if proxy is None:
+                return detail(404, "Proxy not found")
+            if method == "DELETE":
+                self.proxies.remove(proxy)
+                return httpx.Response(204, request=request)
+            proxy["state"] = body["state"]
+            return reply(200, proxy)
+
+        if method != "GET" and not can_manage:
+            return detail(403, "Not permitted for this account")
+        if path == "/admin/pricelists" and method == "GET":
+            return reply(200, list(reversed(self.pricelists)))
+        if path == "/admin/pricelists" and method == "POST":
+            self.price_uploads.append(body)
+            return reply(200, {"outcome": self.upload_outcome, "list_id": 9, "list_date": "1405/07/20",
+                               "row_count": 195, "reasons": ["تغییر قیمت ۲۰٪"]})
+        if path == "/admin/pricelists/rows":
+            plist = self.pricelists[-1] if self.pricelists else None
+            rows = list(self.price_rows)
+            counts = {"unmapped": sum(1 for r in rows if r["action"] is None),
+                      "mapped": sum(1 for r in rows if r["action"] == "map"),
+                      "ignored": sum(1 for r in rows if r["action"] == "ignore"),
+                      "all": len(rows)} if plist else {}
+            sections = list(dict.fromkeys(r["section"] for r in rows))
+            section = request.url.params.get("section")
+            if section:
+                rows = [r for r in rows if r["section"] == section]
+            wanted = request.url.params.get("filter", "all")
+            state = {"unmapped": None, "mapped": "map", "ignored": "ignore"}
+            if wanted in state:
+                rows = [r for r in rows if r["action"] == state[wanted]]
+            if plist is None:
+                return reply(200, {"list": None, "sections": [], "rows": [], "counts": {}})
+            return reply(200, {"list": plist, "sections": sections, "rows": rows, "counts": counts})
+        if path.startswith("/admin/pricelists/") and parts[-1] in ("approve", "reject"):
+            plist = next((p for p in self.pricelists if p["id"] == int(parts[2])), None)
+            if plist is None:
+                return detail(404, "Price list not found")
+            if plist["status"] != "held":
+                return detail(409, f"Price list is {plist['status']}")
+            plist["status"] = "active" if parts[-1] == "approve" else "rejected"
+            return reply(200, plist)
+        if path == "/admin/price-mappings" and method == "PUT":
+            row = next((r for r in self.price_rows if r["row_key"] == body["row_key"]), None)
+            if row is None:
+                return detail(404, "Row not found in the current list")
+            row.update(action=body["action"], kala_code=body.get("kala_code"),
+                       color_label=body.get("color_label", ""), mapping_id=row["id"] + 100)
+            return reply(200, {"id": row["mapping_id"], **body})
+        if path == "/admin/price-mappings/ignore":
+            done = 0
+            for row in self.price_rows:
+                if row["row_key"] in body["row_keys"]:
+                    row.update(action="ignore", kala_code=None, mapping_id=row["id"] + 100)
+                    done += 1
+            return reply(200, {"ignored": done})
+        if path.startswith("/admin/price-mappings/") and method == "DELETE":
+            row = next((r for r in self.price_rows if r["mapping_id"] == int(parts[2])), None)
+            if row is None:
+                return detail(404, "Mapping not found")
+            row.update(action=None, kala_code=None, color_label="", mapping_id=None)
+            return httpx.Response(204, request=request)
         return detail(404, "Not Found")
 
     def _server_admin(self, request, path, body, reply, detail):
