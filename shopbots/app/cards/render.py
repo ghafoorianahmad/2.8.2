@@ -1,20 +1,34 @@
-"""Premium dark image cards rendered with Pillow (offline, no system fonts).
+"""Light "invoice sheet" cards: HTML/CSS templates screenshotted by a headless browser.
 
-Persian shaping: arabic-reshaper joins the letters, python-bidi puts the line in
-visual order, and Pillow draws it with the BASIC layout engine (so the result is
-identical with or without libraqm - nothing to install on Windows). Vazirmatn
-(OFL, bundled in ``assets/``) has the Arabic presentation forms this needs.
+Design (see docs/card-samples/invoice-reference.jpg): white / very light blue page with
+soft blue waves at the top and bottom, shop header + phone/store illustration, rounded
+info boxes with icons, a table with a dark-blue header row, a dark-blue totals panel with
+large bold numbers, a notes box, and a footer with the date and a signature line.
 
-Every public function returns PNG bytes, or ``None`` when anything fails: the
-caller then sends the plain text message instead.
+* Font: Vazirmatn (OFL, ``assets/``) embedded in the page as base64 - no system fonts.
+* Icons: Tabler Icons (MIT, subset in ``assets/icons.json``) inlined as SVG.
+* Browser: no download and no Playwright. A Chromium-family binary is run with
+  ``--headless --screenshot``: Microsoft Edge on the Windows server (always installed),
+  Chrome/Chromium elsewhere. ``BOT_CARD_BROWSER`` overrides the path.
+* Persian shaping and RTL are the browser's job (no reshaper / bidi libraries).
+
+Every public function returns PNG bytes, or ``None`` when anything fails (no browser,
+timeout, bad output): the caller then sends the plain text message instead.
 """
 from __future__ import annotations
 
+import base64
+import functools
+import html
 import io
+import json
 import logging
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
-
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .jdate import shamsi_date
 
@@ -23,19 +37,11 @@ logger = logging.getLogger("shopbots.cards")
 ASSETS = Path(__file__).resolve().parent / "assets"
 FONT_REGULAR = ASSETS / "Vazirmatn-Regular.ttf"
 FONT_BOLD = ASSETS / "Vazirmatn-Bold.ttf"
-LOGO = ASSETS / "logo.png"          # optional; the wordmark is used when absent
+ICONS_FILE = ASSETS / "icons.json"
 
 W = 1080
-PAD = 56
-BG = (5, 7, 12)
-PANEL = (255, 255, 255, 14)         # frosted glass: translucent white
-PANEL_EDGE = (255, 255, 255, 34)
-TEXT = (238, 242, 250)
-MUTED = (140, 152, 176)
-ACCENT = (59, 130, 246)             # deep blue
-ACCENT_DEEP = (29, 78, 216)
-GOOD = (52, 211, 153)
-BAD = (248, 113, 113)
+WINDOW_PAD = 200            # extra window height; the image is cropped to the page
+RENDER_TIMEOUT = 40          # seconds for one screenshot
 
 _FA_DIGITS = str.maketrans("0123456789,.", "۰۱۲۳۴۵۶۷۸۹٬٫")
 
@@ -52,120 +58,295 @@ def fa_digits(text) -> str:
     return str(text).translate(_FA_DIGITS)
 
 
-def shape(text: str) -> str:
-    """Logical Persian/Latin text -> visual string ready for Pillow."""
-    import arabic_reshaper
-    from bidi.algorithm import get_display
-    reshaped = arabic_reshaper.reshape(str(text))
-    return get_display(reshaped, base_dir="R")
+def esc(text) -> str:
+    return html.escape(str(text if text is not None else ""), quote=True)
 
 
-def _font(bold: bool, size: int) -> ImageFont.FreeTypeFont:
-    return ImageFont.truetype(
-        str(FONT_BOLD if bold else FONT_REGULAR), size, layout_engine=ImageFont.Layout.BASIC
-    )
+# ------------------------------------------------------------------- browser
+_WIN_BROWSERS = (
+    r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
+    r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
+    r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+    r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+)
+_PATH_BROWSERS = ("msedge", "microsoft-edge", "google-chrome", "chromium", "chromium-browser", "chrome")
 
 
-class Canvas:
-    def __init__(self, height: int):
-        self.h = height
-        self.img = Image.new("RGBA", (W, height), BG + (255,))
-        self._backdrop()
-        self.d = ImageDraw.Draw(self.img)
+@functools.lru_cache(maxsize=1)
+def find_browser() -> str | None:
+    """Path of a Chromium-family browser, or None (cards then fall back to text)."""
+    override = os.environ.get("BOT_CARD_BROWSER", "").strip()
+    if override:
+        return override if Path(override).exists() else None
+    if sys.platform == "win32":
+        for raw in _WIN_BROWSERS:
+            p = Path(os.path.expandvars(raw))
+            if p.exists():
+                return str(p)
+    for name in _PATH_BROWSERS:
+        found = shutil.which(name)
+        if found:
+            return found
+    pw = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/opt/pw-browsers"))
+    for p in sorted(pw.glob("chromium-*/chrome-linux*/chrome")):
+        return str(p)
+    return None
 
-    def _backdrop(self) -> None:
-        glow = Image.new("RGBA", (W, self.h), (0, 0, 0, 0))
-        g = ImageDraw.Draw(glow)
-        g.ellipse((-260, -320, 640, 380), fill=ACCENT_DEEP + (120,))
-        g.ellipse((560, self.h - 360, 1340, self.h + 260), fill=ACCENT + (60,))
-        self.img.alpha_composite(glow.filter(ImageFilter.GaussianBlur(120)))
 
-    def panel(self, box, radius=34, fill=PANEL, edge=PANEL_EDGE) -> None:
-        x0, y0, x1, y1 = box
-        layer = Image.new("RGBA", (W, self.h), (0, 0, 0, 0))
-        ImageDraw.Draw(layer).rounded_rectangle(box, radius, fill=fill, outline=edge, width=2)
-        self.img.alpha_composite(layer)
-        self.d = ImageDraw.Draw(self.img)
+def _screenshot(page_html: str, height: int) -> bytes | None:
+    browser = find_browser()
+    if not browser:
+        logger.warning("cards: no Chromium/Edge found (set BOT_CARD_BROWSER) - text fallback")
+        return None
+    with tempfile.TemporaryDirectory(prefix="shopcard_") as tmp:
+        tmpd = Path(tmp)
+        page = tmpd / "card.html"
+        out = tmpd / "card.png"
+        page.write_text(page_html, encoding="utf-8")
+        cmd = [
+            browser, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-sandbox",
+            "--no-first-run", "--disable-extensions", "--disable-background-networking",
+            "--force-device-scale-factor=1", f"--window-size={W},{height + WINDOW_PAD}",
+            "--virtual-time-budget=3000", f"--user-data-dir={tmpd / 'profile'}",
+            f"--screenshot={out}", page.as_uri(),
+        ]
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            subprocess.run(cmd, check=False, timeout=RENDER_TIMEOUT, creationflags=flags,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            logger.warning("cards: browser timed out - text fallback")
+            return None
+        if not out.exists():
+            logger.warning("cards: browser produced no image - text fallback")
+            return None
+        data = out.read_bytes()
+    return _crop(data, height)
 
-    def pill(self, box, color, radius=None) -> None:
-        x0, y0, x1, y1 = box
-        layer = Image.new("RGBA", (W, self.h), (0, 0, 0, 0))
-        ImageDraw.Draw(layer).rounded_rectangle(
-            box, radius or (y1 - y0) // 2, fill=color + (40,), outline=color + (150,), width=2
-        )
-        self.img.alpha_composite(layer)
-        self.d = ImageDraw.Draw(self.img)
 
-    def fit(self, text: str, bold: bool, size: int, max_w: int, min_size: int = 20):
-        """The font that fits ``text`` into ``max_w`` (shrinks, then truncates)."""
-        shaped = shape(text)
-        s = size
-        while s > min_size:
-            f = _font(bold, s)
-            if f.getlength(shaped) <= max_w:
-                return f, shaped
-            s -= 2
-        f = _font(bold, min_size)
-        raw = str(text)
-        while len(raw) > 1 and f.getlength(shape(raw + "…")) > max_w:
-            raw = raw[:-1]
-        return f, shape(raw.rstrip() + "…")
+def _crop(png: bytes, height: int) -> bytes | None:
+    """Keep exactly W x height: a headless window is a few dozen px shorter than asked
+    for its viewport, so the page is rendered into a taller window and cropped here."""
+    if not png.startswith(b"\x89PNG"):
+        return None
+    from PIL import Image
 
-    def text_r(self, x, y, text, size, color=TEXT, bold=False, max_w=None) -> int:
-        """Right-aligned at ``x``; returns the text's left edge."""
-        if max_w:
-            font, shaped = self.fit(text, bold, size, max_w)
-        else:
-            font, shaped = _font(bold, size), shape(text)
-        self.d.text((x, y), shaped, font=font, fill=color, anchor="ra")
-        return int(x - font.getlength(shaped))
+    img = Image.open(io.BytesIO(png)).convert("RGB")
+    if img.width != W or img.height < height:
+        return None
+    out = io.BytesIO()
+    img.crop((0, 0, W, height)).save(out, format="PNG", optimize=True)
+    return out.getvalue()
 
-    def text_l(self, x, y, text, size, color=TEXT, bold=False, max_w=None) -> int:
-        if max_w:
-            font, shaped = self.fit(text, bold, size, max_w)
-        else:
-            font, shaped = _font(bold, size), shape(text)
-        self.d.text((x, y), shaped, font=font, fill=color, anchor="la")
-        return int(x + font.getlength(shaped))
 
-    def text_c(self, cx, y, text, size, color=TEXT, bold=False, max_w=None) -> None:
-        if max_w:
-            font, shaped = self.fit(text, bold, size, max_w)
-        else:
-            font, shaped = _font(bold, size), shape(text)
-        self.d.text((cx, y), shaped, font=font, fill=color, anchor="ma")
+# --------------------------------------------------------------------- assets
+@functools.lru_cache(maxsize=1)
+def _icons() -> dict:
+    return json.loads(ICONS_FILE.read_text(encoding="utf-8"))
 
-    def rule(self, y, x0=PAD + 36, x1=W - PAD - 36) -> None:
-        layer = Image.new("RGBA", (W, self.h), (0, 0, 0, 0))
-        ImageDraw.Draw(layer).line((x0, y, x1, y), fill=(255, 255, 255, 28), width=2)
-        self.img.alpha_composite(layer)
-        self.d = ImageDraw.Draw(self.img)
 
-    def header(self, shop: str, tag: str) -> int:
-        """Wordmark on the right, card type on the left. Returns the next y."""
-        right = W - PAD
-        if LOGO.exists():
-            try:
-                logo = Image.open(LOGO).convert("RGBA")
-                logo.thumbnail((72, 72))
-                self.img.alpha_composite(logo, (right - logo.width, PAD))
-                self.d = ImageDraw.Draw(self.img)
-                right -= logo.width + 18
-            except Exception:  # noqa: BLE001 - a bad logo never blocks a card
-                logger.warning("cards: logo.png unreadable - using the wordmark")
-        else:
-            dot = 56
-            self.d.rounded_rectangle((right - dot, PAD + 4, right, PAD + 4 + dot), 18, fill=ACCENT)
-            self.text_c(right - dot / 2, PAD + 6, (shop or "ع")[:1], 36, (255, 255, 255), True)
-            right -= dot + 18
-        self.text_r(right, PAD + 2, shop or "", 40, TEXT, True, max_w=560)
-        self.text_l(PAD, PAD + 12, tag, 30, MUTED)
-        return PAD + 96
+def icon(name: str, size: int = 28, cls: str = "") -> str:
+    inner = _icons().get(name) or _icons()["tag"]
+    return (f'<svg class="ic {cls}" width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" '
+            f'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" '
+            f'stroke-linejoin="round" aria-hidden="true">{inner}</svg>')
 
-    def png(self) -> bytes:
-        out = io.BytesIO()
-        self.img.convert("RGB").save(out, format="PNG", optimize=True)
-        return out.getvalue()
+
+@functools.lru_cache(maxsize=2)
+def _font_b64(path: Path) -> str:
+    return base64.b64encode(path.read_bytes()).decode("ascii")
+
+
+def _item_icon(name: str) -> str:
+    n = (name or "").lower()
+    if any(k in n for k in ("کاور", "قاب", "گلس", "محافظ", "case", "cover", "glass")):
+        return "shield-check"
+    if any(k in n for k in ("شارژ", "باتری", "پاوربانک", "charger", "power", "cable", "کابل")):
+        return "bolt"
+    if any(k in n for k in ("هندزفری", "هدفون", "ایرپاد", "airpod", "buds", "headphone")):
+        return "headphones"
+    return "device-mobile"
+
+
+# ------------------------------------------------------------------------- CSS
+_CSS = """
+:root{--navy:#0b3d86;--navy2:#0a2f6b;--blue:#1d6fd6;--line:#9cc3ee;--soft:#eaf3fd;--ink:#0d2a55;--mute:#4f6a8f;--good:#0f9d6b;--bad:#d64545}
+*{box-sizing:border-box;margin:0;padding:0}
+html{background:#f1f7ff}html,body{width:1080px;height:__H__px;overflow:hidden}
+body{font-family:'Vazirmatn',sans-serif;direction:rtl;color:var(--ink);background:linear-gradient(180deg,#ffffff 0%,#f1f7ff 100%);position:relative;font-size:26px;line-height:1.5}
+@font-face{font-family:'Vazirmatn';font-weight:400;src:url(data:font/ttf;base64,__FR__) format('truetype')}
+@font-face{font-family:'Vazirmatn';font-weight:700;src:url(data:font/ttf;base64,__FB__) format('truetype')}
+.wave{position:absolute;left:0;width:1080px;pointer-events:none}
+.wave.top{top:0;height:170px}.wave.bot{bottom:0;height:150px}
+.page{position:relative;padding:34px 44px 0;z-index:1}
+.head{display:flex;align-items:center;justify-content:space-between;gap:20px;height:210px}
+.brand{flex:1;text-align:center}
+.brand .t{font-size:46px;font-weight:700;color:var(--navy);line-height:1.3}
+.brand .s{font-size:25px;color:var(--mute);margin-top:6px;display:flex;align-items:center;justify-content:center;gap:12px}
+.brand .s:before,.brand .s:after{content:"";height:2px;width:46px;background:var(--line)}
+.illus{width:260px;height:190px;flex:none}
+.metabox{width:340px;flex:none;border:2px solid var(--line);border-radius:22px;background:rgba(234,243,253,.85);padding:12px 20px;display:flex;flex-direction:column;gap:6px}
+.meta{display:flex;align-items:center;gap:10px;font-size:23px;white-space:nowrap}
+.meta .ic{color:var(--navy);flex:none}.meta b{color:var(--navy)}.meta .v{margin-inline-start:auto;font-weight:700}
+.sep{height:2px;background:linear-gradient(90deg,transparent,var(--line),transparent);margin:14px 0 18px}
+.boxes{display:flex;gap:18px;margin-bottom:20px}
+.box{flex:1;border:2px solid var(--line);border-radius:22px;background:var(--soft);padding:16px 22px;min-width:0}
+.box h3{font-size:28px;color:var(--navy);display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.box p{font-size:24px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.box p b{color:var(--mute);font-weight:400}
+table{width:100%;border-collapse:separate;border-spacing:0;border:2px solid var(--navy);border-radius:20px;overflow:hidden;background:#fff;table-layout:fixed}
+th{background:var(--navy);color:#fff;font-size:24px;font-weight:700;height:68px;padding:0 12px;border-inline-start:1px solid rgba(255,255,255,.28)}
+th:first-child{border-inline-start:0}
+th .in{display:inline-flex;align-items:center;gap:10px}
+td{height:__ROW__px;padding:0 14px;border-top:1px solid #c8dcf4;font-size:25px;border-inline-start:1px solid #c8dcf4;overflow:hidden}
+td:first-child{border-inline-start:0}
+tr:nth-child(even) td{background:#f1f7ff}
+td.n{text-align:center;font-weight:700;color:var(--navy);font-size:26px}
+td.nm{font-weight:700;color:var(--ink)}
+td.nm .row{display:flex;align-items:center;gap:12px;min-width:0}
+td.nm .row .ic{flex:none;color:var(--navy);background:#dbe9fa;border-radius:12px;padding:7px;width:46px;height:46px}
+td.nm .tx{min-width:0;overflow:hidden}
+td.nm .l1{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:22px;line-height:1.4}
+td.nm .l2{white-space:nowrap;overflow:hidden;font-size:20px;font-weight:400;color:var(--mute)}
+td.num{text-align:center;font-weight:700;white-space:nowrap}
+.dark{margin-top:20px;display:flex;gap:18px;align-items:stretch}
+.totals{flex:1.25;background:linear-gradient(180deg,var(--navy) 0%,var(--navy2) 100%);border-radius:24px;padding:16px;display:flex;flex-direction:column;gap:12px;color:#fff}
+.trow{flex:1;border:2px solid rgba(255,255,255,.45);border-radius:18px;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:84px}
+.trow .lb{display:flex;align-items:center;gap:10px;font-size:25px;font-weight:700;white-space:nowrap}
+.trow .vl{display:flex;align-items:baseline;gap:10px;white-space:nowrap}
+.trow .vl b{font-size:36px}.trow .vl small{font-size:22px;opacity:.9}
+.trow.big{flex:1.7;background:rgba(255,255,255,.08)}
+.trow.big .vl b{font-size:60px;line-height:1.1}
+.notes{flex:1;overflow:hidden;min-width:0;border:2px solid var(--line);border-radius:22px;background:#fff;padding:16px 22px}
+.notes h3{font-size:30px;color:var(--navy);display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.notes ol{list-style-type:persian}.notes li{font-size:21px;color:var(--ink);margin-inline-start:22px;margin-bottom:4px;line-height:1.55}
+.pay{font-size:31px;font-weight:700;white-space:nowrap;direction:ltr;text-align:center;color:var(--navy);margin:6px 0}
+.pay-meta{font-size:21px;color:var(--mute);line-height:1.5}
+.foot{margin-top:20px;display:flex;justify-content:space-between;align-items:flex-end;gap:18px}
+.fdate{border:2px solid var(--line);border-radius:20px;background:var(--soft);padding:12px 20px;display:flex;align-items:center;gap:14px}
+.fdate .ic{color:var(--navy)}.fdate small{display:block;font-size:20px;color:var(--mute)}.fdate b{font-size:26px;color:var(--navy)}
+.sign{text-align:center;min-width:360px;padding-bottom:6px}
+.sign small{font-size:22px;color:var(--mute);display:block}
+.sign .ln{display:flex;align-items:center;gap:14px;margin-top:30px;font-weight:700;color:var(--navy);font-size:26px}
+.sign .ln i{flex:1;height:2px;background:var(--navy);opacity:.55}
+.badge{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:4px 18px;font-weight:700;font-size:23px;border:2px solid}
+.badge.good{color:var(--good);background:#e5f7ef;border-color:#8fd8b9}.badge.bad{color:var(--bad);background:#fdeaea;border-color:#f0a8a8}
+.pill{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:2px 16px;font-size:22px;background:#dbe9fa;color:var(--navy);font-weight:700}
+"""
+
+_WAVE_TOP = ('<svg class="wave top" viewBox="0 0 1080 170" preserveAspectRatio="none">'
+             '<defs><linearGradient id="a" x1="0" x2="1"><stop offset="0" stop-color="#6fb1f2"/><stop offset="1" stop-color="#2f7fe0"/></linearGradient></defs>'
+             '<path d="M0 0H1080V38C930 78 800 8 640 40C470 76 300 120 150 96C90 86 40 70 0 88Z" fill="#cfe4fb"/>'
+             '<path d="M0 0H1080V16C980 44 880 4 760 22C600 48 450 84 300 68C190 56 90 36 0 60Z" fill="url(#a)" opacity=".75"/>'
+             '<path d="M0 0H1080V6C990 22 900 0 820 8C650 26 480 56 320 44C200 36 100 20 0 34Z" fill="#1c5fc0"/></svg>')
+_WAVE_BOT = ('<svg class="wave bot" viewBox="0 0 1080 150" preserveAspectRatio="none">'
+             '<path d="M0 150V70C120 30 260 20 420 52C580 84 700 92 840 60C940 38 1020 40 1080 54V150Z" fill="#cfe4fb"/>'
+             '<path d="M0 150V96C150 62 290 70 450 98C600 124 760 120 900 90C980 74 1040 76 1080 86V150Z" fill="#6fb1f2" opacity=".7"/>'
+             '<path d="M0 150V122C160 96 300 110 470 128C640 146 800 130 940 112C1010 104 1050 106 1080 112V150Z" fill="#1c5fc0"/></svg>')
+
+_ILLUS = ('<svg class="illus" viewBox="0 0 260 190" aria-hidden="true">'
+          '<ellipse cx="130" cy="176" rx="118" ry="10" fill="#cfe4fb"/>'
+          '<rect x="20" y="70" width="170" height="104" rx="6" fill="#e8f2fe" stroke="#0b3d86" stroke-width="4"/>'
+          '<path d="M10 70L30 22H180L200 70Z" fill="#fff" stroke="#0b3d86" stroke-width="4" stroke-linejoin="round"/>'
+          '<path d="M30 22L22 70M72 22L66 70M115 22V70M158 22L164 70M180 22L188 70" stroke="#0b3d86" stroke-width="4"/>'
+          '<path d="M30 22L22 70H66L72 22Z M115 22V70H164L158 22Z" fill="#1d6fd6" stroke="#0b3d86" stroke-width="4" stroke-linejoin="round"/>'
+          '<path d="M10 70q14 16 28 0q14 16 28 0q14 16 28 0q14 16 28 0q14 16 28 0q14 16 28 0q8 10 16 0" fill="#0b3d86"/>'
+          '<rect x="34" y="100" width="62" height="74" rx="4" fill="#fff" stroke="#0b3d86" stroke-width="4"/>'
+          '<rect x="108" y="100" width="66" height="38" rx="4" fill="#bcd9f8" stroke="#0b3d86" stroke-width="4"/>'
+          '<rect x="108" y="146" width="66" height="28" rx="3" fill="#1d6fd6" stroke="#0b3d86" stroke-width="3"/>'
+          '<rect x="176" y="60" width="62" height="114" rx="12" fill="#0b3d86"/>'
+          '<rect x="182" y="72" width="50" height="86" rx="5" fill="#9fd0ff"/>'
+          '<rect x="193" y="64" width="28" height="4" rx="2" fill="#6fb1f2"/>'
+          '<path d="M189 140l12-24 9 14 7-9 8 19z" fill="#1d6fd6" opacity=".85"/><circle cx="214" cy="88" r="7" fill="#fff"/>'
+          '<circle cx="207" cy="166" r="4" fill="#6fb1f2"/>'
+          '</svg>')
+
+NOTE_LINES = (
+    "قیمت‌ها به ریال است و تا زمان تأیید نهایی در حسابداری ممکن است تغییر کند.",
+    "پس از واریز، تصویر رسید را در همین گفتگو برای ما بفرستید.",
+    "در صورت هرگونه سؤال با پشتیبانی فروشگاه در ارتباط باشید.",
+)
+
+
+# ----------------------------------------------------------------- page parts
+def _page(body: str, height: int) -> str:
+    css = (_CSS.replace("__H__", str(height)).replace("__ROW__", str(_H_ROW))
+           .replace("__FR__", _font_b64(FONT_REGULAR)).replace("__FB__", _font_b64(FONT_BOLD)))
+    return (f'<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8">'
+            f'<style>{css}</style></head><body>{_WAVE_TOP}{_WAVE_BOT}'
+            f'<div class="page">{body}</div></body></html>')
+
+
+def _head(shop: str, title: str, number_label: str, number, date_text: str, cust_label="مشتری",
+          customer: str = "") -> str:
+    cust = f'<div class="meta">{icon("user", 26)}<b>{esc(cust_label)}:</b><span class="v">{esc(customer)}</span></div>' if customer else ""
+    num = (f'<div class="meta">{icon("file-invoice", 26)}<b>{esc(number_label)}:</b>'
+           f'<span class="v">{esc(fa_digits(number))}</span></div>') if number_label else ""
+    return (f'<div class="head">{_ILLUS}<div class="brand"><div class="t">{esc(shop)}</div>'
+            f'<div class="t" style="font-size:30px;font-weight:400">{esc(title)}</div>'
+            f'<div class="s">موبایل و لوازم جانبی</div></div>'
+            f'<div class="metabox">{num}'
+            f'<div class="meta">{icon("calendar", 26)}<b>تاریخ:</b><span class="v">{esc(date_text)}</span></div>'
+            f'{cust}</div></div><div class="sep"></div>')
+
+
+def _foot(date_text: str, sign: str = "مهر و امضای فروشگاه") -> str:
+    return (f'<div class="foot"><div class="fdate">{icon("calendar", 44)}<div><small>تاریخ صدور</small>'
+            f'<b>{esc(date_text)}</b></div></div>'
+            f'<div class="sign"><small>با آرزوی همدلی و همکاری بیشتر</small>'
+            f'<div class="ln"><i></i><span>{esc(sign)}</span><i></i></div></div></div>')
+
+
+def _th(label: str, ic: str) -> str:
+    return f'<th><span class="in">{icon(ic, 26)}{esc(label)}</span></th>'
+
+
+def _items_table(items, currency: str) -> str:
+    rows = []
+    for idx, it in enumerate(items, 1):
+        qty = float(it.get("qty") or 0)
+        unit = float(it.get("unit_price") or 0)
+        name = it.get("name") or ""
+        sub = f"رنگ: {it['variant']}" if it.get("variant") else ""
+        l2 = f'<div class="l2">{esc(sub)}</div>' if sub else ""
+        rows.append(
+            f'<tr><td class="n">{fa_digits(idx)}</td>'
+            f'<td class="nm"><div class="row">{icon(_item_icon(name), 30)}'
+            f'<div class="tx"><div class="l1">{esc(name)}</div>{l2}</div></div></td>'
+            f'<td class="num">{fa_num(qty)}</td><td class="num">{fa_num(unit)}</td>'
+            f'<td class="num">{fa_num(qty * unit)}</td></tr>')
+    cur = esc(currency)
+    return ('<table><colgroup><col style="width:9%"><col style="width:37%"><col style="width:12%">'
+            '<col style="width:21%"><col style="width:21%"></colgroup><thead><tr>'
+            f'{_th("ردیف", "hash")}{_th("شرح کالا", "list-details")}{_th("تعداد", "package")}'
+            f'{_th(f"قیمت واحد ({currency})", "coins")}{_th(f"جمع ({currency})", "cash")}'
+            f'</tr></thead><tbody>{"".join(rows)}</tbody></table>')
+
+
+def _totals(rows: list[tuple[str, str, str, str]], big: tuple[str, str, str]) -> str:
+    """rows: (icon, label, value, unit); big: (icon, label, value, unit) as one row."""
+    out = []
+    for ic, label, value, unit in rows:
+        u = f"<small>{esc(unit)}</small>" if unit else ""
+        out.append(f'<div class="trow"><span class="lb">{icon(ic, 30)}{esc(label)}</span>'
+                   f'<span class="vl"><b>{esc(value)}</b>{u}</span></div>')
+    ic, label, value, unit = big
+    out.append(f'<div class="trow big"><span class="lb">{icon(ic, 34)}{esc(label)}</span>'
+               f'<span class="vl"><b>{esc(value)}</b><small>{esc(unit)}</small></span></div>')
+    return f'<div class="totals">{"".join(out)}</div>'
+
+
+def _notes(lines, extra: str = "") -> str:
+    li = "".join(f"<li>{esc(x)}</li>" for x in lines)
+    return f'<div class="notes"><h3>{icon("notes", 32)}توضیحات</h3>{extra}<ol>{li}</ol></div>'
+
+
+def _pay_box(card_number: str, card_owner: str, bank_name: str) -> str:
+    digits = "".join(ch for ch in str(card_number or "") if ch.isdigit())
+    groups = " ".join(digits[i:i + 4] for i in range(0, len(digits), 4))
+    return (f'<div class="pay-title" style="font-size:22px;color:var(--mute)">{icon("credit-card", 24)} پرداخت با کارت‌به‌کارت</div>'
+            f'<div class="pay">{esc(groups)}</div>'
+            f'<div class="pay-meta">به نام: {esc(card_owner)} — {esc(bank_name)}</div>')
 
 
 def _safe(fn):
@@ -180,9 +361,13 @@ def _safe(fn):
     return wrapper
 
 
-def _footer(c: Canvas, y: int, text: str, date_text: str) -> None:
-    c.text_r(W - PAD, y, text, 24, MUTED, max_w=W - 2 * PAD - 240)
-    c.text_l(PAD, y, date_text, 24, MUTED)
+# Fixed block heights (px) used to size the page; rows never wrap (ellipsis).
+_H_HEAD, _H_TABLE_HEAD, _H_ROW = 250, 70, 96
+_H_DARK, _H_FOOT, _H_BOT = 340, 150, 150
+
+
+def _height(n_rows: int, extra_top: int = 0, dark: int = _H_DARK) -> int:
+    return 34 + _H_HEAD + extra_top + _H_TABLE_HEAD + n_rows * _H_ROW + 20 + dark + 20 + _H_FOOT + 60
 
 
 # ----------------------------------------------------------------- price card
@@ -190,155 +375,67 @@ def _footer(c: Canvas, y: int, text: str, date_text: str) -> None:
 def price_card(*, shop: str, name: str, color: str, price, in_stock: bool,
                currency: str = "ریال", date=None) -> bytes | None:
     """Product, selected color, price in Rial and a stock badge."""
-    c = Canvas(640)
-    y = c.header(shop, "کارت قیمت")
-    box = (PAD, y + 8, W - PAD, 548)
-    c.panel(box)
-    r = W - PAD - 44
-    inner = W - 2 * PAD - 88
-    c.text_r(r, y + 48, name, 52, TEXT, True, max_w=inner)
-    # color pill + stock badge
-    row_y = y + 138
-    right = r
-    label = f"رنگ: {color}" if color else ""
-    if label:
-        f, s = c.fit(label, False, 28, 420)
-        w = int(f.getlength(s)) + 52
-        c.pill((right - w, row_y, right, row_y + 54), ACCENT)
-        c.d.text((right - w / 2, row_y + 8), s, font=f, fill=(190, 215, 255), anchor="ma")
-        right -= w + 16
-    badge = "موجود" if in_stock else "ناموجود"
-    col = GOOD if in_stock else BAD
-    f = _font(True, 28)
-    s = shape(badge)
-    w = int(f.getlength(s)) + 64
-    c.pill((right - w, row_y, right, row_y + 54), col)
-    c.d.ellipse((right - w + 18, row_y + 20, right - w + 32, row_y + 34), fill=col)
-    c.d.text((right - w + 44, row_y + 8), s, font=f, fill=col, anchor="la")
-    c.rule(y + 232)
-    c.text_r(r, y + 256, "قیمت", 28, MUTED)
-    amount = fa_num(price)
-    right_edge = c.text_r(r, y + 296, currency, 34, MUTED)
-    f = _font(True, 92)
-    s = shape(amount)
-    c.d.text((right_edge - 18, y + 262), s, font=f, fill=(255, 255, 255), anchor="ra")
-    c.d.line((box[0] + 44, box[3] - 28, box[0] + 44 + 140, box[3] - 28), fill=ACCENT, width=6)
-    _footer(c, 578, "قیمت لحظه‌ای است و ممکن است تغییر کند", fa_digits(shamsi_date(date)))
-    return c.png()
-
-
-# --------------------------------------------------------------- order tables
-def _row_h(it) -> int:
-    return 92 if it.get("variant") else 66
-
-
-def _table_h(items) -> int:
-    return 252 + sum(_row_h(i) for i in items)
-
-
-def _items_table(c: Canvas, y: int, items, currency: str) -> int:
-    """Rows: name (right), qty, unit price, line total (left). Returns next y."""
-    r = W - PAD - 44
-    c.text_r(r, y, "کالا", 24, MUTED)
-    c.text_r(r - 470, y, "تعداد", 24, MUTED)
-    c.text_r(r - 560, y, "قیمت واحد", 24, MUTED)
-    c.text_l(PAD + 44, y, "جمع", 24, MUTED)
-    y += 46
-    for it in items:
-        qty = float(it.get("qty") or 0)
-        unit = float(it.get("unit_price") or 0)
-        c.text_r(r, y, it.get("name") or "", 30, TEXT, max_w=410)
-        if it.get("variant"):
-            c.text_r(r, y + 40, f"رنگ: {it['variant']}", 24, MUTED, max_w=410)
-        c.text_r(r - 470, y, fa_num(qty), 30, TEXT)
-        c.text_r(r - 560, y, fa_num(unit), 28, MUTED)
-        c.text_l(PAD + 44, y, fa_num(qty * unit), 30, TEXT, True)
-        y += _row_h(it)
-        c.rule(y - 14)
-    return y
-
-
-def _total_panel(c: Canvas, y: int, total, currency: str, label: str = "مبلغ قابل پرداخت") -> int:
-    box = (PAD, y, W - PAD, y + 150)
-    c.panel(box, fill=ACCENT + (46,), edge=ACCENT + (150,))
-    c.text_r(W - PAD - 44, y + 24, label, 28, (190, 215, 255))
-    right_edge = c.text_r(W - PAD - 44, y + 74, currency, 30, (190, 215, 255))
-    f = _font(True, 68)
-    c.d.text((right_edge - 16, y + 50), shape(fa_num(total)), font=f, fill=(255, 255, 255), anchor="ra")
-    return y + 150
-
-
-def _order_head(c: Canvas, y: int, title: str, number_label: str, number, date_text: str) -> int:
-    c.text_r(W - PAD - 10, y, title, 54, TEXT, True)
-    y += 84
-    c.text_r(W - PAD - 10, y, f"{number_label} {fa_digits(number)}", 32, (190, 215, 255), True)
-    c.text_l(PAD + 10, y + 4, date_text, 30, MUTED)
-    return y + 56
+    d = fa_digits(shamsi_date(date))
+    badge = (f'<span class="badge good">{icon("circle-check", 24)}موجود</span>' if in_stock
+             else f'<span class="badge bad">{icon("circle-x", 24)}ناموجود</span>')
+    color_cell = f'<span class="pill">{icon("palette", 22)}{esc(color)}</span>' if color else "—"
+    table = (
+        '<table><colgroup><col style="width:46%"><col style="width:27%"><col style="width:27%"></colgroup>'
+        f'<thead><tr>{_th("کالا", "device-mobile")}{_th("رنگ", "palette")}{_th("وضعیت", "package")}</tr></thead>'
+        f'<tbody><tr style="height:110px"><td class="nm"><div class="row">{icon(_item_icon(name), 34)}'
+        f'<div class="tx"><div class="l1" style="font-size:25px">{esc(name)}</div></div></div></td>'
+        f'<td class="num">{color_cell}</td><td class="num">{badge}</td></tr></tbody></table>')
+    totals = _totals([], ("cash", "قیمت", fa_num(price), currency))
+    dark = 230
+    body = (_head(shop, "کارت قیمت", "", "", d) + table
+            + f'<div class="dark" style="height:{dark}px">{totals}{_notes(NOTE_LINES[:1] + ("موجودی و قیمت لحظه‌ای است.",))}</div>'
+            + _foot(d, "فروشگاه"))
+    h = 34 + _H_HEAD + _H_TABLE_HEAD + 110 + 20 + dark + 20 + _H_FOOT + 60
+    return _screenshot(_page(body, h), h)
 
 
 # ---------------------------------------------------------------- pre-invoice
 @_safe
 def pre_invoice_card(*, shop: str, order_id, items, total, card_number: str = "",
                      card_owner: str = "", bank_name: str = "", currency: str = "ریال",
-                     date=None) -> bytes | None:
+                     date=None, customer: str = "") -> bytes | None:
     """Order number, Shamsi date, lines, total and the bank card to pay into."""
     items = list(items or [])[:10]
+    d = fa_digits(shamsi_date(date))
     has_card = any(ch.isdigit() for ch in str(card_number or ""))
-    table = _table_h(items)
-    height = 150 + table + 24 + 150 + 24 + (236 if has_card else 126) + 90
-    c = Canvas(height)
-    y = c.header(shop, "پیش‌فاکتور") + 4
-    c.panel((PAD, y, W - PAD, y + table))
-    yy = _order_head(c, y + 28, "پیش‌فاکتور سفارش", "شماره سفارش", order_id,
-                     fa_digits(shamsi_date(date)))
-    c.rule(yy + 4)
-    _items_table(c, yy + 24, items, currency)
-    y += table + 24
-    y = _total_panel(c, y, total, currency) + 24
-    if has_card:
-        c.panel((PAD, y, W - PAD, y + 236))
-        c.text_r(W - PAD - 44, y + 24, "پرداخت با کارت‌به‌کارت", 28, MUTED)
-        # the card number is always left-to-right Latin digits: no bidi, no shaping
-        digits = "".join(ch for ch in str(card_number) if ch.isdigit())
-        groups = "   ".join(digits[i:i + 4] for i in range(0, len(digits), 4))
-        c.d.text((W / 2, y + 66), groups, font=_font(True, 62), fill=(255, 255, 255), anchor="ma")
-        c.text_r(W - PAD - 44, y + 164, f"به نام: {card_owner}", 28, TEXT, max_w=480)
-        c.text_l(PAD + 44, y + 164, bank_name, 28, MUTED, max_w=360)
-        y += 236
-    else:
-        c.panel((PAD, y, W - PAD, y + 126))
-        c.text_r(W - PAD - 44, y + 40, "اطلاعات پرداخت در پیام بعدی ارسال می‌شود.", 28, TEXT)
-        y += 126
-    c.text_c(W / 2, y + 30, "پس از واریز، تصویر رسید را در همین گفتگو بفرستید", 24, MUTED,
-             max_w=W - 2 * PAD)
-    return c.png()
+    totals = _totals(
+        [("package", "تعداد اقلام", fa_digits(len(items)), "قلم")],
+        ("cash", "مبلغ قابل پرداخت", fa_num(total), currency))
+    extra = _pay_box(card_number, card_owner, bank_name) if has_card else ""
+    lines = NOTE_LINES if not has_card else NOTE_LINES[1:]
+    dark = _H_DARK + (70 if has_card else 0)
+    body = (_head(shop, "پیش‌فاکتور", "شماره سفارش", order_id, d, customer=customer)
+            + _items_table(items, currency)
+            + f'<div class="dark" style="height:{dark}px">{totals}{_notes(lines, extra)}</div>' + _foot(d))
+    h = _height(len(items), dark=dark)
+    return _screenshot(_page(body, h), h)
 
 
 # -------------------------------------------------------------- final invoice
 @_safe
 def final_invoice_card(*, shop: str, order_id, items, total, partial: bool = False,
-                       accounting_no=None, currency: str = "ریال", date=None) -> bytes | None:
+                       accounting_no=None, currency: str = "ریال", date=None,
+                       customer: str = "") -> bytes | None:
     """Invoice issued in accounting. Lines/prices are the order's own (see PROGRESS)."""
     items = list(items or [])[:10]
-    table = _table_h(items)
-    height = 150 + table + 24 + 150 + 24 + 64 + 70
-    c = Canvas(height)
-    y = c.header(shop, "فاکتور") + 4
-    c.panel((PAD, y, W - PAD, y + table))
-    title = "فاکتور بخشی از سفارش" if partial else "فاکتور سفارش"
-    yy = _order_head(c, y + 28, title, "شماره سفارش", order_id, fa_digits(shamsi_date(date)))
+    d = fa_digits(shamsi_date(date))
+    rows = [("package", "تعداد اقلام", fa_digits(len(items)), "قلم")]
     if accounting_no:
-        c.text_l(PAD + 10, y + 28 + 14, f"ثبت حسابداری {fa_digits(accounting_no)}", 24, MUTED)
-    c.rule(yy + 4)
-    _items_table(c, yy + 24, items, currency)
-    y += table + 24
-    y = _total_panel(c, y, total, currency, "جمع سفارش" if partial else "جمع فاکتور") + 28
-    badge = "بخشی از سفارش فاکتور شد" if partial else "فاکتور صادر شد"
-    f = _font(True, 26)
-    s = shape(badge)
-    w = int(f.getlength(s)) + 64
-    c.pill((W - PAD - w, y, W - PAD, y + 54), GOOD)
-    c.d.ellipse((W - PAD - w + 18, y + 20, W - PAD - w + 32, y + 34), fill=GOOD)
-    c.d.text((W - PAD - w + 44, y + 10), s, font=f, fill=GOOD, anchor="la")
-    c.text_l(PAD + 10, y + 12, "ارسال پس از آماده‌سازی انجام می‌شود", 24, MUTED, max_w=420)
-    return c.png()
+        rows.append(("hash", "ثبت حسابداری", fa_digits(accounting_no), ""))
+    totals = _totals(rows, ("cash", "جمع سفارش" if partial else "جمع فاکتور", fa_num(total), currency))
+    badge = ('<span class="badge good">' + icon("circle-check", 24)
+             + ("بخشی از سفارش فاکتور شد" if partial else "فاکتور صادر شد") + "</span>")
+    lines = ("ارسال پس از آماده‌سازی انجام می‌شود.", NOTE_LINES[2])
+    dark = _H_DARK
+    extra = f'<p style="margin-bottom:8px">{badge}</p>'
+    body = (_head(shop, "فاکتور", "شماره سفارش", order_id, d, customer=customer)
+            + _items_table(items, currency)
+            + f'<div class="dark" style="height:{dark}px">{totals}{_notes(lines, extra)}</div>'
+            + _foot(d))
+    h = _height(len(items), dark=dark)
+    return _screenshot(_page(body, h), h)

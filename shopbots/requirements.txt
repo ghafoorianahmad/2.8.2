@@ -7,5 +7,3 @@ pytest
 Telethon==1.45.0
 shop-tgproxy==1.0.0
 Pillow==12.3.0
-arabic-reshaper==3.0.1
-python-bidi==0.6.11

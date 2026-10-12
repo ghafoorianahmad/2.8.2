@@ -2,6 +2,23 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## Bot image cards v2 — light invoice-sheet style, HTML → headless browser (2026-10-12, branch `claude/hopeful-hamilton-yd346p`) — DONE in code (Linux); OFF by default
+
+Replaces the dark Pillow cards below with the style of `docs/card-samples/invoice-reference.jpg`. Same public API (`price_card`, `pre_invoice_card`, `final_invoice_card`), same text fallback, `BOT_IMAGE_CARDS` still default `false`.
+
+- **Look**: white/light-blue page, soft blue waves top and bottom, header with «عصر ارتباطات ۲» + inline store/phone illustration, rounded info box (order no., Shamsi date, optional customer), table with dark-blue header row and an icon per column/row, dark-blue totals panel with large bold numbers, notes box (bank card goes here on the pre-invoice), footer with date and signature line. Amounts in Rial, Persian digits.
+- **Tech** (`shopbots/app/cards/render.py`): HTML/CSS template per card; Vazirmatn embedded as base64; icons = Tabler Icons subset (MIT, `assets/icons.json` + `ICONS-LICENSE-MIT.txt`) inlined as SVG; screenshot by running a Chromium-family binary with `--headless=new --screenshot` (no Playwright, no download). Browser lookup: `BOT_CARD_BROWSER` → on Windows Microsoft Edge (`Program Files (x86)\Microsoft\Edge\Application\msedge.exe`, then Chrome) → PATH → `/opt/pw-browsers`. Persian shaping/RTL are done by the browser, so `arabic-reshaper`/`python-bidi` were dropped from `requirements.txt` and `build_exe.bat`; Pillow stays, only to crop the screenshot (a headless window's viewport is shorter than `--window-size`, so the window is rendered 200 px taller and cropped). Render timeout 40 s; any failure (no browser, timeout, crash, bad image) → `None` → text message.
+- **Samples** regenerated with Linux Chromium 141: `docs/card-samples/*.png` (+ README). Regenerate: `python shopbots/scripts/render_card_samples.py`.
+- Tests: shopbots 146 passed (`tests/test_telegram_channel.py` not collected here: Telethon not installed in this container). Browser-dependent tests skip when no browser exists.
+
+### Must be verified on Windows (not done here)
+1. `msedge.exe --headless=new --screenshot` works from the **ShopServer service account** (`NT SERVICE\ShopServer`): it needs a writable temp dir (we use `%TEMP%` of that account) and Edge must start without a desktop session. If it fails, set `BOT_CARD_BROWSER` or run the service as a normal user; the bot just sends text.
+2. Output size/crop: the PNG must come out exactly 1080 px wide with the whole page (footer + bottom wave) visible; the 200 px window padding assumes Edge's headless viewport is shorter by < 200 px.
+3. Vazirmatn and icons render the same (fonts are embedded, so they should); compare against the Linux samples.
+4. Card latency (~1–2 s per card) acceptable; many parallel cards spawn parallel Edge processes.
+5. PyInstaller build still bundles `cards/assets` (now includes `icons.json`); `--collect-submodules PIL` kept.
+6. Real Bale/Telegram upload and how the clients display the tall image (unchanged from v1, still untested).
+
 ## Bot image cards — price / pre-invoice / invoice (2026-10-12, branch `bot-cards`) — DONE in code (Linux, fakes only); OFF by default
 
 Branched from `bot-design`. Samples with fake data: `docs/card-samples/` (regenerate: `shopbots/scripts/render_card_samples.py`).

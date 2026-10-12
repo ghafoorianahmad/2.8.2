@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import sys
 
+import pytest
 from PIL import Image
 
 from app import texts
@@ -21,33 +23,11 @@ ITEMS = [
 ]
 
 
+needs_browser = pytest.mark.skipif(render.find_browser() is None,
+                                   reason="no Chromium/Edge available for the card screenshot")
+
+
 # ============================ rendering ======================================
-def test_persian_text_is_shaped_joined_and_right_to_left():
-    shaped = render.shape("سلام")
-    # joined letters = Arabic presentation forms, not the isolated base letters
-    assert all(0xFB50 <= ord(ch) <= 0xFEFF for ch in shaped)
-    assert shaped != "سلام"
-    # visual order of an RTL word is reversed (first letter drawn on the right)
-    assert shaped[-1] == render.shape("س")[0] or shaped[0] == render.shape("م")[0]
-
-
-def test_latin_model_names_and_digits_keep_their_order_inside_persian():
-    shaped = render.shape("گوشی Galaxy S25 Ultra ۲۵۶")
-    assert "Galaxy S25 Ultra" in shaped          # Latin run stays left-to-right, unreversed
-
-
-def test_font_has_the_glyphs_the_shaper_emits():
-    from PIL import ImageFont
-
-    font = ImageFont.truetype(str(render.FONT_REGULAR), 40, layout_engine=ImageFont.Layout.BASIC)
-    notdef = font.getmask("￿").getbbox()
-    for word in ("عصر ارتباطات", "پیش‌فاکتور", "ناموجود", "۱۲٬۳۴۵"):
-        for ch in render.shape(word):
-            if ch == " ":
-                continue
-            assert font.getmask(ch).getbbox() != notdef, (word, hex(ord(ch)))
-
-
 def test_shamsi_date():
     assert shamsi_date(dt.date(2026, 10, 12)) == "1405/07/20"
     assert shamsi_date(dt.date(2025, 3, 21)) == "1404/01/01"
@@ -59,12 +39,25 @@ def test_persian_numbers():
     assert render.fa_num(None) == "۰"
 
 
+def test_html_is_escaped_and_self_contained():
+    page = render._page(render._items_table(
+        [{"name": "<script>x</script>", "qty": 1, "unit_price": 5}], "ریال"), 500)
+    assert "<script>" not in page and "&lt;script&gt;" in page
+    assert "font/ttf;base64" in page and "http" not in page.replace("http://www.w3.org", "")
+
+
+def test_icons_are_bundled_and_licensed():
+    assert "<path" in render.icon("file-invoice")
+    assert (render.ASSETS / "ICONS-LICENSE-MIT.txt").exists()
+
+
 def _open(png: bytes) -> Image.Image:
     assert png.startswith(PNG_MAGIC)
     return Image.open(io.BytesIO(png))
 
 
-def test_cards_are_png_images_with_the_dark_background():
+@needs_browser
+def test_cards_are_png_images_with_the_light_theme():
     price = render.price_card(shop="عصر ارتباطات ۲", name="Apple iPhone 17 Pro", color="نارنجی",
                               price=118_900_000, in_stock=True)
     pre = render.pre_invoice_card(shop="عصر ارتباطات ۲", order_id=7, items=ITEMS, total=79_400_000,
@@ -74,13 +67,14 @@ def test_cards_are_png_images_with_the_dark_background():
                                       total=79_400_000, partial=True, accounting_no=2673)
     for png in (price, pre, final):
         img = _open(png)
-        assert img.width == render.W and 400 < img.height < 2000
+        assert img.width == render.W and 400 < img.height < 2400
         from PIL import ImageStat
 
-        assert max(ImageStat.Stat(img.convert("RGB")).mean) < 60   # near-black (website style)
+        assert min(ImageStat.Stat(img.convert("RGB")).mean) > 150   # light theme
     assert _open(pre).height > _open(price).height
 
 
+@needs_browser
 def test_long_and_odd_input_does_not_fail():
     png = render.price_card(shop="x" * 200, name="گوشی " * 60 + "A" * 80, color="ر" * 90,
                             price="not a number", in_stock=False)
@@ -89,15 +83,31 @@ def test_long_and_odd_input_does_not_fail():
     assert render.final_invoice_card(shop="s", order_id=1, items=many, total=1)
 
 
+@needs_browser
 def test_pre_invoice_without_card_number_says_payment_follows():
     png = render.pre_invoice_card(shop="s", order_id=1, items=ITEMS, total=1,
                                   card_number="XXXX-XXXX-XXXX-XXXX")
     assert png and png.startswith(PNG_MAGIC)
 
 
-def test_rendering_failure_returns_none(monkeypatch):
-    monkeypatch.setattr(render, "FONT_REGULAR", render.ASSETS / "missing.ttf")
+def test_no_browser_returns_none(monkeypatch):
+    monkeypatch.setattr(render, "find_browser", lambda: None)
     assert render.price_card(shop="s", name="n", color="c", price=1, in_stock=True) is None
+
+
+def test_browser_crash_returns_none(monkeypatch, tmp_path):
+    fake = tmp_path / "fakebrowser.cmd" if sys.platform == "win32" else tmp_path / "fakebrowser"
+    fake.write_text("exit 1\n" if sys.platform == "win32" else "#!/bin/sh\nexit 1\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(render, "find_browser", lambda: str(fake))
+    assert render.price_card(shop="s", name="n", color="c", price=1, in_stock=True) is None
+
+
+def test_browser_override_env(monkeypatch, tmp_path):
+    render.find_browser.cache_clear()
+    monkeypatch.setenv("BOT_CARD_BROWSER", str(tmp_path / "nope.exe"))
+    assert render.find_browser() is None
+    render.find_browser.cache_clear()
 
 
 # ============================ engine =========================================
@@ -117,6 +127,7 @@ def test_cards_are_off_by_default(env, bot_apis, shopapi):
     assert "525,000,000" in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
 
 
+@needs_browser
 def test_price_card_only_on_the_first_color_pick_of_a_product_view(settings, env, bot_apis, shopapi):
     settings.bot_image_cards = True
     _shop(shopapi)
@@ -151,7 +162,7 @@ def test_price_card_failure_falls_back_to_text(settings, env, bot_apis, shopapi)
 
 def test_render_failure_falls_back_to_text(settings, env, bot_apis, shopapi, monkeypatch):
     settings.bot_image_cards = True
-    monkeypatch.setattr(render, "FONT_REGULAR", render.ASSETS / "missing.ttf")
+    monkeypatch.setattr(render, "find_browser", lambda: None)
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
 
     async def scenario(engine, adapters, api):
@@ -166,6 +177,7 @@ def test_render_failure_falls_back_to_text(settings, env, bot_apis, shopapi, mon
     assert "شمارهٔ سفارش" in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
 
 
+@needs_browser
 def test_pre_invoice_card_after_checkout(settings, env, bot_apis, shopapi):
     settings.bot_image_cards = True
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
@@ -183,6 +195,7 @@ def test_pre_invoice_card_after_checkout(settings, env, bot_apis, shopapi):
     assert "شمارهٔ سفارش" in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
 
 
+@needs_browser
 def test_invoice_card_replaces_the_invoiced_text(settings, env, bot_apis, shopapi):
     settings.bot_image_cards = True
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
