@@ -74,7 +74,10 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 - Health monitoring alerts (Bale + tray): bot down, Bale unreachable, SQL unreachable, price-list hold, all proxies dead.
 
 ## 9. Website
-- Moves from Cloudflare to **ArvanCloud** (static export of the site on Arvan Object Storage + CDN; DNS to Arvan). The site is the plain HTML/JS project `E:\DSH-Workspace\projects\asr-ertebatat-shop` (no build step; decision 2026-10-12 — the old Next.js prototype `E:\projects\mobile-shop` is not used).
+- Hosted on **ArvanCloud** (static site on Arvan Object Storage + CDN; DNS to Arvan); published from the owner's GitHub repo.
+- **The live site is `E:\DSH-Workspace\projects\asr-ertebatat-2-redesign`** (GitHub `asr-ertebatat-2`, branch `redesign`; verified 2026-10-12 by matching the live files). It is plain HTML/JS with no build step.
+- `projects\asr-ertebatat-shop` (GitHub `asr-ertebatat-shop`) is the older design and is not published. It gets the same changes; slugs are identical in both.
+- The Next.js prototype `E:\projects\mobile-shop` is not used.
 - Showcase only: product presentation and specs. **No prices, no stock, no live connection to the server, no data push, no order submission from the site.**
 - **No accounting codes on the site** (decision 2026-10-12): `Kala.Code` can change after stocktaking and Sazeh Hesab names are entered inconsistently. Each site model has a **permanent slug of our own** (e.g. `iphone-17-pro`; a storage-level slug such as `iphone-17-pro-256` may be added later — slugs are never renamed or reused).
 - Each model: button «استعلام قیمت و سفارش در بله» → copies the model name + slug to the clipboard and opens the Bale bot with a deep link (`start=m_<slug>`); the slug is printed next to the button as the dependable fallback («کد مدل: iphone-17-pro — این متن را در ربات بفرستید»). Telegram button later (same mechanism). Shop phone number as fallback.

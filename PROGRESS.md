@@ -2,9 +2,20 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
-## Phase 6 — website: static showcase, model slugs, ArvanCloud guide (2026-10-12) — DONE; not deployed
+## Phase 6 — website: static showcase, model slugs, ArvanCloud guide (2026-10-12) — DONE; committed, not pushed
 
-Site = `E:\DSH-Workspace\projects\asr-ertebatat-shop` (plain HTML/JS, its own git repo; commit `1524dc1`). The Next.js folder `E:\projects\mobile-shop` is an unused Sep-17 prototype (cart, API routes, admin), and `projects\asr-ertebatat-2-redesign` is an alternative plain-HTML design that did **not** get these changes.
+**Live site = `E:\DSH-Workspace\projects\asr-ertebatat-2-redesign`** (GitHub `ghafoorianahmad/asr-ertebatat-2`, branch `redesign`). This was found after the first pass:
+- every live file (`index`, brand pages, `products.js`, `site.js`, `site.css`, `theme.css`) is byte-identical to `origin/redesign` `141d9c1`;
+- `redesign-2`-only files and `design-samples/` return 404;
+- the live site is already served from Arvan Object Storage `ir-thr-at1`.
+
+GitHub itself could not be queried: both repos are private and the local token has no access.
+
+Phase 6 is in **both** site repos, with identical slugs:
+- redesign `e98eaef` on branch `redesign` (the asset diff replayed from the main site + the same page edits; every assertion matched);
+- `asr-ertebatat-shop` `1524dc1` + `5258adf` on local branch `backup-local-2026-10-10` (not `main`; that site is not published).
+
+Nothing is pushed: the owner pushes after Phase 6b. The Next.js folder `E:\projects\mobile-shop` is an unused Sep-17 prototype.
 
 ### Decisions (user, 2026-10-12) — added to REQUIREMENTS §9, new §9a, phase 6b
 - **No accounting codes on the site.** `Kala.Code` can change after stocktaking and Sazeh names are inconsistent. Each model has a **permanent slug** (`id` in `products.js`, e.g. `iphone-17-pro`; never renamed or reused). Slugs are model-level because the site shows models, not storage sizes. Storage and color are picked in the bot; storage-level slugs can be added later.
@@ -45,12 +56,17 @@ Site = `E:\DSH-Workspace\projects\asr-ertebatat-shop` (plain HTML/JS, its own gi
   - the card CTA clipped the label at desktop widths.
 
 ### Output
-- `E:\Outputs\StoreWebsite\StoreWebsite_2026-10-12.zip`: 179 files, SHA-256 `0EA37F04…7F85C0`. Next to it: `DEPLOY_ARVAN_FA.md` and the README. The previous 2026-10-08 zip is kept.
+- **Live:** `E:\Outputs\StoreWebsite-Redesign\StoreWebsite-Redesign_2026-10-12.zip`. 316 files, SHA-256 `1430A348…2AADD2`, `check_site.js` 1249 ✓ unpacked. The redesign was also checked with headless screenshots (375 px dark/light, 1366 px) and a click flow.
+- Not published: `E:\Outputs\StoreWebsite\StoreWebsite_2026-10-12.zip`. 179 files, built before `5258adf`.
+- Each folder also has `DEPLOY_ARVAN_FA.md` + README; the previous 2026-10-08 zips are kept.
+- Missed in the first pass and fixed in both repos: the hero «ثبت سفارش در ربات» button still had a Telegram icon.
 
 ### Pending / for the user
-1. Deploy to ArvanCloud per `DEPLOY_ARVAN_FA.md` (account + 2FA, IRNIC access; copy the email DNS records from Cloudflare first).
-2. Until Phase 6b, the bot opens at the main menu for `m_<slug>` and pasted text (never a wrong product). Deploying before 6b is safe.
-3. Decide which site goes live: main vs `asr-ertebatat-2-redesign`. If the redesign, port the Phase 6 changes there.
+1. Push the redesign repo (branch `redesign`, `e98eaef`) after Phase 6b, then purge the Arvan CDN cache and run step 8 of the guide.
+   - The live site is already on Arvan Object Storage, so the bucket/DNS steps of `DEPLOY_ARVAN_FA.md` are reference only.
+   - Make sure the publish excludes `DEPLOY_ARVAN_FA.md` and `tools/`; the current setup already excludes `design-samples/` and `MISSING_IMAGES.md`.
+2. Until Phase 6b, the bot opens at the main menu for `m_<slug>` and pasted text (never a wrong product).
+3. `asr-ertebatat-shop`'s Phase 6 commits are on local branch `backup-local-2026-10-10`, not `main`; merge or keep as you prefer (not published).
 4. Still open on the site: Telegram channel link, map link, photos for 3 models.
 
 ### Next step

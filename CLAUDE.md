@@ -15,7 +15,7 @@
 | `shoptg/` | کارگر تلگرام (Telethon، حساب کاربری فروشگاه، فقط‌خواندنی): لیست قیمت PDF کانال پخش‌کننده و استخر پراکسی MTProto؛ فقط `/worker/*` با `WORKER_API_KEY`. `login.ps1` و `check_pricelist.ps1` بدون shopapi کار می‌کنند. راهنمای سرور: `SERVER_GUIDE.md`. | کد کامل؛ ۴۷ تست سبز؛ **ورود تلگرام روی سرور انجام نشده** |
 | `shopsystem/` | `launcher.py` → `ShopSystem.exe` (PyInstaller): API + بات‌ها در یک پروسه. پکیج‌های `app` در بیلد به `shopapi_app`/`shopbots_app` تغییر نام می‌دهند. `.env`، `shopapi.db`، `shopbots.db`، `app.log` کنار exe. | بیلد و تست‌شده با دادهٔ واقعی |
 
-**سایت** خارج از این پوشه است: `E:\DSH-Workspace\projects\asr-ertebatat-shop` (HTML ثابت، CLAUDE.md خودش را دارد). فعلاً به shopapi وصل نیست و فقط لینک ربات (`asrertebatat2_bot`) می‌دهد؛ اتصال آینده فقط سمت سرور و بدون کلید در کد مرورگر.
+**سایت** خارج از این پوشه است. **سایت زنده = `E:\DSH-Workspace\projects\asr-ertebatat-2-redesign`** (GitHub `asr-ertebatat-2`، شاخهٔ `redesign`؛ روی ابرآروان). `projects\asr-ertebatat-shop` نسخهٔ قدیمی و منتشرنشده است و همان تغییرات را می‌گیرد. هر دو HTML ثابت‌اند و CLAUDE.md خودشان را دارند. فعلاً به shopapi وصل نیست و فقط لینک ربات (`asrertebatat2_bot`) می‌دهد؛ اتصال آینده فقط سمت سرور و بدون کلید در کد مرورگر.
 
 ```
 سایت (ثابت) ──لینک──► ربات بله/تلگرام ──HTTP+BOT_API_KEY──┐
@@ -47,7 +47,7 @@ build_all.bat        # (ریشه) بیلد کامل به ترتیب درست: Sh
 
 ## وضعیت (به‌روز 2026-10-12)
 
-- **فاز ۶ (سایت) انجام شد (2026-10-12)؛ جزئیات در `PROGRESS.md`.** سایت = `projects\asr-ertebatat-shop` (commit `1524dc1`): «کد مدل» دائمی (slug، بدون کد حسابداری/قیمت/موجودی)، دکمهٔ «استعلام قیمت و سفارش در بله» (کپی نام+کد و `start=m_<slug>`)، تلفن پشتیبان، ربات تلگرام پنهان، `tools/check_site.js`، راهنمای `DEPLOY_ARVAN_FA.md`. zip در `E:\Outputs\StoreWebsite\`. **منتشر نشده.** تصمیم جدید: نگاشت slug ↔ کالای حسابداری با پیشنهاد فازی + بررسی شبانه = **فاز ۶b** (REQUIREMENTS §9a)، شروع نشده. shopbots ۱۲۰ ✓.
+- **فاز ۶ (سایت) انجام شد (2026-10-12)؛ جزئیات در `PROGRESS.md`.** سایت زنده = `projects\asr-ertebatat-2-redesign` (شاخهٔ `redesign`، commit `e98eaef`، **push نشده**؛ نسخهٔ منتشرنشدهٔ `asr-ertebatat-shop` هم `1524dc1`+`5258adf`): «کد مدل» دائمی (slug، بدون کد حسابداری/قیمت/موجودی)، دکمهٔ «استعلام قیمت و سفارش در بله» (کپی نام+کد و `start=m_<slug>`)، تلفن پشتیبان، ربات تلگرام پنهان، `tools/check_site.js`، راهنمای `DEPLOY_ARVAN_FA.md`. zip در `E:\Outputs\StoreWebsite\`. **منتشر نشده.** تصمیم جدید: نگاشت slug ↔ کالای حسابداری با پیشنهاد فازی + بررسی شبانه = **فاز ۶b** (REQUIREMENTS §9a)، شروع نشده. shopbots ۱۲۰ ✓.
 
 - **فاز ۵ در کد کامل شد (2026-10-12)؛ جزئیات در `PROGRESS.md`، مدل تهدید در `SECURITY.md`.** پشتیبان روزانه (`shopsystem/backup.py`، رشتهٔ سرپرست، ساعت ۳): zip کامل محلی + آزمون بازگردانی خودکار + نسخهٔ بیرون از سرور **فقط رمزگذاری‌شده** (AES-256-GCM، عبارت عبور در `.env` و روی کاغذ مالک؛ `--set-backup-passphrase`)؛ نشست تلگرام هرگز پشتیبان نمی‌شود. `deploy/restore.ps1` با برگشت خودکار. هشدار فعالیت مشکوک (`shopapi/app/security_watch.py` + `POST /security/report` از ربات)، فیلتر حذف اسرار از لاگ، رد `sa`، `deploy/firewall_sql.ps1` (اجرا نشده). نسخه ۲٫۲٫۰. **هیچ‌چیز روی سرور فروشگاه نصب/اعمال نشده.** تست‌ها: shopapi ۲۴۵ ✓، shopbots ۱۱۹ ✓، shopadmin ۴۱۹ ✓، shoptg ۴۷ ✓، shopsystem ۴۹ ✓.
 
