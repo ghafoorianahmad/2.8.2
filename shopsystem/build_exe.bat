@@ -139,6 +139,10 @@ echo [3/6] Running PyInstaller (%MODE%) - this takes a few minutes ...
     --hidden-import pyodbc ^
     --hidden-import httpx ^
     --add-data "%SRC%\shopbots_app\messages.fa.json;shopbots_app" ^
+    --add-data "%SRC%\shopbots_app\cards\assets;shopbots_app\cards\assets" ^
+    --collect-data arabic_reshaper ^
+    --collect-submodules bidi ^
+    --collect-submodules PIL ^
     --hidden-import httpcore ^
     --hidden-import anyio._backends._asyncio ^
     --hidden-import email.mime.multipart ^

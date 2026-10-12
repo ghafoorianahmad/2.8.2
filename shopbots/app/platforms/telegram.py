@@ -393,6 +393,17 @@ class TelethonBotAdapter(PlatformAdapter):
             int(chat_id), media, caption=(caption or "")[:1024], buttons=buttons))
         return {"message_id": getattr(sent, "id", None)}
 
+    async def send_photo_bytes(
+        self, chat_id: str | int, png: bytes, caption: str | None = None
+    ) -> dict | None:
+        import io
+
+        buffer = io.BytesIO(png)
+        buffer.name = "card.png"
+        sent = await self._call("sendPhoto", lambda c: c.send_file(
+            int(chat_id), buffer, caption=(caption or "")[:1024], force_document=False))
+        return {"message_id": getattr(sent, "id", None)}
+
     async def edit_text(
         self,
         chat_id: str | int,

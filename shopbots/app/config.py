@@ -109,6 +109,9 @@ class Settings:
     statement_page_size: int = 8
     #: List out-of-stock products too (marked "ناموجود"); they cannot be ordered.
     show_out_of_stock: bool = True
+    #: Send branded image cards (price / pre-invoice / invoice) as photos. Off by
+    #: default; any rendering or upload failure falls back to the plain text.
+    bot_image_cards: bool = False
     #: Operator copy of messages.fa.json ("" = built-in texts only).
     messages_file: str = ""
 
@@ -146,6 +149,7 @@ class Settings:
             receipt_rate_window=_env_float("RECEIPT_RATE_WINDOW", 600.0),
             statement_page_size=_env_int("STATEMENT_PAGE_SIZE", 8),
             show_out_of_stock=_env_bool("SHOW_OUT_OF_STOCK", True),
+            bot_image_cards=_env_bool("BOT_IMAGE_CARDS", False),
             messages_file=_env("BOT_MESSAGES_FILE", ""),
         )
 

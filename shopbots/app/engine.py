@@ -14,6 +14,8 @@ import logging
 import time
 from typing import Any
 
+import asyncio
+
 from . import texts
 from .config import Settings
 from .core import (
@@ -116,6 +118,7 @@ CUSTOMER_EVENT_KINDS = frozenset(
         "order_partially_invoiced", "order_invoiced", "order_shipped",
     }
 )
+INVOICE_EVENT_KINDS = frozenset({"order_partially_invoiced", "order_invoiced"})
 #: order event kind -> customer message (tracking: invoiced / shipped)
 ORDER_EVENT_TEXTS = {
     "payment_approved": "PAYMENT_APPROVED",
@@ -327,6 +330,23 @@ class BotEngine:
         except BotApiError as exc:
             self.logger.warning("platform=%s send_failed=%s", adapter.platform, exc.method)
             return None
+
+    async def _send_card(self, adapter: PlatformAdapter, chat_id, render, caption: str) -> bool:
+        """Send a branded image card as a photo (BOT_IMAGE_CARDS). False = nothing was
+        sent (setting off, rendering or upload failed) so the caller sends the text."""
+        if not self.settings.bot_image_cards:
+            return False
+        try:
+            png = await asyncio.to_thread(render)
+            if not png:
+                return False
+            await adapter.send_photo_bytes(chat_id, png, caption)
+            return True
+        except BotApiError as exc:
+            self.logger.warning("platform=%s card_send_failed=%s", adapter.platform, exc.method)
+        except Exception as exc:  # noqa: BLE001 - a card must never break the chat flow
+            self.logger.warning("platform=%s card_failed=%s", adapter.platform, type(exc).__name__)
+        return False
 
     async def _edit_text(
         self,
@@ -886,6 +906,7 @@ class BotEngine:
         product: dict, data: dict, edit_message_id=None,
     ) -> None:
         """A phone: the colors as buttons; no price until one is picked."""
+        data = {k: v for k, v in (data or {}).items() if k != "card_code"}  # new product view
         colors = product.get("colors") or []
         if not colors:
             await self._send_options(
@@ -952,6 +973,22 @@ class BotEngine:
             name=name, color=color["name"], price=price, qty=fmt_num(qty),
         )
         changed = bool(previous) and previous != int(color_id)
+        # The image card goes out on the first color pick of a product view only;
+        # later switches keep the short "new price" text (no new image).
+        if self.settings.bot_image_cards and data.get("card_code") != int(code):
+            from .cards import price_card
+
+            sent_card = await self._send_card(
+                adapter, chat_id,
+                lambda: price_card(
+                    shop=texts.SHOP.get("shop_name", ""), name=name, color=color["name"],
+                    price=color["price"], in_stock=True,
+                    currency=texts.SHOP.get("currency", "ریال"),
+                ),
+                texts.CARD_CAPTION_PRICE.format(name=name, color=color["name"], price=price),
+            )
+            if sent_card:
+                data = {**data, "card_code": int(code)}
         if changed:
             notice = texts.COLOR_CHANGED.format(color=color["name"], price=price)
             body = f"{notice}\n\n{body}"
@@ -1092,6 +1129,23 @@ class BotEngine:
         self.store.set_conversation(
             platform, chat_id, STATE_AWAIT_RECEIPT, {"order_id": order_id}
         )
+        if self.settings.bot_image_cards and order.get("items"):
+            from .cards import pre_invoice_card
+
+            await self._send_card(
+                adapter, chat_id,
+                lambda: pre_invoice_card(
+                    shop=texts.SHOP.get("shop_name", ""), order_id=order_id,
+                    items=order.get("items"), total=order.get("total"),
+                    card_number=texts.SHOP.get("card_number", ""),
+                    card_owner=texts.SHOP.get("card_owner", ""),
+                    bank_name=texts.SHOP.get("bank_name", ""),
+                    currency=texts.SHOP.get("currency", "ریال"),
+                    date=order.get("created_at"),
+                ),
+                texts.CARD_CAPTION_PRE_INVOICE.format(
+                    order_id=order_id, total=total, currency=texts.SHOP.get("currency", "ریال")),
+            )
         await self._send_options(
             adapter, platform, chat_id, "\n\n".join(parts), [[(texts.BTN_MENU, "menu")]],
         )
@@ -1570,8 +1624,39 @@ class BotEngine:
         )
         if not target:
             return False
+        if kind in INVOICE_EVENT_KINDS and await self._send_invoice_card(kind, ref_id, target, text):
+            return True
         await self._notify_customer(target, text)
         return True
+
+    async def _send_invoice_card(self, kind: str, order_id: int, target: dict, caption: str) -> bool:
+        """The invoice image (caption = the usual invoiced message). The lines and
+        prices are the order's own: see PROGRESS.md for the grants a true invoice needs."""
+        if not self.settings.bot_image_cards:
+            return False
+        adapter = self.adapters.get(str(target.get("platform") or ""))
+        chat_id = target.get("chat_id")
+        if adapter is None or not chat_id:
+            return False
+        try:
+            order = await self.api.admin_get_order(int(order_id))
+        except ShopApiError:
+            return False
+        if not isinstance(order, dict) or not order.get("items"):
+            return False
+        from .cards import final_invoice_card
+
+        return await self._send_card(
+            adapter, chat_id,
+            lambda: final_invoice_card(
+                shop=texts.SHOP.get("shop_name", ""), order_id=order_id, items=order.get("items"),
+                total=order.get("total"), partial=kind == "order_partially_invoiced",
+                accounting_no=order.get("accounting_order_no"),
+                currency=texts.SHOP.get("currency", "ریال"),
+                date=order.get("invoiced_at"),
+            ),
+            caption,
+        )
 
     async def _find_user_chat(self, user_id: int) -> dict | None:
         try:

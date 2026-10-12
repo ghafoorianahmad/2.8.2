@@ -52,6 +52,12 @@ class PlatformAdapter(ABC):
         reply_markup: dict | None = None,
     ) -> dict | None: ...
 
+    async def send_photo_bytes(
+        self, chat_id: str | int, png: bytes, caption: str | None = None
+    ) -> dict | None:
+        """Upload an in-memory image (the branded cards). Adapters override it."""
+        raise BotApiError("sendPhoto", "upload not supported")
+
     @abstractmethod
     async def edit_text(
         self,
@@ -199,6 +205,31 @@ class HttpBotAdapter(PlatformAdapter):
         if reply_markup:
             payload["reply_markup"] = reply_markup
         return await self._call("sendPhoto", payload)
+
+    async def send_photo_bytes(
+        self, chat_id: str | int, png: bytes, caption: str | None = None
+    ) -> dict | None:
+        """sendPhoto as a multipart upload (the card never touches the disk)."""
+        client = await self._http()
+        data = {"chat_id": str(chat_id)}
+        if caption:
+            data["caption"] = caption[:1024]
+        try:
+            response = await client.post(
+                self._url("sendPhoto"), data=data,
+                files={"photo": ("card.png", png, "image/png")},
+            )
+        except httpx.HTTPError as exc:
+            raise self._network_error("sendPhoto", exc) from None
+        if response.status_code >= 400:
+            raise BotApiError("sendPhoto", f"HTTP {response.status_code}")
+        try:
+            body = response.json()
+        except ValueError:
+            raise BotApiError("sendPhoto", "invalid JSON response") from None
+        if not isinstance(body, dict) or not body.get("ok", False):
+            raise BotApiError("sendPhoto", str((body or {}).get("description", "unknown error")))
+        return body.get("result")
 
     async def edit_text(
         self,

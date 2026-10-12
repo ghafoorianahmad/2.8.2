@@ -2,6 +2,36 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## Bot image cards — price / pre-invoice / invoice (2026-10-12, branch `bot-cards`) — DONE in code (Linux, fakes only); OFF by default
+
+Branched from `bot-design`. Samples with fake data: `docs/card-samples/` (regenerate: `shopbots/scripts/render_card_samples.py`).
+
+### Done
+- **Renderer** `shopbots/app/cards/render.py`: Pillow + `arabic-reshaper` + `python-bidi`, Vazirmatn Regular/Bold (OFL, bundled in `cards/assets/` with `OFL.txt`). Letters are reshaped, put in visual order and drawn with Pillow's BASIC layout, so output is identical with or without libraqm and nothing needs installing on Windows. Dark theme (#05070c, deep blue glow, frosted panels); optional `cards/assets/logo.png` replaces the text wordmark. Every function returns PNG bytes or `None` (never raises).
+- **Shaping proof** (`tests/test_cards.py`): joined presentation forms, RTL visual order, Latin model names/digits keep their order inside Persian, every emitted glyph exists in the font, Shamsi date (`cards/jdate.py`) and Persian digits.
+- **Cards**: price card (name, colour, price in Rial, stock badge, shop name), pre-invoice (order no., Shamsi date, lines, total, bank card from `messages.fa.json`), final invoice (order no., lines, total, "invoice issued" / partial badge).
+- **Sending**: `send_photo_bytes()` on the adapters (Bale = multipart `sendPhoto`; Telegram = Telethon `send_file` from memory). Photo + short caption (`CARD_CAPTION_*` in `messages.fa.json`). Any render/upload failure → the existing text message (flow never breaks).
+  - Price card: on the **first colour pick per product view only**; later colour switches send just the existing short "new price" text.
+  - Pre-invoice: right after checkout; the text payment instructions still follow (copyable card number, receipt prompt).
+  - Invoice: on the existing `order_invoiced` / `order_partially_invoiced` events; the photo's caption is the usual invoiced message (text only if the photo fails).
+- **Setting** `BOT_IMAGE_CARDS` (default `false`, `.env` only; not in shopapi's editable list). `shopbots/.env.example` updated.
+- `requirements.txt`: Pillow 12.3.0, arabic-reshaper 3.0.1, python-bidi 0.6.11.
+- `shopsystem/build_exe.bat`: added `--add-data` for `cards/assets` and `--collect-data arabic_reshaper`, `--collect-submodules bidi/PIL` (**untested: no Windows build in this session**).
+- Tests (Linux): shopbots **177 passed** (was 160; +17 in `tests/test_cards.py`).
+
+### Final invoice data — what is used and what a true invoice needs
+Used today (no grant change): the order's own lines (`order_items`: name, colour, qty, unit price), total, `accounting_order_no`, `invoiced_at` from shopapi's SQLite. The card therefore shows the **order's** prices/quantities, not what was actually invoiced, and no invoice number.
+For an invoice-based card, these **read-only** grants would be needed (not added; to be applied by the owner on Windows / a DBA):
+- `GRANT SELECT ON dbo.facto (Gey, Mab) TO shopbot;` — actual unit price / line amount invoiced (currently granted on `facto`: `Numfact, Codekala, Meg, ordercode, orderdetailcode`; `Numfact` = the invoice number and `Meg` = invoiced quantity are therefore already readable).
+- `GRANT SELECT ON dbo.Fact (Numfact, <invoice-date column>) TO shopbot;` — the invoice date. The exact column name is **not confirmed**: check `Fact` on `hesab5 t` (`SAZEH_DB_REFERENCE.md` lists `Facto`, the line table, but the `Fact` header columns need a look).
+Then shopapi's tracking (`tracking.py`) must also read and store them; that is a separate task.
+
+### Pending / for the user
+- Review the samples, then set `BOT_IMAGE_CARDS=true` in the server `.env` to enable.
+- Not tested: real Bale `sendPhoto` multipart upload, Telethon `send_file` of bytes, the Windows PyInstaller build (assets/fonts bundled), and the card in the real Bale/Telegram clients (cropping of tall images).
+- The card number shows exactly what is in `messages.fa.json`; with the placeholder, the pre-invoice says payment details follow.
+- Persian digits are used on the cards; the captions keep the existing Latin-digit format.
+
 ## Bot look & feel — option C applied (2026-10-12, branch `bot-design`)
 
 Texts only: `shopbots/app/messages.fa.json` (98 values changed: 25 button labels + 73 messages). No code, flows, callback data, keys or placeholders changed (placeholder sets checked per message).
