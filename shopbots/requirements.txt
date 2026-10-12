@@ -2,3 +2,7 @@ httpx
 pydantic
 python-dotenv
 pytest
+# Telegram channel (Phase 7). shop-tgproxy is the repo's ../shared package:
+#   pip install ../shared   (setup.ps1 does it)
+Telethon==1.45.0
+shop-tgproxy==1.0.0

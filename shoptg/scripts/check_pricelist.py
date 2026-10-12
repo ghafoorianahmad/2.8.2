@@ -25,7 +25,7 @@ from app.interactive import (  # noqa: E402
     require_api_credentials,
     summarize,
 )
-from app.proxies import extract_links, parse_proxy_link  # noqa: E402
+from tgproxy import extract_links, parse_proxy_link  # noqa: E402
 
 
 async def connect(gateway: TelegramGateway, session: str, links) -> bool:

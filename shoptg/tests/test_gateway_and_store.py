@@ -8,8 +8,8 @@ import pytest
 
 from app import secure_store
 from app.config import Settings, channel_username
-from app.gateway import NotAuthorized, TelegramGateway, connection_for, to_message
-from app.proxies import extract_links, from_pool, parse_proxy_link
+from app.gateway import NotAuthorized, TelegramGateway, to_message
+from tgproxy import extract_links, from_pool, parse_proxy_link
 from fakes import SECRET16, FakeTelegram, fake_message
 
 windows_only = pytest.mark.skipif(sys.platform != "win32", reason="DPAPI is Windows-only")
@@ -107,7 +107,8 @@ def test_connection_class_per_secret_kind():
         ConnectionTcpMTProxyIntermediate,
         ConnectionTcpMTProxyRandomizedIntermediate,
     )
-    from app.faketls import ConnectionTcpMTProxyFakeTLS
+    from tgproxy.connection import connection_for
+    from tgproxy.faketls import ConnectionTcpMTProxyFakeTLS
     assert connection_for(None) == {}
     for secret, cls in ((SECRET16, ConnectionTcpMTProxyIntermediate),
                         ("dd" + SECRET16, ConnectionTcpMTProxyRandomizedIntermediate),

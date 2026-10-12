@@ -59,6 +59,9 @@ if (-not (Test-Path $venvPython)) {
 Write-Host "Installing dependencies ..."
 & $venvPython -m pip install --upgrade pip | Out-Host
 
+# shop-tgproxy (Telegram channel) is the repo's ..\shared package.
+& $venvPython -m pip install (Join-Path $root "..\shared") | Out-Host
+if ($LASTEXITCODE -ne 0) { throw "pip install ..\shared failed with exit code $LASTEXITCODE." }
 $pipArgs = @("-m", "pip", "install", "-r", (Join-Path $root "requirements.txt"))
 if ($IndexUrl) { $pipArgs += @("-i", $IndexUrl) }
 & $venvPython @pipArgs | Out-Host

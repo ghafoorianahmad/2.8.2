@@ -51,7 +51,11 @@ foreach ($file in @("parser.py", "pricing.py")) { Copy-Item (Join-Path $parserSr
 
 Write-Host "Building wheels for Python 3.12 x64 ..."
 $wheels = Join-Path $stage "wheels"
-$pipArgs = @("-m", "pip", "wheel", "--disable-pip-version-check", "-r", (Join-Path $root "requirements.txt"), "-w", $wheels)
+# The shared package (..\shared, imported as "tgproxy") goes in as its own wheel first;
+# the requirements then find shop-tgproxy in $wheels instead of on PyPI.
+& $venvPython -m pip wheel --disable-pip-version-check --no-deps (Join-Path $root "..\shared") -w $wheels | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "pip wheel ..\shared failed ($LASTEXITCODE)." }
+$pipArgs = @("-m", "pip", "wheel", "--disable-pip-version-check", "--find-links", $wheels, "-r", (Join-Path $root "requirements.txt"), "-w", $wheels)
 if ($PipExtra) { $pipArgs += $PipExtra.Split(" ") }
 & $venvPython @pipArgs | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "pip wheel failed ($LASTEXITCODE)." }

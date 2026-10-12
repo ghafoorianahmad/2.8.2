@@ -87,6 +87,11 @@ if (-not (Test-Path $venvPython)) {
 $req = Join-Path $root "requirements.txt"
 if ($Dev) { $req = Join-Path $root "requirements-dev.txt" }
 $wheels = Join-Path $root "wheels"
+if ($Dev) {
+    # shop-tgproxy lives in the repo (..\shared); the server package carries its wheel instead.
+    & $venvPython -m pip install --disable-pip-version-check (Join-Path $root "..\shared") | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "pip install ..\shared failed with exit code $LASTEXITCODE." }
+}
 $pipArgs = @("-m", "pip", "install", "--disable-pip-version-check", "-r", $req)
 $offline = (Test-Path $wheels) -and ($parts[0] -eq "3.12") -and -not $Dev
 if ($offline) {

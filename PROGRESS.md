@@ -2,6 +2,47 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## Phase 7 — Telegram bot channel (2026-10-12) — DONE in code (Linux, fakes only); never connected to Telegram
+
+Branch `phase7-telegram` (not merged). No token, `.env`, session or real Telegram traffic was used.
+
+### Decisions (user, 2026-10-12)
+- Proxy parsing + fake-TLS + `connection_for` moved into a small shared package **`shared/tgproxy`** (`shop-tgproxy` 1.0.0), used by shoptg and shopbots. No importlib-by-path loading.
+- The bot both **reads** the proxy ranking and **reports** health to shopapi (`/worker/proxies`, `/worker/proxies/report`).
+- Reuses shoptg's `TG_API_ID` / `TG_API_HASH` (one Telegram app). Only `TELEGRAM_BOT_TOKEN` is new.
+
+### Done
+- `shared/` (`pyproject.toml`, `tgproxy/{proxies,faketls,connection}.py`): files moved with `git mv` from `shoptg/app`; shoptg imports and tests updated, behaviour unchanged. `import tgproxy` does not import Telethon; `faketls`/`connection` do (lazily from `connection_for`).
+- `shopbots/app/platforms/telegram.py` — `TelethonBotAdapter(PlatformAdapter)`, `platform = "telegram"`:
+  - bot login (`sign_in(bot_token=…)`) over an outgoing MTProto connection; no webhook, no inbound port;
+  - Telethon events (new message, callback) become Bot-API-shaped update dicts in a queue, so **`polling.py` and `engine.py` are unchanged** and every Bale flow works as is: contact-only registration (contact `user_id` 0/missing → `None` → refused; `!= sender` refused by the existing core check), R4 auto-approval, catalog/search, `m_<slug>`/copied text/names, colors with per-color price, cart/order, receipt (photo or PNG/JPEG file, size checked from the message and while streaming), tracking messages, statement, closed mode;
+  - messages > 4096 chars are split (keyboard on the last part); callback data > 64 bytes is refused with an error; Telethon's default Markdown parse mode is switched off; groups and bot senders are ignored; update ids are time based, so they keep growing across restarts (the engine stores the last id).
+- `shopbots/app/platforms/tg_pool.py` — `ProxyPool`: shopapi ranking (best first) → local `TG_PROXY` links → direct (`TG_ALLOW_DIRECT`). Reports `{"id","ok","latency_ms"}` after every connection attempt and every health ping.
+- **Auto-switch:** each `get_updates` call (re)connects through the first working candidate; a failed ping (every `TG_HEALTH_INTERVAL_SEC`, default 180 s), a dropped socket or a network error drops the connection, reports the proxy as failed and raises a network `BotApiError`; `poll_platform`'s existing backoff retries, which connects through the next proxy within seconds. A wrong bot token / api id is fatal (401 line) and does not cycle through the pool. All proxies dead → the retry loop continues; shopapi raises its `proxies_all_dead` alert from the reports.
+- Config (`shopbots/app/config.py`, `.env.example`): `TELEGRAM_BOT_TOKEN`, `TG_API_ID`, `TG_API_HASH`, `WORKER_API_KEY`, `TG_PROXY`, `TG_ALLOW_DIRECT`, `TG_BOT_SESSION` (default `tg_bot.session` next to `SQLITE_PATH`), `TG_HEALTH_INTERVAL_SEC`, `TG_CONNECT_TIMEOUT_SEC`. The channel starts only when token + api id + api hash are all set and Telethon is installed (otherwise one log line, Bale unaffected). Secrets are `repr=False`; the log redactor also masks `api_hash`.
+- **Owner alerts stay on Bale / admin isolation:** `ADMIN_CHAT_IDS` now means Bale only (a bare id used to match *any* platform; a Telegram user id equal to the owner's Bale id would have become an admin). `telegram:<id>` entries are ignored. Tested.
+- The bot's Telethon session is an SQLite file (keeps update state with `catch_up=True`, so messages sent while the bot was down are delivered, and the entity cache so proactive tracking messages work after a restart). It is git-ignored (`*.session`) but holds the bot's auth key: treat it as a secret.
+- Packaging: `shoptg/requirements.txt` + `shopbots/requirements.txt` + `shopsystem/requirements.txt` list `shop-tgproxy==1.0.0` / `../shared`; `shoptg/install.ps1 -Dev` and `shopbots/setup.ps1` install `..\shared` first; `shoptg/build_package.ps1` builds the shared wheel into `wheels\`; `shopsystem/build_exe.bat` adds `--collect-submodules telethon` and `tgproxy`.
+
+### Tests (Linux, fakes; no network)
+- shopbots **160** ✓ (+32: `tests/test_telegram_channel.py`, `tests/tg_fakes.py`): connector per secret kind (ee/dd/plain), ranking order, failover on ping failure and dropped socket, all-dead and recovery, fatal token, reports, pool client (local dedupe, direct last, keyless, API down), full engine flows on platform `telegram` (registration refusals, R4, model links, colors, order + receipt, statement, closed mode + tracking), split messages, polling loop unchanged, admin isolation, secrets absent from logs, the real Telethon client accepts our options.
+- shoptg **45 ✓ + 2 skipped** (same as before the move), shopapi **281** ✓ (needs `unixodbc`).
+- shopadmin: 2 failures in `test_notifications` / `test_ui` that **also occur without my changes** (sqlite "closed database", differs per run; Qt on Linux); the code is untouched by this phase. shopsystem: 36 ✓, 12 skipped, 1 failed (`test_local_backup_dir`, expects the Windows path `E:\ShopBackup`).
+
+### Must be verified on Windows / live (not done)
+- A real BotFather bot: login, `/start`, contact button, inline buttons, receipt photo download, **`/start m_<slug>` deep link** (`t.me/<bot>?start=m_<slug>`), message editing, a callback toast.
+- Telethon 1.45.0 uses the newer TL layer: reply/inline buttons are `Button`/`KeyboardInlineButton` with `.type`; confirm `request_phone` really shows the share-contact button and that the contact message carries `user_id` for the user's own number.
+- Fake-TLS (`ee`) against real proxies **for a bot login** (shoptg only proved the user-session path); latency/failover timings; behaviour when Telegram is blocked without a proxy.
+- Two Telethon processes (shoptg user session + the bot) using the same api id from one IP: no interference expected, unproven.
+- `catch_up` on first start with an empty session file; update delivery after a restart.
+- `WORKER_API_KEY` reaches ShopSystem's environment so the in-process bot can read `/worker/proxies` (the launcher already writes it for shoptg).
+- **PyInstaller / ShopSystem.exe:** `Telethon` and `shop-tgproxy` must be installed in `shopsystem`'s venv (`pip install -r requirements.txt` from `shopsystem\`, which now includes `../shared`); `--collect-submodules telethon`/`tgproxy` were added to `build_exe.bat` untested; the packages are renamed `shopbots_app`, so `shopbots_app.platforms.telegram` is imported lazily — check it is in the bundle, that the exe size is acceptable, and that `build_all.bat` still passes.
+- `shoptg\install.ps1 -Dev`, `build_package.ps1` (shared wheel + offline install probe) and `shopbots\setup.ps1`: edited on Linux, never run.
+- ShopAdmin shows no Telegram bot status yet (the health snapshot has the platform; no UI change was made).
+
+### Next step
+Owner: create the bot with BotFather, put `TELEGRAM_BOT_TOKEN` in the server `.env`, run the checks above on a test bot, then add the Telegram button on the site (same `m_<slug>` mechanism, REQUIREMENTS §9).
+
 ## Phase 6b — catalog-model mapping, fuzzy suggestions, nightly check, bot resolution (2026-10-12) — DONE in code; not tested on SQL or live Bale
 
 ### Decisions (user, 2026-10-12)

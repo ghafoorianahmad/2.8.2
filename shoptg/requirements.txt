@@ -4,3 +4,6 @@ Telethon==1.45.0
 httpx==0.28.1
 python-dotenv==1.2.4
 pdfplumber==0.11.10
+# Local shared package (../shared). Dev: install.ps1 -Dev installs it from the repo first;
+# server package: build_package.ps1 puts its wheel into wheels\.
+shop-tgproxy==1.0.0

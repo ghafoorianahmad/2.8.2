@@ -60,9 +60,13 @@ python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -m pytest -q
 ```
 
-**Linux test compatibility: not yet verified; the cloud session will run the suites itself.**
-(Expectation from the code only: `shopapi`, `shopbots`, `shoptg` should run; `shopadmin` and
-`shopsystem` contain Windows-only modules. Record the real results here.)
+**Linux test results (2026-10-12, Python 3.13):** `shopbots` 160 ✓, `shoptg` 45 ✓ + 2 skipped,
+`shopapi` 281 ✓ (needs `apt-get install unixodbc` for `pyodbc`), `shopadmin` runs with
+`QT_QPA_PLATFORM=offscreen` after `apt-get install libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1`
+but 2 UI tests fail intermittently on Linux (sqlite "closed database" in `test_ui`/`test_notifications`, also
+without any change), `shopsystem` 36 ✓ / 12 skipped / 1 failed (Windows path `E:\ShopBackup`).
+The shared package must be installed in the venv first: `.venv/bin/python -m pip install ../shared`
+(shoptg, shopbots).
 
 The Windows PC remains the reference: a suite that is green on Linux must still be run on Windows
 by the owner before merge.

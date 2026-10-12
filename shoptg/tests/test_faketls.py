@@ -13,8 +13,8 @@ import time
 import pytest
 from telethon.crypto import AESModeCTR
 
-from app import faketls
-from app.faketls import CCS, ConnectionTcpMTProxyFakeTLS, FakeTlsError, build_client_hello
+from tgproxy import faketls
+from tgproxy.faketls import CCS, ConnectionTcpMTProxyFakeTLS, FakeTlsError, build_client_hello
 
 KEY = bytes(range(16))
 DOMAIN = b"www.example.com"

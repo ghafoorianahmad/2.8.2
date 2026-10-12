@@ -6,7 +6,7 @@ logged, never included in exceptions and never written to the state database.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -41,12 +41,22 @@ def _env_bool(key: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _tg_api_id() -> int:
+    raw = _env("TG_API_ID")
+    if raw and not raw.isdigit():
+        raise ValueError("TG_API_ID must be a number")
+    return int(raw or 0)
+
+
 def _env_list(key: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in _env(key).split(",") if part.strip())
 
 
-#: Channels this process can run (one adapter each in app/platforms/).
+#: Channels that can hold ADMIN chats. Owner alerts and admin actions are Bale
+#: only: a Telegram user id must never match an admin id configured for Bale.
 SUPPORTED_PLATFORMS = ("bale",)
+#: Customer channels this process can run (one adapter each in app/platforms/).
+CUSTOMER_PLATFORMS = ("bale", "telegram")
 
 
 @dataclass
@@ -59,11 +69,24 @@ class Settings:
     admin_api_key: str = ""
 
     # --- bots ---
-    # Bale is the only channel (REQUIREMENTS §2). A later channel plugs in as a
-    # new adapter in app/platforms/ on the same core; the old Telegram Bot-API
-    # adapter and its HTTP/SOCKS proxy were removed (2026-10-11).
+    # Bale is the primary channel (REQUIREMENTS §2). Telegram (Phase 7) is a
+    # Telethon *bot* connection through the MTProto proxy pool; it shares
+    # TG_API_ID / TG_API_HASH / TG_PROXY / WORKER_API_KEY with shoptg. Secrets
+    # come only from the environment.
     bale_token: str = ""
     bale_api_base: str = DEFAULT_BALE_API_BASE
+    telegram_bot_token: str = field(default="", repr=False)
+    tg_api_id: int = 0
+    tg_api_hash: str = field(default="", repr=False)
+    worker_api_key: str = field(default="", repr=False)
+    #: Local known-good tg://proxy links, tried after the pool's ranking.
+    tg_proxies: tuple[str, ...] = field(default=(), repr=False)
+    #: Try a direct connection after every proxy failed.
+    tg_allow_direct: bool = True
+    #: Telethon session file stem of the bot (keeps update state across restarts).
+    tg_session_path: str = ""
+    tg_health_interval_sec: int = 180
+    tg_connect_timeout_sec: int = 20
 
     # --- admins ---
     admin_chat_ids: tuple[str, ...] = ()
@@ -99,6 +122,15 @@ class Settings:
             admin_api_key=_env("ADMIN_API_KEY", ""),
             bale_token=_env("BALE_TOKEN", ""),
             bale_api_base=_env("BALE_API_BASE", DEFAULT_BALE_API_BASE),
+            telegram_bot_token=_env("TELEGRAM_BOT_TOKEN", ""),
+            tg_api_id=_tg_api_id(),
+            tg_api_hash=_env("TG_API_HASH", ""),
+            worker_api_key=_env("WORKER_API_KEY", ""),
+            tg_proxies=tuple(p for p in _env("TG_PROXY", "").replace(";", ",").replace(" ", ",").split(",") if p),
+            tg_allow_direct=_env_bool("TG_ALLOW_DIRECT", True),
+            tg_session_path=_env("TG_BOT_SESSION", ""),
+            tg_health_interval_sec=max(30, _env_int("TG_HEALTH_INTERVAL_SEC", 180)),
+            tg_connect_timeout_sec=max(5, _env_int("TG_CONNECT_TIMEOUT_SEC", 20)),
             admin_chat_ids=_env_list("ADMIN_CHAT_IDS"),
             sqlite_path=_env("SQLITE_PATH", str(BASE_DIR / "shopbots.db")),
             poll_timeout=_env_int("POLL_TIMEOUT", 25),
@@ -121,16 +153,17 @@ class Settings:
     def admin_entries(self) -> list[tuple[str | None, str]]:
         """Admin chats as (platform|None, chat_id).
 
-        `ADMIN_CHAT_IDS` accepts `12345` (any platform) and `bale:12345` for an
-        unambiguous target. Entries for other platforms (e.g. a leftover
-        `telegram:12345`) are ignored, never matched against a Bale chat.
+        `ADMIN_CHAT_IDS` accepts `12345` and `bale:12345`; both mean a Bale chat.
+        Admin chats exist on Bale only (owner alerts stay on Bale, Phase 7):
+        entries for other platforms (e.g. `telegram:12345`) are ignored, and a
+        bare id is never matched against a Telegram chat.
         """
         entries: list[tuple[str | None, str]] = []
         for raw in self.admin_chat_ids:
             platform, sep, chat_id = raw.partition(":")
             platform = platform.strip().lower()
             if not sep:
-                entries.append((None, raw))
+                entries.append(("bale", raw))
             elif platform in SUPPORTED_PLATFORMS and chat_id.strip():
                 entries.append((platform, chat_id.strip()))
         return entries
@@ -153,5 +186,21 @@ class Settings:
                 targets.append((entry_platform, entry_chat))
         return targets
 
+    @property
+    def tg_session_file(self) -> str:
+        """Session file stem of the Telegram bot (``.session`` is added by Telethon)."""
+        if self.tg_session_path:
+            return self.tg_session_path
+        return str(Path(self.sqlite_path).resolve().with_name("tg_bot"))
+
+    @property
+    def telegram_configured(self) -> bool:
+        return bool(self.telegram_bot_token and self.tg_api_id and self.tg_api_hash)
+
     def enabled_platforms(self) -> tuple[str, ...]:
-        return ("bale",) if self.bale_token else ()
+        platforms = []
+        if self.bale_token:
+            platforms.append("bale")
+        if self.telegram_configured:
+            platforms.append("telegram")
+        return tuple(platforms)

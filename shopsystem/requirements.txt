@@ -8,6 +8,8 @@ httpx
 cryptography   # the server's self-signed TLS certificate
 pywin32        # the Windows service (ShopServer)
 pdfplumber     # distributor price-list PDFs (shopapi/app/pricelist)
+Telethon==1.45.0   # Telegram bot channel (Phase 7); the bot code is imported only when configured
+../shared      # shop-tgproxy: MTProto proxy links + fake-TLS (run pip from this folder)
 
 # Build-time only
 pyinstaller

@@ -29,7 +29,7 @@ _PATTERNS = (
     # headers / key=value pairs
     (re.compile(r"(?i)\b(x-api-key|authorization|bearer)(\s*[:=]?\s*)(bearer\s+)?[^\s,;'\"]{8,}"),
      r"\1\2\3" + MASK),
-    (re.compile(r"(?i)(?<![a-z])(pwd|password|passphrase|api_key|secret|token)(\s*[=:]\s*)[^\s,;'\"]+"),
+    (re.compile(r"(?i)(?<![a-z])(pwd|password|passphrase|api_key|api_hash|secret|token)(\s*[=:]\s*)[^\s,;'\"]+"),
      r"\1\2" + MASK),
 )
 

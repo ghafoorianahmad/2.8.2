@@ -12,7 +12,7 @@ from pathlib import Path
 from types import ModuleType
 
 from .config import BASE_DIR, Settings
-from .proxies import ProxyLink, parse_proxy_link
+from tgproxy import ProxyLink, parse_proxy_link
 
 
 def hidden(prompt: str, *, reader=getpass.getpass) -> str:

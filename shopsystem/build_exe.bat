@@ -106,6 +106,8 @@ echo [3/6] Running PyInstaller (%MODE%) - this takes a few minutes ...
     --collect-submodules starlette ^
     --collect-submodules shopapi_app ^
     --collect-submodules shopbots_app ^
+    --collect-submodules telethon ^
+    --collect-submodules tgproxy ^
     --collect-data certifi ^
     --hidden-import uvicorn.logging ^
     --hidden-import uvicorn.loops ^

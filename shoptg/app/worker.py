@@ -24,7 +24,7 @@ from typing import Callable
 from . import secure_store
 from .config import Settings
 from .gateway import NotAuthorized, TelegramGateway, TgMessage
-from .proxies import ProxyLink, extract_links, from_pool, parse_proxy_link
+from tgproxy import ProxyLink, extract_links, from_pool, parse_proxy_link
 from .shopapi import ApiError, WorkerApi
 
 log = logging.getLogger(__name__)

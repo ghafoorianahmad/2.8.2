@@ -1,4 +1,4 @@
-"""Entry point: run the Bale bot.
+"""Entry point: run the bots (Bale, and Telegram when configured).
 
     python -m app.main            # run the bot (BALE_TOKEN must be set)
     python -m app.main --dry-run  # start the adapter, no network calls
@@ -33,7 +33,39 @@ def build_adapters(settings: Settings) -> dict[str, PlatformAdapter]:
         adapters["bale"] = BaleAdapter(
             token=settings.bale_token, api_base=settings.bale_api_base, timeout=timeout
         )
+    if settings.telegram_configured:
+        try:
+            adapters["telegram"] = build_telegram_adapter(settings)
+        except ImportError as exc:
+            logger.error(
+                "TELEGRAM_BOT_TOKEN is set but Telethon / shop-tgproxy is not installed (%s) - "
+                "Telegram channel disabled / کتابخانهٔ تلگرام نصب نیست", type(exc).__name__,
+            )
     return adapters
+
+
+def build_telegram_adapter(settings: Settings) -> PlatformAdapter:
+    """Telethon bot through the proxy pool. Imported here so Bale-only installs
+    (and their tests) never need Telethon."""
+    from .platforms.telegram import TelethonBotAdapter
+    from .platforms.tg_pool import ProxyPool
+
+    pool = ProxyPool(
+        base_url=settings.shopapi_base_url,
+        worker_api_key=settings.worker_api_key,
+        ca_file=settings.shopapi_ca_file,
+        local_proxies=settings.tg_proxies,
+        allow_direct=settings.tg_allow_direct,
+    )
+    return TelethonBotAdapter(
+        bot_token=settings.telegram_bot_token,
+        api_id=settings.tg_api_id,
+        api_hash=settings.tg_api_hash,
+        pool=pool,
+        session_path=settings.tg_session_file,
+        connect_timeout=settings.tg_connect_timeout_sec,
+        health_interval=settings.tg_health_interval_sec,
+    )
 
 
 async def run(
@@ -103,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if not settings.enabled_platforms():
-        print("No bot token configured. Set BALE_TOKEN (see .env.example).")
+        print("No bot configured. Set BALE_TOKEN or TELEGRAM_BOT_TOKEN + TG_API_ID + TG_API_HASH (see .env.example).")
         return 2
 
     asyncio.run(run(settings, dry_run=args.dry_run))

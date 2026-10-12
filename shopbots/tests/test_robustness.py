@@ -200,7 +200,8 @@ def test_old_telegram_settings_are_ignored(monkeypatch):
     settings = Settings.from_env()
     assert settings.enabled_platforms() == ()
     assert build_adapters(settings) == {}
-    assert not any("telegram" in name or "proxy" in name for name in vars(settings))
+    # the old Bot-API names are gone (Phase 7's channel uses TELEGRAM_BOT_TOKEN + TG_*)
+    assert not {"telegram_token", "telegram_proxy", "proxy_url", "telegram_api_base"} & set(vars(settings))
 
 
 # ---- privacy ---------------------------------------------------------------

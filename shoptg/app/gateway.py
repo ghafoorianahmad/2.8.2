@@ -14,7 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable
 
-from .proxies import ProxyLink
+from tgproxy import ProxyLink
+from tgproxy.connection import connection_for
 
 log = logging.getLogger(__name__)
 
@@ -36,24 +37,6 @@ class TgMessage:
     file_size: int = 0
     file_name: str = ""
     raw: Any = field(default=None, repr=False)
-
-
-def connection_for(link: ProxyLink | None) -> dict:
-    """``TelegramClient`` keyword arguments for a proxy (``{}`` = direct)."""
-    if link is None:
-        return {}
-    from telethon.network.connection import (
-        ConnectionTcpMTProxyIntermediate,
-        ConnectionTcpMTProxyRandomizedIntermediate,
-    )
-    if link.kind == "ee":
-        from .faketls import ConnectionTcpMTProxyFakeTLS
-        conn = ConnectionTcpMTProxyFakeTLS
-    elif link.kind == "dd":
-        conn = ConnectionTcpMTProxyRandomizedIntermediate
-    else:
-        conn = ConnectionTcpMTProxyIntermediate
-    return {"connection": conn, "proxy": (link.host, link.port, link.secret)}
 
 
 def _default_client_factory(session: str, api_id: int, api_hash: str, **kwargs):
