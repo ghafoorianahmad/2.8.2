@@ -2,6 +2,15 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## Bot look & feel — option C applied (2026-10-12, branch `bot-design`)
+
+Texts only: `shopbots/app/messages.fa.json` (98 values changed: 25 button labels + 73 messages). No code, flows, callback data, keys or placeholders changed (placeholder sets checked per message).
+- Style = option C of `DESIGN_SAMPLES.md` (formal Persian, "فرمایید", ◆ ❖ ✦ ☑ ◈ markers, 12-char `────────────` separators) mixed with a few functional emojis: 📱 phones/contact, 🛒 cart, 📦 orders, 💳 payment, 🧾 receipt/invoice, 🚚 shipped, 📍 address, ☎️ phone, 🔒 closed, 🎨 colors, 📒 statement, 📨 inquiry.
+- Test-driven wording kept: `«{shop_name}»` in WELCOME, "رنگ را انتخاب کنید", "قیمت ندارد", "شمارهٔ سفارش", "🔄" in COLOR_CHANGED.
+- Not changed (still in `engine.py`): color buttons use 🎨/❌, unavailable products `❌ <name>` in lists. Admin-only notices were only lightly restyled.
+- Tests (Linux): shopbots 160 ✓.
+- Pending: look at it in real Bale/Telegram (◆ ❖ ✦ ◈ glyphs on Bale desktop; if broken swap for 🔹). Operators who copied `%ProgramData%\ShopServer\messages.fa.json` keep their old texts until they replace that file.
+
 ## Phase 7 — Telegram bot channel (2026-10-12) — DONE in code (Linux, fakes only); never connected to Telegram
 
 Branch `phase7-telegram` (not merged). No token, `.env`, session or real Telegram traffic was used.
