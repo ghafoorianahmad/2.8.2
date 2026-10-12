@@ -12,7 +12,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from .. import deps
+from .. import deps, security_watch
 from ..config import Settings
 from ..db_own import OwnDB
 from ..schemas import BootstrapIn, ChangePasswordIn, LoginIn, LoginOut, MeOut, StaffOut
@@ -126,12 +126,14 @@ def login(
 ) -> LoginOut:
     address = request.client.host if request.client else "?"
     if not login_limiter.check(address):
+        security_watch.report(db, "login_throttled", address)
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many login attempts")
 
     user = db.get_staff_by_username(payload.username.strip())
     if user is None:
         verify_password(payload.password, DUMMY_HASH)  # equal timing
         db.audit("anonymous", "login_failed", f"unknown username from {address}")
+        security_watch.report(db, "login_failed", address)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, GENERIC_LOGIN_ERROR)
 
     now = now_utc()
@@ -146,9 +148,11 @@ def login(
                 timespec="seconds")
             db.update_staff(user["id"], failed_attempts=0, locked_until=lock_until)
             db.audit(user["username"], "account_locked", f"from {address}")
+            security_watch.report(db, "account_locked", address)
         else:
             db.update_staff(user["id"], failed_attempts=attempts)
         db.audit(user["username"], "login_failed", f"from {address}")
+        security_watch.report(db, "login_failed", address)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, GENERIC_LOGIN_ERROR)
 
     if not user["active"]:

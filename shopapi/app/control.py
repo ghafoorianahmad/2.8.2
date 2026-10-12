@@ -22,7 +22,7 @@ from typing import Callable, Optional
 
 from .util import now_utc
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 STARTED_AT = now_utc()
 
 
@@ -216,6 +216,21 @@ def write_env_values(changes: dict[str, str]) -> None:
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
         os.replace(tmp, path)
+
+
+def backup_status() -> dict:
+    """``<data>/backups/status.json`` written by the supervisor's daily backup
+    (shopsystem/backup.py); empty without a launcher or before the first run."""
+    if STATE.env_file is None:
+        return {}
+    path = STATE.env_file.parent / "backups" / "status.json"
+    try:
+        import json
+
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def tail_log(lines: int) -> list[str]:

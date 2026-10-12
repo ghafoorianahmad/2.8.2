@@ -237,3 +237,10 @@ class InquiryOut(BaseModel):
     color: str = ""
     created_at: str
     customer_name: Optional[str] = None
+
+
+class SecurityReportIn(BaseModel):
+    """A suspicious act the bot saw (REQUIREMENTS §10); see security_watch.BOT_KINDS."""
+    kind: str = Field(min_length=1, max_length=40)
+    platform: Platform
+    chat_id: str = Field(min_length=1, max_length=40)

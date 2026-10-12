@@ -159,3 +159,80 @@ def test_split_service_path_variants(tmp_path):
     out = _ps(tmp_path, "$a = Split-ServicePath '\"C:\\Program Files\\S\\ShopSystem.exe\" --winservice "
                         "--data-dir \"D:\\Shop Data\"'; \"$($a.InstallDir)|$($a.DataDir)\"")
     assert out.stdout.strip() == r"C:\Program Files\S|D:\Shop Data"
+
+
+# ---- restore.ps1 (Phase 5) ----------------------------------------------------------
+import sqlite3  # noqa: E402
+import sys  # noqa: E402
+
+import backup  # noqa: E402
+
+LAUNCHER = Path(__file__).resolve().parent.parent / "launcher.py"
+PASS = "TEST-PASS-WORD-1234-ABCD-EFGH"
+
+
+def make_backup(tmp_path: Path) -> Path:
+    src = tmp_path / "backup_source"
+    write(src / ".env", "API_PORT=9443\n")
+    write(src / "receipts" / "restored.jpg", "restored receipt")
+    conn = sqlite3.connect(src / "shopapi.db")
+    conn.execute("CREATE TABLE t (x)")
+    conn.execute("INSERT INTO t VALUES (1)")
+    conn.commit()
+    conn.close()
+    return backup.create_backup(src, tmp_path / "daily")
+
+
+def run_restore(site, backup_file: Path, **env_extra) -> subprocess.CompletedProcess:
+    env = dict(os.environ, SHOP_DEPLOY_FAKE=str(site["fake"]),
+               SHOP_DEPLOY_FAKE_PY=f"{sys.executable}|{LAUNCHER}", **env_extra)
+    return subprocess.run(
+        [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(DEPLOY / "restore.ps1"),
+         "-Backup", str(backup_file), "-HealthTimeout", "1"],
+        capture_output=True, text=True, env=env, timeout=180, stdin=subprocess.DEVNULL,
+    )
+
+
+def test_restore_ok_keeps_a_safety_copy(site):
+    result = run_restore(site, make_backup(site["tmp"]))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (site["data"] / ".env").read_text(encoding="utf-8") == "API_PORT=9443\n"
+    assert (site["data"] / "receipts" / "restored.jpg").exists()
+    assert not (site["data"] / "receipts" / "order1.jpg").exists()
+    [safety] = sorted((site["data"] / "backups").glob("pre_restore_*"))
+    assert (safety / "shopapi.db").read_text(encoding="utf-8") == "old-db"
+    assert calls(site["fake"]) == ["stop", "start"]
+
+
+def test_restore_rejects_bad_backup_without_stopping(site):
+    junk = write(site["tmp"] / "junk.zip", "not a zip")
+    result = run_restore(site, junk)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert calls(site["fake"]) == []
+    assert (site["data"] / "shopapi.db").read_text(encoding="utf-8") == "old-db"
+
+
+def test_restore_unhealthy_puts_previous_data_back(site):
+    # healthy only with the old configuration (API_PORT=8443)
+    hook = ("param($d)\n$h = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'fake_health.txt'\n"
+            "if ((Get-Content -LiteralPath (Join-Path $d '.env') -Raw) -match '8443') "
+            "{ Set-Content -LiteralPath $h -Value 'ok' } else { Set-Content -LiteralPath $h -Value 'bad' }\n")
+    write(site["install"] / "fake_start.ps1", hook)
+    result = run_restore(site, make_backup(site["tmp"]))
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert (site["data"] / ".env").read_text(encoding="utf-8") == "API_PORT=8443\n"
+    assert (site["data"] / "receipts" / "order1.jpg").exists()
+    assert calls(site["fake"]) == ["stop", "start", "stop", "start"]
+
+
+def test_restore_encrypted_copy(site):
+    plain = make_backup(site["tmp"])
+    enc = site["tmp"] / "offsite.ssbk"
+    backup.encrypt_file(plain, enc, PASS)
+    wrong = run_restore(site, enc, SHOPSERVER_BACKUP_PASSPHRASE="WRONG-WRONG-WRONG-WRONG-1")
+    assert wrong.returncode == 1 and calls(site["fake"]) == []
+    result = run_restore(site, enc, SHOPSERVER_BACKUP_PASSPHRASE=PASS)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (site["data"] / "receipts" / "restored.jpg").exists()
+    log = (site["data"] / "restore.log").read_text(encoding="utf-8")
+    assert PASS not in log and "wrong passphrase" in log

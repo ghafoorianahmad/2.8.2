@@ -5,7 +5,10 @@ Every ``HEALTH_CHECK_SECONDS`` the server checks:
 * ``sql``  - the accounting database answers,
 * ``bot``  - the Bale bot loop is running (when a Bale token is configured),
 * ``bale`` - the bot can reach Bale (it keeps failing to poll),
-* ``tg``   - the Telegram worker publishes its status (only once it ever did).
+* ``tg``   - the Telegram worker publishes its status (only once it ever did),
+* ``backup`` - the daily backup (run by the ShopServer supervisor) succeeded
+  within ``BACKUP_OVERDUE_HOURS`` and its last run, including the encrypted
+  off-server copy, did not fail (only once backups ever ran).
 
 A component is reported **down** after ``HEALTH_FAIL_THRESHOLD`` bad checks in a
 row and **up** again on the first good check after that. Each change adds one
@@ -27,7 +30,8 @@ from .util import now_utc
 
 logger = logging.getLogger(__name__)
 
-CHECKS = ("sql", "bot", "bale", "tg")
+CHECKS = ("sql", "bot", "bale", "tg", "backup")
+BACKUP_OVERDUE_HOURS = 30
 #: The bot counts as cut off from Bale after this many failed polls in a row
 #: and no successful poll for BALE_SILENCE.
 BALE_ERRORS = 3
@@ -40,12 +44,15 @@ TEXTS_DOWN = {
     "bot": "⚠️ هشدار سرور: ربات بله متوقف شده است. سرویس را بررسی کنید.",
     "bale": "⚠️ هشدار سرور: ربات به سرورهای بله وصل نمی‌شود (اینترنت؟).",
     "tg": "⚠️ هشدار سرور: کارگر تلگرام (لیست قیمت/پراکسی) گزارش نمی‌دهد.",
+    "backup": "⚠️ هشدار سرور: پشتیبان‌گیری روزانه ناموفق بود یا عقب افتاده است "
+              "(دیسک/پوشهٔ نسخهٔ بیرون از سرور را بررسی کنید). جزئیات: صفحهٔ «سرور فروشگاه».",
 }
 TEXTS_UP = {
     "sql": "✅ پایگاه دادهٔ حسابداری دوباره در دسترس است.",
     "bot": "✅ ربات بله دوباره کار می‌کند.",
     "bale": "✅ اتصال ربات به بله برقرار شد.",
     "tg": "✅ کارگر تلگرام دوباره گزارش می‌دهد.",
+    "backup": "✅ پشتیبان‌گیری روزانه دوباره موفق شد.",
 }
 
 
@@ -116,6 +123,15 @@ class HealthMonitor:
             return False
         stale = timedelta(minutes=int(getattr(self.settings, "tg_status_stale_minutes", 20)))
         return self.clock() - at < stale
+
+    def probe_backup(self) -> Optional[bool]:
+        status = control.backup_status()
+        if not status:
+            return None  # no supervisor (development) or backups never ran
+        if not status.get("ok"):
+            return False
+        last = _parse_time(status.get("last_success_at"))
+        return last is not None and self.clock() - last < timedelta(hours=BACKUP_OVERDUE_HOURS)
 
     # ---- one round ------------------------------------------------------------
     def tick(self) -> list[str]:

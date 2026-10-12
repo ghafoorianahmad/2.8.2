@@ -89,6 +89,7 @@ class ServerPage(BasePage):
             ("bots", "ربات‌ها"),
             ("telegram", "کارگر تلگرام"),
             ("health", "پایش سلامت"),
+            ("backup", "پشتیبان‌گیری روزانه"),
             ("counts", "در انتظار رسیدگی"),
         )
         for index, (key, caption) in enumerate(rows):
@@ -166,6 +167,7 @@ class ServerPage(BasePage):
 
         self._set(*telegram_text(status.get("telegram_worker")))
         self._set(*health_text(status.get("health")))
+        self._set(*backup_text(status.get("backup")))
 
         counts = status.get("counts") or {}
         self._set("counts",
@@ -326,7 +328,25 @@ class ServerPage(BasePage):
 
 
 HEALTH_NAMES = {"sql": "SQL حسابداری", "bot": "ربات بله", "bale": "اتصال به بله",
-                "tg": "کارگر تلگرام"}
+                "tg": "کارگر تلگرام", "backup": "پشتیبان‌گیری"}
+
+
+def backup_text(backup: dict | None) -> tuple[str, str, str | None]:
+    """Status-row text for the server's daily backup."""
+    if not backup:
+        return "backup", "هنوز انجام نشده (روزانه، ساعت ۳ بامداد؛ README_FA بخش پشتیبان)", None
+    when = format_shamsi(backup["at"]) if backup.get("at") else "—"
+    if not backup.get("ok"):
+        reason = backup.get("offsite_error") or backup.get("error") or "نامشخص"
+        last = backup.get("last_success_at")
+        tail = f" — آخرین پشتیبان موفق: {format_shamsi(last)}" if last else ""
+        return "backup", f"ناموفق در {when} ({reason}){tail}", theme.DANGER
+    if backup.get("offsite_configured"):
+        where = "نسخهٔ رمزگذاری‌شدهٔ بیرون از سرور: سالم"
+    else:
+        where = "نسخهٔ بیرون از سرور تنظیم نشده (BACKUP_COPY_DIR)"
+    text = f"موفق و آزموده — {when}\n{where}"
+    return "backup", text, theme.SUCCESS_DARK if backup.get("offsite_configured") else theme.WARNING_TEXT
 
 
 def telegram_text(worker: dict | None) -> tuple[str, str, str | None]:

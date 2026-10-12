@@ -44,6 +44,10 @@ def _env_int_list(key: str) -> tuple[int, ...]:
     return tuple(int(part) for part in raw.split(",") if part)
 
 
+#: SQL logins the shop refuses to use (REQUIREMENTS §10).
+FORBIDDEN_SQL_LOGINS = frozenset({"sa"})
+
+
 def _odbc_value(value: str) -> str:
     """Quote an ODBC connection-string value with braces when it contains a
     semicolon, a brace or edge whitespace (the ODBC escaping rule)."""
@@ -202,6 +206,10 @@ class Settings:
         if self.accounting_trusted:
             parts.append("Trusted_Connection=yes")
         else:
+            if self.accounting_username.strip().lower() in FORBIDDEN_SQL_LOGINS:
+                # SECURITY.md: the shop never uses sa (its password cannot be changed)
+                raise ValueError("the SQL login 'sa' is refused - use the least-privilege "
+                                 "login from sql/create_api_user.sql")
             parts.append("UID=" + _odbc_value(self.accounting_username))
             parts.append("PWD=" + _odbc_value(self.accounting_password))
         parts.append("Encrypt=" + self.accounting_encrypt)

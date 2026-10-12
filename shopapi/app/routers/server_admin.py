@@ -61,7 +61,29 @@ def server_status(
         "components": control.provider_status(),
         "health": monitor.CURRENT.snapshot() if monitor.CURRENT else None,
         "telegram_worker": _tg_status(db),
+        "backup": _backup_status(),
         "counts": counts,
+    }
+
+
+def _backup_status() -> dict | None:
+    """The last daily backup (no paths, no passphrase)."""
+    raw = control.backup_status()
+    if not raw:
+        return None
+    offsite = raw.get("offsite") if isinstance(raw.get("offsite"), dict) else {}
+    verify = raw.get("verify") if isinstance(raw.get("verify"), dict) else {}
+    return {
+        "at": raw.get("at"),
+        "ok": bool(raw.get("ok")),
+        "error": raw.get("error"),
+        "file": raw.get("file"),
+        "size": raw.get("size"),
+        "verified": bool(verify.get("ok")),
+        "last_success_at": raw.get("last_success_at"),
+        "offsite_configured": bool(offsite.get("configured")),
+        "offsite_ok": offsite.get("ok"),
+        "offsite_error": offsite.get("error"),
     }
 
 

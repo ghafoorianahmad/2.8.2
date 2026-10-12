@@ -203,6 +203,8 @@ class BotEngine:
             settings.receipt_rate_count, settings.receipt_rate_window
         )
         self._shop_state: tuple[float, bool] | None = None
+        #: (kind, platform, chat) -> monotonic time of the last security report
+        self._security_reported: dict[tuple[str, str, str], float] = {}
 
     # ================= update entry point =================================
     async def handle_update(self, platform: str, update: dict) -> bool:
@@ -229,6 +231,7 @@ class BotEngine:
                 return False
             chat_id = str(event["chat_id"])
             if not self.rate_limiter.allow(platform, chat_id):
+                await self._report_security("rate_limited", platform, chat_id)
                 await self._send_text(adapter, chat_id, texts.RATE_LIMITED)
                 return False
             if event["type"] == "message":
@@ -502,6 +505,24 @@ class BotEngine:
         await self._send_options(adapter, platform, chat_id, body, rows, state=STATE_NONE, data={})
 
     # ================= registration (REQUIREMENTS §3) =====================
+    #: One report per chat and kind per this many seconds (a flood is one report).
+    SECURITY_REPORT_EVERY = 60.0
+
+    async def _report_security(self, kind: str, platform: str, chat_id: str) -> None:
+        now = time.monotonic()
+        key = (kind, platform, str(chat_id))
+        last = self._security_reported.get(key)
+        if last is not None and now - last < self.SECURITY_REPORT_EVERY:
+            return
+        self._security_reported[key] = now
+        if len(self._security_reported) > 5000:
+            cutoff = now - self.SECURITY_REPORT_EVERY
+            self._security_reported = {k: v for k, v in self._security_reported.items() if v > cutoff}
+        try:
+            await self.api.report_security(kind, platform, chat_id)
+        except Exception as exc:  # noqa: BLE001 - reporting must never break the chat
+            self.logger.warning("security report failed (%s)", type(exc).__name__)
+
     async def _begin_registration(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, *,
         intro: str | None = None, product_code: int | None = None,
@@ -520,6 +541,8 @@ class BotEngine:
             event.get("contact"), event.get("from_id"), event.get("sender")
         )
         if verified.problem is not ContactProblem.NONE:
+            if verified.problem is ContactProblem.NOT_OWN:
+                await self._report_security("contact_not_own", platform, chat_id)
             message = {
                 ContactProblem.NOT_OWN: texts.CONTACT_NOT_OWN,
                 ContactProblem.NOT_MOBILE: texts.CONTACT_NOT_MOBILE,
@@ -986,6 +1009,7 @@ class BotEngine:
     ) -> None:
         order_id = (data or {}).get("order_id")
         if not self.receipt_limiter.allow(platform, chat_id):
+            await self._report_security("receipt_flood", platform, chat_id)
             await self._send_text(adapter, chat_id, texts.RECEIPT_RATE_LIMITED)
             return
         result = await self.orders.attach_receipt(

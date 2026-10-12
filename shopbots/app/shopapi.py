@@ -281,6 +281,18 @@ class ShopApiClient:
             "POST", "/inquiries", key=self._settings.bot_api_key, json_body=body
         )
 
+    async def report_security(self, kind: str, platform: str, chat_id: str | int) -> bool:
+        """Tell shopapi about a suspicious act (REQUIREMENTS §10). Best effort:
+        a failure is swallowed, the customer's flow never depends on it."""
+        body = {"kind": kind, "platform": platform, "chat_id": str(chat_id)}
+        try:
+            await self._request(
+                "POST", "/security/report", key=self._settings.bot_api_key, json_body=body
+            )
+        except ShopApiError:
+            return False
+        return True
+
     async def admin_get_inquiry(self, inquiry_id: int) -> dict | None:
         return await self._request(
             "GET", f"/admin/inquiries/{int(inquiry_id)}", key=self._settings.admin_api_key

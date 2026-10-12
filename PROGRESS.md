@@ -2,6 +2,91 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## Phase 5 — security hardening, SECURITY.md, backups (2026-10-12) — DONE in code; nothing installed or applied on the shop server yet
+
+Rollback point: `1867321` (Phase 4). Version **2.2.0**.
+
+### Decisions (user, 2026-10-12)
+- The off-server backup copy is **encrypted with AES-256-GCM**. The passphrase is in the server `.env` for the nightly job and **on paper** with the owner. Losing it makes the off-server copies unrecoverable, and README_FA §10 says so in a boxed warning.
+- The local daily zip is complete (plain), protected by the data-folder ACL.
+- **The Telegram (Telethon) session is never backed up**: DPAPI LocalMachine binds it to this machine. After a restore on new hardware, log in again.
+
+### Done
+**A. Daily backup — `shopsystem/backup.py`, supervisor thread**
+- Runs at `BACKUP_HOUR` (3), or at once if the last attempt is more than 24 h old. It backs up:
+  - `shopapi.db` / `shopbots.db` through SQLite's online-backup API, consistent while the server writes and including WAL content;
+  - `.env`, `messages.fa.json`, `receipts\`, `pricelists\`, `tls\`.
+- It never backs up `shoptg\`, logs or `backups\`.
+- Output: `backups\daily\ShopServer_<stamp>.zip` with `manifest.json` (SHA-256 per file, row counts). `BACKUP_KEEP_DAYS` (14) are kept.
+- **Restore test after every backup:** hashes, `PRAGMA integrity_check`, row counts == manifest.
+- **Off-server copy** in `BACKUP_COPY_DIR`:
+  - `.ssbk` = scrypt (n=2¹⁵, r=8, p=1) → AES-256-GCM in 1 MiB chunks. The nonce = prefix | index | last flag and the header is AAD, so truncation, reordering and edits are detected.
+  - Each copy is read back, decrypted and compared to the local zip.
+  - Without a passphrase nothing is copied, and the backup counts as failed.
+- Status: `backups\status.json`. It shows in shopapi as the health check `backup` (down if the last run failed or there has been no success for 30 h → Bale + tray), in `/admin/server/status.backup` (no paths or secrets) and in a ShopAdmin server-page row.
+- CLI:
+  - `--backup-now`, `--verify-backup <zip|ssbk>`, `--decrypt-backup … --out …`, `--restore-backup <file>`;
+  - `--set-backup-passphrase`: interactive; shows a generated 8×4 passphrase (160 bits) once, makes the owner type it back from paper, writes it to `.env` and clears the screen.
+  - The passphrase comes from `SHOPSERVER_BACKUP_PASSPHRASE`, else `.env`, else a hidden prompt (real console only); never from argv.
+- `--install-service` grants the service account Modify on a local `BACKUP_COPY_DIR`. A drive root or a UNC path is not granted; README explains it.
+- `deploy/restore.ps1`:
+  1. restore test first; a bad file or wrong passphrase changes nothing (exit 1);
+  2. stop the service, safety copy to `backups\pre_restore_<t>`;
+  3. restore, start, `/health`;
+  4. if unhealthy, put the old data back automatically (exit 3/4).
+- `common.ps1` now carries the SQLite `-wal/-shm` files with backups and update rollbacks (a WAL can hold committed rows after a crash). `restore_to` deletes a stale WAL.
+- `build_exe.bat` copies `deploy\{common,restore,firewall_sql}.ps1` + README next to the exe (`ShopSystem\deploy\`), so a ShopServerSetup install has them too; `build_package.ps1` adds them to the zip.
+
+**B. Hardening**
+- **Suspicious-activity alerts — `shopapi/app/security_watch.py`.**
+  - Every report is audited (`suspicious_<kind>`, masked source `…1234`). A per-source threshold within 1 h triggers one Bale message + `security_alert` event (ShopAdmin tray). It repeats at most once per source and kind per hour, and at most 6 alerts per hour overall.
+  - Kinds:
+    - bot: `contact_not_own` (3), `rate_limited` (3), `receipt_flood` (2);
+    - shopapi: `order_probe` (5; someone else's order via GET or receipt), `login_failed` (10 per address), `login_throttled`, `account_locked`.
+  - Bot side: new `POST /security/report` (bot/admin key, whitelisted kinds). `engine._report_security` sends at most one report per chat and kind per 60 s and never breaks the chat.
+- **Log redaction — `shopbots/app/logging_setup.RedactingFilter`**, on every root handler, including the launcher's `app.log` and `supervisor.log`. It masks `bot<token>`, bare Bot API tokens, X-API-Key/Authorization/Bearer and `password|pwd|passphrase|api_key|secret|token=` values, in messages and exception text.
+- **`sa` refused:** `Settings.accounting_connection_string()` raises for `sa` (any case). A test asserts that no shopapi code mentions `Options.ini`.
+- The launcher warns when `API_HOST` is not loopback and `API_TLS` is off.
+- `verify_permissions.sql`:
+  - new probes: DELETE KalaOrder, UPDATE KalaOrderDetail, DELETE name_mo, `name_mo.mobile`, INSERT/UPDATE/DELETE KOL, UPDATE setting / Telegram_Setting, db_owner/datareader/datawriter membership, sysadmin;
+  - a test checks the grant script DENYs §10's tables and the verify script probes them.
+- **`deploy/firewall_sql.ps1`:**
+  - limits sqlservr.exe of the instance (+ SQL Browser UDP 1434) to `-AllowedIPs`;
+  - lists and disables (never deletes) broader allow rules, saved for `-Undo`;
+  - is a dry run without `-Apply`.
+  - **Not run anywhere.**
+- `BACKUP_*` settings are not remotely editable (test).
+
+**C. Docs**
+- `SECURITY.md`: assets, trust boundaries, a compromise table (bot token, customer account, abuse, website, ShopAdmin PC, staff password, shoptg session, `shopbot` login, server admin, LAN, stolen USB), the `sa` problem, secrets, detection, backups, incident steps, known limits.
+- `deploy/README_FA.txt` §10 (backup, passphrase warning, Telegram session, restore, quarterly restore drill) and §11 (SQL firewall). `.env.example` has a `BACKUP_*` block.
+
+### Tests
+- shopapi **245** ✓ (+15 `test_phase5.py`)
+- shopbots **119** ✓ (+5)
+- shopadmin **419** ✓ (+3)
+- shoptg **47** ✓
+- shopsystem **49** ✓ (+26):
+  - `test_backup.py`: contents, live WAL, tamper, encryption round trip/wrong passphrase/truncation/reorder, no-passphrase never copies plain, prune, due/health, restore, CLI end to end;
+  - `test_deploy.py`: restore.ps1 in real PowerShell against the fake service — OK, bad backup, unhealthy → rollback, encrypted copy with wrong/right passphrase.
+- Sandbox note: pytest needs `--basetemp` in the scratchpad from the Claude app (`pytest-of-Lenovo` is not readable here).
+- Found by the tests: `isatty()` is True for NUL on Windows, so a non-interactive run would hang in getpass. `interactive_console()` now checks `GetConsoleMode`.
+
+### Pending / for the user (on the server, elevated)
+1. Plug in a USB/second disk. Then:
+   - set `BACKUP_COPY_DIR=E:\ShopBackup`;
+   - run `ShopSystem.exe --install-service`, then `--set-backup-passphrase` (write it on paper, keep it away from the server and the USB);
+   - run `--backup-now`. Expect `ok: true`, and the server page shows «موفق و آزموده».
+2. Restore drill on another PC: `--verify-backup <latest .ssbk>` with the paper passphrase. Repeat every 3 months.
+3. SQL firewall:
+   - run `deploy\firewall_sql.ps1 -Instance SAZEHHESAB -AllowedIPs <accounting PCs>`, read the dry run, then add `-Apply`;
+   - open «سازه حساب» on every PC; if anything breaks, run `-Undo`.
+4. Run `shopapi\sql\create_api_user.sql` (DBA) and `verify_permissions.sql`. Every `(0)` row must show 0, and `is_sysadmin` must be 0.
+5. Still from Phase 4: live service install/reboot test. Not verified live: Bale delivery of security/backup alerts, restore on real hardware.
+
+### Next step
+Phase 6 — website: static showcase, deep links + printed product code, ArvanCloud deployment guide (§9).
+
 ## Phase 4 — service, install/update/rollback, tray, alerts, health (2026-10-12) — DONE in code; service not installed on any PC yet
 
 Rollback point: `4a151d0` (Phase 3). Version 2.1.0.

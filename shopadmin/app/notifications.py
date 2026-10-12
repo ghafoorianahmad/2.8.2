@@ -32,6 +32,7 @@ HEALTH_LABELS = {
     "bot": "ربات بله",
     "bale": "اتصال ربات به بله",
     "tg": "کارگر تلگرام (لیست قیمت)",
+    "backup": "پشتیبان‌گیری روزانه",
 }
 #: Problems reported by other code paths, shown the same way.
 SERVER_WARNINGS = {
@@ -40,6 +41,7 @@ SERVER_WARNINGS = {
     "proxies_all_dead": "هیچ پراکسی تلگرامی کار نمی‌کند؛ یک پراکسی تازه وارد کنید.",
     "telegram_login_required": "کارگر تلگرام نیاز به ورود دوباره دارد.",
     "telegram_unreachable": "کارگر تلگرام به تلگرام وصل نمی‌شود.",
+    "security_alert": "فعالیت مشکوک (ربات یا ورود به کنسول) دیده شد؛ گزارش ممیزی را ببینید.",
 }
 
 #: Which page (and filter) a notification opens.
@@ -90,6 +92,11 @@ def notice_for(event: dict) -> Optional[Notice]:
         label = HEALTH_LABELS.get(check)
         if label is None or state not in ("down", "up"):
             return None
+        if check == "backup":
+            if state == "down":
+                return Notice(kind, "هشدار سرور فروشگاه",
+                              "پشتیبان‌گیری روزانه ناموفق بود یا عقب افتاده است.", None, warning=True)
+            return Notice(kind, "سرور فروشگاه", "پشتیبان‌گیری روزانه دوباره موفق شد.", None)
         if state == "down":
             return Notice(kind, "هشدار سرور فروشگاه", f"{label} در دسترس نیست.", None, warning=True)
         return Notice(kind, "سرور فروشگاه", f"{label} دوباره کار می‌کند.", None)

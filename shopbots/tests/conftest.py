@@ -167,6 +167,7 @@ class FakeShopApi:
         self.statement_requests: list[dict] = []
         self.order_bodies: list[dict] = []
         self.inquiries: list[dict] = []
+        self.security_reports: list[dict] = []
         self._next_user = 1
         self._next_order = 1
 
@@ -455,6 +456,10 @@ class FakeShopApi:
                 if order["_platform"] != platform or order["_chat_id"] != str(chat_id):
                     return self._err(404, "Order not found")
             return self._ok(self._order_public(order))
+
+        if method == "POST" and path == "/security/report":
+            self.security_reports.append(json.loads(request.content or b"{}"))
+            return httpx.Response(204)
 
         return self._err(404, f"no route for {method} {path}")
 

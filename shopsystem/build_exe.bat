@@ -123,6 +123,7 @@ echo [3/6] Running PyInstaller (%MODE%) - this takes a few minutes ...
     --hidden-import dotenv ^
     --hidden-import server_tls ^
     --hidden-import winservice ^
+    --hidden-import backup ^
     --hidden-import servicemanager ^
     --hidden-import win32service ^
     --hidden-import win32serviceutil ^
@@ -155,6 +156,9 @@ if not exist "%OUT%" mkdir "%OUT%"
 copy /y "%PKG%\.env.example" "%OUT%\.env.example" >nul
 copy /y "%PKG%\README.txt" "%OUT%\README.txt" >nul
 if exist "%PKG%\NOTES.md" copy /y "%PKG%\NOTES.md" "%OUT%\NOTES.md" >nul
+rem restore / firewall scripts also next to an installed copy (ShopServerSetup)
+if not exist "%OUT%\deploy" mkdir "%OUT%\deploy"
+for %%F in (common.ps1 restore.ps1 firewall_sql.ps1 README_FA.txt) do copy /y "%PKG%\deploy\%%F" "%OUT%\deploy\%%F" >nul
 
 if exist "%KEEP%\.env" (
     copy /y "%KEEP%\.env" "%OUT%\.env" >nul

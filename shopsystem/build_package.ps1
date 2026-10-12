@@ -4,7 +4,8 @@
 .DESCRIPTION
     Run build_exe.bat (or ..\build_all.bat) first. Contents:
       ShopSystem\            the PyInstaller build (no .env, *.db, *.log, tls)
-      install.ps1, update.ps1, uninstall.ps1, common.ps1, README_FA.txt, VERSION.txt
+      install.ps1, update.ps1, uninstall.ps1, restore.ps1, firewall_sql.ps1, common.ps1,
+      README_FA.txt, VERSION.txt
     Output: <OutDir>\ShopServer_<version>_<yyyy-MM-dd>.zip  (+ SHA-256 printed)
     The version comes from shopadmin\installer\ShopAdmin.iss (MyAppVersion).
 .EXAMPLE
@@ -41,7 +42,7 @@ foreach ($dir in @("tls", "receipts", "pricelists", "backups", "shoptg")) {
     $p = Join-Path $stage "ShopSystem\$dir"
     if (Test-Path $p) { Remove-Item -Recurse -Force $p }
 }
-foreach ($file in @("install.ps1", "update.ps1", "uninstall.ps1", "common.ps1")) {
+foreach ($file in @("install.ps1", "update.ps1", "uninstall.ps1", "restore.ps1", "firewall_sql.ps1", "common.ps1")) {
     Copy-Item (Join-Path $root "deploy\$file") $stage
 }
 # README with a BOM so Notepad shows the Persian text correctly

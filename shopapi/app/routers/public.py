@@ -5,9 +5,9 @@ import logging
 from datetime import timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-from .. import deps, receipts
+from .. import deps, receipts, security_watch
 from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
@@ -23,6 +23,7 @@ from ..schemas import (
     ProductOut,
     ProductPage,
     ReceiptIn,
+    SecurityReportIn,
     ShopStateOut,
     StatementOut,
     UserOut,
@@ -367,6 +368,7 @@ def upload_receipt(
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
             user = db.get_user_by_platform(platform, chat_id)
             if user is None or user["id"] != order["user_id"]:
+                security_watch.report(db, "order_probe", f"{platform}:{chat_id}")
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
         if order["status"] != "awaiting_payment":
             raise HTTPException(
@@ -402,6 +404,7 @@ def get_order(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
         user = db.get_user_by_platform(platform, chat_id)
         if user is None or user["id"] != order["user_id"]:
+            security_watch.report(db, "order_probe", f"{platform}:{chat_id}")
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
     return OrderOut(**order)
 
@@ -440,3 +443,18 @@ def statement(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "User is not approved")
     data = reader.customer_statement(int(user["person_code"]), settings.statement_max_rows)
     return build_statement(data, page, page_size)
+
+
+@router.post("/security/report", status_code=status.HTTP_204_NO_CONTENT)
+def security_report(
+    payload: SecurityReportIn,
+    role: str = Depends(get_api_identity),
+    db: OwnDB = Depends(deps.get_db),
+) -> Response:
+    """The bot reports a suspicious act; repeated ones alert the owner."""
+    if role not in ("bot", "admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this key")
+    if payload.kind not in security_watch.BOT_KINDS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown kind")
+    security_watch.report(db, payload.kind, f"{payload.platform}:{payload.chat_id}")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

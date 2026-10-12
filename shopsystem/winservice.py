@@ -70,10 +70,27 @@ def install_commands(bin_path: str, *, exists: bool) -> list[list[str]]:
     ]
 
 
+def local_backup_dir(raw: Optional[str]) -> Optional[Path]:
+    """``BACKUP_COPY_DIR`` when it is a folder on a local disk the service account
+    can be granted (a share is granted on the file server; a drive root never)."""
+    text = (raw or "").strip()
+    if not text or text.startswith("\\\\") or text.startswith("//"):
+        return None
+    path = Path(text)
+    if not path.is_absolute() or path == Path(path.anchor):
+        return None
+    return path
+
+
 def acl_commands(data_dir: Path, *, shoptg_dir: Optional[Path] = None,
-                 shoptg_data: Optional[Path] = None) -> list[list[str]]:
+                 shoptg_data: Optional[Path] = None,
+                 backup_dir: Optional[Path] = None) -> list[list[str]]:
     """Grants for the service account (added, never replacing other entries)."""
     commands = [["icacls", str(data_dir), "/grant", f"{SERVICE_ACCOUNT}:(OI)(CI)M", "/C", "/Q"]]
+    if backup_dir is not None:
+        # the off-server copy (encrypted): a USB / second disk folder
+        commands.append(["icacls", str(backup_dir), "/grant",
+                         f"{SERVICE_ACCOUNT}:(OI)(CI)M", "/C", "/Q"])
     # Files written before the service existed may carry their own (protected) ACL.
     for path in _protected_files(data_dir):
         commands.append(["icacls", str(path), "/grant", f"{SERVICE_ACCOUNT}:M", "/C", "/Q"])
@@ -117,7 +134,8 @@ def state(run: Runner | None = None) -> Optional[str]:
 
 
 def install(exe_command: Sequence[str], data_dir: Path, *, shoptg_dir: Optional[Path] = None,
-            shoptg_data: Optional[Path] = None, run: Runner | None = None) -> dict:
+            shoptg_data: Optional[Path] = None, backup_dir: Optional[Path] = None,
+            run: Runner | None = None) -> dict:
     """Create or update the service, grant its account, drop the old boot task."""
     run = run or _default_runner
     already = exists(run)
@@ -127,7 +145,10 @@ def install(exe_command: Sequence[str], data_dir: Path, *, shoptg_dir: Optional[
         result = run(command)
         if result.returncode != 0:
             raise ServiceError(f"{' '.join(command[:2])} failed: {_tail(result)}")
-    for command in acl_commands(data_dir, shoptg_dir=shoptg_dir, shoptg_data=shoptg_data):
+    if backup_dir is not None:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+    for command in acl_commands(data_dir, shoptg_dir=shoptg_dir, shoptg_data=shoptg_data,
+                                backup_dir=backup_dir):
         result = run(command)
         if result.returncode != 0:
             raise ServiceError(f"icacls failed for {command[1]}: {_tail(result)}")
@@ -167,7 +188,8 @@ def stop(run: Runner | None = None, *, timeout: float = 60,
 
 
 def uninstall(data_dir: Path, *, shoptg_dir: Optional[Path] = None,
-              shoptg_data: Optional[Path] = None, run: Runner | None = None) -> dict:
+              shoptg_data: Optional[Path] = None, backup_dir: Optional[Path] = None,
+              run: Runner | None = None) -> dict:
     """Stop and delete the service; take its grants away. Data stays."""
     run = run or _default_runner
     if not exists(run):
@@ -178,6 +200,8 @@ def uninstall(data_dir: Path, *, shoptg_dir: Optional[Path] = None,
         targets.append(shoptg_dir / ".env")
     if shoptg_data is not None:
         targets.append(shoptg_data)
+    if backup_dir is not None:
+        targets.append(backup_dir)
     for target in targets:
         if Path(target).exists():
             # /T: also the per-file grants added by install()

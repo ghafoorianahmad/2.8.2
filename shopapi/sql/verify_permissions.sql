@@ -4,8 +4,9 @@
    ===================================================================== */
 SET NOCOUNT ON;
 
-PRINT '-- server login --';
-SELECT name, is_disabled FROM sys.server_principals WHERE name = N'shopbot';
+PRINT '-- server login (sysadmin must be 0) --';
+SELECT name, is_disabled, IS_SRVROLEMEMBER('sysadmin', name) AS is_sysadmin
+FROM sys.server_principals WHERE name = N'shopbot';
 
 PRINT '-- database user --';
 SELECT name, type_desc FROM sys.database_principals WHERE name = N'shopbot';
@@ -50,6 +51,19 @@ UNION ALL SELECT 'INSERT KalaOrder (1)',          HAS_PERMS_BY_NAME('dbo.KalaOrd
 UNION ALL SELECT 'UPDATE KalaOrder (0)',          HAS_PERMS_BY_NAME('dbo.KalaOrder', 'OBJECT', 'UPDATE')
 UNION ALL SELECT 'DELETE KalaOrderDetail (0)',    HAS_PERMS_BY_NAME('dbo.KalaOrderDetail', 'OBJECT', 'DELETE')
 UNION ALL SELECT 'INSERT Fact (0)',               HAS_PERMS_BY_NAME('dbo.Fact', 'OBJECT', 'INSERT')
-UNION ALL SELECT 'UPDATE Kala (0)',               HAS_PERMS_BY_NAME('dbo.Kala', 'OBJECT', 'UPDATE');
+UNION ALL SELECT 'UPDATE Kala (0)',               HAS_PERMS_BY_NAME('dbo.Kala', 'OBJECT', 'UPDATE')
+-- Phase 5 (REQUIREMENTS §10): every DENY of create_api_user.sql has a probe
+UNION ALL SELECT 'DELETE KalaOrder (0)',          HAS_PERMS_BY_NAME('dbo.KalaOrder', 'OBJECT', 'DELETE')
+UNION ALL SELECT 'UPDATE KalaOrderDetail (0)',    HAS_PERMS_BY_NAME('dbo.KalaOrderDetail', 'OBJECT', 'UPDATE')
+UNION ALL SELECT 'DELETE name_mo (0)',            HAS_PERMS_BY_NAME('dbo.name_mo', 'OBJECT', 'DELETE')
+UNION ALL SELECT 'SELECT name_mo.mobile (0)',     HAS_PERMS_BY_NAME('dbo.name_mo', 'OBJECT', 'SELECT', 'mobile', 'COLUMN')
+UNION ALL SELECT 'INSERT KOL (0)',                HAS_PERMS_BY_NAME('dbo.KOL', 'OBJECT', 'INSERT')
+UNION ALL SELECT 'UPDATE KOL (0)',                HAS_PERMS_BY_NAME('dbo.KOL', 'OBJECT', 'UPDATE')
+UNION ALL SELECT 'DELETE KOL (0)',                HAS_PERMS_BY_NAME('dbo.KOL', 'OBJECT', 'DELETE')
+UNION ALL SELECT 'UPDATE setting (0)',            HAS_PERMS_BY_NAME('dbo.setting', 'OBJECT', 'UPDATE')
+UNION ALL SELECT 'UPDATE Telegram_Setting (0)',   HAS_PERMS_BY_NAME('dbo.Telegram_Setting', 'OBJECT', 'UPDATE')
+UNION ALL SELECT 'member of db_owner (0)',        IS_MEMBER('db_owner')
+UNION ALL SELECT 'member of db_datareader (0)',   IS_MEMBER('db_datareader')
+UNION ALL SELECT 'member of db_datawriter (0)',   IS_MEMBER('db_datawriter');
 REVERT;
 GO

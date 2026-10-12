@@ -94,7 +94,14 @@ function Start-ShopService {
 
 function Invoke-ShopSystem([string]$Exe, [string[]]$Arguments) {
     # Runs ShopSystem.exe and returns @{ Code; Json } (it prints one JSON line).
-    $output = & $Exe @Arguments 2>$null
+    # Test mode: SHOP_DEPLOY_FAKE_PY = "<python.exe>|<launcher.py>" runs the real
+    # launcher code instead of the fake exe (backup / restore tests).
+    if ($script:Fake -and $env:SHOP_DEPLOY_FAKE_PY) {
+        $py, $launcher = $env:SHOP_DEPLOY_FAKE_PY -split '\|', 2
+        $output = & $py $launcher @Arguments 2>$null
+    } else {
+        $output = & $Exe @Arguments 2>$null
+    }
     $code = $LASTEXITCODE
     $json = $null
     foreach ($line in @($output)) {
@@ -125,7 +132,10 @@ function Move-Folder([string]$From, [string]$To) {
 }
 
 # What a backup of the data folder holds (never the backups folder itself, never logs).
-$script:DataFiles = @('.env', 'shopapi.db', 'shopbots.db', 'messages.fa.json')
+# A SQLite write-ahead log can hold committed data (e.g. after a crash): it travels
+# with its database, and a stale one is removed when a database is put back.
+$script:DataFiles = @('.env', 'shopapi.db', 'shopbots.db', 'messages.fa.json',
+                      'shopapi.db-wal', 'shopapi.db-shm', 'shopbots.db-wal', 'shopbots.db-shm')
 $script:DataDirs = @('receipts', 'pricelists', 'tls')
 
 function Backup-ShopData([string]$DataDir, [string]$Target) {

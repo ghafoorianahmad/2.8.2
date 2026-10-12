@@ -14,6 +14,14 @@ Modes
                    --stop-service | --service-status   (administrator; JSON output)
     ShopSystem.exe --health-check [--timeout 90]   wait for /health (update.ps1)
     ShopSystem.exe --fingerprint  print the TLS certificate fingerprint and exit.
+    ShopSystem.exe --backup-now               daily backup now (JSON; see backup.py)
+    ShopSystem.exe --verify-backup <file>     restore test of a .zip / .ssbk backup
+    ShopSystem.exe --decrypt-backup <file.ssbk> --out <file.zip>
+    ShopSystem.exe --restore-backup <file>    put a backup back (service stopped;
+                                              use deploy\\restore.ps1)
+    ShopSystem.exe --set-backup-passphrase    create/enter the off-server passphrase
+    The passphrase of a .ssbk comes from SHOPSERVER_BACKUP_PASSPHRASE, else the
+    server's .env, else a hidden prompt - never from the command line.
 
 Data folder (``.env``, databases, log, TLS certificate)
     --data-dir <folder>  >  SHOPSERVER_DATA_DIR  >  the exe folder when a ``.env``
@@ -171,6 +179,11 @@ def _truthy(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def insecure_bind(host: str, tls: bool) -> bool:
+    """Listening beyond this computer without TLS."""
+    return not tls and host.strip().lower() not in {"127.0.0.1", "localhost", "::1"}
+
+
 def normalise_configuration() -> dict:
     """Translate the friendly names and fill sensible defaults."""
     for friendly, internal in ALIASES.items():
@@ -193,6 +206,9 @@ def normalise_configuration() -> dict:
         cert_path, key_path, fingerprint = ensure_certificate(Paths.tls_dir)
         os.environ.setdefault("SHOPAPI_CA_FILE", str(cert_path))
     scheme = "https" if tls else "http"
+    if insecure_bind(host, tls):
+        logger.warning("API_HOST=%s without API_TLS: staff passwords and session tokens would "
+                       "cross the network in clear text - set API_TLS=true (SECURITY.md)", host)
 
     # the bots talk to the API served by this same process unless told otherwise
     os.environ.setdefault("SHOPAPI_BASE_URL", f"{scheme}://127.0.0.1:{port}")
@@ -700,6 +716,12 @@ def run_supervisor(args: list[str], stop_event: threading.Event | None = None) -
         threading.Thread(target=send_crash_alert, args=(spec.label, values), daemon=True).start()
 
     threads = []
+    import backup
+
+    threading.Thread(target=backup.scheduler_loop,
+                     args=(Paths.data_dir, read_env_values, stop),
+                     kwargs={"log": logging.getLogger("shopsystem.backup")},
+                     name="backup", daemon=True).start()
     for spec in child_specs(values, run_mode=run_mode):
         thread = threading.Thread(target=supervise_child, args=(spec, stop),
                                   kwargs={"job": job, "tracker": tracker,
@@ -735,12 +757,14 @@ def service_tool(args: list[str]) -> int:
 
     values = read_env_values()
     shoptg_dir, shoptg_data = _shoptg_paths(values)
+    backup_dir = winservice.local_backup_dir(values.get("BACKUP_COPY_DIR"))
     if "--install-service" in args:
         result = winservice.install(self_command(), Paths.data_dir,
-                                    shoptg_dir=shoptg_dir, shoptg_data=shoptg_data)
+                                    shoptg_dir=shoptg_dir, shoptg_data=shoptg_data,
+                                    backup_dir=backup_dir)
     elif "--uninstall-service" in args:
         result = winservice.uninstall(Paths.data_dir, shoptg_dir=shoptg_dir,
-                                      shoptg_data=shoptg_data)
+                                      shoptg_data=shoptg_data, backup_dir=backup_dir)
     elif "--start-service" in args:
         winservice.start()
         result = {"ok": True}
@@ -752,6 +776,128 @@ def service_tool(args: list[str]) -> int:
     result["state"] = winservice.state()
     _emit(result)
     return EXIT_OK
+
+
+# --------------------------------------------------------------------------
+# backups (backup.py; restore.ps1 and the README call these)
+# --------------------------------------------------------------------------
+PASSPHRASE_ENV = "SHOPSERVER_BACKUP_PASSPHRASE"
+
+
+def interactive_console() -> bool:
+    """A person at a real console (NUL and pipes report isatty() on Windows too)."""
+    if sys.stdin is None or not sys.stdin.isatty():
+        return False
+    if os.name != "nt":
+        return True
+    import ctypes
+    import msvcrt
+
+    try:
+        handle = msvcrt.get_osfhandle(sys.stdin.fileno())
+    except (OSError, ValueError):
+        return False
+    mode = ctypes.c_uint32()
+    return bool(ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode)))
+
+
+def _backup_passphrase(values: dict[str, str]) -> str:
+    phrase = os.environ.get(PASSPHRASE_ENV, "") or values.get("BACKUP_PASSPHRASE", "")
+    if not phrase and interactive_console():
+        import getpass
+
+        phrase = getpass.getpass("Backup passphrase (hidden): ")
+    if not phrase:
+        import backup
+
+        raise backup.BackupError(f"no passphrase: set {PASSPHRASE_ENV} or type it when asked")
+    return phrase
+
+
+def _plain_backup(path: Path, values: dict[str, str], workdir: Path) -> Path:
+    """A ``.ssbk`` is decrypted into ``workdir`` first; a ``.zip`` is used as it is."""
+    import backup
+
+    if path.suffix.lower() != ".ssbk":
+        return path
+    plain = workdir / (path.stem + ".zip")
+    backup.decrypt_file(path, plain, _backup_passphrase(values))
+    return plain
+
+
+def new_passphrase() -> str:
+    """8 groups of 4 from 32 unambiguous capitals/digits = 160 bits."""
+    import secrets
+
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return "-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(8))
+
+
+def set_backup_passphrase() -> int:
+    """Interactive (console, administrator): show a new passphrase once, have the
+    owner type it back from paper, then store it in the server's .env."""
+    import getpass
+
+    import backup
+
+    if not interactive_console():
+        raise backup.BackupError("run this in a console window (it asks questions)")
+    if not Paths.env.exists():
+        raise backup.BackupError("no .env in the data folder - set up the server first")
+    print("A backup passphrase protects the off-server copies. WRITE IT ON PAPER and")
+    print("keep the paper away from the server. Without it those copies can NEVER be opened.")
+    print(f"Press Enter for a generated one, or type your own ({backup.MIN_PASSPHRASE}+ characters).")
+    own = getpass.getpass("Own passphrase (hidden, Enter = generate): ").strip()
+    if own:
+        problem = backup.passphrase_problem(own)
+        if problem:
+            raise backup.BackupError(problem)
+        phrase = own
+    else:
+        phrase = new_passphrase()
+        print("\n    " + phrase + "\n")
+        print("Capital letters and digits only; hyphens and spaces do not matter.")
+    again = getpass.getpass("Type it again from your paper (hidden): ")
+    if backup.normalise_passphrase(again) != backup.normalise_passphrase(phrase):
+        raise backup.BackupError("the two entries differ - nothing was changed")
+    from shopapi_app import control
+
+    control.set_files(env_file=Paths.env)
+    control.write_env_values({"BACKUP_PASSPHRASE": phrase})
+    if os.name == "nt":
+        os.system("cls")  # take the passphrase off the screen
+    _emit({"ok": True, "message": "passphrase saved in .env (the service reads it at the next backup)"})
+    return EXIT_OK
+
+
+def backup_tool(args: list[str]) -> int:
+    import tempfile
+
+    import backup
+
+    values = read_env_values()
+    if "--set-backup-passphrase" in args:
+        return set_backup_passphrase()
+    if "--backup-now" in args:
+        status = backup.run_backup(Paths.data_dir, backup.BackupConfig.from_values(values))
+        _emit(status)
+        return EXIT_OK if status["ok"] else 1
+    if "--decrypt-backup" in args:
+        source = Path(_arg_value(args, "--decrypt-backup") or "")
+        out = Path(_arg_value(args, "--out") or source.with_suffix(".zip"))
+        backup.decrypt_file(source, out, _backup_passphrase(values))
+        _emit({"ok": True, "out": str(out)})
+        return EXIT_OK
+    with tempfile.TemporaryDirectory(prefix="shopbak_cli_") as tmp:
+        if "--verify-backup" in args:
+            plain = _plain_backup(Path(_arg_value(args, "--verify-backup") or ""), values, Path(tmp))
+            _emit(backup.verify_backup(plain))
+            return EXIT_OK
+        source = Path(_arg_value(args, "--restore-backup") or "")
+        plain = _plain_backup(source, values, Path(tmp))
+        backup.restore_to(plain, Paths.data_dir)
+        _emit({"ok": True, "restored": source.name, "data_dir": str(Paths.data_dir)})
+        return EXIT_OK
 
 
 def health_check(timeout: float) -> int:
@@ -950,6 +1096,17 @@ def main(argv: list[str] | None = None) -> int:
             text = str(exc).splitlines()[0][:300] if str(exc) else ""
             _emit({"ok": False, "error": type(exc).__name__, "message": text})
             return 1
+    if any(flag in args for flag in BACKUP_FLAGS):
+        try:
+            return backup_tool(args)
+        except Exception as exc:  # noqa: BLE001 - always answer with JSON
+            import backup
+
+            # only our own messages are shown (restore.ps1 prints them)
+            known = isinstance(exc, backup.BackupError)
+            text = str(exc).splitlines()[0][:300] if known and str(exc) else ""
+            _emit({"ok": False, "error": type(exc).__name__, "message": text})
+            return 1
     if "--health-check" in args:
         try:
             timeout = float(_arg_value(args, "--timeout") or 90)
@@ -959,6 +1116,8 @@ def main(argv: list[str] | None = None) -> int:
     return run_worker(args, console="--worker" not in args)
 
 
+BACKUP_FLAGS = ("--backup-now", "--verify-backup", "--decrypt-backup", "--restore-backup",
+                "--set-backup-passphrase")
 SERVICE_FLAGS = ("--install-service", "--uninstall-service", "--start-service",
                  "--stop-service", "--service-status")
 
