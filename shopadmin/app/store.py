@@ -65,6 +65,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "notify_sound": True,
     "event_poll_seconds": 15,
     "close_to_tray": True,
+    "sazeh_watch": True,
+    "sazeh_process_names": "Sazeh Hesab, SazehHesab",
 }
 
 

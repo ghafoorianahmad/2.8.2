@@ -94,6 +94,12 @@ class Settings:
     receipts_dir: str = ""
     #: How often orders written to accounting are checked for invoices (0 = off).
     invoice_sync_seconds: int = 300
+    #: Health monitor (REQUIREMENTS §8): seconds between checks; 0 = off.
+    health_check_seconds: int = 60
+    #: Consecutive bad checks before a component is reported down.
+    health_fail_threshold: int = 2
+    #: The Telegram worker's status older than this = worker not running.
+    tg_status_stale_minutes: int = 20
     #: Most recent KOL rows read for a customer statement.
     statement_max_rows: int = 2000
 
@@ -165,6 +171,9 @@ class Settings:
             receipt_max_bytes=_env_int("RECEIPT_MAX_BYTES", 5 * 1024 * 1024),
             receipts_dir=_env("RECEIPTS_DIR", ""),
             invoice_sync_seconds=_env_int("INVOICE_SYNC_SECONDS", 300),
+            health_check_seconds=_env_int("HEALTH_CHECK_SECONDS", 60),
+            health_fail_threshold=max(1, _env_int("HEALTH_FAIL_THRESHOLD", 2)),
+            tg_status_stale_minutes=max(5, _env_int("TG_STATUS_STALE_MINUTES", 20)),
             statement_max_rows=_env_int("STATEMENT_MAX_ROWS", 2000),
             pricelist_unit_rial=_env_int("PRICELIST_UNIT_RIAL", 10_000),
             pricelist_cash_surcharge_rial=_env_int("PRICELIST_CASH_SURCHARGE_RIAL", 5_000_000),

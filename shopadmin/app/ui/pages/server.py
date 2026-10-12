@@ -87,6 +87,8 @@ class ServerPage(BasePage):
             ("uptime", "مدت روشن بودن سرور"),
             ("version", "نسخه"),
             ("bots", "ربات‌ها"),
+            ("telegram", "کارگر تلگرام"),
+            ("health", "پایش سلامت"),
             ("counts", "در انتظار رسیدگی"),
         )
         for index, (key, caption) in enumerate(rows):
@@ -161,6 +163,9 @@ class ServerPage(BasePage):
                     parts[-1] += f" — آخرین پاسخ: {format_shamsi(state['last_ok_at'])}"
             bad = any("خطا" in p or "متوقف" in p for p in parts)
             self._set("bots", "\n".join(parts), theme.DANGER if bad else theme.SUCCESS_DARK)
+
+        self._set(*telegram_text(status.get("telegram_worker")))
+        self._set(*health_text(status.get("health")))
 
         counts = status.get("counts") or {}
         self._set("counts",
@@ -318,3 +323,43 @@ class ServerPage(BasePage):
             bar.setValue(bar.maximum())
 
         self.run(lambda: self.context.api.server_logs(300), on_success=ok)
+
+
+HEALTH_NAMES = {"sql": "SQL حسابداری", "bot": "ربات بله", "bale": "اتصال به بله",
+                "tg": "کارگر تلگرام"}
+
+
+def telegram_text(worker: dict | None) -> tuple[str, str, str | None]:
+    """Status-row text for the Telegram price/proxy worker (shoptg)."""
+    if not worker:
+        return "telegram", "نصب نشده یا هنوز گزارشی نداده است", None
+    when = format_shamsi(worker["at"]) if worker.get("at") else "—"
+    if worker.get("login_required"):
+        return "telegram", f"نیاز به ورود دوباره به تلگرام (login.ps1 روی سرور) — {when}", theme.DANGER
+    if worker.get("connected"):
+        via = worker.get("proxy") or "اتصال مستقیم"
+        return "telegram", f"متصل از طریق {via} — آخرین گزارش: {when}", theme.SUCCESS_DARK
+    error = worker.get("error") or "قطع"
+    return "telegram", f"قطع ({error}) — آخرین گزارش: {when}", theme.DANGER
+
+
+def health_text(health: dict | None) -> tuple[str, str, str | None]:
+    """Status-row text for the server's health monitor."""
+    if not health or not health.get("checks"):
+        return "health", "هنوز بررسی نشده (هر یک دقیقه یک‌بار)", None
+    parts, bad = [], False
+    for key, name in HEALTH_NAMES.items():
+        check = health["checks"].get(key) or {}
+        if check.get("ok") is None and not check.get("down"):
+            continue
+        if check.get("down"):
+            parts.append(f"{name}: از کار افتاده")
+            bad = True
+        elif check.get("ok"):
+            parts.append(f"{name}: سالم")
+        else:
+            parts.append(f"{name}: خطا ({to_persian_digits(check.get('fails', 0))} بار)")
+    text = "، ".join(parts) or "—"
+    if health.get("checked_at"):
+        text += f"\nآخرین بررسی: {format_shamsi(health['checked_at'])}"
+    return "health", text, theme.DANGER if bad else theme.SUCCESS_DARK

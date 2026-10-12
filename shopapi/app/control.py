@@ -22,7 +22,7 @@ from typing import Callable, Optional
 
 from .util import now_utc
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 STARTED_AT = now_utc()
 
 
@@ -129,6 +129,8 @@ EDITABLE: dict[str, tuple[Callable[[str], Optional[str]], bool]] = {
     "ALLOW_SHARED_PERSON_CODE": (_bool, False),
     "PENDING_MAX_ORDER_ITEMS": (_int_range(0, 1000), False),
     "INVOICE_SYNC_SECONDS": (_int_range(0, 86400), False),
+    "HEALTH_CHECK_SECONDS": (_int_range(0, 3600), False),
+    "HEALTH_FAIL_THRESHOLD": (_int_range(1, 60), False),
     "PRICELIST_MAX_CHANGE_PCT": (_int_range(1, 100), False),
     "PRICELIST_MAX_AGE_HOURS": (_int_range(0, 720), False),
     "STAFF_SESSION_HOURS": (_int_range(1, 72), False),

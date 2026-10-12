@@ -80,6 +80,9 @@ class ShopAdminApp(QObject):
         self.wizard: Optional[SetupWizard] = None
         self.watcher = None
         self.notifier = None
+        self.sazeh_watcher = None
+        #: Started with --tray (Windows sign-in): stay hidden until asked.
+        self.tray_mode = False
         #: Probe-only reachability monitor; the console never runs a server.
         self.server_monitor = None
         self._logging_out = False
@@ -91,19 +94,43 @@ class ShopAdminApp(QObject):
         self.api.on_session_invalid = self._session_invalid.emit
 
     # ------------------------------------------------------------------ start
-    def start(self, *, server_setup: bool = False) -> None:
+    def start(self, *, server_setup: bool = False, tray: bool = False) -> None:
         apply_env_overrides(self.store)
+        self.tray_mode = tray and not server_setup
         if server_setup:
             self.show_server_setup()
             return
         if needs_setup(self.store):
+            if self.tray_mode:
+                log.info("--tray before the first setup: nothing to watch yet")
+                QTimer.singleShot(0, self.app.quit)
+                return
             log.info("first run detected; showing the setup wizard")
             self.show_wizard()
             return
         self._configure_api()
         if self._try_auto_login():
             return
+        if self.tray_mode:
+            self._signed_out_tray()
+            return
         self.show_login()
+
+    def _signed_out_tray(self) -> None:
+        """--tray without a remembered session: an icon that offers to sign in."""
+        from .notifications import TrayNotifier
+
+        self.notifier = TrayNotifier(self.store, self)
+        self.notifier.open_requested.connect(self._open_from_tray)
+        self.notifier.quit_requested.connect(self.quit_application)
+        if self.notifier.tray is None:
+            self.show_login()
+            return
+        self.app.setQuitOnLastWindowClosed(False)
+        self.notifier.tray.showMessage(
+            "مدیریت فروشگاه",
+            "برای دریافت اعلان‌های فروشگاه وارد شوید (روی همین آیکون بزنید). "
+            "با «مرا به خاطر بسپار» دفعهٔ بعد خودکار وارد می‌شوید.")
 
     def _configure_api(self) -> None:
         """Point the client at the saved server, with its pinned certificate."""
@@ -130,8 +157,9 @@ class ShopAdminApp(QObject):
         if result is None:
             log.info("auto login was not possible; showing the login window")
             return False
-        log.info("landing directly on the dashboard as %s", result.principal.username)
-        self._signed_in(result, auto=True)
+        log.info("landing directly on the dashboard as %s (tray=%s)",
+                 result.principal.username, self.tray_mode)
+        self._signed_in(result, auto=True, hidden=self.tray_mode)
         return True
 
     # ------------------------------------------------------------ server setup
@@ -189,7 +217,7 @@ class ShopAdminApp(QObject):
             self.login_window = None
         self._signed_in(result, auto=False)
 
-    def _signed_in(self, result, *, auto: bool) -> None:
+    def _signed_in(self, result, *, auto: bool, hidden: bool = False) -> None:
         """A server session exists: force a password change if asked, then open."""
         if result.must_change_password:
             from .ui.password_dialog import ForcedPasswordChangeDialog
@@ -208,9 +236,9 @@ class ShopAdminApp(QObject):
             # Somebody else signed in at the lock screen: close the old session.
             self._close_session(end_server_session=False)
 
-        self._open_main_window(principal, auto=auto)
+        self._open_main_window(principal, auto=auto, hidden=hidden)
 
-    def _open_main_window(self, principal, *, auto: bool = False) -> None:
+    def _open_main_window(self, principal, *, auto: bool = False, hidden: bool = False) -> None:
         self.context = AppContext(
             store=self.store,
             auth=self.auth,
@@ -224,6 +252,9 @@ class ShopAdminApp(QObject):
         self.main_window.logout_requested.connect(self.logout)
         self.main_window.session_expired.connect(self._lock)
         self.main_window.close_requested.connect(self._on_main_close)
+        if hidden and self.notifier is not None and self.notifier.tray is not None:
+            log.info("session started hidden in the tray for role=%s", principal.role)
+            return
         self.main_window.show()
         _centre(self.main_window)
         self.main_window.reset_activity()
@@ -259,8 +290,45 @@ class ShopAdminApp(QObject):
         self.watcher.events_arrived.connect(self._on_server_events)
         self.watcher.session_lost.connect(self._on_session_invalid)
         self.watcher.start()
+        self._start_sazeh_watch()
+
+    # ------------------------------------------------------ accounting program
+    def _start_sazeh_watch(self) -> None:
+        """Remind about pending work when «سازه حساب» is opened on this PC."""
+        from .sazeh_watch import DEFAULT_PREFIXES, SazehWatcher
+
+        if self.sazeh_watcher is not None:
+            self.sazeh_watcher.stop()
+            self.sazeh_watcher = None
+        if not self.store.get_setting("sazeh_watch", True):
+            return
+        prefixes = str(self.store.get_setting("sazeh_process_names", DEFAULT_PREFIXES) or "")
+        self.sazeh_watcher = SazehWatcher(prefixes, parent=self)
+        self.sazeh_watcher.started.connect(self._on_sazeh_started)
+        self.sazeh_watcher.start()
+
+    def _on_sazeh_started(self) -> None:
+        from .notifications import Notice
+        from .sazeh_watch import pending_summary, summary_text
+        from .ui.async_utils import run_async
+
+        if self.notifier is None or self._locked:
+            return
+
+        def shown(counts) -> None:
+            orders, customers = counts
+            kind = "sazeh_orders" if orders or not customers else "sazeh_customers"
+            if self.notifier is not None:
+                self.notifier.show_notice(
+                    Notice(kind, "سازه حساب باز شد", summary_text(orders, customers), None))
+
+        run_async(pending_summary, self.api, on_success=shown,
+                  on_error=lambda _m, _k: log.info("pending summary unavailable"))
 
     def _stop_notifications(self) -> None:
+        if self.sazeh_watcher is not None:
+            self.sazeh_watcher.stop()
+            self.sazeh_watcher = None
         if self.watcher is not None:
             self.watcher.stop()
             self.watcher.client.close()
@@ -275,6 +343,9 @@ class ShopAdminApp(QObject):
 
     def _open_from_tray(self, page: str, filter_key: str) -> None:
         if self._locked or self.main_window is None:
+            if self.login_window is None and self.main_window is None:
+                self.show_login()
+                return
             if self.login_window is not None:
                 self.login_window.show()
                 self.login_window.raise_()
@@ -283,6 +354,12 @@ class ShopAdminApp(QObject):
         self.main_window.showNormal()
         self.main_window.raise_()
         self.main_window.activateWindow()
+        if self.tray_mode:
+            # first time shown after a hidden (--tray) start
+            self.tray_mode = False
+            QTimer.singleShot(50, self.main_window.check_server)
+            QTimer.singleShot(700, self.main_window.check_connection_async)
+        self.main_window.reset_activity()
         if page:
             self.main_window.navigate(page, filter_key)
 
@@ -439,6 +516,21 @@ def _instance_server_name() -> str:
     return f"ShopAdmin-{getpass.getuser()}"
 
 
+def _instance_running() -> bool:
+    """True when another copy is running (it is left alone)."""
+    from PySide6.QtNetwork import QLocalSocket
+
+    socket = QLocalSocket()
+    socket.connectToServer(_instance_server_name())
+    running = socket.waitForConnected(500)
+    if running:
+        socket.write(b"ping")  # not "show": the running copy stays as it is
+        socket.flush()
+        socket.waitForBytesWritten(500)
+    socket.disconnectFromServer()
+    return running
+
+
 def _activate_running_instance() -> bool:
     """True when another copy is running: it is asked to show itself."""
     from PySide6.QtNetwork import QLocalSocket
@@ -463,8 +555,13 @@ def _listen_for_second_instances(controller: "ShopAdminApp"):
 
     def on_connection() -> None:
         connection = server.nextPendingConnection()
+        message = b""
         if connection is not None:
+            if connection.bytesAvailable() or connection.waitForReadyRead(300):
+                message = bytes(connection.readAll())
             connection.disconnectFromServer()
+        if message.startswith(b"ping"):
+            return  # a --tray start only checked that this copy runs
         controller._open_from_tray("", "")
 
     server.newConnection.connect(on_connection)
@@ -479,6 +576,7 @@ def run(argv: list[str] | None = None) -> int:
     _log_credential_backend()
     args = list(argv if argv is not None else sys.argv)
     server_setup = "--server-setup" in args
+    tray = "--tray" in args  # Windows sign-in (autostart): start hidden in the tray
 
     if server_setup:
         try:
@@ -519,6 +617,9 @@ def run(argv: list[str] | None = None) -> int:
     theme.apply_theme(app)
     app.setWindowIcon(theme.app_icon())
 
+    if tray and not server_setup and _instance_running():
+        logger.info("--tray: ShopAdmin is already running")
+        return 0
     if not server_setup and _activate_running_instance():
         logger.info("another copy is already running; asked it to show itself")
         return 0
@@ -527,7 +628,7 @@ def run(argv: list[str] | None = None) -> int:
     controller = ShopAdminApp(app)
     instance_server = _listen_for_second_instances(controller)  # noqa: F841
     app.aboutToQuit.connect(controller.shutdown)
-    controller.start(server_setup=server_setup)
+    controller.start(server_setup=server_setup, tray=tray)
     return app.exec()
 
 

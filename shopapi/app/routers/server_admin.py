@@ -1,6 +1,7 @@
 """Server control for the super admin: status, settings, log, restart."""
 from __future__ import annotations
 
+import json
 import sys
 import threading
 import time
@@ -8,7 +9,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
-from .. import control, deps
+from .. import control, deps, monitor
 from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
@@ -58,8 +59,25 @@ def server_status(
         "restart_available": control.STATE.restart_hook is not None,
         "settings_editable": control.STATE.env_file is not None,
         "components": control.provider_status(),
+        "health": monitor.CURRENT.snapshot() if monitor.CURRENT else None,
+        "telegram_worker": _tg_status(db),
         "counts": counts,
     }
+
+
+def _tg_status(db: OwnDB) -> dict | None:
+    """The Telegram worker's last published status (no secrets inside)."""
+    raw = db.get_state(monitor.TG_STATUS_KEY, "")
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(value, dict):
+        return None
+    keep = ("connected", "proxy", "login_required", "error", "at")
+    return {key: value.get(key) for key in keep}
 
 
 @router.get("/settings")

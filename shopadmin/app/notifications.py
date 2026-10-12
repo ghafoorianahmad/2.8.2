@@ -25,11 +25,34 @@ KIND_RECEIPT = "receipt_uploaded"
 #: Kinds that ask a person to act; the rest only refresh the screens.
 ATTENTION_KINDS = (KIND_CUSTOMER, KIND_ORDER, KIND_RECEIPT)
 
+#: Server health (REQUIREMENTS §8): ``health_<check>_down`` / ``health_<check>_up``.
+HEALTH_PREFIX = "health_"
+HEALTH_LABELS = {
+    "sql": "پایگاه دادهٔ حسابداری (SQL)",
+    "bot": "ربات بله",
+    "bale": "اتصال ربات به بله",
+    "tg": "کارگر تلگرام (لیست قیمت)",
+}
+#: Problems reported by other code paths, shown the same way.
+SERVER_WARNINGS = {
+    "pricelist_held": "لیست قیمت جدید به‌خاطر تغییر زیاد قیمت نگه داشته شد؛ بررسی و تأیید کنید.",
+    "pricelist_failed": "لیست قیمت جدید خوانده نشد؛ قیمت‌های قبلی همچنان فعال است.",
+    "proxies_all_dead": "هیچ پراکسی تلگرامی کار نمی‌کند؛ یک پراکسی تازه وارد کنید.",
+    "telegram_login_required": "کارگر تلگرام نیاز به ورود دوباره دارد.",
+    "telegram_unreachable": "کارگر تلگرام به تلگرام وصل نمی‌شود.",
+}
+
 #: Which page (and filter) a notification opens.
 TARGETS = {
     KIND_CUSTOMER: ("customers", "pending"),
     KIND_ORDER: ("orders", "awaiting_payment"),
     KIND_RECEIPT: ("orders", "receipt_uploaded"),
+    "pricelist_held": ("pricelist", ""),
+    "pricelist_failed": ("pricelist", ""),
+    "proxies_all_dead": ("pricelist", ""),
+    # the accounting program was opened (sazeh_watch)
+    "sazeh_orders": ("orders", "awaiting_payment"),
+    "sazeh_customers": ("customers", "pending"),
 }
 
 
@@ -39,6 +62,11 @@ class Notice:
     title: str
     body: str
     ref_id: Optional[int]
+    warning: bool = False
+
+    @property
+    def is_server(self) -> bool:
+        return self.kind.startswith(HEALTH_PREFIX) or self.kind in SERVER_WARNINGS
 
     @property
     def target(self) -> tuple[str, str]:
@@ -57,6 +85,16 @@ def notice_for(event: dict) -> Optional[Notice]:
     if kind == KIND_RECEIPT:
         return Notice(kind, "فیش پرداخت جدید",
                       f"برای سفارش شمارهٔ {ref_fa} فیش پرداخت ارسال شد و منتظر بررسی است.", ref)
+    if kind.startswith(HEALTH_PREFIX):
+        check, _, state = kind[len(HEALTH_PREFIX):].rpartition("_")
+        label = HEALTH_LABELS.get(check)
+        if label is None or state not in ("down", "up"):
+            return None
+        if state == "down":
+            return Notice(kind, "هشدار سرور فروشگاه", f"{label} در دسترس نیست.", None, warning=True)
+        return Notice(kind, "سرور فروشگاه", f"{label} دوباره کار می‌کند.", None)
+    if kind in SERVER_WARNINGS:
+        return Notice(kind, "هشدار سرور فروشگاه", SERVER_WARNINGS[kind], ref, warning=True)
     return None
 
 
@@ -220,20 +258,29 @@ class TrayNotifier(QObject):
         notices = [n for n in (notice_for(e) for e in events) if n is not None]
         if not notices:
             return []
-        for n in notices:
+        attention = [n for n in notices if n.kind in ATTENTION_KINDS]
+        server = [n for n in notices if n.is_server]
+        for n in attention:
             self.unread[n.kind] = self.unread.get(n.kind, 0) + 1
-        self.counts_changed.emit(dict(self.unread))
-        shown = summarize(notices)
-        self._last_notice = shown
+        if attention:
+            self.counts_changed.emit(dict(self.unread))
+        # A server problem matters more than a counter: it is the one shown.
+        shown = server[-1] if server else summarize(attention)
+        self.show_notice(shown)
+        self._update_tooltip()
+        return notices
+
+    def show_notice(self, notice: Notice) -> None:
+        """One Windows balloon (and the sound), clicking it opens ``notice.target``."""
+        self._last_notice = notice
         if self.store.get_setting("notify_desktop", True) and self.tray is not None:
             from PySide6.QtWidgets import QSystemTrayIcon
 
-            self.tray.showMessage(shown.title, shown.body,
-                                  QSystemTrayIcon.MessageIcon.Information, 8000)
+            icon = (QSystemTrayIcon.MessageIcon.Warning if notice.warning
+                    else QSystemTrayIcon.MessageIcon.Information)
+            self.tray.showMessage(notice.title, notice.body, icon, 10000 if notice.warning else 8000)
         if self.store.get_setting("notify_sound", True):
             play_notification_sound()
-        self._update_tooltip()
-        return notices
 
     def mark_seen(self, *kinds: str) -> None:
         changed = False

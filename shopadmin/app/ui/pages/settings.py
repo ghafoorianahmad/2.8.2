@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ... import autostart
 from ...logging_setup import get_logger
 from ...paths import APP_VERSION, data_dir, db_path, log_path
 from ...permissions import (
@@ -169,8 +170,12 @@ class SettingsPage(BasePage):
         self.notify_sound_check = QCheckBox("پخش صدای اعلان")
         self.close_to_tray_check = QCheckBox(
             "با بستن پنجره، برنامه کنار ساعت ویندوز فعال بماند تا اعلان‌ها برسد")
+        self.autostart_check = QCheckBox(
+            "با ورود به ویندوز، برنامه خودکار کنار ساعت ویندوز اجرا شود (پنجره باز نمی‌شود)")
+        self.sazeh_watch_check = QCheckBox(
+            "با باز شدن «سازه حساب» روی این رایانه، تعداد سفارش‌ها و مشتریان منتظر را یادآوری کن")
         for check in (self.notify_desktop_check, self.notify_sound_check,
-                      self.close_to_tray_check):
+                      self.close_to_tray_check, self.autostart_check, self.sazeh_watch_check):
             panel.body.addWidget(check)
 
         form = QFormLayout()
@@ -250,6 +255,11 @@ class SettingsPage(BasePage):
         self.notify_desktop_check.setChecked(bool(store.get_setting("notify_desktop", True)))
         self.notify_sound_check.setChecked(bool(store.get_setting("notify_sound", True)))
         self.close_to_tray_check.setChecked(bool(store.get_setting("close_to_tray", True)))
+        self.sazeh_watch_check.setChecked(bool(store.get_setting("sazeh_watch", True)))
+        try:
+            self.autostart_check.setChecked(autostart.is_enabled())
+        except Exception:  # noqa: BLE001 - no registry (not Windows)
+            self.autostart_check.setEnabled(False)
         self.poll_spin.setValue(store.get_int_setting("event_poll_seconds", 15, minimum=5,
                                                       maximum=600))
         self.refresh_spin.setValue(self.context.auto_refresh_seconds)
@@ -433,6 +443,12 @@ class SettingsPage(BasePage):
         store.set_setting("notify_desktop", self.notify_desktop_check.isChecked())
         store.set_setting("notify_sound", self.notify_sound_check.isChecked())
         store.set_setting("close_to_tray", self.close_to_tray_check.isChecked())
+        store.set_setting("sazeh_watch", self.sazeh_watch_check.isChecked())
+        if self.autostart_check.isEnabled():
+            try:
+                autostart.set_enabled(self.autostart_check.isChecked())
+            except OSError:
+                self.notify_error("تنظیم اجرای خودکار در ویندوز ممکن نشد")
         store.set_setting("event_poll_seconds", int(self.poll_spin.value()))
         self.notify_success("تنظیمات اعلان ذخیره شد")
 

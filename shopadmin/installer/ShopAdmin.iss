@@ -21,7 +21,7 @@
 
 #define MyAppName "ShopAdmin"
 #define MyAppNameFa "مدیریت فروشگاه"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "2.1.0"
 #define MyAppPublisher "فروشگاه"
 #define MyAppExeName "ShopAdmin.exe"
 #define MyServiceExeName "ShopSystem.exe"
@@ -51,7 +51,7 @@ UninstallDisplayName=سرور فروشگاه
 OutputBaseFilename=ShopServerSetup
 DefaultDirName={autopf}\ShopServer
 DefaultGroupName=سرور فروشگاه
-; Registering a boot-time task, a firewall rule and a locked data folder all
+; Registering the Windows service, a firewall rule and a locked data folder all
 ; need an administrator.
 PrivilegesRequired=admin
 #else
@@ -167,9 +167,16 @@ Filename: "{app}\installer_readme.txt"; Description: "{cm:ReadMeFirst}"; \
 
 #ifdef SERVER
 [UninstallRun]
-; Stop and remove what the setup wizard registered. The data folder
-; %ProgramData%\ShopServer (configuration, databases, certificate, logs) is
-; deliberately kept: a reinstall continues with the same data and keys.
+; Stop and remove what the setup wizard registered: the Windows service
+; ShopServer (and its grants), the firewall rule, and the boot task of older
+; versions. The data folder %ProgramData%\ShopServer (configuration, databases,
+; certificate, logs, backups) is deliberately kept: a reinstall continues with
+; the same data and keys.
+Filename: "{app}\ShopSystem\{#MyServiceExeName}"; \
+    Parameters: "--uninstall-service --data-dir ""{commonappdata}\ShopServer"""; \
+    Flags: runhidden; RunOnceId: "RemoveService"
+Filename: "{sys}\sc.exe"; Parameters: "delete {#ServerTask}"; \
+    Flags: runhidden; RunOnceId: "DeleteService"
 Filename: "{sys}\schtasks.exe"; Parameters: "/End /TN {#ServerTask}"; \
     Flags: runhidden; RunOnceId: "StopServerTask"
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN {#ServerTask} /F"; \
@@ -217,13 +224,42 @@ begin
     Result := MsgBox(CustomMessage('OdbcMissing'), mbConfirmation, MB_YESNO) = IDYES;
 end;
 
+function RunHiddenCode(const FileName, Params: String): Integer;
+begin
+  if not Exec(FileName, Params, '', SW_HIDE, ewWaitUntilTerminated, Result) then
+    Result := -1;
+end;
+
+var
+  ServiceWasInstalled: Boolean;
+  TaskWasInstalled: Boolean;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
-  { Upgrade: stop the scheduled server so its files can be replaced. The
-    setup wizard (or the next boot) starts it again. }
+  { Upgrade: stop the server so its files can be replaced. "net stop" waits
+    until the service has stopped (a plain kill would make the service
+    manager restart it while files are being copied). }
+  ServiceWasInstalled := RunHiddenCode(ExpandConstant('{sys}\sc.exe'), 'query {#ServerTask}') = 0;
+  TaskWasInstalled := RunHiddenCode(ExpandConstant('{sys}\schtasks.exe'), '/Query /TN {#ServerTask}') = 0;
+  if ServiceWasInstalled then
+    RunHidden(ExpandConstant('{sys}\net.exe'), 'stop {#ServerTask}');
   RunHidden(ExpandConstant('{sys}\schtasks.exe'), '/End /TN {#ServerTask}');
   RunHidden(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyServiceExeName}');
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep <> ssPostInstall then
+    exit;
+  { An older version ran as a boot task: move it to the Windows service now,
+    so a silent upgrade does not leave the server on the old mechanism. }
+  if TaskWasInstalled and not ServiceWasInstalled then
+    RunHidden(ExpandConstant('{app}\ShopSystem\{#MyServiceExeName}'),
+      '--install-service --data-dir "' + ExpandConstant('{commonappdata}\ShopServer') + '"');
+  { Start the (new) program again; harmless when no service exists yet. }
+  if TaskWasInstalled or ServiceWasInstalled then
+    RunHidden(ExpandConstant('{sys}\net.exe'), 'start {#ServerTask}');
 end;
 #else
 function PrepareToInstall(var NeedsRestart: Boolean): String;

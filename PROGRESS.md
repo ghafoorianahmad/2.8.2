@@ -2,6 +2,101 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## Phase 4 — service, install/update/rollback, tray, alerts, health (2026-10-12) — DONE in code; service not installed on any PC yet
+
+Rollback point: `4a151d0` (Phase 3). Version 2.1.0.
+
+### Decisions (user, 2026-10-12)
+- Real Windows service (pywin32), not NSSM: no unsigned third-party download. Account = virtual service account **`NT SERVICE\ShopServer`** (dedicated, not admin, no password).
+- shopapi stays on **LAN HTTPS** for ShopAdmin clients (the network is VLAN-segmented). Firewall = LocalSubnet by default; optional allowed-IP list (`FIREWALL_ALLOWED_IPS`). No port is opened to the internet.
+- Tray = part of ShopAdmin (`--tray`), not a separate app: it already has the server session.
+- Health alerts go **straight from shopapi to Bale** (`owner_alerts.py`), so "bot down" still arrives; other owner alerts still go through the bot.
+
+### Done
+**A. Windows service — `shopsystem/winservice.py`, `launcher.py`**
+- Service `ShopServer`: `ShopSystem.exe --winservice --data-dir …`. Auto start at boot, no login needed. SCM restarts it 10 s / 30 s / 60 s; `failureflag 1`; `sidtype unrestricted`.
+- `--install-service` / `--uninstall-service` / `--start-service` / `--stop-service` / `--service-status` print JSON.
+  - Install grants the account Modify on the data folder and on files that have their own ACL (`.env`, dbs, `tls\*`). With `SHOPTG_DIR` set, it also grants Read on `shoptg\.env` and Modify on the session folder `%ProgramData%\ShopServer\shoptg`.
+  - It removes the old `ShopServer` boot task.
+  - Uninstall takes the grants back. Data stays.
+- The supervisor runs separate children, each with its own restart and back-off: (1) API + Bale bot; (2) **shoptg** when `SHOPTG_DIR` is set.
+  - shoptg's environment is filtered: it gets only the local HTTPS URL, the CA file, `WORKER_API_KEY` and `TG_SERVICE_ACCOUNT`, never the Bale token or the SQL password.
+  - A child failing 3× in 10 min → one Bale alert per hour.
+  - A service stop terminates the children.
+- `--health-check [--timeout N]` waits for `/health` using the pinned certificate (used by update.ps1).
+- `--init-config` now generates `WORKER_API_KEY`; `SHOPTG_DIR` and `FIREWALL_ALLOWED_IPS` are setup fields.
+- Build: pywin32 + pdfplumber hidden imports/collects; `build_exe.bat` also runs the shopsystem tests.
+
+**B. Install / update / rollback — `shopsystem/deploy/`**
+- `install.ps1` copies the program, locks the data folder, registers the service, opens the firewall, then starts it and checks health. Without a `.env` it registers but does not start.
+- `update.ps1` steps:
+  1. Stop the service, then back up the program plus `.env`, dbs, `messages.fa.json`, `receipts\`, `pricelists\`, `tls\` → `backups\update_<time>\`.
+  2. Swap in the new program and start it.
+  3. `/health` within 120 s → done.
+  4. Otherwise it **puts back the old program and data**, restarts and exits 3 (4 if the old version is unhealthy too).
+  - Keeps 3 backups. Accepts a zip.
+- `uninstall.ps1` removes the service and firewall rule; `-RemoveProgram` also removes the program folder. Data is kept.
+- `README_FA.txt` covers the service, install/update/uninstall, a SQL login for `NT SERVICE\ShopServer` if Windows auth is used, the firewall, shoptg, alerts, and **BIOS "Restore on AC Power Loss" + UPS**.
+- `build_package.ps1` builds `ShopServer_<ver>_<date>.zip`. The exe, scripts and README go in; `.env`/db/log/key are refused.
+
+**C. Health monitoring — `shopapi/app/monitor.py`, `owner_alerts.py`**
+- Every `HEALTH_CHECK_SECONDS` (60) it checks: SQL ping, bot loop running, Bale reachable (≥3 failed polls and no success for 3 min), and shoptg status freshness (`TG_STATUS_STALE_MINUTES` 20; ignored until the worker has ever reported).
+- Down after `HEALTH_FAIL_THRESHOLD` (2) bad checks, up on the first good one. Each change produces one event `health_<check>_down/up` plus one direct Bale message.
+- `/admin/server/status` now has `health` and `telegram_worker` (connected/proxy/login/error/time only).
+- Both settings are remote-editable.
+
+**D. ShopAdmin**
+- The server wizard registers the **service** (no Windows password any more). The Windows-auth option explains the SQL login the service account needs. New optional fields: allowed IPs (validated) and the shoptg folder.
+- Tray:
+  - health and server warnings (price list held/failed, all proxies dead, Telegram login/unreachable) appear as warning balloons. They are not counted as unread; price-list warnings open the price-list page.
+  - `--tray` starts hidden with the remembered session. Without one, it shows an icon that offers to sign in. A second `--tray` start sends "ping" instead of "show".
+- Settings → اعلان‌ها:
+  - "run at Windows sign-in", via HKCU Run `ShopAdmin.exe --tray`;
+  - "remind when سازه حساب opens" (`sazeh_watch.py`): `tasklist` every 10 s, prefix `Sazeh Hesab` (the exe name carries the version); on start → "X سفارش جدید، Y مشتری در انتظار تأیید", and a click opens the page.
+- Server page: rows «کارگر تلگرام» and «پایش سلامت».
+- Inno:
+  - uninstall runs `--uninstall-service` (plus legacy task delete);
+  - an upgrade does `net stop ShopServer` before copying;
+  - an old task-based install is moved to the service and started again in `ssPostInstall`.
+
+### Tests
+- shopapi **230** ✓ (+12 `test_phase4.py`), run with `PYTHONPATH=.venv\Lib\site-packages python -m pytest`.
+- shopbots **114** ✓ (unchanged).
+- shopadmin **416** ✓ (+15 `test_phase4.py`; task tests replaced by service/firewall tests).
+- shoptg **47** ✓.
+- shopsystem **23** ✓ (new):
+  - service commands with a fake runner;
+  - supervisor restart, stop and crash-loop alerts;
+  - the shoptg environment filter;
+  - health check against a local HTTP server;
+  - **update.ps1 run in real PowerShell against a fake service**: update OK, rollback of program + data after a "migration", old version unhealthy → 4, zip + keep 3, no service, bad package;
+  - firewall list; service path parsing.
+- Sandbox note: the shopapi venv (Store Python) cannot create temp files from the Claude app. `build_exe.bat` therefore has an opt-in `SHOP_TESTS_ALREADY_RUN=1` to skip its shopapi/shopbots test step after both suites were run separately; this build used it. On a normal PowerShell, run `build_all.bat` without it.
+
+### Build / outputs (`E:\Outputs\ShopSystem\`)
+- `ShopServerSetup_2.1.0_2026-10-12.exe` (64 MB; bigger because of pywin32 + pdfplumber) and `ShopAdminSetup_2.1.0_2026-10-12.exe` (33 MB).
+- `ShopServer_2.1.0_2026-10-12.zip` is the server package for `install.ps1` / `update.ps1`: 254 files, no `.env`/db/log/key.
+- SHA-256 values are in `E:\Outputs\ShopSystem\README_FA.txt`; the 2.0.0 pair is kept as the previous version.
+- Smoke test of the frozen exe: `--service-status` → `state: null` (not installed); `--health-check` returns JSON; pywin32 and pdfminer are bundled.
+
+### Pending / for the user (on the server, elevated)
+1. **Live service test** (not done on any PC — it changes the system):
+   - install with ShopServerSetup, or move the current task install with `install.ps1`;
+   - `Get-Service ShopServer`, reboot without logging in, check the bot answers;
+   - kill `ShopSystem.exe --worker` in Task Manager → it comes back;
+   - `update.ps1` with the same zip (expect 0).
+2. The service account must reach SQL:
+   - with SQL auth (`shopbot`) nothing changes;
+   - with Windows auth, create `LOGIN [NT SERVICE\ShopServer]` (README §5).
+3. The dev xray proxy at 127.0.0.1:10808 needs a logged-in user; Bale needs no proxy. shoptg uses its own `TG_PROXY`.
+4. shoptg: set `SHOPTG_DIR` in the server `.env`, run `--install-service` again, restart (`shoptg/SERVER_GUIDE.md` §6). The shoptg zip in `E:\Outputs\ShopTG` still has the old guide; the updated guide is next to it.
+5. BIOS "Restore on AC Power Loss" + UPS (README §9).
+6. ShopAdmin on the owner PC: Settings → اعلان‌ها → autostart + «سازه حساب» reminder; tick «مرا به خاطر بسپار» once.
+- Not verified live: Bale delivery of health alerts, `tasklist` names on the shop PC (prefix setting `sazeh_process_names` if different), Inno upgrade from 2.0.0 (task → service migration path).
+
+### Next step
+Phase 5 — security hardening, `SECURITY.md`, daily backups of SQLite + receipts + config with an off-server copy and a restore test (§10).
+
 ## Phase 3 — Telegram worker, price list, proxy pool (2026-10-12) — DONE in code; live Telegram login pending (on the server)
 
 Part 1 is WIP commit `db48ce3` (rollback point: `5d7a0cf`). Part 2 is committed on top of it.

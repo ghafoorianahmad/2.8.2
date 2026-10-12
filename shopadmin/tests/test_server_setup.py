@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -110,40 +109,51 @@ def test_config_json_is_removed_even_when_the_tool_fails(captured, monkeypatch, 
     assert list((tmp_path / "ShopServer").glob("setup-*.json")) == []
 
 
-def test_task_runs_as_system_at_boot_and_restarts(captured):
-    xml = setup.task_xml([r"C:\Program Files\ShopServer\ShopSystem\ShopSystem.exe"],
-                         run_as_user=None)
-    ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
-    root = ET.fromstring(xml.replace('encoding="UTF-16"', ""))
-    assert root.find(".//t:BootTrigger", ns) is not None
-    assert root.find(".//t:Principal/t:UserId", ns).text == "S-1-5-18"
-    assert root.find(".//t:RestartOnFailure/t:Count", ns).text == "999"
-    assert root.find(".//t:ExecutionTimeLimit", ns).text == "PT0S"
-    assert root.find(".//t:MultipleInstancesPolicy", ns).text == "IgnoreNew"
-    arguments = root.find(".//t:Exec/t:Arguments", ns).text
-    assert "--service" in arguments and "--data-dir" in arguments
+def test_service_steps_call_shopsystem(captured, monkeypatch):
+    seen = []
+
+    def fake_tool(args, timeout=60):
+        seen.append(args[0])
+        return {"ok": True, "account": r"NT SERVICE\ShopServer"}
+
+    monkeypatch.setattr(setup, "run_server_tool", fake_tool)
+    assert setup.install_service()["account"] == r"NT SERVICE\ShopServer"
+    setup.start_service()
+    setup.stop_service()
+    setup.remove_service()
+    assert seen == ["--install-service", "--start-service", "--stop-service", "--uninstall-service"]
+    assert not any(c[0] == "schtasks" for c in captured)   # no scheduled task any more
 
 
-def test_task_for_a_windows_account_uses_a_password_logon(captured):
-    xml = setup.task_xml(["x.exe"], run_as_user="SHOP\\owner")
-    assert "<UserId>SHOP\\owner</UserId>" in xml
-    assert "<LogonType>Password</LogonType>" in xml
-
-
-def test_register_task_removes_the_xml_afterwards(captured, tmp_path):
-    setup.register_task()
-    create = next(c for c in captured if c[:2] == ["schtasks", "/Create"])
-    assert create[create.index("/TN") + 1] == "ShopServer"
-    assert not (tmp_path / "ShopServer" / "task.xml").exists()
+def test_service_failure_is_a_setup_error(captured, monkeypatch):
+    monkeypatch.setattr(setup, "run_server_tool",
+                        lambda args, timeout=60: {"ok": False, "message": "Access is denied."})
+    with pytest.raises(setup.SetupError) as exc:
+        setup.install_service()
+    assert exc.value.detail == "Access is denied."
 
 
 def test_firewall_rule_is_local_network_only(captured):
-    setup.open_firewall(8443)
+    assert setup.open_firewall(8443) == "localsubnet"
     add = next(c for c in captured if "add" in c)
     assert "localport=8443" in add
     assert "remoteip=localsubnet" in add
     assert "profile=private,domain" in add
     assert any(part.startswith("program=") for part in add)
+
+
+def test_firewall_can_be_limited_to_listed_addresses(captured):
+    remote = setup.open_firewall(8443, "192.168.10.0/24، 192.168.10.5;10.0.0.1-10.0.0.9")
+    assert remote == "192.168.10.0/24,192.168.10.5,10.0.0.1-10.0.0.9"
+    add = next(c for c in captured if "add" in c)
+    assert f"remoteip={remote}" in add
+
+
+def test_firewall_rejects_junk_addresses(captured):
+    with pytest.raises(setup.SetupError):
+        setup.open_firewall(8443, "any")
+    assert setup.parse_allowed_ips("  ") == []
+    assert not any("add" in c for c in captured)
 
 
 def test_config_password_never_goes_on_a_command_line(captured, monkeypatch, tmp_path):

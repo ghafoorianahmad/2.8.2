@@ -6,6 +6,8 @@ pyodbc
 python-dotenv
 httpx
 cryptography   # the server's self-signed TLS certificate
+pywin32        # the Windows service (ShopServer)
+pdfplumber     # distributor price-list PDFs (shopapi/app/pricelist)
 
 # Build-time only
 pyinstaller

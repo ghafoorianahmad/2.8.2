@@ -8,8 +8,10 @@ progress and stop on the first problem:
    the database password travels in a JSON file inside the locked folder,
    never on a command line, and the file is deleted right away),
 3. test the accounting connection with ``ShopSystem.exe --check-db``,
-4. register the Windows scheduled task that starts the server at boot and
-   restarts it on failure, plus a firewall rule for the local network only,
+4. register the Windows service ``ShopServer`` (virtual account
+   ``NT SERVICE\\ShopServer``, starts at boot, restarts on failure; the old
+   scheduled task is removed) plus a firewall rule for the local network only
+   (or an explicit list of client addresses),
 5. start it, wait for HTTPS, pin its certificate (read from the local file —
    no trust-on-first-use needed on the server itself),
 6. create the first super admin with the server-local service key.
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -28,7 +31,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-from xml.sax.saxutils import escape
 
 from .errors import SetupError
 from .logging_setup import get_logger
@@ -36,7 +38,6 @@ from .paths import app_dir, is_frozen
 
 log = get_logger("server_setup")
 
-TASK_NAME = "ShopServer"
 FIREWALL_RULE = "ShopServer"
 DEFAULT_PORT = 8443
 SID_SYSTEM = "S-1-5-18"
@@ -249,85 +250,61 @@ def odbc_driver_installed(driver: str = "ODBC Driver 17 for SQL Server") -> bool
         return False
 
 
-def task_xml(command: list[str], *, run_as_user: str | None) -> str:
-    exe, args = command[0], command[1:] + ["--service", "--data-dir", str(data_dir())]
-    if run_as_user:
-        principal = (f"<UserId>{escape(run_as_user)}</UserId><LogonType>Password</LogonType>"
-                     "<RunLevel>HighestAvailable</RunLevel>")
-    else:
-        principal = f"<UserId>{SID_SYSTEM}</UserId><RunLevel>HighestAvailable</RunLevel>"
-    return f"""<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>Shop server: API and Bale bot</Description></RegistrationInfo>
-  <Triggers><BootTrigger><Enabled>true</Enabled><Delay>PT30S</Delay></BootTrigger></Triggers>
-  <Principals><Principal id="Author">{principal}</Principal></Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <AllowHardTerminate>true</AllowHardTerminate>
-    <StartWhenAvailable>true</StartWhenAvailable>
-    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
-    <Hidden>false</Hidden>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>5</Priority>
-    <RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>{escape(exe)}</Command>
-      <Arguments>{escape(subprocess.list2cmdline(args))}</Arguments>
-      <WorkingDirectory>{escape(str(Path(exe).parent))}</WorkingDirectory>
-    </Exec>
-  </Actions>
-</Task>
-"""
+SERVICE_NAME = "ShopServer"
+SERVICE_ACCOUNT = r"NT SERVICE\ShopServer"
 
 
-def register_task(*, run_as_user: str | None = None, password: str = "") -> None:
-    """Create (or replace) the boot-time scheduled task."""
-    stop_task()
-    xml_path = data_dir() / "task.xml"
-    xml_path.write_text(task_xml(server_command(), run_as_user=run_as_user), encoding="utf-16")
-    command = ["schtasks", "/Create", "/TN", TASK_NAME, "/XML", str(xml_path), "/F"]
-    if run_as_user:
-        command += ["/RU", run_as_user, "/RP", password]
-    try:
-        result = _run(command)
-    finally:
-        xml_path.unlink(missing_ok=True)
-    if result.returncode != 0:
-        raise SetupError("ساخت وظیفهٔ خودکار ویندوز برای سرور ممکن نشد. اگر حساب ویندوز "
-                         "را انتخاب کرده‌اید، گذرواژهٔ آن را بررسی کنید.",
-                         (result.stderr or result.stdout)[-300:])
+def _service_tool(flag: str, message: str, timeout: float = 120) -> dict:
+    answer = run_server_tool([flag], timeout=timeout)
+    if not answer.get("ok"):
+        raise SetupError(message, answer.get("message") or answer.get("error") or str(answer)[:300])
+    return answer
 
 
-def stop_task() -> None:
-    _run(["schtasks", "/End", "/TN", TASK_NAME])
+def install_service() -> dict:
+    """Register (or update) the Windows service ``ShopServer``.
+
+    ShopSystem does the work (``--install-service``): virtual account
+    ``NT SERVICE\\ShopServer``, automatic start at boot, restart on failure,
+    Modify on the data folder for that account, and removal of the scheduled
+    task older versions used.
+    """
+    return _service_tool("--install-service", "ثبت سرویس ویندوز برای سرور ممکن نشد.")
 
 
-def start_task() -> None:
-    result = _run(["schtasks", "/Run", "/TN", TASK_NAME])
-    if result.returncode != 0:
-        raise SetupError("روشن کردن سرور ممکن نشد.", (result.stderr or result.stdout)[-300:])
+def start_service() -> None:
+    _service_tool("--start-service", "روشن کردن سرویس سرور ممکن نشد.")
 
 
-def remove_task() -> None:
-    stop_task()
-    _run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"])
+def stop_service() -> None:
+    _service_tool("--stop-service", "متوقف کردن سرویس سرور ممکن نشد.")
 
 
-def open_firewall(port: int) -> None:
-    """Inbound TCP on the port, from the local network only, private/domain profiles."""
+def remove_service() -> None:
+    _service_tool("--uninstall-service", "حذف سرویس سرور ممکن نشد.")
+
+
+_IP_PART = re.compile(r"^(?i:localsubnet|[0-9a-f:.]+(/\d{1,3})?|[0-9.]+-[0-9.]+)$")
+
+
+def parse_allowed_ips(text: str) -> list[str]:
+    """``192.168.10.0/24, 192.168.10.5`` -> parts; raises SetupError on junk."""
+    parts = [p for p in re.split(r"[\s,;،]+", text or "") if p]
+    for part in parts:
+        if not _IP_PART.match(part):
+            raise SetupError(f"«{part}» نشانی IP، بازه یا زیرشبکهٔ معتبری نیست.", part)
+    return parts
+
+
+def open_firewall(port: int, allowed_ips: str = "") -> str:
+    """Inbound TCP on the port, private/domain profiles, from the local subnet
+    (default) or only from the listed addresses. Returns the remote filter."""
+    parts = parse_allowed_ips(allowed_ips)
+    remote = ",".join(parts) if parts else "localsubnet"
     _run(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={FIREWALL_RULE}"])
     command = ["netsh", "advfirewall", "firewall", "add", "rule", f"name={FIREWALL_RULE}",
                "dir=in", "action=allow", "protocol=TCP", f"localport={int(port)}",
-               "remoteip=localsubnet", "profile=private,domain"]
+               f"remoteip={remote}", "profile=private,domain"]
     try:
         exe = server_command()[0]
         if exe.lower().endswith("shopsystem.exe"):
@@ -337,6 +314,7 @@ def open_firewall(port: int) -> None:
     result = _run(command)
     if result.returncode != 0:
         raise SetupError("قانون دیوار آتش ویندوز ساخته نشد.", (result.stderr or result.stdout)[-300:])
+    return remote
 
 
 def network_is_public() -> bool:

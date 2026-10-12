@@ -13,7 +13,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from . import deps, tracking
+from . import deps, monitor, tracking
 from .db_own import OwnDB
 from .routers import admin, auth, pricelist, public, server_admin, staff_admin
 
@@ -48,17 +48,21 @@ async def lifespan(app: FastAPI):
     settings = deps.get_settings()
     OwnDB(settings.sqlite_path)
     # Invoice tracking (R5): written orders -> "invoiced" events for the bots.
-    task = asyncio.create_task(
-        tracking.invoice_sync_loop(
-            settings, lambda: deps.get_db(settings), lambda: deps.get_reader(settings)
-        )
-    )
+    db_factory = lambda: deps.get_db(settings)  # noqa: E731
+    reader_factory = lambda: deps.get_reader(settings)  # noqa: E731
+    tasks = [
+        asyncio.create_task(tracking.invoice_sync_loop(settings, db_factory, reader_factory)),
+        # Health monitoring (§8): SQL / bot / Bale / Telegram worker -> events + Bale.
+        asyncio.create_task(monitor.health_loop(settings, db_factory, reader_factory)),
+    ]
     try:
         yield
     finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 def create_app() -> FastAPI:

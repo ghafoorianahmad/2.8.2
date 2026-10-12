@@ -392,7 +392,11 @@ def test_server_installer_runs_the_setup_wizard(server_iss):
 def test_server_uninstall_removes_task_and_firewall_but_keeps_data(server_iss):
     body = _section(server_iss, "[UninstallRun]")
     assert "/Delete /TN" in body and "firewall delete rule" in body
+    assert "--uninstall-service" in body, "the Windows service is removed"
     assert "RunOnceId" in body
+    code = _section(server_iss, "[Code]")
+    assert "'stop {#ServerTask}'" in code, "an upgrade stops the service before copying"
+    assert "--install-service" in code, "an old boot task is moved to the service"
     values = " ".join(l for l in _lines(_section(server_iss, "[UninstallDelete]"))
                       if not l.startswith(";")).lower()
     assert "programdata" not in values, "server data must survive an uninstall"

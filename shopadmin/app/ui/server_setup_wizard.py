@@ -132,7 +132,7 @@ class ServerSetupWizard(QWidget):
         panel.body.addLayout(form)
 
         self.auth_sql = QRadioButton("ورود SQL (توصیه می‌شود: کاربر با دسترسی محدود، مثل shopbot)")
-        self.auth_windows = QRadioButton("حساب ویندوز همین کاربر (سرور با این حساب اجرا می‌شود)")
+        self.auth_windows = QRadioButton("احراز هویت ویندوز با حساب سرویس NT SERVICE\\ShopServer")
         group = QButtonGroup(self)
         group.addButton(self.auth_sql)
         group.addButton(self.auth_windows)
@@ -145,11 +145,13 @@ class ServerSetupWizard(QWidget):
         sql_form.addRow(widgets.label("گذرواژهٔ SQL:"), self.db_password)
         panel.body.addLayout(sql_form)
         panel.body.addWidget(self.auth_windows)
-        win_form = _form()
-        self.win_password = _line(password=True)
-        win_form.addRow(widgets.label(f"گذرواژهٔ ویندوز ({setup.current_windows_user()}):"),
-                        self.win_password)
-        panel.body.addLayout(win_form)
+        # The server runs as the virtual account NT SERVICE\ShopServer (no password).
+        self.win_hint = widgets.label(
+            "سرور به‌صورت سرویس ویندوز با حساب اختصاصی NT SERVICE\\ShopServer اجرا می‌شود. "
+            "در این حالت باید در SQL Server برای همین حساب یک login با دسترسی محدود بسازید؛ "
+            "آزمایش اتصال این صفحه با حساب فعلی شما انجام می‌شود، نه حساب سرویس.",
+            name="Muted", wrap=True)
+        panel.body.addWidget(self.win_hint)
         self.auth_sql.toggled.connect(self._auth_changed)
         self._auth_changed()
 
@@ -181,6 +183,13 @@ class ServerSetupWizard(QWidget):
             "یک قانون دیوار آتش ویندوز فقط برای شبکهٔ محلی (شبکه‌های خصوصی و دامنه) ساخته "
             "می‌شود. برای ثابت ماندن نشانی، بهتر است برای این رایانه در مودم/روتر یک IP ثابت "
             "تعیین کنید.", name="Muted", wrap=True))
+        ip_form = _form()
+        self.allowed_ips = _line("خالی = همهٔ رایانه‌های همین شبکه (پیش‌فرض)")
+        ip_form.addRow(widgets.label("فقط این نشانی‌ها (اختیاری):"), self.allowed_ips)
+        panel.body.addLayout(ip_form)
+        panel.body.addWidget(widgets.label(
+            "مثال: 192.168.10.0/24 یا 192.168.10.5, 192.168.10.6 — با چند نشانی جدا با کاما.",
+            name="Muted", wrap=True))
         self.public_warning = widgets.label("", color=theme.DANGER, wrap=True)
         self.public_warning.setVisible(False)
         panel.body.addWidget(self.public_warning)
@@ -195,6 +204,8 @@ class ServerSetupWizard(QWidget):
         form.addRow(widgets.label("متن حساب بانکی:"), self.bank_text)
         form.addRow(widgets.label("توکن ربات بله:"), self.bale_token)
         form.addRow(widgets.label("گفت‌وگوی مدیران در ربات:"), self.admin_chats)
+        self.shoptg_dir = _line(r"C:\ShopServer\shoptg")
+        form.addRow(widgets.label("پوشهٔ کارگر تلگرام (اختیاری):"), self.shoptg_dir)
         panel.body.addLayout(form)
         return panel
 
@@ -249,7 +260,7 @@ class ServerSetupWizard(QWidget):
         sql = self.auth_sql.isChecked()
         self.db_user.setEnabled(sql)
         self.db_password.setEnabled(sql)
-        self.win_password.setEnabled(not sql)
+        self.win_hint.setVisible(not sql)
         self._db_ok = False
 
     def _db_config(self) -> setup.DatabaseConfig:
@@ -321,7 +332,7 @@ class ServerSetupWizard(QWidget):
         self._db_message("در حال ذخیره و آزمایش…", None)
 
         def work() -> dict:
-            setup.harden_data_dir(setup.current_windows_user() if db.trusted else None)
+            setup.harden_data_dir()
             setup.write_config(db, port=self.port.value())
             return setup.check_database()
 
@@ -357,8 +368,11 @@ class ServerSetupWizard(QWidget):
             if not self._db_ok:
                 widgets.error(self, "حسابداری", "ابتدا «ذخیره و آزمایش اتصال» را با موفقیت انجام دهید.")
                 return
-            if self.auth_windows.isChecked() and not self.win_password.text():
-                widgets.error(self, "حسابداری", "گذرواژهٔ حساب ویندوز را وارد کنید.")
+        elif self._step == 2:
+            try:
+                setup.parse_allowed_ips(self.allowed_ips.text())
+            except setup.SetupError as exc:
+                widgets.error(self, "شبکه", exc.message)
                 return
         elif self._step == 4:
             if not self._validate_admin():
@@ -398,9 +412,10 @@ class ServerSetupWizard(QWidget):
     def _execute(self) -> None:
         db = self._db_config()
         port = self.port.value()
-        windows_user = setup.current_windows_user() if db.trusted else None
-        windows_password = self.win_password.text()
+        allowed_ips = self.allowed_ips.text().strip()
         extra = {
+            "firewall_allowed_ips": " ".join(setup.parse_allowed_ips(allowed_ips)),
+            "shoptg_dir": self.shoptg_dir.text().strip(),
             "bank_account_text": self.bank_text.text().strip(),
             "bale_token": self.bale_token.text().strip(),
             "admin_chat_ids": self.admin_chats.text().strip(),
@@ -410,15 +425,15 @@ class ServerSetupWizard(QWidget):
 
         def work(on_progress) -> tuple[str, str, str]:
             on_progress("محدود کردن دسترسی پوشهٔ داده")
-            setup.harden_data_dir(windows_user)
+            setup.harden_data_dir()
             on_progress("نوشتن تنظیمات سرور")
             setup.write_config(db, port=port, extra=extra)
-            on_progress("ساخت وظیفهٔ خودکار ویندوز")
-            setup.register_task(run_as_user=windows_user, password=windows_password)
+            on_progress("ثبت سرویس ویندوز «ShopServer»")
+            setup.install_service()
             on_progress("باز کردن دیوار آتش برای شبکهٔ محلی")
-            setup.open_firewall(port)
+            setup.open_firewall(port, allowed_ips)
             on_progress("روشن کردن سرور")
-            setup.start_task()
+            setup.start_service()
             on_progress("منتظر آماده شدن سرور (تا ۹۰ ثانیه)")
             pem, fingerprint = setup.wait_until_ready(port)
             base_url = f"https://127.0.0.1:{port}"

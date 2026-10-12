@@ -24,6 +24,13 @@ if not exist "%WS%\shopbots\app" goto :nosrc
 
 rem ------------------------------------------------------------------
 echo [1/6] Running the test suites (shopapi, then shopbots) ...
+rem SHOP_TESTS_ALREADY_RUN=1: the shopapi/shopbots suites were run separately
+rem (e.g. where the venv Python cannot create temp files). Opt-in only.
+if "%SHOP_TESTS_ALREADY_RUN%"=="1" (
+    echo [WARN] SHOP_TESTS_ALREADY_RUN=1 - skipping the shopapi/shopbots tests here.
+    echo        Only use this right after running both suites yourself.
+    goto :teststail
+)
 pushd "%WS%\shopapi"
 if exist ".venv\Scripts\python.exe" (
     ".venv\Scripts\python.exe" -m pytest -q
@@ -49,6 +56,15 @@ if exist ".venv\Scripts\python.exe" (
     echo [WARN] shopbots\.venv not found - skipping its tests
 )
 popd
+
+:teststail
+if exist "%PY%" (
+    "%PY%" -m pytest -q "%PKG%\tests" -p no:cacheprovider
+    if errorlevel 1 (
+        echo [ERROR] shopsystem tests FAILED - fix them before building.
+        exit /b 1
+    )
+)
 
 rem ------------------------------------------------------------------
 echo [2/6] Collecting the two "app" packages as shopapi_app / shopbots_app ...
@@ -106,6 +122,15 @@ echo [3/6] Running PyInstaller (%MODE%) - this takes a few minutes ...
     --hidden-import uvicorn.lifespan.off ^
     --hidden-import dotenv ^
     --hidden-import server_tls ^
+    --hidden-import winservice ^
+    --hidden-import servicemanager ^
+    --hidden-import win32service ^
+    --hidden-import win32serviceutil ^
+    --hidden-import win32event ^
+    --hidden-import win32timezone ^
+    --collect-submodules pdfplumber ^
+    --collect-submodules pdfminer ^
+    --collect-data pdfminer ^
     --collect-submodules cryptography ^
     --hidden-import sqlite3 ^
     --hidden-import pyodbc ^
@@ -146,9 +171,9 @@ echo   Output folder : %OUT%
 echo   Executable    : %OUT%\ShopSystem.exe
 echo.
 echo [6/6] Next steps:
-echo   1. copy  .env.example  to  .env   in that folder
-echo   2. fill in the tokens, API keys and database details
-echo   3. double-click ShopSystem.exe  (keep the console window open)
+echo   - installers: shopadminuild_installer.bat  (or build_all.bat at the root)
+echo   - server update package: powershell -File build_package.ps1
+echo   - quick manual run: copy .env.example to .env here, fill it in, double-click ShopSystem.exe
 echo.
 exit /b 0
 

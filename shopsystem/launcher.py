@@ -3,11 +3,16 @@
 Modes
     ShopSystem.exe              console mode: API + bots in this window (development,
                                 or a quick manual run). Closing the window stops it.
-    ShopSystem.exe --service    supervisor: starts a worker process and restarts it
-                                when it crashes or when a super admin asks for a
-                                restart from ShopAdmin. Used by the Windows
-                                scheduled task that starts the server at boot.
+    ShopSystem.exe --winservice the Windows service ``ShopServer`` (started by the
+                                service control manager at boot): the supervisor.
+    ShopSystem.exe --service    the same supervisor from a console / old boot task.
+                                It runs the worker and, when ``SHOPTG_DIR`` is set,
+                                the Telegram worker; each is restarted on its own
+                                when it crashes or asks for a restart.
     ShopSystem.exe --worker     the actual server (started by the supervisor).
+    ShopSystem.exe --install-service | --uninstall-service | --start-service |
+                   --stop-service | --service-status   (administrator; JSON output)
+    ShopSystem.exe --health-check [--timeout 90]   wait for /health (update.ps1)
     ShopSystem.exe --fingerprint  print the TLS certificate fingerprint and exit.
 
 Data folder (``.env``, databases, log, TLS certificate)
@@ -521,44 +526,268 @@ def _assign_to_job(job, process: subprocess.Popen) -> None:
 
 
 def worker_command(data_dir: Path) -> list[str]:
+    return [*self_command(), "--worker", "--data-dir", str(data_dir)]
+
+
+def self_command() -> list[str]:
+    """How to start this program again (frozen exe, or python + this file)."""
     if getattr(sys, "frozen", False):
-        return [sys.executable, "--worker", "--data-dir", str(data_dir)]
-    return [sys.executable, str(Path(__file__).resolve()), "--worker", "--data-dir", str(data_dir)]
+        return [sys.executable]
+    return [sys.executable, str(Path(__file__).resolve())]
 
 
-def run_supervisor(args: list[str]) -> int:
+class ChildSpec:
+    """One process the supervisor keeps running."""
+
+    def __init__(self, name: str, label: str, command: list[str], *,
+                 env: dict, cwd: str | None = None) -> None:
+        self.name, self.label, self.command, self.env, self.cwd = name, label, command, env, cwd
+
+
+def read_env_values() -> dict[str, str]:
+    """``.env`` as a dict, without putting it into this process's environment."""
+    if not Paths.env.exists():
+        return {}
+    from dotenv import dotenv_values
+
+    return {k: v for k, v in dotenv_values(Paths.env).items() if v is not None}
+
+
+def shoptg_spec(values: dict[str, str], *, run_mode: str) -> ChildSpec | None:
+    """The Telegram worker (``SHOPTG_DIR`` in ``.env`` = its install folder).
+
+    It gets the plain system environment plus only what it needs from the
+    server: the local API address, the certificate to pin and its own key -
+    never the Bale token or the database password.
+    """
+    root = (values.get("SHOPTG_DIR") or "").strip()
+    if not root:
+        return None
+    python = Path(root) / ".venv" / "Scripts" / "python.exe"
+    if not python.exists():
+        logging.getLogger("shopsystem.supervisor").warning(
+            "SHOPTG_DIR is set but %s is missing - Telegram worker not started", python)
+        return None
+    tls = _truthy(values.get("API_TLS", "false"))
+    port = (values.get("API_PORT") or "").strip() or "8000"
+    env = {k: v for k, v in os.environ.items() if not k.startswith("SHOPSERVER_")}
+    env["SHOPAPI_BASE_URL"] = f"{'https' if tls else 'http'}://127.0.0.1:{port}"
+    env["WORKER_API_KEY"] = values.get("WORKER_API_KEY", "")
+    env["PYTHONIOENCODING"] = "utf-8"
+    if tls:
+        from server_tls import CERT_NAME
+
+        env["SHOPAPI_CA_FILE"] = str(Paths.tls_dir / CERT_NAME)
+    if run_mode == "service":
+        from winservice import SERVICE_ACCOUNT
+
+        env["TG_SERVICE_ACCOUNT"] = SERVICE_ACCOUNT
+    return ChildSpec("shoptg", "کارگر تلگرام", [str(python), "-m", "app.main"], env=env, cwd=root)
+
+
+def child_specs(values: dict[str, str], *, run_mode: str) -> list[ChildSpec]:
+    env = dict(os.environ, SHOPSERVER_SUPERVISED="1", SHOPSERVER_RUN_MODE=run_mode)
+    specs = [ChildSpec("server", "سرور فروشگاه و ربات بله", worker_command(Paths.data_dir), env=env)]
+    tg = shoptg_spec(values, run_mode=run_mode)
+    if tg is not None:
+        specs.append(tg)
+    return specs
+
+
+#: A child that fails this many times within CRASH_WINDOW seconds alerts the owner
+#: (at most once per CRASH_ALERT_EVERY seconds per child).
+CRASH_COUNT = 3
+CRASH_WINDOW = 600
+CRASH_ALERT_EVERY = 3600
+
+
+class CrashTracker:
+    def __init__(self, clock=time.monotonic) -> None:
+        self.clock = clock
+        self.failures: dict[str, list[float]] = {}
+        self.alerted: dict[str, float] = {}
+
+    def failed(self, name: str) -> bool:
+        """Record a failure; True when the owner should be alerted now."""
+        now = self.clock()
+        recent = [t for t in self.failures.get(name, []) if now - t < CRASH_WINDOW] + [now]
+        self.failures[name] = recent
+        if len(recent) < CRASH_COUNT:
+            return False
+        last = self.alerted.get(name)
+        if last is not None and now - last < CRASH_ALERT_EVERY:
+            return False
+        self.alerted[name] = now
+        return True
+
+
+def crash_alert_text(label: str) -> str:
+    return (f"⚠️ هشدار سرور: «{label}» پشت‌سرهم از کار می‌افتد و خودکار دوباره "
+            "راه‌اندازی می‌شود. گزارش‌ها: supervisor.log و app.log در پوشهٔ دادهٔ سرور.")
+
+
+def send_crash_alert(label: str, values: dict[str, str]) -> None:
+    try:
+        from shopapi_app import owner_alerts
+    except ImportError:  # development run without the build packages
+        return
+    try:
+        owner_alerts.send_owner_alert(crash_alert_text(label), env=values)
+    except Exception as exc:  # noqa: BLE001 - alerting must never stop supervision
+        logging.getLogger("shopsystem.supervisor").warning("crash alert failed (%s)",
+                                                           type(exc).__name__)
+
+
+def supervise_child(spec: ChildSpec, stop: threading.Event, *, job=None,
+                    tracker: CrashTracker | None = None, on_crash_loop=None,
+                    popen=subprocess.Popen) -> None:
+    """Keep one child running until ``stop`` is set (growing back-off on failures)."""
+    log = logging.getLogger("shopsystem.supervisor")
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    failures = 0
+    while not stop.is_set():
+        started = time.monotonic()
+        try:
+            process = popen(spec.command, env=spec.env, cwd=spec.cwd, creationflags=flags,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            log.error("%s: cannot start (%s)", spec.name, type(exc).__name__)
+            code = None
+        else:
+            _assign_to_job(job, process)
+            log.info("%s started (pid %s)", spec.name, process.pid)
+            while process.poll() is None:
+                if stop.wait(1.0):
+                    log.info("%s: stopping", spec.name)
+                    process.terminate()
+                    try:
+                        process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    return
+            code = process.returncode
+            if code == EXIT_RESTART:
+                log.info("%s asked for a restart", spec.name)
+                failures = 0
+                continue
+        if time.monotonic() - started > 300:
+            failures = 0  # it ran fine for a while: start the back-off over
+        failures += 1
+        if tracker is not None and tracker.failed(spec.name) and on_crash_loop is not None:
+            on_crash_loop(spec)
+        delay = 60 if code == EXIT_NO_CONFIG else min(5 * failures, 60)
+        log.warning("%s exited with code %s; starting again in %ss", spec.name, code, delay)
+        stop.wait(delay)
+
+
+def run_supervisor(args: list[str], stop_event: threading.Event | None = None) -> int:
+    """Run every child until ``stop_event`` is set (Windows service) or Ctrl+C."""
+    run_mode = "service" if stop_event is not None else "task"
+    stop = stop_event or threading.Event()
     # Its own file: two processes must never rotate the same log.
     setup_logging(os.environ.get("LOG_LEVEL", "INFO"), console=False,
                   log_file=Paths.data_dir / "supervisor.log")
     install_excepthooks()
     supervisor_log = logging.getLogger("shopsystem.supervisor")
-    supervisor_log.info("supervisor starting (data folder: %s)", Paths.data_dir)
+    supervisor_log.info("supervisor starting (data folder: %s, mode: %s)", Paths.data_dir, run_mode)
+    values = read_env_values()
     job = _kill_on_close_job()
-    env = dict(os.environ, SHOPSERVER_SUPERVISED="1")
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    failures = 0
+    tracker = CrashTracker()
+
+    def crash_loop(spec: ChildSpec) -> None:
+        supervisor_log.error("%s keeps failing - alerting the owner", spec.name)
+        threading.Thread(target=send_crash_alert, args=(spec.label, values), daemon=True).start()
+
+    threads = []
+    for spec in child_specs(values, run_mode=run_mode):
+        thread = threading.Thread(target=supervise_child, args=(spec, stop),
+                                  kwargs={"job": job, "tracker": tracker,
+                                          "on_crash_loop": crash_loop},
+                                  name=f"supervise-{spec.name}", daemon=True)
+        thread.start()
+        threads.append(thread)
+    try:
+        while any(t.is_alive() for t in threads):
+            if stop.wait(1.0):
+                break
+    except KeyboardInterrupt:
+        stop.set()
+    stop.set()
+    for thread in threads:
+        thread.join(timeout=20)
+    supervisor_log.info("supervisor stopped")
+    return EXIT_OK
+
+
+# --------------------------------------------------------------------------
+# Windows service management (run as administrator: setup wizard, scripts)
+# --------------------------------------------------------------------------
+def _shoptg_paths(values: dict[str, str]) -> tuple[Path | None, Path | None]:
+    root = (values.get("SHOPTG_DIR") or "").strip()
+    return (Path(root) if root else None), Paths.data_dir / "shoptg"
+
+
+def service_tool(args: list[str]) -> int:
+    """``--install-service`` / ``--uninstall-service`` / ``--start-service`` /
+    ``--stop-service`` / ``--service-status``: print JSON, exit 0 on success."""
+    import winservice
+
+    values = read_env_values()
+    shoptg_dir, shoptg_data = _shoptg_paths(values)
+    if "--install-service" in args:
+        result = winservice.install(self_command(), Paths.data_dir,
+                                    shoptg_dir=shoptg_dir, shoptg_data=shoptg_data)
+    elif "--uninstall-service" in args:
+        result = winservice.uninstall(Paths.data_dir, shoptg_dir=shoptg_dir,
+                                      shoptg_data=shoptg_data)
+    elif "--start-service" in args:
+        winservice.start()
+        result = {"ok": True}
+    elif "--stop-service" in args:
+        winservice.stop()
+        result = {"ok": True}
+    else:
+        result = {"ok": True}
+    result["state"] = winservice.state()
+    _emit(result)
+    return EXIT_OK
+
+
+def health_check(timeout: float) -> int:
+    """Wait until this server answers ``/health`` (used by update.ps1)."""
+    import ssl
+
+    import httpx
+
+    values = read_env_values()
+    tls = _truthy(values.get("API_TLS", "false"))
+    port = (values.get("API_PORT") or "").strip() or "8000"
+    url = f"{'https' if tls else 'http'}://127.0.0.1:{port}/health"
+    verify: object = True
+    if tls:
+        from server_tls import CERT_NAME
+
+        cert = Paths.tls_dir / CERT_NAME
+        if not cert.exists():
+            _emit({"ok": False, "error": "no certificate yet", "url": url})
+            return 1
+        verify = ssl.create_default_context(cafile=str(cert))
+    deadline = time.monotonic() + timeout
+    last = ""
     while True:
-        started = time.monotonic()
-        process = subprocess.Popen(worker_command(Paths.data_dir), env=env, creationflags=flags,
-                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                   stderr=subprocess.DEVNULL)
-        _assign_to_job(job, process)
-        supervisor_log.info("worker started (pid %s)", process.pid)
         try:
-            code = process.wait()
-        except KeyboardInterrupt:
-            process.terminate()
-            return EXIT_OK
-        if code == EXIT_RESTART:
-            supervisor_log.info("worker asked for a restart")
-            failures = 0
-            continue
-        if time.monotonic() - started > 300:
-            failures = 0  # it ran fine for a while: start the back-off over
-        failures += 1
-        delay = 60 if code == EXIT_NO_CONFIG else min(5 * failures, 60)
-        supervisor_log.warning("worker exited with code %s; starting again in %ss", code, delay)
-        time.sleep(delay)
+            response = httpx.get(url, timeout=5.0, verify=verify, trust_env=False)
+            if response.status_code == 200:
+                _emit({"ok": True, "url": url})
+                return EXIT_OK
+            last = f"HTTP {response.status_code}"
+        except Exception as exc:  # noqa: BLE001 - reported as JSON
+            last = type(exc).__name__
+        if time.monotonic() >= deadline:
+            _emit({"ok": False, "error": last, "url": url})
+            return 1
+        time.sleep(2.0)
 
 
 # --------------------------------------------------------------------------
@@ -577,6 +806,7 @@ SETUP_FIELDS = {
     "bank_account_text": "BANK_ACCOUNT_TEXT",
     "bale_token": "BALE_TOKEN",
     "admin_chat_ids": "ADMIN_CHAT_IDS",
+    "shoptg_dir": "SHOPTG_DIR",
 }
 
 #: Written once, on the first setup. Existing values are never replaced.
@@ -633,7 +863,8 @@ def init_config(json_path: Path) -> int:
     values: dict[str, str] = {}
     if not existing:
         values.update(FIRST_RUN_DEFAULTS)
-    for key in ("BOT_API_KEY", "SITE_API_KEY", "ADMIN_API_KEY"):
+    # WORKER_API_KEY: the Telegram worker (shoptg), loopback only.
+    for key in ("BOT_API_KEY", "SITE_API_KEY", "ADMIN_API_KEY", "WORKER_API_KEY"):
         if not existing.get(key):
             values[key] = secrets.token_urlsafe(32)
     for field, key in SETUP_FIELDS.items():
@@ -706,9 +937,30 @@ def main(argv: list[str] | None = None) -> int:
         _cert, _key, fingerprint = ensure_certificate(Paths.tls_dir)
         print(fingerprint)
         return EXIT_OK
+    if "--winservice" in args:
+        import winservice
+
+        return winservice.run_service(lambda stop: run_supervisor(args, stop_event=stop))
     if "--service" in args:
         return run_supervisor(args)
+    if any(flag in args for flag in SERVICE_FLAGS):
+        try:
+            return service_tool(args)
+        except Exception as exc:  # noqa: BLE001 - always answer with JSON
+            text = str(exc).splitlines()[0][:300] if str(exc) else ""
+            _emit({"ok": False, "error": type(exc).__name__, "message": text})
+            return 1
+    if "--health-check" in args:
+        try:
+            timeout = float(_arg_value(args, "--timeout") or 90)
+        except ValueError:
+            timeout = 90.0
+        return health_check(timeout)
     return run_worker(args, console="--worker" not in args)
+
+
+SERVICE_FLAGS = ("--install-service", "--uninstall-service", "--start-service",
+                 "--stop-service", "--service-status")
 
 
 def _pause() -> None:
