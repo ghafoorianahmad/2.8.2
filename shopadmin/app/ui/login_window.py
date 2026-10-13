@@ -1,11 +1,14 @@
 """پنجرهٔ ورود به برنامه."""
 from __future__ import annotations
 
+import sqlite3
+
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QPushButton,
     QVBoxLayout,
@@ -37,15 +40,23 @@ class LoginWindow(QWidget):
 
         self.setWindowTitle("ورود به مدیریت فروشگاه")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setMinimumSize(520, 560)
+        self.setMinimumSize(900, 600)
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        # Two columns: the form (first = right side in RTL) and a brand panel.
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        form_side = QVBoxLayout()
+        form_side.setContentsMargins(24, 24, 24, 24)
+        outer.addLayout(form_side, 11)
+        outer.addWidget(self._build_brand_panel(), 9)
+        root = form_side
         root.addStretch(1)
 
         card = QFrame()
         card.setObjectName("Card")
-        card.setFixedWidth(440)
+        card.setFixedWidth(420)
+        widgets.add_shadow(card)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(32, 32, 32, 28)
         card_layout.setSpacing(16)
@@ -139,6 +150,45 @@ class LoginWindow(QWidget):
         QTimer.singleShot(0, self._prefill_remembered_username)
 
     # ------------------------------------------------------------------ saved
+    @staticmethod
+    def _build_brand_panel() -> QFrame:
+        """Dark side panel: shop name, what the app does, version."""
+        panel = QFrame()
+        panel.setObjectName("LoginBrand")
+        panel.setStyleSheet(
+            f"QFrame#LoginBrand {{ background: {theme.SIDEBAR_BG}; }}"
+            "QFrame#LoginBrand QLabel { background: transparent; }"
+        )
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(40, 40, 40, 32)
+        layout.setSpacing(14)
+        layout.addStretch(2)
+
+        mark = QLabel()
+        mark.setPixmap(theme.icon_pixmap("products", 44, "#FFFFFF"))
+        mark.setFixedSize(84, 84)
+        mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        mark.setStyleSheet(f"background: {theme.SIDEBAR_ACTIVE}; border-radius: 22px;")
+        layout.addWidget(mark, 0, Qt.AlignmentFlag.AlignRight)
+
+        name = widgets.label("عصر ارتباطات ۲", size=20, bold=True, color="#FFFFFF")
+        layout.addWidget(name)
+        tagline = widgets.label(
+            "مدیریت مشتریان، سفارش‌ها و پرداخت‌ها در یک‌جا؛ متصل به نرم‌افزار حسابداری "
+            "و ربات‌های فروشگاه.", wrap=True, color=theme.SIDEBAR_TEXT,
+        )
+        layout.addWidget(tagline)
+
+        layout.addSpacing(10)
+        for text in ("تأیید مشتری و رسید پرداخت", "پیگیری سفارش و موجودی", "گزارش و خروجی اکسل"):
+            row = widgets.label("•  " + text, color=theme.SIDEBAR_TEXT)
+            layout.addWidget(row)
+
+        layout.addStretch(3)
+        layout.addWidget(widgets.label(
+            f"نسخهٔ {to_persian_digits(APP_VERSION)}", color=theme.SIDEBAR_MUTED))
+        return panel
+
     def _prefill_remembered_username(self) -> None:
         """Pre-fill the username when a saved login exists but is not usable.
 
@@ -146,7 +196,10 @@ class LoginWindow(QWidget):
         shown. If we are here, that failed (revoked token, disabled account…),
         so the least we can do is fill in the name the user used last time.
         """
-        username = self.auth.remembered_username()
+        try:
+            username = self.auth.remembered_username()
+        except sqlite3.Error:
+            return      # the deferred call outlived the window's store (shutdown)
         if not username:
             return
         self.username_input.setText(username)

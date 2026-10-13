@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
@@ -52,6 +53,17 @@ def label(text: str, *, name: str = "", size: int | None = None, bold: bool = Fa
     widget.setWordWrap(wrap)
     widget.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     widget.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    return widget
+
+
+def add_shadow(widget: QWidget, *, blur: int = 24, dy: int = 4, alpha: int = 28) -> QWidget:
+    """Soft drop shadow for a card. Use on small cards only: a graphics effect
+    re-renders its children, so it must not wrap big tables."""
+    effect = QGraphicsDropShadowEffect(widget)
+    effect.setBlurRadius(blur)
+    effect.setOffset(0, dy)
+    effect.setColor(QColor(15, 23, 42, alpha))
+    widget.setGraphicsEffect(effect)
     return widget
 
 
@@ -273,6 +285,7 @@ class StatCard(QFrame):
         root.addLayout(text_column, 1)
 
         self._apply_accent()
+        add_shadow(self, blur=18, dy=3, alpha=22)
 
     def _apply_accent(self) -> None:
         self.setStyleSheet(
@@ -689,7 +702,11 @@ class _CenteredOverlay(QWidget):
                  background: str = theme.SURFACE, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.setStyleSheet(f"background: {background};")
+        # Scoped by object name: an unscoped "background" would cascade onto the
+        # labels inside and paint boxes behind them.
+        self.setObjectName("CenteredOverlay")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"QWidget#CenteredOverlay {{ background: {background}; }}")
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(8)

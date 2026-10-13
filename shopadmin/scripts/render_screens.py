@@ -199,7 +199,7 @@ def render_all(app: QApplication, tmp: Path, opened: list) -> int:
     login_store.configure_connection(FAKE_BASE_URL)
     login_store.set_setting("wizard_completed", True)
     login = LoginWindow(login_store, AuthService(login_store, client_for(new_fake(), "")))
-    login.resize(720, 660)
+    login.resize(980, 640)
     login.show()
     settle(app, 5)
     grab(login, OUT / "04-login.png")
