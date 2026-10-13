@@ -86,6 +86,10 @@ class FakeReader:
     def invoice_progress(self, codlps):
         return {c: self.invoices[c] for c in codlps if c in self.invoices}
 
+    def invoice_numbers(self, codlps):
+        nums = getattr(self, "invoice_nums", {})
+        return {c: list(nums[c]) for c in codlps if c in nums}
+
     def customer_statement(self, person_code, max_rows=2000):
         rows = list(self.ledger.get(person_code, []))
         return {

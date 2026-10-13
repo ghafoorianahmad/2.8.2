@@ -400,6 +400,7 @@ def get_order(
     chat_id: Optional[str] = Query(None),
     role: str = Depends(get_api_identity),
     db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
 ) -> OrderOut:
     order = db.get_order(order_id)
     if order is None:
@@ -412,7 +413,14 @@ def get_order(
         if user is None or user["id"] != order["user_id"]:
             security_watch.report(db, "order_probe", f"{platform}:{chat_id}")
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
-    return OrderOut(**order)
+    numbers: list[str] = []
+    if role == "admin" and order.get("accounting_order_no") and order.get("invoice_state"):
+        try:   # accounting down = no numbers (the card then says only that it was issued)
+            numbers = reader.invoice_numbers([int(order["accounting_order_no"])]).get(
+                int(order["accounting_order_no"]), [])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("invoice numbers unavailable: %s", type(exc).__name__)
+    return OrderOut(**order, invoice_numbers=numbers)
 
 
 @router.get("/users/{platform}/{chat_id}/orders", response_model=list[OrderOut])

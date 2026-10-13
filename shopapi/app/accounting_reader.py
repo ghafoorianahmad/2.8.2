@@ -291,6 +291,33 @@ class AccountingReader:
             for r in rows
         }
 
+    def invoice_numbers(self, codlps: list[int]) -> dict[int, list[str]]:
+        """Accounting invoice numbers (``facto.Numfact``) per order: {Codlp: [Numfact, ...]}.
+
+        Matched on ``facto.ordercode = KalaOrder.Codlp``; an order with several (partial)
+        invoices lists all of them, ascending. Parameterized, SQL Server 2008 R2 compatible.
+        """
+        codlps = [int(c) for c in codlps]
+        if not codlps:
+            return {}
+        db = self._db()
+        conn = self.connection()
+        try:
+            rows = self._rows(
+                conn.execute(
+                    f"SELECT DISTINCT f.ordercode, f.Numfact FROM {db}.dbo.facto f "
+                    f"WHERE f.ordercode IN ({self._in_placeholders(codlps)}) "
+                    f"AND f.Numfact IS NOT NULL ORDER BY f.ordercode, f.Numfact",
+                    codlps,
+                )
+            )
+        finally:
+            conn.close()
+        out: dict[int, list[str]] = {}
+        for r in rows:
+            out.setdefault(int(r["ordercode"]), []).append(str(r["Numfact"]).strip())
+        return out
+
     def customer_statement(self, person_code: int, max_rows: int = 2000) -> dict:
         """A customer's ledger rows (KOL, reference §3), oldest first.
 

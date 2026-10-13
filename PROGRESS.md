@@ -2,6 +2,14 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## Bot image cards v3.1 — invoice numbers, logo in header (2026-10-13, branch `claude/invoice-card-v3`) — DONE in code (Linux)
+
+- **Pre-invoice**: new status row «✓ سفارش شما ثبت شد — شمارهٔ پیگیری: <our order number>» (same style as before on the final invoice).
+- **Final invoice**: the number is now the accounting invoice number. New `AccountingReader.invoice_numbers()`: `SELECT DISTINCT f.ordercode, f.Numfact FROM <db>.dbo.facto f WHERE f.ordercode IN (?,…) AND f.Numfact IS NOT NULL ORDER BY …` — parameterized, no 2012+ syntax (no OFFSET/STRING_AGG), only `facto.Numfact/ordercode` (already in `grant_shopbot_2008r2.sql`). `GET /orders/{id}` returns `invoice_numbers` (list of strings) **only for the admin/bot key** and only when the order is written and invoiced; accounting down → empty list. Card text «✓ فاکتور شما صادر شد — شمارهٔ فاکتور: ۲۶۷۲، ۲۶۸۰» (all numbers of a partial order, joined by «،»); with no numbers it says only «فاکتور شما صادر شد».
+- **Logo**: `assets/logo.png` is now in the header of all three cards in place of the store/phone illustration (the illustration remains only as a fallback when the logo file is missing), and still at the bottom of the invoices.
+- Tests: shopapi 289 passed (pyodbc stubbed), shopbots 184 passed (Telegram-channel tests not collectable here). Samples re-rendered in `docs/card-samples/`.
+- **Pending live check on `hesab5 t`**: the `invoice_numbers` query against a real invoiced order (`Numfact` type/format, e.g. varchar vs int) and that the bot's admin key reaches it.
+
 ## Bot image cards v3 — invoice/price card changes (2026-10-13, branch `claude/invoice-card-v3`, from `claude/hopeful-hamilton-yd346p`) — DONE in code (Linux); cards still OFF by default
 
 - **Logo**: `clip/img/logo_black.png` from `ghafoorianahmad/cloud` (branch `claude/vibrant-fermat-eu8xlh`, 1450×650 transparent PNG) → `shopbots/app/cards/assets/logo.png`, embedded in the card HTML. Missing file = card still renders without it.

@@ -108,3 +108,13 @@ def test_groups_skip_the_root_group():
 def test_status_code_default_is_zero(monkeypatch):
     monkeypatch.delenv("ACCOUNTING_STATUS_CODE", raising=False)
     assert Settings().accounting_status_code == 0
+
+
+def test_invoice_numbers_sql_is_parameterized_facto_numfact_by_ordercode():
+    reader, conn = _reader([("f.Numfact", [(41, "2672"), (41, "2680"), (42, "2675")], ["ordercode", "Numfact"])])
+    assert reader.invoice_numbers([41, 42]) == {41: ["2672", "2680"], 42: ["2675"]}
+    sql, params = conn.sql[0]
+    assert "facto" in sql and "f.ordercode IN (?,?)" in sql and "DISTINCT" in sql
+    assert "41" not in sql and params == ([41, 42],)       # values travel as parameters only
+    assert "OFFSET" not in sql.upper() and "STRING_AGG" not in sql.upper()   # SQL Server 2008 R2
+    assert reader.invoice_numbers([]) == {}

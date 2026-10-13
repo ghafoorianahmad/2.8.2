@@ -323,3 +323,33 @@ def test_admin_get_user_and_order_has_user_id(client, reader):
     user_id = register_and_approve(client)
     assert client.get(f"/admin/users/{user_id}", headers=h("admin")).json()["chat_id"] == "111"
     assert order(client).json()["user_id"] == user_id
+
+
+# ---- accounting invoice numbers (facto.Numfact) -------------------------------------
+def test_invoice_numbers_come_from_facto_numfact_by_ordercode(client, reader, db):
+    seed_products(reader)
+    order_id, codlp = _written_order(client)
+    params = {"platform": "bale", "chat_id": "111"}
+    assert client.get(f"/orders/{order_id}", params=params, headers=h("bot")).json()["invoice_numbers"] == []
+    reader.invoices = {codlp: {"ordered": 2, "invoiced": 1}}
+    reader.invoice_nums = {codlp: ["2672", "2680"]}
+    tracking.sync_invoices(db, reader)
+    got = client.get(f"/orders/{order_id}", headers=h("admin")).json()
+    assert got["invoice_numbers"] == ["2672", "2680"]                 # partial: every invoice
+    # customers' own (non-admin) reads never trigger an accounting query
+    reader.invoice_nums = {codlp: ["1"]}
+    assert client.get(f"/orders/{order_id}", params=params, headers=h("bot")).json()["invoice_numbers"] == []
+
+
+def test_invoice_numbers_survive_accounting_being_down(client, reader, db, monkeypatch):
+    seed_products(reader)
+    order_id, codlp = _written_order(client)
+    reader.invoices = {codlp: {"ordered": 2, "invoiced": 2}}
+    tracking.sync_invoices(db, reader)
+
+    def boom(codlps):
+        raise RuntimeError("accounting down")
+
+    monkeypatch.setattr(reader, "invoice_numbers", boom)
+    r = client.get(f"/orders/{order_id}", headers=h("admin"))
+    assert r.status_code == 200 and r.json()["invoice_numbers"] == []

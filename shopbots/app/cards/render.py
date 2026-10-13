@@ -220,7 +220,7 @@ td.num{text-align:center;font-weight:700;white-space:nowrap}
 .trow.big{flex:1.7;background:rgba(255,255,255,.08);flex-direction:column;align-items:stretch;justify-content:center;gap:4px}
 .trow.big .bt{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .trow .words{font-size:22px;opacity:.95;text-align:right;line-height:1.4}
-.trow.msg{justify-content:flex-start;gap:12px;font-size:24px;font-weight:700;line-height:1.4}
+.trow.msg{justify-content:flex-start;gap:12px;font-size:22px;font-weight:700;line-height:1.4}
 .trow.msg .ic{flex:none;color:#7fe3b5}
 .trow.big .vl b{font-size:60px;line-height:1.1}
 .notes{flex:1;overflow:hidden;min-width:0;border:2px solid var(--line);border-radius:22px;background:#fff;padding:16px 22px}
@@ -233,6 +233,7 @@ td.num{text-align:center;font-weight:700;white-space:nowrap}
 .pf b.ltr{direction:ltr;text-align:right}
 .pf.card{flex:1.1}.pf.sheba{flex:1.7}.pf.sheba b{font-size:21px}.pf.owner{flex:.9}
 .logo{height:96px;max-width:300px;object-fit:contain}
+.logo.hd{width:270px;height:121px;max-width:none;flex:none}
 .contact{margin-top:18px;border:2px solid var(--line);border-radius:22px;background:rgba(255,255,255,.9);padding:14px 22px;text-align:center}
 .contact .ln{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 26px;font-size:21px;color:var(--ink)}
 .contact .it{display:inline-flex;align-items:center;gap:8px;max-width:100%}.contact .it .ic{color:var(--navy);flex:none}
@@ -302,7 +303,8 @@ def _head(shop: str, title: str, number_label: str, number, date_text: str, cust
     cust = f'<div class="meta">{icon("user", 26)}<b>{esc(cust_label)}:</b><span class="v">{esc(customer)}</span></div>' if customer else ""
     num = (f'<div class="meta">{icon("file-invoice", 26)}<b>{esc(number_label)}:</b>'
            f'<span class="v">{esc(fa_digits(number))}</span></div>') if number_label else ""
-    return (f'<div class="head">{_ILLUS}<div class="brand"><div class="t">{esc(shop)}</div>'
+    mark = _logo_tag("logo hd") or _ILLUS      # the logo replaces the store illustration
+    return (f'<div class="head">{mark}<div class="brand"><div class="t">{esc(shop)}</div>'
             f'<div class="t" style="font-size:30px;font-weight:400">{esc(title)}</div>'
             f'<div class="s">موبایل و لوازم جانبی</div></div>'
             f'<div class="metabox">{num}'
@@ -322,8 +324,13 @@ def _foot_signature(date_text: str, sign: str) -> str:
             f'<div class="ln"><i></i><span>{esc(sign)}</span><i></i></div></div></div>')
 
 
+def _logo_tag(cls: str = "logo") -> str:
+    tag = _logo_html()
+    return tag.replace('class="logo"', f'class="{cls}"') if tag else ""
+
+
 @functools.lru_cache(maxsize=1)
-def _logo_tag() -> str:
+def _logo_html() -> str:
     """The shop logo as an inline image; empty when the file is missing/unreadable."""
     try:
         raw = LOGO_FILE.read_bytes()
@@ -497,26 +504,30 @@ def pre_invoice_card(*, shop: str, order_id, items, total, payment: dict | None 
     totals = _totals(
         [("package", "تعداد اقلام", fa_digits(len(items)), "قلم")],
         ("cash", "مبلغ قابل پرداخت", fa_num(total), currency),
-        words=amount_in_words(total, currency))
+        words=amount_in_words(total, currency),
+        message=f"سفارش شما ثبت شد — شمارهٔ پیگیری: {fa_digits(order_id)}")
     lines = NOTE_LINES if pay_html else (NO_PAYMENT_NOTE,) + NOTE_LINES[1:]
     body = (_head(shop, "پیش‌فاکتور", "شماره سفارش", order_id, d, customer=customer)
             + _items_table(items, currency) + pay_html
-            + f'<div class="dark" style="height:{_H_DARK}px">{totals}{_notes(lines)}</div>'
+            + f'<div class="dark" style="height:{_H_DARK + 40}px">{totals}{_notes(lines)}</div>'
             + _foot_invoice(d, contact))
-    h = _height(len(items), pay=_H_PAY if pay_html else 0, foot=_foot_height(contact))
+    h = _height(len(items), dark=_H_DARK + 40, pay=_H_PAY if pay_html else 0, foot=_foot_height(contact))
     return _screenshot(_page(body, h), h)
 
 
 # -------------------------------------------------------------- final invoice
 @_safe
 def final_invoice_card(*, shop: str, order_id, items, total, partial: bool = False,
-                       accounting_no=None, contact: dict | None = None, currency: str = "ریال",
+                       invoice_numbers=None, contact: dict | None = None, currency: str = "ریال",
                        date=None, customer: str = "") -> bytes | None:
     """Sales invoice (the order was invoiced in accounting). Lines/prices are the order's own
-    (see PROGRESS). The order number doubles as the tracking number."""
+    (see PROGRESS). ``invoice_numbers`` = accounting invoice numbers (facto.Numfact), all of
+    them for a partially invoiced order."""
     items = list(items or [])[:10]
     d = fa_digits(shamsi_date(date))
-    message = f"سفارش شما ثبت شد — شمارهٔ پیگیری: {fa_digits(order_id)}" if accounting_no else ""
+    nums = [str(n).strip() for n in (invoice_numbers or []) if str(n).strip()]
+    message = "فاکتور شما صادر شد" + (
+        " — شمارهٔ فاکتور: " + "، ".join(fa_digits(n) for n in nums) if nums else "")
     totals = _totals(
         [("package", "تعداد اقلام", fa_digits(len(items)), "قلم")],
         ("cash", "جمع سفارش" if partial else "جمع فاکتور", fa_num(total), currency),
@@ -526,8 +537,8 @@ def final_invoice_card(*, shop: str, order_id, items, total, partial: bool = Fal
     lines = ("ارسال پس از آماده‌سازی انجام می‌شود.", NOTE_LINES[1])
     body = (_head(shop, "فاکتور فروش", "شماره سفارش", order_id, d, customer=customer)
             + _items_table(items, currency)
-            + f'<div class="dark" style="height:{_H_DARK + (40 if message else 0)}px">{totals}'
+            + f'<div class="dark" style="height:{_H_DARK + 40}px">{totals}'
               f'{_notes(lines, f"<p style=margin-bottom:8px>{badge}</p>")}</div>'
             + _foot_invoice(d, contact))
-    h = _height(len(items), dark=_H_DARK + (40 if message else 0), foot=_foot_height(contact))
+    h = _height(len(items), dark=_H_DARK + 40, foot=_foot_height(contact))
     return _screenshot(_page(body, h), h)

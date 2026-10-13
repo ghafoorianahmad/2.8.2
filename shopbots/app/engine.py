@@ -1658,7 +1658,7 @@ class BotEngine:
             lambda: final_invoice_card(
                 shop=texts.SHOP.get("shop_name", ""), order_id=order_id, items=order.get("items"),
                 total=order.get("total"), partial=kind == "order_partially_invoiced",
-                accounting_no=order.get("accounting_order_no"), contact=self._card_contact(),
+                invoice_numbers=order.get("invoice_numbers"), contact=self._card_contact(),
                 currency=texts.SHOP.get("currency", "ریال"),
                 date=order.get("invoiced_at"),
             ),

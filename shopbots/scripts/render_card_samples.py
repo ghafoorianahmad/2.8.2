@@ -19,7 +19,7 @@ cards = {
     'price-card-out-of-stock.png': price_card(shop=shop, name='گوشی شیائومی Redmi Note 14 Pro+ 5G ظرفیت ۵۱۲ گیگابایت رم ۱۲', color='سبز', price=24500000, in_stock=False, date=d),
     'pre-invoice.png': pre_invoice_card(shop=shop, order_id=1042, items=items, total=total, payment=pay, contact=contact, date=d, customer='احمد نمونه'),
     'pre-invoice-no-payment.png': pre_invoice_card(shop=shop, order_id=1042, items=items, total=total, contact=contact, date=d, customer='احمد نمونه'),
-    'final-invoice.png': final_invoice_card(shop=shop, order_id=1042, items=items, total=total, accounting_no=2673, contact=contact, date=d, customer='احمد نمونه'),
+    'final-invoice.png': final_invoice_card(shop=shop, order_id=1042, items=items, total=total, invoice_numbers=['2672', '2680'], contact=contact, date=d, customer='احمد نمونه'),
 }
 for name, png in cards.items():
     if not png:

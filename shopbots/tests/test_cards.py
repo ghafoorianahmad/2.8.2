@@ -63,7 +63,7 @@ def test_cards_are_png_images_with_the_light_theme():
     pre = render.pre_invoice_card(shop="عصر ارتباطات ۲", order_id=7, items=ITEMS, total=79_400_000,
                                   payment={"card_number": "6037991122223333", "owner": "نمونه"})
     final = render.final_invoice_card(shop="عصر ارتباطات ۲", order_id=7, items=ITEMS,
-                                      total=79_400_000, partial=True, accounting_no=2673)
+                                      total=79_400_000, partial=True, invoice_numbers=[2673])
     for png in (price, pre, final):
         img = _open(png)
         assert img.width == render.W and 400 < img.height < 2400
@@ -262,7 +262,7 @@ CONTACT = {"address": "نشانی نمونه", "phone": "02112345678", "bot_id":
 
 
 def test_invoice_has_logo_no_signature_no_color_and_buyer_label(monkeypatch):
-    page = _html(monkeypatch, render.final_invoice_card, accounting_no=7, contact=CONTACT, customer="احمد")
+    page = _html(monkeypatch, render.final_invoice_card, invoice_numbers=['2672'], contact=CONTACT, customer="احمد")
     assert 'class="logo"' in page and "data:image/png;base64" in page
     assert "مهر و امضا" not in page and "با آرزوی همدلی" not in page
     assert "مشکی" not in page and "رنگ" not in page       # item color is never shown
@@ -272,14 +272,15 @@ def test_invoice_has_logo_no_signature_no_color_and_buyer_label(monkeypatch):
 
 
 def test_invoice_total_in_words_and_tracking_message(monkeypatch):
-    page = _html(monkeypatch, render.final_invoice_card, accounting_no=7, contact=CONTACT)
+    page = _html(monkeypatch, render.final_invoice_card, invoice_numbers=['2672'], contact=CONTACT)
     assert "پانصد و بیست و پنج میلیون ریال" in page
-    assert "سفارش شما ثبت شد — شمارهٔ پیگیری: ۱۰۴۲" in page
+    assert "فاکتور شما صادر شد — شمارهٔ فاکتور: ۲۶۷۲" in page
+    assert "شمارهٔ پیگیری" not in page          # the final invoice shows the accounting number
 
 
 def test_titles_follow_the_order_state(monkeypatch):
     assert "پیش‌فاکتور</div>" in _html(monkeypatch, render.pre_invoice_card)
-    final = _html(monkeypatch, render.final_invoice_card, accounting_no=7)
+    final = _html(monkeypatch, render.final_invoice_card, invoice_numbers=['2672'])
     assert "فاکتور فروش</div>" in final and "پیش‌فاکتور" not in final
 
 
@@ -308,7 +309,41 @@ def test_price_card_has_no_accounting_word(monkeypatch):
 
 
 def test_missing_logo_does_not_break_the_card(monkeypatch, tmp_path):
-    render._logo_tag.cache_clear()
+    render._logo_html.cache_clear()
     monkeypatch.setattr(render, "LOGO_FILE", tmp_path / "none.png")
     assert render._logo_tag() == ""
-    render._logo_tag.cache_clear()
+    render._logo_html.cache_clear()
+
+
+def test_pre_invoice_shows_our_order_number_as_tracking(monkeypatch):
+    page = _html(monkeypatch, render.pre_invoice_card)
+    assert "سفارش شما ثبت شد — شمارهٔ پیگیری: ۱۰۴۲" in page
+    assert "شمارهٔ فاکتور" not in page
+
+
+def test_final_invoice_lists_every_accounting_invoice_number(monkeypatch):
+    page = _html(monkeypatch, render.final_invoice_card, invoice_numbers=["2672", 2680, " "], partial=True)
+    assert "فاکتور شما صادر شد — شمارهٔ فاکتور: ۲۶۷۲، ۲۶۸۰" in page
+    plain = _html(monkeypatch, render.final_invoice_card)            # numbers unavailable
+    assert "فاکتور شما صادر شد" in plain and "شمارهٔ فاکتور:" not in plain
+
+
+def test_logo_is_in_the_header_of_every_card_and_at_the_bottom_of_invoices(monkeypatch):
+    for fn in (render.pre_invoice_card, render.final_invoice_card):
+        page = _html(monkeypatch, fn)
+        assert page.count("data:image/png;base64") == 2                # header + footer
+        assert 'class="logo hd"' in page and "<svg class=\"illus\"" not in page
+    seen = {}
+    monkeypatch.setattr(render, "_screenshot", lambda page, h: seen.setdefault("p", page) and b"x")
+    render.price_card(shop="s", name="n", color="c", price=1, in_stock=True)
+    assert 'class="logo hd"' in seen["p"] and "illus" not in seen["p"].split("</style>")[1]
+
+
+def test_header_falls_back_to_the_illustration_without_a_logo(monkeypatch, tmp_path):
+    render._logo_html.cache_clear()
+    monkeypatch.setattr(render, "LOGO_FILE", tmp_path / "none.png")
+    try:
+        head = render._head("s", "t", "", "", "d")
+        assert 'class="illus"' in head and "logo" not in head
+    finally:
+        render._logo_html.cache_clear()

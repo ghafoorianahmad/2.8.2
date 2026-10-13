@@ -105,6 +105,8 @@ class OrderOut(BaseModel):
     #: None | "partial" | "full" (recipe R5, synced from Facto.ordercode)
     invoice_state: Optional[str] = None
     invoiced_at: Optional[str] = None
+    #: Accounting invoice numbers (facto.Numfact) of the order; filled for the bot (admin key) only.
+    invoice_numbers: list[str] = []
     shipped_at: Optional[str] = None
     has_receipt: bool = False
     #: The customer is not approved yet: the order is written to accounting
