@@ -2,6 +2,17 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## Bot image cards v3 — invoice/price card changes (2026-10-13, branch `claude/invoice-card-v3`, from `claude/hopeful-hamilton-yd346p`) — DONE in code (Linux); cards still OFF by default
+
+- **Logo**: `clip/img/logo_black.png` from `ghafoorianahmad/cloud` (branch `claude/vibrant-fermat-eu8xlh`, 1450×650 transparent PNG) → `shopbots/app/cards/assets/logo.png`, embedded in the card HTML. Missing file = card still renders without it.
+- **Invoice cards** (`render.py`): signature box removed, logo in its place; no colour anywhere on invoices (colour column/sub-line removed; the **price card keeps its colour column**); label «مشتری» → «خریدار»; accounting row → «سفارش شما ثبت شد — شمارهٔ پیگیری: <order id>» (shown when the order has an accounting number, i.e. on the final invoice; the tracking number is the bot order number); grand total in words under the digits (`cards/numwords.py`, tests in `tests/test_numwords.py`); titles «پیش‌فاکتور» (placed) / «فاکتور فروش» (invoiced: the existing `order_invoiced*` events, driven by the `Facto.ordercode` sync); footer = date box + logo, then a band with address, phone, Bale bot ID and one thank-you line; no price-validity line on invoices.
+- **Footer values** come from the `shop` block of `messages.fa.json` (editable copy in `%ProgramData%\ShopServer`): existing `shop_address`, `shop_phone`; **new keys** `bot_id` (default `@asrertebatat2_bot`, taken from CLAUDE.md — owner must confirm it is the Bale bot ID) and `invoice_thanks`. Placeholder values still in the JSON (e.g. «شماره تلفن فروشگاه») would be printed as is — fill them in before enabling cards.
+- **Payment info**: new shopapi settings `PAYMENT_CARD_NUMBER` (16 digits), `PAYMENT_SHEBA` (IR + 24 digits), `PAYMENT_OWNER` (≤ 80 chars), editable remotely (`control.EDITABLE`, written to `.env`, restart as for other settings) and labelled in ShopAdmin's server-settings page (`shopadmin/app/server_settings.py`, no new UI code). `POST /orders` now returns `payment_card_number/sheba/owner` (None when empty); the pre-invoice shows the payment row only for the filled fields, nothing at all when all are empty (then a note says details follow in the next message). The old `card_number/card_owner/bank_name` of `messages.fa.json` are no longer used by the card (still used by the text message).
+- **Price card**: only the word «حسابداری» removed from its note.
+- Tests (Linux, fakes): shopapi 286 passed (pyodbc stubbed: libodbc missing here), shopbots 180 passed (+ `test_telegram_channel.py` not collected, Telethon missing). ShopAdmin tests not run (PySide6 missing); only the label/translation module was exercised by hand.
+- Samples: `docs/card-samples/{pre-invoice,pre-invoice-no-payment,final-invoice,price-card,price-card-out-of-stock}.png`.
+- **Still to verify on Windows**: all items of the v2 list below, plus the ShopAdmin settings page shows/saves the three new fields, and a real order shows them on the pre-invoice.
+
 ## Bot image cards v2 — light invoice-sheet style, HTML → headless browser (2026-10-12, branch `claude/hopeful-hamilton-yd346p`) — DONE in code (Linux); OFF by default
 
 Replaces the dark Pillow cards below with the style of `docs/card-samples/invoice-reference.jpg`. Same public API (`price_card`, `pre_invoice_card`, `final_invoice_card`), same text fallback, `BOT_IMAGE_CARDS` still default `false`.

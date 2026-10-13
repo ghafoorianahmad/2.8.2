@@ -90,6 +90,19 @@ def _int_range(lo: int, hi: int) -> Callable[[str], Optional[str]]:
     return check
 
 
+def _card_number(value: str) -> Optional[str]:
+    if value == "":
+        return None
+    digits = re.sub(r"[ -]", "", value)
+    return None if re.fullmatch(r"\d{16}", digits) else "must be a 16-digit card number"
+
+
+def _sheba(value: str) -> Optional[str]:
+    if value == "":
+        return None
+    return None if re.fullmatch(r"(?i)IR\d{24}", value.replace(" ", "")) else "must be a sheba like IR followed by 24 digits"
+
+
 def _bool(value: str) -> Optional[str]:
     return None if value in ("true", "false") else "must be true or false"
 
@@ -121,6 +134,9 @@ def _token(value: str) -> Optional[str]:
 #: only be changed on the server itself.
 EDITABLE: dict[str, tuple[Callable[[str], Optional[str]], bool]] = {
     "BANK_ACCOUNT_TEXT": (_text(500), False),
+    "PAYMENT_CARD_NUMBER": (_card_number, False),
+    "PAYMENT_SHEBA": (_sheba, False),
+    "PAYMENT_OWNER": (_text(80), False),
     "RESERVE_HOURS": (_int_range(1, 168), False),
     "MAX_ORDER_QTY": (_int_range(1, 1_000_000), False),
     "PRICE_LEVEL_BOT": (_int_range(1, 5), False),

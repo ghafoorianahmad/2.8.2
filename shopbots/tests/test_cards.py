@@ -61,8 +61,7 @@ def test_cards_are_png_images_with_the_light_theme():
     price = render.price_card(shop="عصر ارتباطات ۲", name="Apple iPhone 17 Pro", color="نارنجی",
                               price=118_900_000, in_stock=True)
     pre = render.pre_invoice_card(shop="عصر ارتباطات ۲", order_id=7, items=ITEMS, total=79_400_000,
-                                  card_number="6037-0000-1111-2222", card_owner="نمونه",
-                                  bank_name="بانک نمونه")
+                                  payment={"card_number": "6037991122223333", "owner": "نمونه"})
     final = render.final_invoice_card(shop="عصر ارتباطات ۲", order_id=7, items=ITEMS,
                                       total=79_400_000, partial=True, accounting_no=2673)
     for png in (price, pre, final):
@@ -84,9 +83,8 @@ def test_long_and_odd_input_does_not_fail():
 
 
 @needs_browser
-def test_pre_invoice_without_card_number_says_payment_follows():
-    png = render.pre_invoice_card(shop="s", order_id=1, items=ITEMS, total=1,
-                                  card_number="XXXX-XXXX-XXXX-XXXX")
+def test_pre_invoice_without_payment_info_renders():
+    png = render.pre_invoice_card(shop="s", order_id=1, items=ITEMS, total=1, payment={})
     assert png and png.startswith(PNG_MAGIC)
 
 
@@ -249,3 +247,68 @@ def test_bale_upload_is_multipart_and_log_safe():
     assert asyncio.run(run()) == {"message_id": 5}
     assert seen["ctype"].startswith("multipart/form-data")
     assert PNG_MAGIC in seen["body"] and b'name="chat_id"' in seen["body"]
+
+
+# ============================ invoice card rules (HTML level, no browser) ====
+def _html(monkeypatch, fn, **kw):
+    """The page the card would screenshot."""
+    seen = {}
+    monkeypatch.setattr(render, "_screenshot", lambda page, h: seen.setdefault("p", page) and b"x")
+    assert fn(shop="عصر ارتباطات ۲", order_id=1042, items=ITEMS, total=525_000_000, **kw) == b"x"
+    return seen["p"]
+
+
+CONTACT = {"address": "نشانی نمونه", "phone": "02112345678", "bot_id": "@sample_bot", "thanks": "سپاس از خرید شما"}
+
+
+def test_invoice_has_logo_no_signature_no_color_and_buyer_label(monkeypatch):
+    page = _html(monkeypatch, render.final_invoice_card, accounting_no=7, contact=CONTACT, customer="احمد")
+    assert 'class="logo"' in page and "data:image/png;base64" in page
+    assert "مهر و امضا" not in page and "با آرزوی همدلی" not in page
+    assert "مشکی" not in page and "رنگ" not in page       # item color is never shown
+    assert "خریدار:" in page and "مشتری:" not in page
+    assert "حسابداری" not in page
+    assert "اعتبار" not in page and "ممکن است تغییر کند" not in page   # no price-validity line
+
+
+def test_invoice_total_in_words_and_tracking_message(monkeypatch):
+    page = _html(monkeypatch, render.final_invoice_card, accounting_no=7, contact=CONTACT)
+    assert "پانصد و بیست و پنج میلیون ریال" in page
+    assert "سفارش شما ثبت شد — شمارهٔ پیگیری: ۱۰۴۲" in page
+
+
+def test_titles_follow_the_order_state(monkeypatch):
+    assert "پیش‌فاکتور</div>" in _html(monkeypatch, render.pre_invoice_card)
+    final = _html(monkeypatch, render.final_invoice_card, accounting_no=7)
+    assert "فاکتور فروش</div>" in final and "پیش‌فاکتور" not in final
+
+
+def test_footer_is_built_from_the_given_shop_settings(monkeypatch):
+    page = _html(monkeypatch, render.pre_invoice_card, contact=CONTACT)
+    for value in ("نشانی نمونه", "@sample_bot", "سپاس از خرید شما", "۰۲۱۱۲۳۴۵۶۷۸"):
+        assert value in page
+    assert 'class="contact"' not in _html(monkeypatch, render.pre_invoice_card)   # nothing configured
+
+
+def test_payment_section_only_when_configured(monkeypatch):
+    none = _html(monkeypatch, render.pre_invoice_card, payment={"card_number": "", "sheba": None})
+    assert 'class="payrow"' not in none and "شمارهٔ شبا" not in none and "شمارهٔ کارت" not in none
+    full = _html(monkeypatch, render.pre_invoice_card, payment={
+        "card_number": "6037991122223333", "sheba": "ir062960000000100324200001", "owner": "احمد نمونه"})
+    assert "6037 9911 2222 3333" in full and "IR062960000000100324200001" in full and "احمد نمونه" in full
+    partial = _html(monkeypatch, render.pre_invoice_card, payment={"owner": "فقط نام"})
+    assert "فقط نام" in partial and "شمارهٔ کارت" not in partial
+
+
+def test_price_card_has_no_accounting_word(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(render, "_screenshot", lambda page, h: seen.setdefault("p", page) and b"x")
+    render.price_card(shop="s", name="n", color="سبز", price=1, in_stock=True)
+    assert "حسابداری" not in seen["p"] and "سبز" in seen["p"]      # the color column stays on this card
+
+
+def test_missing_logo_does_not_break_the_card(monkeypatch, tmp_path):
+    render._logo_tag.cache_clear()
+    monkeypatch.setattr(render, "LOGO_FILE", tmp_path / "none.png")
+    assert render._logo_tag() == ""
+    render._logo_tag.cache_clear()

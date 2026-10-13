@@ -31,6 +31,7 @@ import tempfile
 from pathlib import Path
 
 from .jdate import shamsi_date
+from .numwords import amount_in_words
 
 logger = logging.getLogger("shopbots.cards")
 
@@ -38,6 +39,7 @@ ASSETS = Path(__file__).resolve().parent / "assets"
 FONT_REGULAR = ASSETS / "Vazirmatn-Regular.ttf"
 FONT_BOLD = ASSETS / "Vazirmatn-Bold.ttf"
 ICONS_FILE = ASSETS / "icons.json"
+LOGO_FILE = ASSETS / "logo.png"       # shop logo (transparent PNG)
 
 W = 1080
 WINDOW_PAD = 200            # extra window height; the image is cropped to the page
@@ -215,14 +217,28 @@ td.num{text-align:center;font-weight:700;white-space:nowrap}
 .trow .lb{display:flex;align-items:center;gap:10px;font-size:25px;font-weight:700;white-space:nowrap}
 .trow .vl{display:flex;align-items:baseline;gap:10px;white-space:nowrap}
 .trow .vl b{font-size:36px}.trow .vl small{font-size:22px;opacity:.9}
-.trow.big{flex:1.7;background:rgba(255,255,255,.08)}
+.trow.big{flex:1.7;background:rgba(255,255,255,.08);flex-direction:column;align-items:stretch;justify-content:center;gap:4px}
+.trow.big .bt{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.trow .words{font-size:22px;opacity:.95;text-align:right;line-height:1.4}
+.trow.msg{justify-content:flex-start;gap:12px;font-size:24px;font-weight:700;line-height:1.4}
+.trow.msg .ic{flex:none;color:#7fe3b5}
 .trow.big .vl b{font-size:60px;line-height:1.1}
 .notes{flex:1;overflow:hidden;min-width:0;border:2px solid var(--line);border-radius:22px;background:#fff;padding:16px 22px}
 .notes h3{font-size:30px;color:var(--navy);display:flex;align-items:center;gap:10px;margin-bottom:8px}
 .notes ol{list-style-type:persian}.notes li{font-size:21px;color:var(--ink);margin-inline-start:22px;margin-bottom:4px;line-height:1.55}
-.pay{font-size:31px;font-weight:700;white-space:nowrap;direction:ltr;text-align:center;color:var(--navy);margin:6px 0}
-.pay-meta{font-size:21px;color:var(--mute);line-height:1.5}
-.foot{margin-top:20px;display:flex;justify-content:space-between;align-items:flex-end;gap:18px}
+.payrow{margin-top:20px;display:flex;gap:14px}
+.pf{flex:1;min-width:0;border:2px solid var(--line);border-radius:20px;background:var(--soft);padding:12px 18px}
+.pf small{display:flex;align-items:center;gap:8px;font-size:20px;color:var(--mute)}.pf small .ic{color:var(--navy)}
+.pf b{display:block;margin-top:2px;font-size:24px;color:var(--navy);white-space:nowrap;overflow:hidden}
+.pf b.ltr{direction:ltr;text-align:right}
+.pf.card{flex:1.1}.pf.sheba{flex:1.7}.pf.sheba b{font-size:21px}.pf.owner{flex:.9}
+.logo{height:96px;max-width:300px;object-fit:contain}
+.contact{margin-top:18px;border:2px solid var(--line);border-radius:22px;background:rgba(255,255,255,.9);padding:14px 22px;text-align:center}
+.contact .ln{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 26px;font-size:21px;color:var(--ink)}
+.contact .it{display:inline-flex;align-items:center;gap:8px;max-width:100%}.contact .it .ic{color:var(--navy);flex:none}
+.contact .it span{overflow:hidden;text-overflow:ellipsis}
+.contact .th{margin-top:6px;font-size:23px;font-weight:700;color:var(--navy)}
+.foot{margin-top:20px;display:flex;justify-content:space-between;align-items:center;gap:18px}
 .fdate{border:2px solid var(--line);border-radius:20px;background:var(--soft);padding:12px 20px;display:flex;align-items:center;gap:14px}
 .fdate .ic{color:var(--navy)}.fdate small{display:block;font-size:20px;color:var(--mute)}.fdate b{font-size:26px;color:var(--navy)}
 .sign{text-align:center;min-width:360px;padding-bottom:6px}
@@ -262,10 +278,14 @@ _ILLUS = ('<svg class="illus" viewBox="0 0 260 190" aria-hidden="true">'
           '</svg>')
 
 NOTE_LINES = (
-    "قیمت‌ها به ریال است و تا زمان تأیید نهایی در حسابداری ممکن است تغییر کند.",
     "پس از واریز، تصویر رسید را در همین گفتگو برای ما بفرستید.",
     "در صورت هرگونه سؤال با پشتیبانی فروشگاه در ارتباط باشید.",
 )
+PRICE_NOTES = (
+    "قیمت‌ها به ریال است و تا زمان تأیید نهایی ممکن است تغییر کند.",
+    "موجودی و قیمت لحظه‌ای است.",
+)
+NO_PAYMENT_NOTE = "جزئیات پرداخت در پیام بعدی برای شما ارسال می‌شود."
 
 
 # ----------------------------------------------------------------- page parts
@@ -277,7 +297,7 @@ def _page(body: str, height: int) -> str:
             f'<div class="page">{body}</div></body></html>')
 
 
-def _head(shop: str, title: str, number_label: str, number, date_text: str, cust_label="مشتری",
+def _head(shop: str, title: str, number_label: str, number, date_text: str, cust_label="خریدار",
           customer: str = "") -> str:
     cust = f'<div class="meta">{icon("user", 26)}<b>{esc(cust_label)}:</b><span class="v">{esc(customer)}</span></div>' if customer else ""
     num = (f'<div class="meta">{icon("file-invoice", 26)}<b>{esc(number_label)}:</b>'
@@ -290,11 +310,55 @@ def _head(shop: str, title: str, number_label: str, number, date_text: str, cust
             f'{cust}</div></div><div class="sep"></div>')
 
 
-def _foot(date_text: str, sign: str = "مهر و امضای فروشگاه") -> str:
-    return (f'<div class="foot"><div class="fdate">{icon("calendar", 44)}<div><small>تاریخ صدور</small>'
-            f'<b>{esc(date_text)}</b></div></div>'
+def _date_box(date_text: str) -> str:
+    return (f'<div class="fdate">{icon("calendar", 44)}<div><small>تاریخ صدور</small>'
+            f'<b>{esc(date_text)}</b></div></div>')
+
+
+def _foot_signature(date_text: str, sign: str) -> str:
+    """Price card footer: date box and a signature line."""
+    return (f'<div class="foot">{_date_box(date_text)}'
             f'<div class="sign"><small>با آرزوی همدلی و همکاری بیشتر</small>'
             f'<div class="ln"><i></i><span>{esc(sign)}</span><i></i></div></div></div>')
+
+
+@functools.lru_cache(maxsize=1)
+def _logo_tag() -> str:
+    """The shop logo as an inline image; empty when the file is missing/unreadable."""
+    try:
+        raw = LOGO_FILE.read_bytes()
+    except OSError:
+        return ""
+    if not raw.startswith(b"\x89PNG"):
+        return ""
+    return f'<img class="logo" alt="" src="data:image/png;base64,{base64.b64encode(raw).decode("ascii")}">'
+
+
+def _contact_box(contact: dict | None) -> str:
+    """Shop address, phone, Bale bot id and a thank-you line (all from the shop config;
+    empty entries are skipped, no entries at all = no box)."""
+    c = contact or {}
+    items = []
+    for key, ic in (("address", "map-pin"), ("phone", "phone"), ("bot_id", "message-circle")):
+        value = str(c.get(key) or "").strip()
+        if value:
+            shown = fa_digits(value) if key == "phone" else value
+            items.append(f'<span class="it">{icon(ic, 24)}<span>{esc(shown)}</span></span>')
+    thanks = str(c.get("thanks") or "").strip()
+    if not items and not thanks:
+        return ""
+    th = f'<div class="th">{esc(thanks)}</div>' if thanks else ""
+    return f'<div class="contact"><div class="ln">{"".join(items)}</div>{th}</div>'
+
+
+def _foot_invoice(date_text: str, contact: dict | None) -> str:
+    """Invoice footer: issue date, the shop logo (where the signature box used to be)
+    and the contact band."""
+    return (f'<div class="foot">{_date_box(date_text)}{_logo_tag()}</div>{_contact_box(contact)}')
+
+
+def _foot_height(contact: dict | None) -> int:
+    return 110 + (20 + 130 if _contact_box(contact) else 0)
 
 
 def _th(label: str, ic: str) -> str:
@@ -307,15 +371,12 @@ def _items_table(items, currency: str) -> str:
         qty = float(it.get("qty") or 0)
         unit = float(it.get("unit_price") or 0)
         name = it.get("name") or ""
-        sub = f"رنگ: {it['variant']}" if it.get("variant") else ""
-        l2 = f'<div class="l2">{esc(sub)}</div>' if sub else ""
         rows.append(
             f'<tr><td class="n">{fa_digits(idx)}</td>'
             f'<td class="nm"><div class="row">{icon(_item_icon(name), 30)}'
-            f'<div class="tx"><div class="l1">{esc(name)}</div>{l2}</div></div></td>'
+            f'<div class="tx"><div class="l1">{esc(name)}</div></div></div></td>'
             f'<td class="num">{fa_num(qty)}</td><td class="num">{fa_num(unit)}</td>'
             f'<td class="num">{fa_num(qty * unit)}</td></tr>')
-    cur = esc(currency)
     return ('<table><colgroup><col style="width:9%"><col style="width:37%"><col style="width:12%">'
             '<col style="width:21%"><col style="width:21%"></colgroup><thead><tr>'
             f'{_th("ردیف", "hash")}{_th("شرح کالا", "list-details")}{_th("تعداد", "package")}'
@@ -323,16 +384,21 @@ def _items_table(items, currency: str) -> str:
             f'</tr></thead><tbody>{"".join(rows)}</tbody></table>')
 
 
-def _totals(rows: list[tuple[str, str, str, str]], big: tuple[str, str, str]) -> str:
-    """rows: (icon, label, value, unit); big: (icon, label, value, unit) as one row."""
+def _totals(rows: list[tuple[str, str, str, str]], big: tuple[str, str, str, str],
+            words: str = "", message: str = "") -> str:
+    """rows: (icon, label, value, unit); big: (icon, label, value, unit) as one row with
+    optional amount-in-words under it; message: a full-width status row."""
     out = []
     for ic, label, value, unit in rows:
         u = f"<small>{esc(unit)}</small>" if unit else ""
         out.append(f'<div class="trow"><span class="lb">{icon(ic, 30)}{esc(label)}</span>'
                    f'<span class="vl"><b>{esc(value)}</b>{u}</span></div>')
+    if message:
+        out.append(f'<div class="trow msg">{icon("circle-check", 34)}<span>{esc(message)}</span></div>')
     ic, label, value, unit = big
-    out.append(f'<div class="trow big"><span class="lb">{icon(ic, 34)}{esc(label)}</span>'
-               f'<span class="vl"><b>{esc(value)}</b><small>{esc(unit)}</small></span></div>')
+    w = f'<div class="words">{esc(words)}</div>' if words else ""
+    out.append(f'<div class="trow big"><div class="bt"><span class="lb">{icon(ic, 34)}{esc(label)}</span>'
+               f'<span class="vl"><b>{esc(value)}</b><small>{esc(unit)}</small></span></div>{w}</div>')
     return f'<div class="totals">{"".join(out)}</div>'
 
 
@@ -341,12 +407,33 @@ def _notes(lines, extra: str = "") -> str:
     return f'<div class="notes"><h3>{icon("notes", 32)}توضیحات</h3>{extra}<ol>{li}</ol></div>'
 
 
-def _pay_box(card_number: str, card_owner: str, bank_name: str) -> str:
-    digits = "".join(ch for ch in str(card_number or "") if ch.isdigit())
-    groups = " ".join(digits[i:i + 4] for i in range(0, len(digits), 4))
-    return (f'<div class="pay-title" style="font-size:22px;color:var(--mute)">{icon("credit-card", 24)} پرداخت با کارت‌به‌کارت</div>'
-            f'<div class="pay">{esc(groups)}</div>'
-            f'<div class="pay-meta">به نام: {esc(card_owner)} — {esc(bank_name)}</div>')
+def _payment_fields(payment: dict | None) -> list[tuple[str, str, str, str, bool]]:
+    """(css class, icon, label, value, ltr) for each configured payment field."""
+    p = payment or {}
+    out = []
+    digits = "".join(ch for ch in str(p.get("card_number") or "").translate(
+        str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")) if ch.isdigit())
+    if digits:
+        out.append(("card", "credit-card", "شمارهٔ کارت", " ".join(digits[i:i + 4] for i in range(0, len(digits), 4)), True))
+    sheba = str(p.get("sheba") or "").replace(" ", "").upper()
+    if sheba:
+        out.append(("sheba", "building-bank", "شمارهٔ شبا", sheba, True))
+    owner = str(p.get("owner") or "").strip()
+    if owner:
+        out.append(("owner", "user-circle", "صاحب حساب", owner, False))
+    return out
+
+
+def _payment_box(payment: dict | None) -> str:
+    """The payment section; nothing at all when no field is configured."""
+    fields = _payment_fields(payment)
+    if not fields:
+        return ""
+    cells = "".join(
+        f'<div class="pf {cls}"><small>{icon(ic, 22)}{esc(label)}</small>'
+        f'<b class="{"ltr" if ltr else ""}">{esc(value)}</b></div>'
+        for cls, ic, label, value, ltr in fields)
+    return f'<div class="payrow">{cells}</div>'
 
 
 def _safe(fn):
@@ -361,13 +448,15 @@ def _safe(fn):
     return wrapper
 
 
-# Fixed block heights (px) used to size the page; rows never wrap (ellipsis).
+# Fixed block heights (px) used to size the page; rows never wrap (2-line clamp).
 _H_HEAD, _H_TABLE_HEAD, _H_ROW = 250, 70, 96
 _H_DARK, _H_FOOT, _H_BOT = 340, 150, 150
+_H_PAY = 110
 
 
-def _height(n_rows: int, extra_top: int = 0, dark: int = _H_DARK) -> int:
-    return 34 + _H_HEAD + extra_top + _H_TABLE_HEAD + n_rows * _H_ROW + 20 + dark + 20 + _H_FOOT + 60
+def _height(n_rows: int, dark: int = _H_DARK, pay: int = 0, foot: int = _H_FOOT) -> int:
+    return (34 + _H_HEAD + _H_TABLE_HEAD + n_rows * _H_ROW + 20 + (pay + 20 if pay else 0)
+            + dark + 20 + foot + 60)
 
 
 # ----------------------------------------------------------------- price card
@@ -388,54 +477,57 @@ def price_card(*, shop: str, name: str, color: str, price, in_stock: bool,
     totals = _totals([], ("cash", "قیمت", fa_num(price), currency))
     dark = 230
     body = (_head(shop, "کارت قیمت", "", "", d) + table
-            + f'<div class="dark" style="height:{dark}px">{totals}{_notes(NOTE_LINES[:1] + ("موجودی و قیمت لحظه‌ای است.",))}</div>'
-            + _foot(d, "فروشگاه"))
+            + f'<div class="dark" style="height:{dark}px">{totals}{_notes(PRICE_NOTES)}</div>'
+            + _foot_signature(d, "فروشگاه"))
     h = 34 + _H_HEAD + _H_TABLE_HEAD + 110 + 20 + dark + 20 + _H_FOOT + 60
     return _screenshot(_page(body, h), h)
 
 
 # ---------------------------------------------------------------- pre-invoice
 @_safe
-def pre_invoice_card(*, shop: str, order_id, items, total, card_number: str = "",
-                     card_owner: str = "", bank_name: str = "", currency: str = "ریال",
+def pre_invoice_card(*, shop: str, order_id, items, total, payment: dict | None = None,
+                     contact: dict | None = None, currency: str = "ریال",
                      date=None, customer: str = "") -> bytes | None:
-    """Order number, Shamsi date, lines, total and the bank card to pay into."""
+    """Pre-invoice (placed order): lines, total (digits + words) and, when configured, the
+    payment details. ``payment`` = {card_number, sheba, owner}; ``contact`` = {address,
+    phone, bot_id, thanks}."""
     items = list(items or [])[:10]
     d = fa_digits(shamsi_date(date))
-    has_card = any(ch.isdigit() for ch in str(card_number or ""))
+    pay_html = _payment_box(payment)
     totals = _totals(
         [("package", "تعداد اقلام", fa_digits(len(items)), "قلم")],
-        ("cash", "مبلغ قابل پرداخت", fa_num(total), currency))
-    extra = _pay_box(card_number, card_owner, bank_name) if has_card else ""
-    lines = NOTE_LINES if not has_card else NOTE_LINES[1:]
-    dark = _H_DARK + (70 if has_card else 0)
+        ("cash", "مبلغ قابل پرداخت", fa_num(total), currency),
+        words=amount_in_words(total, currency))
+    lines = NOTE_LINES if pay_html else (NO_PAYMENT_NOTE,) + NOTE_LINES[1:]
     body = (_head(shop, "پیش‌فاکتور", "شماره سفارش", order_id, d, customer=customer)
-            + _items_table(items, currency)
-            + f'<div class="dark" style="height:{dark}px">{totals}{_notes(lines, extra)}</div>' + _foot(d))
-    h = _height(len(items), dark=dark)
+            + _items_table(items, currency) + pay_html
+            + f'<div class="dark" style="height:{_H_DARK}px">{totals}{_notes(lines)}</div>'
+            + _foot_invoice(d, contact))
+    h = _height(len(items), pay=_H_PAY if pay_html else 0, foot=_foot_height(contact))
     return _screenshot(_page(body, h), h)
 
 
 # -------------------------------------------------------------- final invoice
 @_safe
 def final_invoice_card(*, shop: str, order_id, items, total, partial: bool = False,
-                       accounting_no=None, currency: str = "ریال", date=None,
-                       customer: str = "") -> bytes | None:
-    """Invoice issued in accounting. Lines/prices are the order's own (see PROGRESS)."""
+                       accounting_no=None, contact: dict | None = None, currency: str = "ریال",
+                       date=None, customer: str = "") -> bytes | None:
+    """Sales invoice (the order was invoiced in accounting). Lines/prices are the order's own
+    (see PROGRESS). The order number doubles as the tracking number."""
     items = list(items or [])[:10]
     d = fa_digits(shamsi_date(date))
-    rows = [("package", "تعداد اقلام", fa_digits(len(items)), "قلم")]
-    if accounting_no:
-        rows.append(("hash", "ثبت حسابداری", fa_digits(accounting_no), ""))
-    totals = _totals(rows, ("cash", "جمع سفارش" if partial else "جمع فاکتور", fa_num(total), currency))
+    message = f"سفارش شما ثبت شد — شمارهٔ پیگیری: {fa_digits(order_id)}" if accounting_no else ""
+    totals = _totals(
+        [("package", "تعداد اقلام", fa_digits(len(items)), "قلم")],
+        ("cash", "جمع سفارش" if partial else "جمع فاکتور", fa_num(total), currency),
+        words=amount_in_words(total, currency), message=message)
     badge = ('<span class="badge good">' + icon("circle-check", 24)
              + ("بخشی از سفارش فاکتور شد" if partial else "فاکتور صادر شد") + "</span>")
-    lines = ("ارسال پس از آماده‌سازی انجام می‌شود.", NOTE_LINES[2])
-    dark = _H_DARK
-    extra = f'<p style="margin-bottom:8px">{badge}</p>'
-    body = (_head(shop, "فاکتور", "شماره سفارش", order_id, d, customer=customer)
+    lines = ("ارسال پس از آماده‌سازی انجام می‌شود.", NOTE_LINES[1])
+    body = (_head(shop, "فاکتور فروش", "شماره سفارش", order_id, d, customer=customer)
             + _items_table(items, currency)
-            + f'<div class="dark" style="height:{dark}px">{totals}{_notes(lines, extra)}</div>'
-            + _foot(d))
-    h = _height(len(items), dark=dark)
+            + f'<div class="dark" style="height:{_H_DARK + (40 if message else 0)}px">{totals}'
+              f'{_notes(lines, f"<p style=margin-bottom:8px>{badge}</p>")}</div>'
+            + _foot_invoice(d, contact))
+    h = _height(len(items), dark=_H_DARK + (40 if message else 0), foot=_foot_height(contact))
     return _screenshot(_page(body, h), h)

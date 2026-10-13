@@ -1137,9 +1137,10 @@ class BotEngine:
                 lambda: pre_invoice_card(
                     shop=texts.SHOP.get("shop_name", ""), order_id=order_id,
                     items=order.get("items"), total=order.get("total"),
-                    card_number=texts.SHOP.get("card_number", ""),
-                    card_owner=texts.SHOP.get("card_owner", ""),
-                    bank_name=texts.SHOP.get("bank_name", ""),
+                    payment={"card_number": order.get("payment_card_number"),
+                             "sheba": order.get("payment_sheba"),
+                             "owner": order.get("payment_owner")},
+                    contact=self._card_contact(),
                     currency=texts.SHOP.get("currency", "ریال"),
                     date=order.get("created_at"),
                 ),
@@ -1152,6 +1153,12 @@ class BotEngine:
         if order_id is not None and not self.store.is_announced("neworder", int(order_id)):
             self.store.mark_announced("neworder", int(order_id), platform, chat_id)
             await self._announce_new_order(order)
+
+    @staticmethod
+    def _card_contact() -> dict:
+        """Footer of the invoice cards, from the shop texts (messages.fa.json)."""
+        return {"address": texts.SHOP.get("shop_address", ""), "phone": texts.SHOP.get("shop_phone", ""),
+                "bot_id": texts.SHOP.get("bot_id", ""), "thanks": texts.SHOP.get("invoice_thanks", "")}
 
     @staticmethod
     def _payment_text(order_id, total: str, api_instructions) -> str:
@@ -1651,7 +1658,7 @@ class BotEngine:
             lambda: final_invoice_card(
                 shop=texts.SHOP.get("shop_name", ""), order_id=order_id, items=order.get("items"),
                 total=order.get("total"), partial=kind == "order_partially_invoiced",
-                accounting_no=order.get("accounting_order_no"),
+                accounting_no=order.get("accounting_order_no"), contact=self._card_contact(),
                 currency=texts.SHOP.get("currency", "ریال"),
                 date=order.get("invoiced_at"),
             ),

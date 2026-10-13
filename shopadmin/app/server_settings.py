@@ -14,6 +14,9 @@ from .persian import to_persian_digits
 #: key -> (label, help text, kind) ; kind: text | int | bool | secret
 SETTINGS_FA: dict[str, tuple[str, str, str]] = {
     "BANK_ACCOUNT_TEXT": ("متن حساب بانکی", "پس از ثبت سفارش برای مشتری فرستاده می‌شود.", "text"),
+    "PAYMENT_CARD_NUMBER": ("شمارهٔ کارت پرداخت", "۱۶ رقم؛ روی پیش‌فاکتور تصویری نمایش داده می‌شود. خالی = بخش پرداخت نمایش داده نمی‌شود.", "text"),
+    "PAYMENT_SHEBA": ("شمارهٔ شبا", "به شکل IR و ۲۴ رقم؛ خالی = نمایش داده نمی‌شود.", "text"),
+    "PAYMENT_OWNER": ("نام صاحب حساب", "روی پیش‌فاکتور تصویری نمایش داده می‌شود.", "text"),
     "RESERVE_HOURS": ("مهلت پرداخت (ساعت)", "کالای سفارش تا این مدت برای مشتری رزرو می‌ماند.", "int"),
     "MAX_ORDER_QTY": ("حداکثر تعداد هر قلم", "", "int"),
     "PRICE_LEVEL_BOT": ("سطح قیمت ربات‌ها (۱ تا ۵)", "۱ = قیمت اصلی (Gey).", "int"),
@@ -41,6 +44,8 @@ _PROBLEMS = (
     (re.compile(r"must be at most (\d+) characters"), "حداکثر {0} نویسه"),
     (re.compile(r"must be a single line"), "باید یک خط باشد"),
     (re.compile(r"cannot be changed remotely"), "از راه دور قابل تغییر نیست"),
+    (re.compile(r"must be a 16-digit card number"), "شمارهٔ کارت باید ۱۶ رقم باشد"),
+    (re.compile(r"must be a sheba"), "شبا باید IR و ۲۴ رقم باشد"),
     (re.compile(r"does not look like a bot token"), "شبیه توکن ربات نیست"),
     (re.compile(r"use entries like"), "به شکل bale:123456 و با کاما جدا کنید"),
     (re.compile(r"use warehouse codes"), "کد انبارها را با کاما جدا کنید"),

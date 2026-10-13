@@ -91,6 +91,10 @@ class Settings:
     price_level_site: int = 3
     reserve_hours: int = 12
     bank_account_text: str = ""
+    #: Payment details shown on the bot's pre-invoice card (all optional; empty = no section).
+    payment_card_number: str = ""
+    payment_sheba: str = ""
+    payment_owner: str = ""
     max_order_qty: int = 10000
     allow_shared_person_code: bool = False
     #: Customers awaiting approval may order up to these limits; the totals
@@ -182,6 +186,9 @@ class Settings:
             price_level_site=_env_int("PRICE_LEVEL_SITE", 3),
             reserve_hours=_env_int("RESERVE_HOURS", 12),
             bank_account_text=_env("BANK_ACCOUNT_TEXT", ""),
+            payment_card_number=_env("PAYMENT_CARD_NUMBER", ""),
+            payment_sheba=_env("PAYMENT_SHEBA", ""),
+            payment_owner=_env("PAYMENT_OWNER", ""),
             max_order_qty=_env_int("MAX_ORDER_QTY", 10000),
             allow_shared_person_code=_env_bool("ALLOW_SHARED_PERSON_CODE", False),
             pending_max_order_items=_env_int("PENDING_MAX_ORDER_ITEMS", 3),

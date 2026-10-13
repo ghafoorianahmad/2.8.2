@@ -53,6 +53,8 @@ def test_approval_flow_then_order(client, reader):
     assert body["total"] == 200.0
     assert body["items"][0]["kala_code"] == 101
     assert body["payment_instructions"] == "pay to account 123"
+    # structured payment details are None unless configured (the card then has no section)
+    assert body["payment_card_number"] is None and body["payment_sheba"] is None
 
 
 def test_order_rejects_insufficient_stock(client, reader):

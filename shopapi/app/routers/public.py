@@ -338,7 +338,13 @@ def create_order(
         )
     db.audit(role, "order_create", f"order id={order['id']}")
     db.add_event("order_created", order["id"], role)
-    return OrderOut(**order, payment_instructions=settings.bank_account_text or None)
+    return OrderOut(
+        **order,
+        payment_instructions=settings.bank_account_text or None,
+        payment_card_number=settings.payment_card_number or None,
+        payment_sheba=settings.payment_sheba or None,
+        payment_owner=settings.payment_owner or None,
+    )
 
 
 @router.post("/orders/{order_id}/receipt", response_model=OrderOut)

@@ -10,5 +10,6 @@ Not sent anywhere; `BOT_IMAGE_CARDS` is off by default.
 | --- | --- |
 | `price-card.png` | Price card (first colour pick of a product view) — in stock |
 | `price-card-out-of-stock.png` | Same card, out of stock, very long mixed Persian/Latin name (wraps to 2 lines) |
-| `pre-invoice.png` | Pre-invoice sent right after the order is placed (card number is a placeholder) |
-| `final-invoice.png` | Invoice sent on the `order_invoiced` event |
+| `pre-invoice.png` | Pre-invoice «پیش‌فاکتور» sent right after the order is placed, with payment info (fake card/sheba/owner) |
+| `pre-invoice-no-payment.png` | Same, payment info not configured: the payment section is absent |
+| `final-invoice.png` | «فاکتور فروش» sent on the `order_invoiced` event (logo, total in words, tracking line, shop footer) |

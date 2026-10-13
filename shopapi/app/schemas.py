@@ -98,6 +98,10 @@ class OrderOut(BaseModel):
     created_at: str
     items: list[OrderItemOut]
     payment_instructions: Optional[str] = None
+    #: Structured payment details for the pre-invoice card (None = not configured).
+    payment_card_number: Optional[str] = None
+    payment_sheba: Optional[str] = None
+    payment_owner: Optional[str] = None
     #: None | "partial" | "full" (recipe R5, synced from Facto.ordercode)
     invoice_state: Optional[str] = None
     invoiced_at: Optional[str] = None

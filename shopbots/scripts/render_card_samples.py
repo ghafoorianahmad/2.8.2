@@ -10,13 +10,16 @@ shop = 'عصر ارتباطات ۲'
 items = [{"name": "گوشی Samsung Galaxy S25 Ultra 256GB", "variant": "مشکی", "qty": 1, "unit_price": 78500000},
          {"name": "کاور شفاف iPhone 17 Pro", "qty": 2, "unit_price": 450000},
          {"name": "شارژر سریع ۶۵ وات Anker", "qty": 1, "unit_price": 1850000}]
+contact = {'address': 'نشانی نمونه: تهران، خیابان نمونه، پلاک ۱۲', 'phone': '۰۲۱-۱۲۳۴۵۶۷۸', 'bot_id': '@sample_bot', 'thanks': 'از خرید شما سپاسگزاریم.'}
+pay = {'card_number': '6037991122223333', 'sheba': 'IR062960000000100324200001', 'owner': 'احمد نمونه'}
 total = sum(i['qty'] * i['unit_price'] for i in items)
 d = dt.date(2026, 10, 12)
 cards = {
     'price-card.png': price_card(shop=shop, name='Apple iPhone 17 Pro Max 512GB', color='نارنجی کیهانی', price=118900000, in_stock=True, date=d),
     'price-card-out-of-stock.png': price_card(shop=shop, name='گوشی شیائومی Redmi Note 14 Pro+ 5G ظرفیت ۵۱۲ گیگابایت رم ۱۲', color='سبز', price=24500000, in_stock=False, date=d),
-    'pre-invoice.png': pre_invoice_card(shop=shop, order_id=1042, items=items, total=total, card_number='6037-0000-1111-2222', card_owner='نام صاحب کارت (نمونه)', bank_name='بانک نمونه', date=d, customer='احمد نمونه'),
-    'final-invoice.png': final_invoice_card(shop=shop, order_id=1042, items=items, total=total, accounting_no=2673, date=d, customer='احمد نمونه'),
+    'pre-invoice.png': pre_invoice_card(shop=shop, order_id=1042, items=items, total=total, payment=pay, contact=contact, date=d, customer='احمد نمونه'),
+    'pre-invoice-no-payment.png': pre_invoice_card(shop=shop, order_id=1042, items=items, total=total, contact=contact, date=d, customer='احمد نمونه'),
+    'final-invoice.png': final_invoice_card(shop=shop, order_id=1042, items=items, total=total, accounting_no=2673, contact=contact, date=d, customer='احمد نمونه'),
 }
 for name, png in cards.items():
     if not png:
