@@ -107,6 +107,8 @@ class FakeShopApi:
         self.catalog_imports: list[list] = []
         self.catalog_checks = 0
         self.catalog_last_check: dict | None = None
+        # ---- v2.4.0: forgot password ----
+        self.pw_requests: dict[int, dict] = {}
 
     # ---- helpers used by tests ------------------------------------------
     def add_staff(self, username: str, password: str = OWNER_PASSWORD, role: str = "operator",
@@ -233,6 +235,45 @@ class FakeShopApi:
             return reply(200, {"token": token, "expires_at": "2099-01-01T00:00:00+00:00",
                                "user": self.staff_out(row), "permissions": []})
 
+        if path == "/auth/forgot":
+            row = self.find_staff(body.get("username", ""))
+            rid = 10 ** 9 + len(self.pw_requests)
+            token = f"secret-{len(self.pw_requests) + 1}"
+            if row is not None and row["active"]:
+                rid = len(self.pw_requests) + 1
+                self.pw_requests[rid] = {"id": rid, "staff_id": row["id"], "token": token,
+                                         "status": "pending", "created_at": TS}
+            return reply(200, {"request_id": rid, "token": token})
+        if path in ("/auth/forgot/status", "/auth/forgot/complete"):
+            req = self.pw_requests.get(body.get("request_id"))
+            if req is None or req["token"] != body.get("token"):
+                if path.endswith("status"):
+                    return reply(200, {"status": "pending"})
+                return detail(403, "Request is not approved")
+            if path.endswith("status"):
+                return reply(200, {"status": req["status"]})
+            if req["status"] != "approved":
+                return detail(403, "Request is not approved")
+            owner = self.staff[req["staff_id"]]
+            if body["new_password"] == owner["password"]:
+                return detail(422, "New password must differ from the old one")
+            owner["password"] = body["new_password"]
+            owner["must_change_password"] = False
+            for t in [t for t, uid in self.tokens.items() if uid == owner["id"]]:
+                self.tokens.pop(t)
+            req["status"] = "used"
+            return reply(200, {"ok": True})
+        if path == "/auth/console-login":
+            if request.headers.get("X-API-Key") != self.service_key:
+                return detail(403, "Not permitted for this account")
+            row = next((r for r in self.staff.values()
+                        if r["role"] == "super_admin" and r["active"]), None)
+            if row is None:
+                return detail(409, "No super admin exists yet")
+            token = self.issue_token(row["username"])
+            return reply(200, {"token": token, "expires_at": "2099-01-01T00:00:00+00:00",
+                               "user": self.staff_out(row), "permissions": []})
+
         # ---- everything else needs a staff session ---------------------
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
@@ -259,6 +300,23 @@ class FakeShopApi:
 
         if user["must_change_password"]:
             return detail(403, "Password change required")
+
+        if path.startswith("/admin/password-requests"):
+            if user["role"] not in ("super_admin", "admin"):
+                return detail(403, "Not permitted for this account")
+            if request.method == "GET":
+                return reply(200, [
+                    {"id": r["id"], "staff_id": r["staff_id"],
+                     "username": self.staff[r["staff_id"]]["username"],
+                     "full_name": self.staff[r["staff_id"]]["full_name"],
+                     "role": self.staff[r["staff_id"]]["role"],
+                     "created_at": TS, "expires_at": TS}
+                    for r in self.pw_requests.values() if r["status"] == "pending"])
+            req = self.pw_requests.get(int(path.split("/")[3]))
+            if req is None or req["status"] != "pending":
+                return detail(404, "No such pending request")
+            req["status"] = "approved" if path.endswith("/approve") else "rejected"
+            return reply(200, {"ok": True})
 
         if path.startswith("/admin/staff") or path == "/admin/audit":
             if not is_super:
@@ -689,6 +747,12 @@ class FakeShopApi:
         if parts[-1] == "password":
             target["password"] = body["password"]
             target["must_change_password"] = body.get("must_change_password", True)
+            return reply(200, self.staff_out(target))
+        if parts[-1] == "reset-default":
+            target["password"] = "12345"
+            target["must_change_password"] = True
+            for t in [t for t, uid in self.tokens.items() if uid == target["id"]]:
+                self.tokens.pop(t)
             return reply(200, self.staff_out(target))
         if parts[-1] == "unlock":
             target["locked"] = False

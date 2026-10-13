@@ -10,7 +10,9 @@ from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from .api_client import MSG_SESSION_EXPIRED, ShopApiClient
 from .auth import AuthService
+from .edition import is_server_edition
 from .logging_setup import get_logger, setup_logging
+from .permissions import PASSWORDS_DECIDE
 from .paths import APP_NAME, data_dir, is_frozen
 from .store import Store
 from .ui import theme, widgets
@@ -88,6 +90,8 @@ class ShopAdminApp(QObject):
         self._logging_out = False
         self._locked = False
         self._quitting = False
+        #: Server edition: opened over Remote Desktop on the server, no sign-in screen.
+        self.server_edition = is_server_edition()
         # The API client may report a dead session from a worker thread; a
         # queued signal brings that back to the GUI thread.
         self._session_invalid.connect(self._on_session_invalid, Qt.ConnectionType.QueuedConnection)
@@ -109,6 +113,9 @@ class ShopAdminApp(QObject):
             self.show_wizard()
             return
         self._configure_api()
+        if self.server_edition:
+            self.show_login()   # = the console sign-in; there is no login screen
+            return
         if self._try_auto_login():
             return
         if self.tray_mode:
@@ -199,6 +206,9 @@ class ShopAdminApp(QObject):
     # ------------------------------------------------------------------ login
     def show_login(self, message: str = "") -> None:
         self._configure_api()
+        if self.server_edition:
+            self._console_sign_in()
+            return
         if self.login_window is None:
             self.login_window = LoginWindow(self.store, self.auth)
             self.login_window.logged_in.connect(self._on_logged_in)
@@ -210,6 +220,33 @@ class ShopAdminApp(QObject):
         self.login_window.raise_()
         self.login_window.activateWindow()
         _centre(self.login_window)
+
+    # --------------------------------------------------- server edition sign-in
+    def _console_sign_in(self) -> None:
+        """Server edition: sign in as the server console. Never shows a login form."""
+        from .ui.async_utils import run_async
+
+        def work():
+            from .server_setup import service_key
+
+            return self.auth.console_sign_in(service_key())
+
+        def failed(message: str, _kind: str) -> None:
+            log.warning("server console sign-in failed")
+            box = QMessageBox(QMessageBox.Icon.Warning, "مدیریت فروشگاه (سرور)",
+                              "ورود خودکار به سرور فروشگاه انجام نشد.\n" + message
+                              + "\n\nاگر خطا دربارهٔ دسترسی است، برنامه را با «Run as "
+                              "administrator» اجرا کنید.")
+            retry = box.addButton("تلاش دوباره", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("خروج", QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            if box.clickedButton() is retry:
+                QTimer.singleShot(0, self._console_sign_in)
+            else:
+                self.quit_application()
+
+        run_async(work, on_success=lambda r: self._signed_in(r, auto=False, hidden=self.tray_mode),
+                  on_error=failed)
 
     def _on_logged_in(self, result) -> None:
         if self.login_window is not None:
@@ -335,6 +372,8 @@ class ShopAdminApp(QObject):
             self.watcher = None
 
     def _on_server_events(self, events: list) -> None:
+        if self.context is not None and not self.context.can(PASSWORDS_DECIDE):
+            events = [e for e in events if e.get("kind") != "password_request"]
         if self.notifier is not None:
             self.notifier.handle_events(events)
         if self.context is not None:
@@ -381,6 +420,8 @@ class ShopAdminApp(QObject):
         """Inactivity: hide the data, keep the server session for notifications."""
         if self._locked or self.main_window is None:
             return
+        if self.server_edition:
+            return   # no password exists to unlock with; Remote Desktop is the gate
         log.info("locking after inactivity")
         self._locked = True
         self.main_window.hide()

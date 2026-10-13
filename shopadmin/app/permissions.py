@@ -36,6 +36,7 @@ PRICELIST_MANAGE = "pricelist.manage"    # upload, approve/reject, map/ignore ro
 PROXIES_MANAGE = "proxies.manage"        # Telegram proxy pool
 CATALOG_VIEW = "catalog.view"            # site models <-> accounting products (read only)
 CATALOG_MANAGE = "catalog.manage"        # import, map, confirm (REQUIREMENTS §9a)
+PASSWORDS_DECIDE = "passwords.decide"    # approve / reject forgot-password requests
 
 ALL_ROLES = (ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_OPERATOR, ROLE_VIEWER)
 
@@ -94,6 +95,7 @@ PERMISSIONS: dict[str, frozenset[str]] = {
             SHOP_STATE,
             PRICELIST_MANAGE,
             CATALOG_MANAGE,
+            PASSWORDS_DECIDE,
             SETTINGS_CHANGE_OWN_PASSWORD,
             SETTINGS_VIEW_LOG,
         }
@@ -125,6 +127,7 @@ PERMISSIONS: dict[str, frozenset[str]] = {
             SERVER_MANAGE,
             PRICELIST_MANAGE,
             CATALOG_MANAGE,
+            PASSWORDS_DECIDE,
             PROXIES_MANAGE,
         }
     ),

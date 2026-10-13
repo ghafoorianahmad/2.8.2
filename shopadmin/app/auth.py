@@ -232,6 +232,70 @@ class AuthService:
         except ApiError as exc:
             raise _auth_error(exc) from exc
 
+    # ---- forgot password -------------------------------------------------
+    def request_password_reset(self, username: str) -> dict:
+        """Ask the admins for permission to choose a new password.
+
+        Returns ``{"request_id", "token"}``; the token stays in memory only and
+        is the proof, later, that the same person completes the reset.
+        """
+        username = to_english_digits(str(username or "")).strip()
+        if not USERNAME_RE.match(username):
+            raise AuthError(MSG_USERNAME_INVALID, "username_invalid")
+        try:
+            return self.api.forgot_password(username)
+        except ApiError as exc:
+            raise _auth_error(exc) from exc
+
+    def password_request_status(self, request_id: int, token: str) -> str:
+        try:
+            return self.api.forgot_status(request_id, token)
+        except ApiError as exc:
+            raise _auth_error(exc) from exc
+
+    def complete_password_reset(self, request_id: int, token: str, new_password: str,
+                                confirm_password: str) -> None:
+        if new_password != confirm_password:
+            raise AuthError(MSG_PASSWORD_MISMATCH, "password_mismatch")
+        problem = validate_password_strength(new_password)
+        if problem:
+            raise AuthError(problem, "weak_password")
+        try:
+            self.api.forgot_complete(request_id, token, new_password)
+        except ApiError as exc:
+            raise _auth_error(exc) from exc
+
+    def list_password_requests(self) -> list[dict]:
+        try:
+            return self.api.list_password_requests()
+        except ApiError as exc:
+            raise _auth_error(exc) from exc
+
+    def decide_password_request(self, request_id: int, approve: bool) -> None:
+        try:
+            self.api.decide_password_request(int(request_id), approve)
+        except ApiError as exc:
+            raise _auth_error(exc) from exc
+
+    def reset_password_to_default(self, user_id: int) -> None:
+        """Super admin: back to the temporary password; the user must change it."""
+        try:
+            self.api.reset_staff_default(int(user_id))
+        except ApiError as exc:
+            raise _auth_error(exc) from exc
+
+    # ---- server edition (no sign-in screen) ---------------------------------
+    def console_sign_in(self, service_key: str) -> LoginResult:
+        """Session for the server edition: loopback + the server's own key."""
+        try:
+            payload = self.api.console_login(service_key)
+        except ApiError as exc:
+            raise _auth_error(exc) from exc
+        user = payload["user"]
+        log.info("server console session: staff id=%s role=%s", user["id"], user["role"])
+        return LoginResult(principal=principal_from_staff(user),
+                           must_change_password=bool(user.get("must_change_password")))
+
     # ---- staff management (super admin; enforced by the server) ---------------
     def list_users(self) -> list[dict]:
         try:

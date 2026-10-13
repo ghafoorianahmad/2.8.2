@@ -47,7 +47,9 @@ build_all.bat        # (ریشه) بیلد کامل به ترتیب درست: Sh
 ## git
 ریپوی محلی در همین پوشه (branch `main`، از 2026-10-07). `.gitignore` ریشه `.env`، `*.db`، `*.log`، `.venv`، `build/`، `dist/`، `build_src/`، `*.spec` (PyInstaller در هر بیلد با مسیر مطلق بازمی‌سازد)، `.wheels/`، `.tools/` را بیرون نگه می‌دارد. قبل از هر commit: `git status` و مطمئن شو هیچ `.env`/`.db` stage نشده.
 
-## وضعیت (به‌روز 2026-10-12)
+## وضعیت (به‌روز 2026-10-13)
+
+- **نسخه ۲٫۴٫۰ (2026-10-13، شاخهٔ `claude/amazing-mccarthy-dob95x`؛ جزئیات در `PROGRESS.md`):** فراموشی گذرواژه با تأیید مدیر، بازنشانی به ۱۲۳۴۵ توسط مدیر کل، نسخهٔ سرور ShopAdmin بدون صفحهٔ ورود (ورود کنسول فقط loopback)، حالت آزمایشی `hesab5 t` با خواندن/نوشتن کامل، رفع تیک «مرا به خاطر بسپار». **روی ویندوز/GUI واقعی راستی‌آزمایی نشده.**
 
 - **فاز ۷ (کانال تلگرام) در کد کامل شد (2026-10-12، شاخهٔ `phase7-telegram`؛ جزئیات در `PROGRESS.md`).** ربات تلگرام با Telethon (توکن BotFather) از طریق استخر پراکسی MTProto؛ آداپتر نازک `shopbots/app/platforms/telegram.py` روی همان هستهٔ مشترک، پکیج مشترک `shared/tgproxy` (لینک پراکسی + fake-TLS) برای shoptg و shopbots، خواندن و گزارش سلامت پراکسی از/به shopapi. فقط `TELEGRAM_BOT_TOKEN` جدید است؛ `TG_API_ID/HASH` همان shoptg. اعلان مالک فقط بله (`ADMIN_CHAT_IDS` فقط بله). **روی تلگرام واقعی و بیلد ویندوز آزموده نشده.** تست‌ها (لینوکس): shopbots ۱۶۰ ✓، shopapi ۲۸۱ ✓، shoptg ۴۵ ✓.
 

@@ -22,8 +22,9 @@ log = get_logger("notify")
 KIND_CUSTOMER = "customer_registered"
 KIND_ORDER = "order_created"
 KIND_RECEIPT = "receipt_uploaded"
+KIND_PASSWORD = "password_request"
 #: Kinds that ask a person to act; the rest only refresh the screens.
-ATTENTION_KINDS = (KIND_CUSTOMER, KIND_ORDER, KIND_RECEIPT)
+ATTENTION_KINDS = (KIND_CUSTOMER, KIND_ORDER, KIND_RECEIPT, KIND_PASSWORD)
 
 #: Server health (REQUIREMENTS §8): ``health_<check>_down`` / ``health_<check>_up``.
 HEALTH_PREFIX = "health_"
@@ -51,6 +52,7 @@ TARGETS = {
     KIND_CUSTOMER: ("customers", "pending"),
     KIND_ORDER: ("orders", "awaiting_payment"),
     KIND_RECEIPT: ("orders", "receipt_uploaded"),
+    KIND_PASSWORD: ("password_requests", ""),
     "pricelist_held": ("pricelist", ""),
     "pricelist_failed": ("pricelist", ""),
     "proxies_all_dead": ("pricelist", ""),
@@ -90,6 +92,9 @@ def notice_for(event: dict) -> Optional[Notice]:
     if kind == KIND_RECEIPT:
         return Notice(kind, "فیش پرداخت جدید",
                       f"برای سفارش شمارهٔ {ref_fa} فیش پرداخت ارسال شد و منتظر بررسی است.", ref)
+    if kind == KIND_PASSWORD:
+        return Notice(kind, "درخواست گذرواژه",
+                      "یکی از کاربران گذرواژه‌اش را فراموش کرده و منتظر تأیید شماست.", ref)
     if kind.startswith(HEALTH_PREFIX):
         check, _, state = kind[len(HEALTH_PREFIX):].rpartition("_")
         label = HEALTH_LABELS.get(check)
@@ -116,7 +121,8 @@ def summarize(notices: list[Notice]) -> Notice:
     for n in notices:
         counts[n.kind] = counts.get(n.kind, 0) + 1
     parts = []
-    labels = {KIND_CUSTOMER: "مشتری جدید", KIND_ORDER: "سفارش جدید", KIND_RECEIPT: "فیش جدید"}
+    labels = {KIND_CUSTOMER: "مشتری جدید", KIND_ORDER: "سفارش جدید", KIND_RECEIPT: "فیش جدید",
+              KIND_PASSWORD: "درخواست گذرواژه"}
     for kind in ATTENTION_KINDS:
         if counts.get(kind):
             parts.append(f"{to_persian_digits(counts[kind])} {labels[kind]}")

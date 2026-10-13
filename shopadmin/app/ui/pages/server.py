@@ -135,7 +135,10 @@ class ServerPage(BasePage):
                       theme.SUCCESS_DARK)
         else:
             self._set("accounting", "قطع — سرور به پایگاه‌دادهٔ حسابداری دسترسی ندارد", theme.DANGER)
-        if status.get("accounting_write_enabled"):
+        if status.get("test_mode"):
+            self._set("write", "فعال کامل — پایگاه آزمایشی (خواندن و نوشتن آزاد)",
+                      theme.SUCCESS_DARK)
+        elif status.get("accounting_write_enabled"):
             self._set("write", "فعال (ثبت واقعی)", theme.SUCCESS_DARK)
         else:
             self._set("write", "آزمایشی — بدون ثبت واقعی (فقط روی خود سرور قابل تغییر)",
