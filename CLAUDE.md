@@ -4,168 +4,61 @@
 قواعد کلی workspace در `E:\DSH-Workspace\CLAUDE.md` معتبر است (production ممنوع، `.env`/`*.db`/توکن نخوان و چاپ نکن، SQL فقط پارامتری، بدون تغییر اسکیمای حسابداری، `backups/ dist/ build/ *.bak-*` را ویرایش نکن، متن‌ها فارسی UTF-8).
 
 > **جلسهٔ ابری (Claude Code cloud، لینوکس):** اول `CLOUD.md` را بخوان — بدون SQL، بدون بیلد ویندوز، فقط روی شاخهٔ خودش (هرگز `main`).
-
-> **قاعدهٔ جلسه:** اول این فایل را بخوان، با وضعیت واقعی پوشه تطبیق بده و بعد از هر کار مهم بخش «وضعیت» و «کارهای پیش رو» را به‌روز کن.
+> **قاعدهٔ جلسه:** اول این فایل را بخوان، با وضعیت واقعی تطبیق بده، بعد از هر کار مهم «وضعیت» و «کارهای باز» را به‌روز کن. **تاریخچهٔ فازها و بایگانی وضعیت‌های قدیمی در `PROGRESS.md`** است؛ تصمیم‌ها در `REQUIREMENTS.md`.
 
 ## اجزا (هرکدام venv و `.env` جدا)
 
-| پوشه | چیست | وضعیت |
+| پوشه | چیست | تست‌ها (لینوکس، 2026-10-13) |
 | --- | --- | --- |
-| `shopapi/` | FastAPI؛ تنها جزئی که به SQL Server وصل می‌شود. کالا/گروه/موجودی/قیمت از حسابداری (فقط‌خواندنی)، مشتری/سفارش/رزرو در SQLite خودش، ثبت سفارش تأییدشده در `KalaOrder/KalaOrderDetail` (پیش‌فرض dry-run + ROLLBACK). کلیدها: `BOT_API_KEY`, `SITE_API_KEY`, `ADMIN_API_KEY` (هدر `X-API-Key`). | کامل؛ ۵۵ تست سبز؛ روی `hesab5 t` زنده تست شده |
-| `shopbots/` | ربات بله + تلگرام (long-polling، httpx خام، موتور گفتگوی مشترک). فقط HTTP به shopapi. ادمین‌ها از `ADMIN_CHAT_IDS` تأیید مشتری/فیش را داخل چت انجام می‌دهند. تلگرام با `TELEGRAM_PROXY` (socks5/http). همهٔ متن‌ها/دکمه‌ها/اطلاعات فروشگاه در `app/messages.fa.json` (نسخهٔ قابل ویرایش: `%ProgramData%\ShopServer\messages.fa.json`). | کامل؛ ۷۷ تست سبز؛ **بله با ربات واقعی راستی‌آزمایی نشده** |
-| `shopadmin/` | کنسول دسکتاپ PySide6 (فارسی، RTL، شمسی): داشبورد، مشتریان، سفارش‌ها، محصولات، گزارش CSV/XLSX، تنظیمات، کاربران داخلی. ShopSystem.exe را به‌صورت child process (Job Object) بالا می‌آورد. + نصب‌کنندهٔ Inno Setup. | برنامه کامل (۳۲۳ تست سبز)؛ **نصب‌کننده نیمه‌کاره** |
-| `shoptg/` | کارگر تلگرام (Telethon، حساب کاربری فروشگاه، فقط‌خواندنی): لیست قیمت PDF کانال پخش‌کننده و استخر پراکسی MTProto؛ فقط `/worker/*` با `WORKER_API_KEY`. `login.ps1` و `check_pricelist.ps1` بدون shopapi کار می‌کنند. راهنمای سرور: `SERVER_GUIDE.md`. | کد کامل؛ ۴۷ تست سبز؛ **ورود تلگرام روی سرور انجام نشده** |
-| `shopsystem/` | `launcher.py` → `ShopSystem.exe` (PyInstaller): API + بات‌ها در یک پروسه. پکیج‌های `app` در بیلد به `shopapi_app`/`shopbots_app` تغییر نام می‌دهند. `.env`، `shopapi.db`، `shopbots.db`، `app.log` کنار exe. | بیلد و تست‌شده با دادهٔ واقعی |
+| `shopapi/` | FastAPI؛ تنها جزئی که به SQL Server وصل می‌شود. کالا/موجودی/قیمت از حسابداری (فقط‌خواندنی)، مشتری/سفارش/رزرو/مدل‌های سایت/لیست قیمت/پراکسی در SQLite خودش، ثبت سفارش در `KalaOrder` (پیش‌فرض dry-run + ROLLBACK). ورود کارکنان سمت سرور (توکن نشست)؛ کلیدهای `BOT_/SITE_/ADMIN_API_KEY` فقط loopback. `POST /orders` ایدمپوتنت است (`Idempotency-Key`، ۲۴ ساعت). | ۲۹۳ ✓ |
+| `shopbots/` | ربات بله (long-polling) + آداپتر تلگرام (فاز ۷، فقط با fake)، موتور مشترک `app/core/`، کارت‌های تصویری (قیمت/پیش‌فاکتور/فاکتور؛ پیش‌فرض خاموش)، متن‌ها در `messages.fa.json`. فقط HTTP به shopapi. | ۲۱۹ ✓ |
+| `shopadmin/` | کنسول PySide6 (فارسی، RTL، شمسی): داشبورد، مشتریان، سفارش‌ها، محصولات، مدل‌های سایت، لیست قیمت، گزارش، سرور، کاربران؛ ورود دو‌ستونه. بیلد کلاینت/سرور + نصب‌کننده Inno. اسکریپت‌های `e2e_check.py`/`e2e_app_live.py` (ورود سمت سرور؛ راهنما در سرفایل). | ۴۳۳ ✓ / ۱ ✗ (`test_sidebar_badges_and_close_to_tray`: خطای بسته‌بودن SQLite در لینوکس، پیش از این کارها هم بود) |
+| `shoptg/` | کارگر تلگرام (Telethon، فقط‌خواندنی): لیست قیمت PDF و استخر پراکسی MTProto؛ فقط `/worker/*`. | ۴۵ ✓، ۲ skip |
+| `shopsystem/` | `launcher.py` → `ShopSystem.exe` (PyInstaller)، سرویس ویندوز `ShopServer`، پشتیبان، `deploy/*.ps1`. | ۳۶ ✓، ۱ ✗ (مسیر `E:\` ویندوز)، ۱۲ skip |
+| `shared/` | پکیج مشترک `shop-tgproxy` (پراکسی MTProto). | — |
 
-**سایت** خارج از این پوشه است. **سایت زنده = `E:\DSH-Workspace\projects\asr-ertebatat-2-redesign`** (GitHub `asr-ertebatat-2`، شاخهٔ `redesign`؛ روی ابرآروان). `projects\asr-ertebatat-shop` نسخهٔ قدیمی و منتشرنشده است و همان تغییرات را می‌گیرد. هر دو HTML ثابت‌اند و CLAUDE.md خودشان را دارند. فعلاً به shopapi وصل نیست و فقط لینک ربات (`asrertebatat2_bot`) می‌دهد؛ اتصال آینده فقط سمت سرور و بدون کلید در کد مرورگر.
+تست‌های ویندوزی/SQL (`hesab5 t`) را فقط مالک روی PC خودش اجرا می‌کند؛ لینوکس = fakeها (`CLOUD.md`). نیاز لینوکس: `apt install unixodbc` برای import `pyodbc`، و `pip install ./shared` برای shopbots/shoptg.
+
+**سایت** خارج از این پوشه است (`E:\DSH-Workspace\projects\asr-ertebatat-2-redesign`، شاخهٔ `redesign`)؛ HTML ثابت با «کد مدل» و لینک ربات بله، بدون اتصال به shopapi.
 
 ```
-سایت (ثابت) ──لینک──► ربات بله/تلگرام ──HTTP+BOT_API_KEY──┐
-ShopAdmin.exe ─────────────HTTP+ADMIN_API_KEY─────────────┼──► shopapi ──pyodbc──► SQL Server «سازه حساب»
-(SITE_API_KEY آماده، بدون مصرف‌کننده)                      ┘      └─ shopapi.db (SQLite)
+سایت ──لینک──► ربات بله/تلگرام ──HTTP+BOT_API_KEY──┐
+ShopAdmin.exe ───────────HTTP + نشست کارمند────────┼──► shopapi ──pyodbc──► SQL Server «سازه حساب»
+shoptg ──────────────────/worker/* + WORKER_API_KEY─┘      └─ shopapi.db (SQLite)
 ```
 
-استقرار: PC سرور (کنار SQL Server) = `ShopSystem.exe` + ODBC Driver 17؛ PCهای کارمندان = فقط `ShopAdmin.exe` با آدرس راه دور (استقرار چندکاره هنوز عملاً تست نشده).
+استقرار: PC سرور (کنار SQL Server) = `ShopSystem.exe` (سرویس `ShopServer`) + ODBC Driver 17؛ PCهای کارمندان = فقط `ShopAdmin.exe` با آدرس راه دور (HTTPS با pin اثرانگشت).
 
 ## مستندات مرجع
-- **`SAZEH_DB_REFERENCE.md`** (2026-10-10) — مرجع کامل DB «سازه حساب»: نقشهٔ جدول‌ها، READ/WRITE recipe تست‌شده، پاسخ سؤال‌های باز، حداقل دسترسی، پروتکل آزمایش GUI. ابزارها: `research_tools/` (`sazeh_snapshot.py` برای diff قبل/بعد، `recipes/`).
-- `shopapi/README.md` (مدل ایمنی، endpointها، رفتن به production)، `shopapi/NOTES.md` (واقعیت‌های اسکیما: قیمت‌ها `Gey/Geycf/gey3/gey4/gey5`، موجودی `SUM(Megv)-SUM(Megs)` از `kardex_an`، فقط سطح ۱ در نسخهٔ تست کاتالوگ واقعی دارد ← `PRICE_LEVEL_*=1`)، `shopapi/REVIEW.md` (بازبینی امنیتی).
-- `shopbots/README.md`, `shopbots/NOTES.md` (۱۰ سؤال باز دربارهٔ تفاوت‌های بله).
-- `shopadmin/CLAUDE.md` (وضعیت نصب‌کننده با جزئیات)، `shopadmin/NOTES.md`, `shopadmin/README.txt` (راهنمای کاربر)، `shopadmin/installer/`.
-- `shopsystem/NOTES.md`, `shopsystem/README.txt`.
+- `REQUIREMENTS.md` (تصمیم‌ها و فازها)، `PROGRESS.md` (لاگ فازها + بایگانی)، `SECURITY.md`، `DEPLOY_CHECKLIST.md`.
+- `SAZEH_DB_REFERENCE.md` — مرجع DB «سازه حساب» (READ/WRITE recipeها؛ ابزار: `research_tools/`).
+- `shopapi/{README,NOTES,REVIEW}.md`، `shopbots/{README,NOTES}.md`، `shopadmin/{CLAUDE,NOTES}.md` + `README.txt`، `shopsystem/{NOTES.md,README.txt}`، `shoptg/{README,SERVER_GUIDE}.md`.
 
 ## اجرا و تست (PowerShell، داخل پوشهٔ هر جزء)
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q          # shopapi, shopbots
-.\.venv\Scripts\python.exe -m pytest tests -q    # shopadmin (برای اجرای بی‌پنجره: $env:QT_QPA_PLATFORM='offscreen')
+.\.venv\Scripts\python.exe -m pytest -q          # shopapi, shopbots, shoptg
+.\.venv\Scripts\python.exe -m pytest tests -q    # shopadmin, shopsystem ($env:QT_QPA_PLATFORM='offscreen')
 .\run.ps1 [-Port 8100 -Reload]                   # shopapi / shopbots
-.\check.ps1 ; .\.venv\Scripts\python.exe scripts\selfcheck.py   # shopapi، فقط‌خواندنی
-build_all.bat        # (ریشه) بیلد کامل به ترتیب درست: ShopSystem → تست shopadmin → ShopAdmin + installer
+build_all.bat        # (ریشه) ShopSystem → تست shopadmin → ShopAdmin + installer
 ```
-همیشه `python -m <tool>` بزن، نه `pytest.exe`/`uvicorn.exe`: exeهای داخل `.venv\Scripts` هنوز مسیر قدیمی (`E:\DSH-Workspace\<proj>`) را دارند. خود `python.exe` و `python -m pip` سالم‌اند.
+همیشه `python -m <tool>` بزن، نه `pytest.exe`/`uvicorn.exe` (مسیر قدیمی در exeهای `.venv`).
 
 ## git
-ریپوی محلی در همین پوشه (branch `main`، از 2026-10-07). `.gitignore` ریشه `.env`، `*.db`، `*.log`، `.venv`، `build/`، `dist/`، `build_src/`، `*.spec` (PyInstaller در هر بیلد با مسیر مطلق بازمی‌سازد)، `.wheels/`، `.tools/` را بیرون نگه می‌دارد. قبل از هر commit: `git status` و مطمئن شو هیچ `.env`/`.db` stage نشده.
+ریپوی محلی، شاخهٔ `main`. `.gitignore` ریشه `.env`، `*.db`، `*.log`، `.venv`، `build/`، `dist/`، `*.spec` و … را بیرون نگه می‌دارد. قبل از commit: `git status` و مطمئن شو هیچ `.env`/`.db` stage نشده.
 
-## وضعیت (به‌روز 2026-10-12)
+## وضعیت (2026-10-13)
+- **فازهای ۱–۷ و کارت‌های تصویری ربات در کد کامل‌اند** (جزئیات هر فاز در `PROGRESS.md`). ثبت واقعی در حسابداری خاموش است (`ACCOUNTING_WRITE_ENABLED=false`).
+- **تازه (شاخهٔ `claude/magical-ride-7p262r`):** `Idempotency-Key` برای `POST /orders` (ربات برای هر checkout یک کلید می‌فرستد؛ تلاش دوباره = همان سفارش)؛ اسکریپت‌های e2e با ورود سمت سرور؛ صفحهٔ ورود دو‌ستونه + سایهٔ کارت‌ها + overlay جدول با selector (contrast_audit ۹۵/۹۵ AA؛ تصاویر در `shopadmin/docs/screens/` روی لینوکس رندر شده → فونت‌ها با ویندوز فرق دارند).
+- **هیچ‌چیز روی سرور فروشگاه نصب/آزمون زنده نشده:** سرویس `ShopServer`، پشتیبان، دیوار آتش، ورود تلگرام (`shoptg`)، بلهٔ واقعی (پارامتر `start` نامطمئن؛ fallback = ارسال کد کالا)، کارت‌های تصویری و نصب‌کننده‌ها.
 
-- **فاز ۷ (کانال تلگرام) در کد کامل شد (2026-10-12، شاخهٔ `phase7-telegram`؛ جزئیات در `PROGRESS.md`).** ربات تلگرام با Telethon (توکن BotFather) از طریق استخر پراکسی MTProto؛ آداپتر نازک `shopbots/app/platforms/telegram.py` روی همان هستهٔ مشترک، پکیج مشترک `shared/tgproxy` (لینک پراکسی + fake-TLS) برای shoptg و shopbots، خواندن و گزارش سلامت پراکسی از/به shopapi. فقط `TELEGRAM_BOT_TOKEN` جدید است؛ `TG_API_ID/HASH` همان shoptg. اعلان مالک فقط بله (`ADMIN_CHAT_IDS` فقط بله). **روی تلگرام واقعی و بیلد ویندوز آزموده نشده.** تست‌ها (لینوکس): shopbots ۱۶۰ ✓، shopapi ۲۸۱ ✓، shoptg ۴۵ ✓.
-
-- **فاز ۶b انجام شد (2026-10-12)؛ جزئیات در `PROGRESS.md`.** جدول مدل‌های سایت در shopapi (slug ↔ کالاهای حسابداری؛ ردیف‌های لیست قیمت از همان `kala_code`)، تطبیق فازی (`app/fuzzy.py`)، بررسی شبانه (`MODEL_CHECK_HOUR`): تغییر کوچک نام = «drifted» و مدل نمایش داده می‌شود؛ کالای گم‌شده یا شباهت زیر `MODEL_DRIFT_MIN_SCORE` = پنهان + هشدار بله. ربات `m_<slug>`، متن کپی‌شده، slug خالی و نام را با `GET /catalog/resolve` می‌شناسد و هرگز حدس نمی‌زند. صفحهٔ ShopAdmin «مدل‌های سایت» (ورود از `products.js`). **روی `hesab5 t` و بلهٔ واقعی آزموده نشده.** تست‌ها: shopapi ۲۸۱ ✓، shopbots ۱۲۸ ✓، shopadmin ۴۳۴ ✓، shopsystem ۴۹ ✓، shoptg ۴۷ ✓.
-
-- **فاز ۶ (سایت) انجام شد (2026-10-12)؛ جزئیات در `PROGRESS.md`.** سایت زنده = `projects\asr-ertebatat-2-redesign` (شاخهٔ `redesign`، commit `e98eaef`، **push نشده**؛ نسخهٔ منتشرنشدهٔ `asr-ertebatat-shop` هم `1524dc1`+`5258adf`): «کد مدل» دائمی (slug، بدون کد حسابداری/قیمت/موجودی)، دکمهٔ «استعلام قیمت و سفارش در بله» (کپی نام+کد و `start=m_<slug>`)، تلفن پشتیبان، ربات تلگرام پنهان، `tools/check_site.js`، راهنمای `DEPLOY_ARVAN_FA.md`. zip سایت زنده در `E:\Outputs\StoreWebsite-Redesign\`. تصمیم جدید: نگاشت slug ↔ کالای حسابداری با پیشنهاد فازی + بررسی شبانه = **فاز ۶b** (REQUIREMENTS §9a)، انجام شد. shopbots ۱۲۰ ✓.
-
-- **فاز ۵ در کد کامل شد (2026-10-12)؛ جزئیات در `PROGRESS.md`، مدل تهدید در `SECURITY.md`.** پشتیبان روزانه (`shopsystem/backup.py`، رشتهٔ سرپرست، ساعت ۳): zip کامل محلی + آزمون بازگردانی خودکار + نسخهٔ بیرون از سرور **فقط رمزگذاری‌شده** (AES-256-GCM، عبارت عبور در `.env` و روی کاغذ مالک؛ `--set-backup-passphrase`)؛ نشست تلگرام هرگز پشتیبان نمی‌شود. `deploy/restore.ps1` با برگشت خودکار. هشدار فعالیت مشکوک (`shopapi/app/security_watch.py` + `POST /security/report` از ربات)، فیلتر حذف اسرار از لاگ، رد `sa`، `deploy/firewall_sql.ps1` (اجرا نشده). نسخه ۲٫۲٫۰. **هیچ‌چیز روی سرور فروشگاه نصب/اعمال نشده.** تست‌ها: shopapi ۲۴۵ ✓، shopbots ۱۱۹ ✓، shopadmin ۴۱۹ ✓، shoptg ۴۷ ✓، shopsystem ۴۹ ✓.
-
-- **فاز ۴ در کد کامل شد (2026-10-12)؛ جزئیات در `PROGRESS.md`.** سرور = سرویس ویندوز `ShopServer` با حساب مجازی `NT SERVICE\ShopServer` (pywin32؛ جای Scheduled Task قدیمی را می‌گیرد و آن را حذف می‌کند)؛ سرپرست، سرور+ربات و (با `SHOPTG_DIR`) کارگر تلگرام را جدا اجرا/بازراه‌اندازی می‌کند. اسکریپت‌ها: `shopsystem/deploy/{install,update,uninstall}.ps1` (update با پشتیبان و برگشت خودکار)، بسته با `shopsystem/build_package.ps1`. پایش سلامت `shopapi/app/monitor.py` (SQL/ربات/بله/تلگرام → پیام مستقیم بله + اعلان ShopAdmin). ShopAdmin: `--tray`، اجرای خودکار با ورود ویندوز، یادآوری با باز شدن «سازه حساب». دیوار آتش: LocalSubnet یا `FIREWALL_ALLOWED_IPS`. **سرویس روی هیچ رایانه‌ای نصب/آزمون زنده نشده.** نسخه ۲٫۱٫۰. تست‌ها: shopapi ۲۳۰ ✓، shopbots ۱۱۴ ✓، shopadmin ۴۱۶ ✓، shoptg ۴۷ ✓، shopsystem ۲۳ ✓.
-
-- **فاز ۳ در کد کامل شد (2026-10-12)؛ جزئیات در `PROGRESS.md`.** جزء جدید `shoptg/` (کارگر تلگرام با Telethon، venv جدا): کانال قیمت هر ۳۰ دقیقه → `/worker/pricelists`، جمع‌آوری هفتگی پراکسی، health check و failover، پشتیبانی fake-TLS (`ee`) که Telethon ندارد، نشست با DPAPI LocalMachine + ACL. بستهٔ سرور: `E:\Outputs\ShopTG\` + `shoptg/SERVER_GUIDE.md`. **ورود تلگرام و تست زنده هنوز انجام نشده** (فقط روی سرور فروشگاه، توسط کاربر). تست‌ها: shopapi ۲۱۸ ✓، shopbots ۱۱۴ ✓، shopadmin ۴۰۱ ✓، shoptg ۴۷ ✓.
-
-- **جلسهٔ آزمون زنده بعد از فاز ۲ (2026-10-11)؛ جزئیات در `PROGRESS.md`.** بله: `contact.user_id` هست و با `from.id` برابر است ✓؛ **پارامتر start نامطمئن است** (۲ از ۸ بار رسید: `kala_289` و `289`) ← fallback: مشتری کد کالا را می‌فرستد (پیش از ثبت‌نام هم نگه داشته می‌شود). SQL روی `hesab5 t`: گردش KOL ✓، `create_person` + بررسی تکراری ✓ (دادهٔ آزمون پاک شد)، R5 فقط بخش بدون فاکتور (فاکتور با `ordercode` در DB تست نیست ← G3). همهٔ مبالغ **ریال**؛ سقف مبلغ مشتری تأییدنشده حذف شد (فقط سقف تعداد). اسکریپت SQL را فقط از PowerShell معمولی اجرا کنید (پروسه‌های اپ Claude را shared memory رد می‌کند). تست‌ها: shopapi ۱۷۳ ✓، shopbots ۱۰۴ ✓، shopadmin ۳۷۷ ✓.
-
-- **فاز ۲ از `REQUIREMENTS.md` انجام و commit شد (2026-10-11)؛ جزئیات در `PROGRESS.md`.** ثبت‌نام فقط با دکمهٔ اشتراک شماره + تطبیق خودکار R4، ساخت شخص با نام ویرایش‌شده در ShopAdmin، سفارش محدود مشتری تأییدنشده، لینک عمیق `kala_<code>`، رسید عکس/فایل ≤۵MB با ذخیره روی سرور، پیگیری فاکتور/ارسال، گردش حساب از KOL، حالت تعطیل. تست‌ها: shopapi ۱۷۳ ✓، shopbots ۱۰۱ ✓، shopadmin ۳۷۷ ✓. **پارامتر start بله و ستون‌های KOL زنده بررسی نشده‌اند** (توکن تست نیست؛ SQL از این جلسه در دسترس نبود).
-
-- **فاز ۱ از `REQUIREMENTS.md` انجام شد (2026-10-11)؛ جزئیات و کارهای بعدی در `PROGRESS.md`.** تلگرام Bot-API حذف شد (فقط بله)؛ هستهٔ مشترک `shopbots/app/core/`؛ R4/R2/`sp_getapplock`/`Status=0`/`create_person` بدون شخص تکراری. تست‌ها: shopapi ۱۴۵ ✓، shopbots ۸۰ ✓، shopadmin ۳۶۴ ✓. هنوز commit نشده (نقطهٔ بازگشت `6f7eca5`).
-
-- تست‌ها: shopapi ۱۰۹ ✓، shopbots ۷۷ ✓، shopadmin ۳۶۴ ✓ (2026-10-07، بعد از کار تلگرام).
-- **کلاینت هرگز سرور را اجرا نمی‌کند** (باگ Sandbox «ShopSystem.exe not found»): `child_process.py`/`jobobject.py` حذف؛ `services/connection.py` فقط `/health` را پروب می‌کند و در قطعی «سرور در دسترس نیست» + نشانی + «تلاش دوباره» نشان می‌دهد. بیلد کلاینت جدا (`build_shopadmin.py --variant client` → `dist/client`، بدون `server_setup`، بررسی خودکار صفر ارجاع به ShopSystem حتی داخل PYZ). باگ `build_installer.bat` (کپی قدیمی اسکریپت بعد از `:fail`) رفع شد.
-- **متن سفید روی زمینهٔ روشن** (دکمهٔ «ادامه» و OK دیالوگ‌ها) در سورس از 7bcabe8 رفع شده بود؛ installerهای قبلی قدیمی بودند. `contrast_audit.py` حالا دکمه‌های واقعی رندرشده (ویزاردها، ورود، MessageDialog/ConfirmDialog/QMessageBox روی هر پنجره) را اندازه می‌گیرد: ۹۵/۹۵ AA؛ قاعدهٔ قدیمی را ۱٫۰۶:۱ تشخیص می‌دهد.
-- هر دو installer در 2026-10-07 ۱۰:۵۰ از نو ساخته شدند (`ShopAdminSetup.exe` ۳۳MB، `ShopServerSetup.exe` ۵۱MB)؛ ShopSystem/سرور دست نخورد، `ACCOUNTING_WRITE_ENABLED=false`. نصب آزمایشی دوباره در Sandbox لازم است.
-- **ثبت در حسابداری:** خاموش (`ACCOUNTING_WRITE_ENABLED=false`)؛ کد وضعیت `6808` در `TabaghehBandi` تأیید نشده — باید DBA در production تأیید کند.
-- **نشت `.env`:** راه بسته شد (`build_installer.bat` بعد از کپی، `.env`/`*.db`/`*.log` را از staging پاک می‌کند و اگر چیزی ماند متوقف می‌شود؛ `.iss` هم `Excludes` دارد). `ShopAdminSetup.exe` در 2026-10-07 از نو ساخته شد (نسخهٔ آلودهٔ 2026-10-05 جایگزین شد؛ اگر کپی‌ای از آن جای دیگری هست، دور بریز).
-- `.env` کنار `shopsystem/dist/ShopSystem/ShopSystem.exe` (تنظیمات تست توسعه‌دهنده) عمداً آنجا می‌ماند و rebuild حفظش می‌کند؛ فقط نباید وارد installer شود.
-
-## کارهای پیش رو (backlog)
-
-### ۰. دستورات جدید کاربر
-- [x] (۱)–(۵) در فاز ۱ انجام شد (2026-10-11)؛ (۶) باز است. **(2026-10-10، از `SAZEH_DB_REFERENCE.md` §9/§11) یافته‌هایی که باید در shopapi اصلاح شوند:** (۱) `find_person_by_mobile` روی `name_mo.mobile` کار می‌کند ولی آن ستون در همهٔ ردیف‌ها خالی است ← باید از `DetailTBL` (نوع ۱ و ۳) بخواند؛ (۲) `ACCOUNTING_STATUS_CODE=6808` در `TabaghehBandi` وجود ندارد ← `0` و پس از آزمایش GUI؛ (۳) تولید `Codlp` با `sp_getapplock`؛ (۴) فرمول رزرو با `va=0` و `orderdetailcode`؛ (۵) `create_api_user.sql` را با نسخهٔ حداقل‌دسترسی `research_tools/recipes/grant_shopbot_2008r2.sql` جایگزین کنید (فعلاً SELECT روی `setting`/`TabaghehBandi` می‌دهد که رمز پیامک/یادداشت شخصی دارند)؛ (۶) آزمایش GUI گام‌های G1‑G4 (§10) برای تعیین `Status` واقعی.
-- [x] (2026-10-07) ربات تلگرام آمادهٔ production برای «عصر ارتباطات ۲» (بله دست نخورد؛ موتور مشترک است پس متن‌های جدید در بله هم دیده می‌شوند):
-  - خوشامد با نام فروشگاه؛ منو: گروه‌ها، جستجو، سبد، سفارش‌های من، پشتیبانی، آدرس/ساعت کاری؛ لیست کالا = نام + قیمت سطح ۱ + «موجود/ناموجود» (بدون تعداد؛ ناموجود قابل سفارش نیست).
-  - `/myid` (همه، در هر وضعیت)، `/help`؛ `/start` وسط ثبت‌نام هم از نو شروع می‌کند. مشتری در انتظار تأیید فقط پشتیبانی/آدرس می‌بیند.
-  - پس از ثبت سفارش: دستور پرداخت از `messages.fa.json` (شمارهٔ کارت؛ تا وقتی شمارهٔ کارت placeholder است `BANK_ACCOUNT_TEXT` سرور)؛ دکمهٔ «ارسال رسید» در «سفارش‌های من».
-  - اعلان فوری به مدیر: سفارش جدید (دکمهٔ وضعیت)، رسید با عکس (تأیید/رد پرداخت)، مشتری جدید (تأیید/رد). تأیید در حالت dry-run صادقانه «در حسابداری ثبت نشد» می‌گوید.
-  - تصمیم‌های ShopAdmin از فید `/admin/events` به مشتری خبر داده می‌شود (یک‌بار؛ اجرای اول فقط مکان فعلی را ثبت می‌کند).
-  - `TELEGRAM_PROXY` (fallback: `PROXY_URL`) فقط روی کلاینت httpx تلگرام (polling/send/getFile/دانلود)؛ shopapi با `trust_env=False`. قطعی پروکسی: backoff 1→60s، یک خط خطای انگلیسی+فارسی در هر قطعی، «connection restored» در وصل دوباره؛ socksio در venv/بیلد. روی این PC پورت 10808 (xray) هم socks5 و هم http جواب می‌دهد → socks5 انتخاب شد.
-  - `scripts/set_telegram_token.ps1` (prompt مخفی، نوشتن درجا در `.env` با حفظ ACL) و `scripts/test_telegram_proxy.ps1` (تشخیص خودکار socks5→http، getMe بدون نمایش توکن؛ توکن از stdin به curl). در بیلد کنار `ShopSystem.exe\scripts\` کپی می‌شوند.
-  - `TELEGRAM_PROXY` به تنظیمات قابل ویرایش shopapi (`control.EDITABLE`) و صفحهٔ سرور ShopAdmin اضافه شد.
-  - تسک `ShopServer` با حساب `Lenovo` (Password logon) اجرا می‌شود و به 127.0.0.1:10808 دسترسی دارد؛ **ولی xray فقط با ورود کاربر بالا می‌آید** — اگر PC بدون لاگین ریستارت شود، تلگرام تا اجرای xray در حال retry است.
-  - [ ] بعد از «token set» کاربر: ری‌استارت تسک، بررسی `app.log`، تست /start، /myid، سفارش آزمایشی.
-
-### ۱. سروسامان (مرحلهٔ ۱ — انجام شد 2026-10-07)
-- [x] git init + `.gitignore` ریشه + commit اولیه.
-- [x] فایل‌های `.spec`: نیازی به ویرایش نیست؛ هر بیلد آن‌ها را با مسیر جدید بازمی‌سازد (در git نیستند).
-- [x] مسیرهای قدیمی در `shopapi/README.md`, `shopbots/README.md`, `shopsystem/NOTES.md` و `E:\DSH-Workspace\CLAUDE.md`.
-- [x] `build_all.bat` (ریشه)؛ `SHOP_NOPAUSE` در `build_installer.bat` برای اجرای زنجیره‌ای.
-- [x] دو باگ `build_exe.bat`: (۱) `%OUT%shopapi.db` بدون `\`؛ (۲) نجات `.env`/db/log **بعد** از PyInstaller انجام می‌شد که پوشه را پاک کرده بود ← حالا قبل از آن در `shopsystem/.rebuild_keep/` و در صورت شکست بیلد هم برگردانده می‌شود (تست‌شده).
-- [x] `build_all.bat` اجرا شد (2026-10-07 00:24): همهٔ تست‌ها سبز، `ShopAdminSetup.exe` تازه (۴۸MB) بدون `.env`/db/log در staging.
-- [ ] **`.env` تست توسعه کنار `shopsystem/dist/ShopSystem/ShopSystem.exe` در همین بیلد اول (باگ ۲) پاک شد.** یک نسخه در سطل بازیافت هست (`shopadmin\.installtest\ShopSystem\.env`)؛ بازگرداندن با تأیید کاربر. تنظیمات اصلی توسعه در `shopapi/.env` سالم است.
-- [x] نصب آزمایشی ثبت‌شده در ویندوز (`.installtest`، منوی Start) با uninstaller خودش حذف شد؛ فایل‌های موقت به سطل بازیافت.
-- [x] `qt_api` از `shopadmin/pytest.ini` (pytest-qt نصب نیست و تست‌ها از آن استفاده نمی‌کنند).
-- [ ] نصب و اجرای آزمایشی `ShopAdminSetup.exe` تازه.
-- [ ] (اختیاری) بازسازی venvها در مسیر جدید تا `pip.exe`/`pytest.exe` هم کار کنند.
-
-### ۲. مرحلهٔ ۲ — معماری نهایی (تصمیم کاربر 2026-10-07)
-- **فقط برای فروشگاه خود مالک** (فروشی نیست) → لایسنس/فعال‌سازی لازم نیست.
-- **سرور = همان PC سرور حسابداری** (همیشه روشن): `ShopServer` (shopapi + ربات‌ها) به‌صورت سرویس پس‌زمینه با اجرای خودکار هنگام بوت و ری‌استارت خودکار. ربات‌ها فقط اتصال خروجی دارند (بله/تلگرام آپدیت‌ها را تا ~۲۴ ساعت نگه می‌دارند)؛ سایت در آینده از طریق یک relay سمت سرور.
-- **همهٔ PCهای دیگر کلاینت‌اند** (ShopAdmin)؛ PC مدیر هم کلاینت است ولی نقش super_admin دارد و سرور را هم کنترل می‌کند (وضعیت، ری‌استارت، تنظیمات، لاگ).
-- **نوتیفیکیشن** در کلاینت‌ها: مشتری جدید، سفارش جدید، فیش جدید (tray + اعلان ویندوز + شمارنده).
-- **امنیت اولویت اول:** کاربران و نقش‌ها **سمت سرور** (نه SQLite محلی هر PC)؛ ورود با نام کاربری/رمز → توکن نشست؛ کنترل دسترسی در خود API؛ `ADMIN_API_KEY`/`BOT_API_KEY` فقط از loopback (داخل همان سرور) پذیرفته می‌شوند و به کلاینت‌ها داده نمی‌شوند؛ HTTPS در شبکه با گواهی self-signed و pin اثرانگشت در کلاینت؛ فایروال فقط LocalSubnet؛ داده و `.env` سرور در `%ProgramData%` با ACL محدود.
-- **رابط کاربری** بازطراحی با گرافیک بهتر (کاربر اجازه داده).
-
-زیرمرحله‌ها:
-- [x] 2.1 shopapi: کاربران کارکنان + نشست + نقش سمت سرور + rate-limit ورود + لاگ ممیزی با نام کاربر + فید رویداد (`/admin/events`) + محدودیت loopback کلیدها. ← انجام شد (۸۹ تست؛ `app/staff.py`, `routers/auth.py`, `routers/staff_admin.py`).  **تغییر قرارداد:** کلاینت‌ها دیگر ADMIN_API_KEY ندارند؛ ShopAdmin باید به ورود سمت سرور مهاجرت کند (2.2).
-- [x] 2.2 ShopAdmin: ورود سمت سرور، حذف کاربران محلی، اعلان‌ها (tray/toast/badge)، مدیریت کارکنان روی سرور. ← انجام شد (۳۴۰ تست + ۲۲ بررسی زنده با shopapi واقعی و `hesab5 t`):
-  - `api_client.py`: Bearer token؛ `X-API-Key` فقط در `bootstrap`. `on_session_invalid` → بازگشت به ورود.
-  - `auth.py`: همهٔ تصمیم‌ها با سرور؛ «مرا به خاطر بسپار» = توکن نشست سرور در Credential Manager (fallback با DPAPI، نه فقط obfuscation).
-  - `store.py`: جدول‌های `admin_users`/`remembered_sessions` و `shopapi_api_key` قدیمی هنگام باز شدن حذف + VACUUM.
-  - `notifications.py`: `EventWatcher` (پولینگ `/admin/events` با کپی توکن) + `TrayNotifier` (tray، اعلان ویندوز، صدا، شمارندهٔ نوار کناری). بستن پنجره = ماندن در tray.
-  - عدم فعالیت = قفل (نه خروج): نشست سرور برای اعلان‌ها می‌ماند؛ باز کردن قفل با ورود دوباره و ابطال توکن قبلی.
-  - تغییر اجباری گذرواژهٔ موقت (`ui/password_dialog.py`)؛ ویزارد: آدرس سرور → (فقط سرور تازه) bootstrap با کلید سرویس.
-  - **مانده:** `scripts/e2e_check.py`, `e2e_app_live.py`, `render_screens.py` هنوز API قدیمی را دارند (همراه 2.5 بازنویسی شوند).
-- [x] 2.3 ShopServer: پوشهٔ داده در ProgramData، HTTPS، endpointهای وضعیت/کنترل سرور، وضعیت ربات‌ها. ← انجام شد:
-  - `shopsystem/launcher.py`: پوشهٔ داده `%ProgramData%\ShopServer` (یا `--data-dir`)؛ `--service` = سرپرست که `--worker` را با Job Object اجرا و در خرابی/درخواست (کد خروج ۳) دوباره بالا می‌آورد؛ `supervisor.log` جدا؛ `app.log` چرخشی.
-  - `shopsystem/server_tls.py`: `API_TLS=true` → گواهی self-signed ECDSA در `tls/` + `fingerprint.txt`؛ ربات‌ها با `SHOPAPI_CA_FILE` pin می‌کنند. `ShopSystem.exe --fingerprint` اثرانگشت را چاپ می‌کند.
-  - shopapi `control.py` + `/admin/server/{status,settings,logs,restart}` (فقط super_admin). تنظیمات قابل تغییر از راه دور فقط فهرست سفید (`EDITABLE`)؛ اتصال حسابداری، `ACCOUNTING_WRITE_ENABLED`، کلیدها و `API_HOST` فقط روی خود سرور.
-  - shopbots `health.py`: وضعیت هر پلتفرم بدون توکن.
-  - ShopAdmin: pin گواهی (`fetch_server_certificate`، `pinned_context`)؛ ویزارد اثرانگشت را نشان می‌دهد و تا تأیید کاربر ادامه نمی‌دهد؛ تغییر آدرس در تنظیمات = ویزارد دوباره؛ صفحهٔ «سرور فروشگاه» (وضعیت، ربات‌ها، اثرانگشت، تنظیمات، گزارش، راه‌اندازی دوباره).
-  - آزمون زنده: HTTPS pin‌شده، رد گواهی دیگر/HTTP ساده، restart از API با تنظیمات جدید، مرگ worker همراه سرپرست (۱۸/۱۸).
-- [x] 2.4 نصب‌کننده: گزینهٔ «سرور» / «کلاینت»، Scheduled Task، فایروال، ویزارد راه‌اندازی سرور (ساخت `.env` + تست SQL + اولین مدیر)، بستن برنامه هنگام آپدیت، چک ODBC. ← انجام شد (بیلد واقعی: `ShopAdminSetup.exe` ۳۲MB، `ShopServerSetup.exe` ۵۱MB):
-  - یک `.iss` با `#ifdef SERVER` → دو نصب‌کننده با AppId جدا. کلاینت: lowest/per-user، بدون سرور. سرور: admin، `{autopf}\ShopServer`، در پایان `ShopAdmin.exe --server-setup`، حذف = برداشتن task و قانون فایروال (پوشهٔ داده می‌ماند). `AppMutex=ShopAdminRunning`؛ توقف task/`taskkill` پیش از ارتقا؛ چک ODBC 17/18.
-  - باگ قدیمی رفع شد: `PrepareToInstall` مسیر staging (پوشهٔ بیلد) را روی رایانهٔ مشتری چک می‌کرد → همیشه شکست می‌خورد. حالا چک هنگام کامپایل (`#error`).
-  - `ShopSystem.exe --init-config <json>` (کلیدهای تصادفی، گذرواژهٔ DB از فایل JSON داخل پوشهٔ قفل، نه خط فرمان؛ فایل فوراً پاک می‌شود) و `--check-db`.
-  - ShopAdmin `--server-setup` (خودکار UAC): `server_setup.py` + `ui/server_setup_wizard.py` — icacls با SID (SYSTEM + Administrators)، task XML (Boot، SYSTEM یا حساب ویندوز با گذرواژه، RestartOnFailure)، فایروال `localsubnet` + `private,domain`، شروع، انتظار HTTPS، pin گواهی از فایل محلی، bootstrap مدیر کل.
-  - ShopAdmin: نمونهٔ واحد (QLocalServer؛ اجرای دوباره پنجرهٔ قبلی را نشان می‌دهد) + mutex برای نصب‌کننده. وقتی سرور به‌صورت task نصب است، ShopAdmin هرگز نسخهٔ دوم سرور را اجرا نمی‌کند (فقط `schtasks /Run`).
-  - **آزمون نصب واقعی روی ویندوز انجام نشده** (ساخت task/فایروال/پوشهٔ ProgramData روی این رایانه = تغییر سیستمی؛ با اجازهٔ کاربر در 2.6).
-- [ ] 2.5 بازطراحی UI. ← شروع شد:
-  - [x] `scripts/render_screens.py` با API جدید بازنویسی شد (۱۵ تصویر، شامل صفحهٔ سرور و ویزارد سرور).
-  - [x] باگ مهم: دکمه‌های Primary (ورود، ادامه، آزمایش اتصال) در پنجرهٔ ورود و هر دو ویزارد متن سفید روی زمینهٔ روشن داشتند (setStyleSheet بدون selector روی پنجره) → محدود به `QWidget#WindowRoot`.
-  - [x] نوار کناری تیره (`SIDEBAR_*` در theme، `nav_icon`، badge زرد) + نمودار سفارش‌های ۷ روز اخیر در داشبورد (`widgets.BarChart`, `orders_per_day`)؛ ۷۳/۷۳ جفت AA، ۳۷۷ تست سبز (2026-10-07).
-  - **اول (2026-10-07، مقدم بر بقیهٔ UI):** (۱) ✓ بررسی امنیتی: `shopsystem/dist`، staging و `ShopAdmin` بدون `.env`/`*.db`/لاگ/توکن؛ فقط `.env.example` با مقادیر خالی. محتوای دو installer بدون اجرا قابل بازرسی نیست (فشردهٔ Inno)؛ از روی staging پاک و `Excludes` در `.iss` نتیجه می‌شود. (۲) ✓ `404 persons/match` خطا نیست: قرارداد سرور/کلاینت یکی است و 404 یعنی «مشتری مطابق ندارد» (`match_person` → None)؛ فقط لاگ پرحرف fake server. (۳) ✓ چک‌لیست نصب آزمایشی: `shopadmin/installer/TEST_INSTALL_CHECKLIST.md` (اجرا نشده، منتظر PC/VM تست).
-  - [ ] مانده از بازطراحی: صفحهٔ ورود دو ستونه، سایهٔ کارت‌ها.
-  - [ ] `scripts/e2e_check.py` و `e2e_app_live.py` هنوز API قدیمی دارند.
-  - نکته: `widgets.py:388` (overlay) هم background بدون selector دارد — بررسی شود.
-- [ ] 2.6 تست سرتاسری روی نسخهٔ محلی `hesab5 t`.
-
-### ۲-قدیم. نصب‌کننده (از `shopadmin/CLAUDE.md`)
-- [x] exclude کردن `.env`, `app.log`, `*.db` از staging (بیلد مجدد = بند آخر مرحلهٔ ۱).
-- [ ] پوشهٔ دادهٔ ShopSystem: launcher آرگومان/متغیر پوشهٔ داده بگیرد (مثلاً `%LOCALAPPDATA%\ShopAdmin\service`) تا نصب در Program Files مشکل مجوز نداشته باشد.
-- [ ] ساخت `.env` سرویس هنگام نصب/اجرای اول (کلیدهای تصادفی قوی، DB_SERVER/DB_NAME + تست اتصال، توکن بات‌ها، `ADMIN_CHAT_IDS`, `BANK_ACCOUNT_TEXT`).
-- [ ] تمیزکاری `.iss`: حذف CustomMessageهای سرویس ویندوز بی‌استفاده؛ بستن ShopAdmin/ShopSystem در حال اجرا هنگام آپدیت؛ چک پیش‌نیاز ODBC Driver 17/SQL.
-- [ ] نصب‌کنندهٔ جدا «فقط کلاینت» و «فقط سرور».
-- [x] تضمین بیلد تازهٔ ShopSystem پیش از installer ← `build_all.bat`.
-
-### ۳. باز از shopapi / shopbots
-- [ ] راستی‌آزمایی بله با ربات واقعی (`tapi.bale.ai`، long-poll، inline keyboard، request_contact، getFile، …).
-- [ ] کلید ایدمپوتنسی برای `POST /orders`.
-- [ ] (اختیاری) اعتبارسنجی platform↔نقش کلید؛ credential هر مشتری برای خواندن پروفایل/سفارش؛ redact دلیل رد در audit_log؛ بازبینی grant `TabaghehBandi`.
-- [ ] تست استقرار چندکاره (ShopAdmin روی PC دیگر با آدرس راه دور).
-- [ ] اتصال سایت به shopapi (سمت سرور، با `SITE_API_KEY`) — فیچر آینده.
-- [ ] پیش از production: کاربر `shopbot` با `sql/create_api_user.sql`، تأیید `6808`، امضای دیجیتال installer.
-
-### ۴. تصمیم‌های باز (از کاربر پرسیده شده)
-- [ ] فقط برای «عصر ارتباطات ۲» یا فروش به فروشگاه‌های دیگر؟
-- [ ] یک PC یا سرور + چند کلاینت؟
-- [ ] سرویس فقط هم‌زمان با ShopAdmin، یا همیشه روشن (پیشنهاد: Scheduled Task هنگام بوت) تا ربات‌ها ۲۴ ساعته جواب دهند؟
+## کارهای باز
+- [ ] آزمون زنده روی `hesab5 t` + بلهٔ واقعی: R4/`create_person`، applock سفارش، فاز ۶b (مدل‌های سایت)، کارت‌ها (Edge headless)، e2e scripts.
+- [ ] GUI تست G1–G4 (`SAZEH_DB_REFERENCE.md` §10) برای `Status` واقعی؛ تأیید DBA قبل از production؛ اجرای `sql/create_api_user.sql` (least-privilege).
+- [ ] نصب آزمایشی سرویس/installer روی PC یا VM تست (`shopadmin/installer/TEST_INSTALL_CHECKLIST.md`)، `firewall_sql.ps1`، ورود تلگرام روی سرور (`shoptg/SERVER_GUIDE.md`).
+- [ ] راستی‌آزمایی بله (`shopbots/NOTES.md`: ۱۰ سؤال باز)، تست استقرار چندکاره (ShopAdmin روی PC دیگر).
+- [ ] رفع تست `test_sidebar_badges_and_close_to_tray` (لینوکس) و وابستگی تست‌های shoptg به `pdfplumber`.
+- [ ] ماندهٔ UI (اختیاری): سایه روی Panelهای بدون جدول؛ دکمه‌های حاشیه‌ای ویزارد.
+- [ ] امضای دیجیتال installer؛ اتصال سایت به shopapi (آینده، فقط سمت سرور).
 
 ## پوشهٔ خروجی (`E:\Outputs\ShopSystem\`)
 بعد از هر بیلد تازه (`build_all.bat` ← `shopadmin\dist\installer\ShopServerSetup.exe` و `ShopAdminSetup.exe`):
