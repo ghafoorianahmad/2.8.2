@@ -983,6 +983,7 @@ class BotEngine:
                 lambda: price_card(
                     shop=texts.SHOP.get("shop_name", ""), name=name, color=color["name"],
                     price=color["price"], in_stock=True,
+                    contact={**self._card_contact(), "thanks": ""},
                     currency=texts.SHOP.get("currency", "ریال"),
                 ),
                 texts.CARD_CAPTION_PRICE.format(name=name, color=color["name"], price=price),

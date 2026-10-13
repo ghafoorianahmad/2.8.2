@@ -2,6 +2,12 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## Bot image cards v3.2 — small fixes (2026-10-13, branch `claude/invoice-card-v3`) — DONE in code (Linux)
+
+- Final invoice: the «✓ فاکتور شما صادر شد — شمارهٔ فاکتور: …» row is now forced onto one line (`nowrap`, font 24 → 17 px by text length); it wraps only beyond ~62 characters (about 8 invoice numbers).
+- Price card: the lone «فروشگاه» footer line (signature) is gone; the footer is now the date box plus the same contact band as the invoices (address, phone, Bale bot ID from the `shop` block of `messages.fa.json`; no thank-you line). `price_card()` takes `contact=`; the engine passes it.
+- Tests: shopbots 186 passed (Telegram-channel tests not collectable here). Samples re-rendered in `docs/card-samples/`.
+
 ## Bot image cards v3.1 — invoice numbers, logo in header (2026-10-13, branch `claude/invoice-card-v3`) — DONE in code (Linux)
 
 - **Pre-invoice**: new status row «✓ سفارش شما ثبت شد — شمارهٔ پیگیری: <our order number>» (same style as before on the final invoice).

@@ -317,11 +317,9 @@ def _date_box(date_text: str) -> str:
             f'<b>{esc(date_text)}</b></div></div>')
 
 
-def _foot_signature(date_text: str, sign: str) -> str:
-    """Price card footer: date box and a signature line."""
-    return (f'<div class="foot">{_date_box(date_text)}'
-            f'<div class="sign"><small>با آرزوی همدلی و همکاری بیشتر</small>'
-            f'<div class="ln"><i></i><span>{esc(sign)}</span><i></i></div></div></div>')
+def _foot_price(date_text: str, contact: dict | None) -> str:
+    """Price card footer: issue date and the shop contact band (address, phone, bot id)."""
+    return f'<div class="foot">{_date_box(date_text)}</div>{_contact_box(contact)}'
 
 
 def _logo_tag(cls: str = "logo") -> str:
@@ -401,7 +399,12 @@ def _totals(rows: list[tuple[str, str, str, str]], big: tuple[str, str, str, str
         out.append(f'<div class="trow"><span class="lb">{icon(ic, 30)}{esc(label)}</span>'
                    f'<span class="vl"><b>{esc(value)}</b>{u}</span></div>')
     if message:
-        out.append(f'<div class="trow msg">{icon("circle-check", 34)}<span>{esc(message)}</span></div>')
+        # one line: the font shrinks with the text; it wraps only if even the smallest size cannot fit
+        n = len(message)
+        size = 24 if n <= 34 else 21 if n <= 44 else 19 if n <= 52 else 17 if n <= 62 else 17
+        nowrap = "white-space:nowrap;" if n <= 62 else ""
+        out.append(f'<div class="trow msg">{icon("circle-check", 30)}'
+                   f'<span style="font-size:{size}px;{nowrap}">{esc(message)}</span></div>')
     ic, label, value, unit = big
     w = f'<div class="words">{esc(words)}</div>' if words else ""
     out.append(f'<div class="trow big"><div class="bt"><span class="lb">{icon(ic, 34)}{esc(label)}</span>'
@@ -469,7 +472,7 @@ def _height(n_rows: int, dark: int = _H_DARK, pay: int = 0, foot: int = _H_FOOT)
 # ----------------------------------------------------------------- price card
 @_safe
 def price_card(*, shop: str, name: str, color: str, price, in_stock: bool,
-               currency: str = "ریال", date=None) -> bytes | None:
+               contact: dict | None = None, currency: str = "ریال", date=None) -> bytes | None:
     """Product, selected color, price in Rial and a stock badge."""
     d = fa_digits(shamsi_date(date))
     badge = (f'<span class="badge good">{icon("circle-check", 24)}موجود</span>' if in_stock
@@ -485,8 +488,8 @@ def price_card(*, shop: str, name: str, color: str, price, in_stock: bool,
     dark = 230
     body = (_head(shop, "کارت قیمت", "", "", d) + table
             + f'<div class="dark" style="height:{dark}px">{totals}{_notes(PRICE_NOTES)}</div>'
-            + _foot_signature(d, "فروشگاه"))
-    h = 34 + _H_HEAD + _H_TABLE_HEAD + 110 + 20 + dark + 20 + _H_FOOT + 60
+            + _foot_price(d, contact))
+    h = 34 + _H_HEAD + _H_TABLE_HEAD + 110 + 20 + dark + 20 + _foot_height(contact) + 60
     return _screenshot(_page(body, h), h)
 
 

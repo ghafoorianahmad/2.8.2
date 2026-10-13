@@ -347,3 +347,24 @@ def test_header_falls_back_to_the_illustration_without_a_logo(monkeypatch, tmp_p
         assert 'class="illus"' in head and "logo" not in head
     finally:
         render._logo_html.cache_clear()
+
+
+def test_tracking_message_stays_on_one_line_even_with_several_numbers(monkeypatch):
+    page = _html(monkeypatch, render.final_invoice_card, invoice_numbers=["2672", "2680", "2691"], partial=True)
+    row = page.split('class="trow msg"')[1].split("</div>")[0]
+    assert "white-space:nowrap" in row and "۲۶۷۲، ۲۶۸۰، ۲۶۹۱" in row
+    short = _html(monkeypatch, render.final_invoice_card, invoice_numbers=["2672"])
+    big = int(short.split('class="trow msg"')[1].split("font-size:")[1].split("px")[0])
+    small = int(row.split("font-size:")[1].split("px")[0])
+    assert small < big                                  # shrinks instead of wrapping
+
+
+def test_price_card_footer_is_the_shop_contact_band_not_a_store_line(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(render, "_screenshot", lambda page, h: seen.setdefault("p", page) and b"x")
+    render.price_card(shop="s", name="n", color="c", price=1, in_stock=True,
+                      contact={"address": "نشانی نمونه", "phone": "02112345678", "bot_id": "@sample_bot"})
+    page = seen["p"]
+    assert 'class="contact"' in page and "نشانی نمونه" in page and "@sample_bot" in page
+    assert "۰۲۱۱۲۳۴۵۶۷۸" in page
+    assert "<span>فروشگاه</span>" not in page and 'class="sign"' not in page
