@@ -18,6 +18,8 @@ timeout, bad output): the caller then sends the plain text message instead.
 from __future__ import annotations
 
 import base64
+import uuid
+import contextlib
 import functools
 import html
 import io
@@ -97,6 +99,16 @@ def find_browser() -> str | None:
     return None
 
 
+@contextlib.contextmanager
+def _work_dir():
+    path = Path(tempfile.gettempdir()) / f"shopcard_{uuid.uuid4().hex}"
+    os.makedirs(path)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
 def _wait_for_file(path: Path, timeout: float) -> bool:
     """True once ``path`` exists with a non-zero size that stopped changing."""
     deadline = time.monotonic() + timeout
@@ -119,8 +131,10 @@ def _screenshot(page_html: str, height: int) -> bytes | None:
     if not browser:
         logger.warning("cards: no Chromium/Edge found (set BOT_CARD_BROWSER) - text fallback")
         return None
-    with tempfile.TemporaryDirectory(prefix="shopcard_") as tmp:
-        tmpd = Path(tmp)
+    # Not tempfile.TemporaryDirectory/mkdtemp: on Windows (Python 3.13+) those get an
+    # owner-only ACL that Edge's sandboxed processes cannot use ("can't read and write
+    # to its data directory"). A plain makedirs folder inherits the normal %TEMP% ACL.
+    with _work_dir() as tmpd:
         page = tmpd / "card.html"
         out = tmpd / "card.png"
         page.write_text(page_html, encoding="utf-8")
