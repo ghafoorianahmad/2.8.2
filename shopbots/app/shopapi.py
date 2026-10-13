@@ -104,9 +104,12 @@ class ShopApiClient:
         params: dict | None = None,
         json_body: Any = None,
         allow_404: bool = True,
+        extra_headers: dict | None = None,
     ):
         client = await self._http()
         headers = {"X-API-Key": key} if key else {}
+        if extra_headers:
+            headers.update(extra_headers)
         try:
             response = await client.request(
                 method, f"{self._base}{path}", params=params, json=json_body, headers=headers
@@ -209,13 +212,15 @@ class ShopApiClient:
         )
 
     async def create_order(
-        self, platform: str, chat_id: str | int, items: list[dict]
+        self, platform: str, chat_id: str | int, items: list[dict],
+        idempotency_key: str | None = None,
     ) -> dict | None:
         return await self._request(
             "POST",
             "/orders",
             key=self._settings.bot_api_key,
             json_body={"platform": platform, "chat_id": str(chat_id), "items": items},
+            extra_headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
         )
 
     async def upload_receipt(

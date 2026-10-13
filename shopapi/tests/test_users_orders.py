@@ -145,3 +145,53 @@ def test_admin_approve_payment_writes_order(client, reader, writer):
     assert len(writer.calls) == 1
     assert writer.calls[0][0] == order["id"]
     assert writer.calls[0][1] == 7001
+
+
+def _order_body(qty=1):
+    return {"platform": "bale", "chat_id": "111", "items": [{"kala_code": 101, "qty": qty}]}
+
+
+def test_idempotency_key_returns_the_original_order(client, reader):
+    seed_products(reader)
+    register_and_approve(client)
+    hd = {**h("bot"), "Idempotency-Key": "checkout-key-0001"}
+    first = client.post("/orders", json=_order_body(), headers=hd)
+    again = client.post("/orders", json=_order_body(), headers=hd)
+    assert first.status_code == 201 and again.status_code == 200
+    assert first.json()["id"] == again.json()["id"]
+    orders = client.get("/users/bale/111/orders", headers=h("bot")).json()
+    assert len(orders) == 1
+    # no key = every call is a new order (old behaviour)
+    client.post("/orders", json=_order_body(), headers=h("bot"))
+    assert len(client.get("/users/bale/111/orders", headers=h("bot")).json()) == 2
+
+
+def test_idempotency_key_of_another_customer_is_refused(client, reader):
+    seed_products(reader)
+    register_and_approve(client)
+    client.post("/users/register", json={
+        "platform": "bale", "chat_id": "222", "name": "Bob", "phone": "09121111111",
+    }, headers=h("bot"))
+    hd = {**h("bot"), "Idempotency-Key": "checkout-key-0002"}
+    assert client.post("/orders", json=_order_body(), headers=hd).status_code == 201
+    other = _order_body()
+    other["chat_id"] = "222"
+    r = client.post("/orders", json=other, headers=hd)
+    assert r.status_code in (403, 409)
+
+
+def test_idempotency_key_expires(client, reader, db):
+    seed_products(reader)
+    register_and_approve(client)
+    hd = {**h("bot"), "Idempotency-Key": "checkout-key-0003"}
+    first = client.post("/orders", json=_order_body(), headers=hd).json()
+    db._conn.execute("UPDATE idempotency_keys SET expires_at='2000-01-01T00:00:00+00:00'")
+    second = client.post("/orders", json=_order_body(), headers=hd)
+    assert second.status_code == 201 and second.json()["id"] != first["id"]
+
+
+def test_bad_idempotency_key_is_rejected(client, reader):
+    seed_products(reader)
+    register_and_approve(client)
+    r = client.post("/orders", json=_order_body(), headers={**h("bot"), "Idempotency-Key": "x"})
+    assert r.status_code == 422

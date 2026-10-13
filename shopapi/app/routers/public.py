@@ -5,7 +5,7 @@ import logging
 from datetime import timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 
 from .. import deps, receipts, security_watch
 from ..accounting_reader import AccountingReader
@@ -38,6 +38,7 @@ router = APIRouter()
 logger = logging.getLogger("shopapi.public")
 
 SHOP_CLOSED_KEY = "shop_closed"
+IDEMPOTENCY_HOURS = 24
 
 
 def shop_state(db: OwnDB) -> ShopStateOut:
@@ -235,6 +236,8 @@ def _merge_items(items) -> dict[tuple[int, int | None], float]:
 @router.post("/orders", response_model=OrderOut, status_code=status.HTTP_201_CREATED)
 def create_order(
     payload: OrderCreate,
+    response: Response,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     role: str = Depends(get_api_identity),
     reader: AccountingReader = Depends(deps.get_reader),
     db: OwnDB = Depends(deps.get_db),
@@ -247,6 +250,19 @@ def create_order(
     if user["status"] == "rejected" or (not approved and settings.pending_max_order_items <= 0):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "User is not approved")
 
+    idem = (idempotency_key or "").strip() or None
+    if idem is not None and not (8 <= len(idem) <= 128 and idem.isprintable()):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid Idempotency-Key")
+
+    def _out(o: dict) -> OrderOut:
+        return OrderOut(
+            **o,
+            payment_instructions=settings.bank_account_text or None,
+            payment_card_number=settings.payment_card_number or None,
+            payment_sheba=settings.payment_sheba or None,
+            payment_owner=settings.payment_owner or None,
+        )
+
     merged = _merge_items(payload.items)
     level = settings.price_level_for(role)
     phones = phone_catalog.load(db, settings)
@@ -254,6 +270,14 @@ def create_order(
     # Serialize availability-check + reservation: without this lock two
     # concurrent orders can both pass the check and oversell the same stock.
     with db.reservation_guard():
+        if idem is not None:
+            seen = db.find_idempotent(idem)
+            if seen is not None:
+                if seen["user_id"] != user["id"]:
+                    raise HTTPException(status.HTTP_409_CONFLICT,
+                                        "Idempotency-Key belongs to another customer")
+                response.status_code = status.HTTP_200_OK
+                return _out(db.get_order(seen["order_id"]))
         our_res = db.pending_reservations()
         codes = list(dict.fromkeys(code for code, _ in merged))
         detail = reader.get_products_for_order(codes, level, our_res)
@@ -336,15 +360,14 @@ def create_order(
             [(it.kala_code, it.name, it.qty, it.unit_price, it.variant_id, it.variant)
              for it in items_out],
         )
+        if idem is not None:
+            db.save_idempotent(
+                idem, user["id"], order["id"],
+                (now_utc() + timedelta(hours=IDEMPOTENCY_HOURS)).isoformat(timespec="seconds"),
+            )
     db.audit(role, "order_create", f"order id={order['id']}")
     db.add_event("order_created", order["id"], role)
-    return OrderOut(
-        **order,
-        payment_instructions=settings.bank_account_text or None,
-        payment_card_number=settings.payment_card_number or None,
-        payment_sheba=settings.payment_sheba or None,
-        payment_owner=settings.payment_owner or None,
-    )
+    return _out(order)
 
 
 @router.post("/orders/{order_id}/receipt", response_model=OrderOut)

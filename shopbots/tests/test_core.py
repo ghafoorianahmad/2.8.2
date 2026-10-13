@@ -50,8 +50,9 @@ class StubApi:
     async def register_user(self, platform, chat_id, name, phone):
         self.calls.append(("register_user", platform, chat_id, name, phone))
 
-    async def create_order(self, platform, chat_id, items):
+    async def create_order(self, platform, chat_id, items, idempotency_key=None):
         self.calls.append(("create_order", items))
+        self.keys = getattr(self, "keys", []) + [idempotency_key]
         return self.order
 
     async def upload_receipt(self, order_id, file_ref, platform, chat_id, data_b64=None):
@@ -124,6 +125,23 @@ def test_checkout_sends_codes_and_quantities_only_and_clears_the_cart():
     assert result.order["id"] == 7
     assert api.calls[-1] == ("create_order", [{"kala_code": 101, "qty": 2.0}])
     assert orders.cart.items("bale", "1") == []
+
+
+def test_checkout_key_is_reused_on_retry_and_renewed_when_cart_changes():
+    api, store, orders = _orders()
+    api.order = None                                     # failed attempts keep the cart
+    orders.cart.add("bale", "1", 101, "کابل", 1, 1.0)
+    run(orders.checkout("bale", "1"))
+    run(orders.checkout("bale", "1"))
+    assert api.keys[0] and api.keys[0] == api.keys[1]    # retry = same key
+    orders.cart.add("bale", "1", 102, "شارژر", 1, 1.0)
+    run(orders.checkout("bale", "1"))
+    assert api.keys[2] != api.keys[0]                    # other cart = new key
+    api.order = {"id": 7}
+    run(orders.checkout("bale", "1"))
+    orders.cart.add("bale", "1", 102, "شارژر", 1, 1.0)
+    run(orders.checkout("bale", "1"))
+    assert api.keys[3] == api.keys[2] and api.keys[4] != api.keys[3]  # a new checkout, a new key
 
 
 def test_failed_checkout_keeps_the_cart():

@@ -234,6 +234,16 @@ CREATE TABLE IF NOT EXISTS catalog_model_items (
     checked_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_model_items_model ON catalog_model_items(model_id);
+
+-- Idempotency-Key of POST /orders: same key + same customer = the original order.
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    key TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    order_id INTEGER NOT NULL REFERENCES orders(id),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_idem_expires ON idempotency_keys(expires_at);
 """
 
 #: Columns added after the first release: (table, column, declaration).
@@ -400,6 +410,23 @@ class OwnDB:
                 )
             self._commit()
             return self.get_order(order_id)
+
+    def find_idempotent(self, key: str) -> dict | None:
+        """{'user_id', 'order_id'} of a live (unexpired) key; expired keys are purged."""
+        with self._lock:
+            self._conn.execute("DELETE FROM idempotency_keys WHERE expires_at<=?", (now_iso(),))
+            return self._fetchone(
+                "SELECT user_id, order_id FROM idempotency_keys WHERE key=?", (key,)
+            )
+
+    def save_idempotent(self, key: str, user_id: int, order_id: int, expires_at: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO idempotency_keys (key, user_id, order_id, created_at, "
+                "expires_at) VALUES (?,?,?,?,?)",
+                (key, user_id, order_id, now_iso(), expires_at),
+            )
+            self._commit()
 
     def get_order(self, order_id: int) -> dict | None:
         with self._lock:

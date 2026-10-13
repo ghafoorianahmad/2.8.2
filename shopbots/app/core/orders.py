@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import base64
 import enum
+import hashlib
+import json
+import uuid
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
@@ -93,10 +96,27 @@ class OrderService:
         items = self.cart.items(platform, chat_id)
         if not items:
             return CheckoutResult(empty_cart=True)
-        order = await self.api.create_order(platform, chat_id, self.cart.order_payload(items))
+        payload = self.cart.order_payload(items)
+        key = self._checkout_key(platform, chat_id, payload)
+        order = await self.api.create_order(platform, chat_id, payload, idempotency_key=key)
         if order:
             self.cart.clear(platform, chat_id)
+            self.store.set_value(f"checkout_key:{platform}:{chat_id}", "")
         return CheckoutResult(order=order or None)
+
+    def _checkout_key(self, platform: str, chat_id: str, payload: list[dict]) -> str:
+        """One key per checkout attempt: a retry of the same cart (timeout, double tap)
+        reuses it so shopapi returns the first order; a changed cart gets a new key."""
+        digest = hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode()
+        ).hexdigest()[:16]
+        slot = f"checkout_key:{platform}:{chat_id}"
+        saved = self.store.get_value(slot) or ""
+        if saved.startswith(digest + ":"):
+            return saved.split(":", 1)[1]
+        key = uuid.uuid4().hex
+        self.store.set_value(slot, f"{digest}:{key}")
+        return key
 
     async def attach_receipt(
         self, platform: str, chat_id: str, order_id, photo, document=None,
