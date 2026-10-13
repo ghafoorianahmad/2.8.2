@@ -118,6 +118,11 @@ class LoginWindow(QWidget):
         card_layout.addWidget(self.login_button)
 
         # ---- last user hint (informational only) ------------------------
+        self.forgot_button = widgets.button(
+            "فراموشی گذرواژه", variant="ghost", on_click=self._forgot_password,
+            tooltip="درخواست تعیین گذرواژهٔ جدید از مدیر فروشگاه")
+        card_layout.addWidget(self.forgot_button)
+
         self.saved_box = QFrame()
         self.saved_box.setVisible(False)
         saved_layout = QVBoxLayout(self.saved_box)
@@ -148,6 +153,20 @@ class LoginWindow(QWidget):
         self.password_input.returnPressed.connect(self._submit)
         self._attempts = 0
         QTimer.singleShot(0, self._prefill_remembered_username)
+
+    # ------------------------------------------------------------------ forgot
+    def _forgot_password(self) -> None:
+        from .forgot_dialog import ForgotPasswordDialog
+
+        dialog = ForgotPasswordDialog(self.auth, to_english_digits(self.username_input.text()),
+                                      self)
+        dialog.exec()
+        if dialog.completed:
+            self.username_input.setText(dialog.username)
+            self.password_input.clear()
+            self.password_input.setFocus()
+            self.saved_label.setText("گذرواژهٔ جدید ثبت شد. با آن وارد شوید.")
+            self.saved_box.setVisible(True)
 
     # ------------------------------------------------------------------ saved
     @staticmethod

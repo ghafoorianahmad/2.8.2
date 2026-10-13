@@ -185,9 +185,10 @@ def writer():
 
 @pytest.fixture
 def client(settings, db, reader, writer):
-    from app.routers.auth import login_limiter
+    from app.routers.auth import forgot_limiter, login_limiter
 
     login_limiter.reset()
+    forgot_limiter.reset()
     app = create_app()
     app.dependency_overrides[deps.get_settings] = lambda: settings
     app.dependency_overrides[deps.get_db] = lambda: db

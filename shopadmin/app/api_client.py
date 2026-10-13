@@ -280,6 +280,8 @@ class SystemInfo:
 
     accounting_write_enabled: bool = False
     write_allowed_on_host: bool = False
+    #: Connected to the test database (hesab5 t): everything is enabled.
+    test_mode: bool = False
     price_level_bot: int = 3
     price_level_site: int = 3
     reserve_hours: int = 12
@@ -753,6 +755,42 @@ class ShopApiClient:
     def change_password(self, current_password: str, new_password: str) -> None:
         self._request("POST", "/auth/change-password", json_body={
             "current_password": current_password, "new_password": new_password})
+
+    # ---- forgot password (public until approved) ---------------------------
+    def forgot_password(self, username: str) -> dict:
+        return self._request("POST", "/auth/forgot", with_auth=False,
+                             json_body={"username": username}) or {}
+
+    def forgot_status(self, request_id: int, token: str) -> str:
+        payload = self._request("POST", "/auth/forgot/status", with_auth=False, json_body={
+            "request_id": int(request_id), "token": token}) or {}
+        return str(payload.get("status") or "pending")
+
+    def forgot_complete(self, request_id: int, token: str, new_password: str) -> None:
+        self._request("POST", "/auth/forgot/complete", with_auth=False, json_body={
+            "request_id": int(request_id), "token": token, "new_password": new_password})
+
+    def list_password_requests(self) -> list[dict]:
+        return list(self._request("GET", "/admin/password-requests") or [])
+
+    def decide_password_request(self, request_id: int, approve: bool) -> None:
+        action = "approve" if approve else "reject"
+        self._request("POST", f"/admin/password-requests/{int(request_id)}/{action}")
+
+    def reset_staff_default(self, staff_id: int) -> dict:
+        return self._request("POST", f"/admin/staff/{int(staff_id)}/reset-default") or {}
+
+    # ---- server edition: no sign-in screen ---------------------------------
+    def console_login(self, service_key: str) -> dict:
+        """Session for the server edition (loopback + the server's own service key)."""
+        payload = self._request(
+            "POST", "/auth/console-login", with_auth=False,
+            headers={API_KEY_HEADER: str(service_key or "").strip()},
+        )
+        if not isinstance(payload, dict) or not payload.get("token"):
+            raise ApiError(MSG_BAD_RESPONSE, kind="decode")
+        self.token = str(payload["token"])
+        return payload
 
     def bootstrap(self, service_key: str, username: str, full_name: str, password: str) -> dict:
         """Create the first super admin. Works only on the server machine itself."""

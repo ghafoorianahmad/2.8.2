@@ -5,7 +5,7 @@ text, and rounded controls with clear hover states.
 """
 from __future__ import annotations
 
-from urllib.parse import quote
+from pathlib import Path
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap
 from PySide6.QtCore import QByteArray, QRectF, Qt
@@ -250,26 +250,57 @@ def dot_pixmap(color: str, diameter: int = 12) -> QPixmap:
 
 
 # --------------------------------------------------------------------------
-# inline indicator glyphs
+# checkbox / radio indicator glyphs
 #
-# Qt's stylesheet engine cannot draw a checkmark itself, so a checked
-# QCheckBox/QRadioButton would show a solid blue square with no visible mark —
-# the user could not tell whether "مرا به خاطر بسپار" was ticked. These tiny SVG
-# data URIs give both controls a real, high-contrast glyph.
+# A checked QCheckBox/QRadioButton would be a plain blue square with no mark —
+# the user could not tell whether "مرا به خاطر بسپار" was ticked. Qt style
+# sheets cannot draw a checkmark themselves and, unlike a browser, do NOT load
+# ``data:`` URIs in ``image: url(...)`` (the glyph silently never appeared).
+# So the two glyphs are rendered to small PNG files once and the stylesheet
+# points at those real files.
 # --------------------------------------------------------------------------
-def _svg_data_uri(body: str, color: str = "#FFFFFF", width: float = 3.0) -> str:
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" '
-        f'stroke="{color}" stroke-width="{width}" stroke-linecap="round" '
-        f'stroke-linejoin="round">{body}</svg>'
-    )
-    return "data:image/svg+xml;utf8," + quote(svg, safe="")
-
-
-CHECK_ICON_DATA_URI = _svg_data_uri('<path d="M20 6 9 17l-5-5"/>')
-RADIO_DOT_DATA_URI = _svg_data_uri(
-    '<circle cx="12" cy="12" r="5" fill="#FFFFFF" stroke="none"/>', width=0
+INDICATOR_SIZE = 18
+_CHECK_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" '
+    'stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M19.5 6.5 9.5 16.5l-5-5"/></svg>'
 )
+_RADIO_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
+    '<circle cx="12" cy="12" r="5.5" fill="#FFFFFF"/></svg>'
+)
+
+
+def _render_glyph(svg: str, target: Path) -> bool:
+    from PySide6.QtGui import QImage
+
+    image = QImage(INDICATOR_SIZE, INDICATOR_SIZE, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+    if not renderer.isValid():
+        return False
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    renderer.render(painter, QRectF(0, 0, INDICATOR_SIZE, INDICATOR_SIZE))
+    painter.end()
+    return image.save(str(target), "PNG")
+
+
+def indicator_images() -> tuple[str, str]:
+    """(check, radio-dot) PNG paths for the stylesheet; ``""`` when unavailable."""
+    import tempfile
+
+    folder = Path(tempfile.gettempdir()) / "ShopAdmin-ui"
+    result = []
+    for name, svg in (("check.png", _CHECK_SVG), ("radio.png", _RADIO_SVG)):
+        target = folder / name
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            ok = _render_glyph(svg, target)
+        except OSError:
+            ok = False
+        result.append(target.as_posix() if ok else "")
+    return result[0], result[1]
 
 
 # --------------------------------------------------------------------------
@@ -402,7 +433,7 @@ QCheckBox::indicator {{
 QCheckBox::indicator:hover {{ border-color: {PRIMARY}; }}
 QCheckBox::indicator:checked {{
     background: {PRIMARY_DARK}; border-color: {PRIMARY_DARK};
-    image: url({CHECK_ICON_DATA_URI});
+    __CHECK_IMAGE__
 }}
 QCheckBox:disabled {{ color: {TEXT_MUTED}; }}
 QCheckBox::indicator:disabled {{ border-color: {DISABLED_TEXT}; background: {DISABLED_BG}; }}
@@ -414,7 +445,7 @@ QRadioButton::indicator {{
 }}
 QRadioButton::indicator:checked {{
     background: {PRIMARY_DARK}; border-color: {PRIMARY_DARK};
-    image: url({RADIO_DOT_DATA_URI});
+    __RADIO_IMAGE__
 }}
 QRadioButton:disabled {{ color: {TEXT_MUTED}; }}
 
@@ -478,7 +509,11 @@ def apply_theme(app: QApplication) -> None:
 def stylesheet(family: str | None = None) -> str:
     """The global stylesheet, with the resolved Persian font family in place."""
     resolved = family or resolve_font_family()
-    return _STYLESHEET_TEMPLATE.replace("__FONT_FAMILY__", resolved)
+    check, radio = indicator_images()
+    return (_STYLESHEET_TEMPLATE
+            .replace("__FONT_FAMILY__", resolved)
+            .replace("__CHECK_IMAGE__", f'image: url("{check}");' if check else "")
+            .replace("__RADIO_IMAGE__", f'image: url("{radio}");' if radio else ""))
 
 
 def make_rtl(widget: QWidget) -> QWidget:

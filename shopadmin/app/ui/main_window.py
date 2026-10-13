@@ -1,6 +1,7 @@
 """پنجرهٔ اصلی: نوار کناری سمت راست، نوار بالا و ناحیهٔ محتوا."""
 from __future__ import annotations
 
+import sqlite3
 from typing import Optional
 
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..edition import is_server_edition
 from ..logging_setup import get_logger
 from ..paths import APP_VERSION
 from ..persian import to_persian_digits
@@ -26,6 +28,7 @@ from ..permissions import (
     CUSTOMERS_VIEW,
     DASHBOARD_VIEW,
     ORDERS_VIEW,
+    PASSWORDS_DECIDE,
     PRICELIST_VIEW,
     PRODUCTS_VIEW,
     REPORTS_VIEW,
@@ -40,6 +43,7 @@ from .pages.customers import CustomersPage
 from .pages.dashboard import DashboardPage
 from .pages.orders import OrdersPage
 from .pages.catalog_models import CatalogModelsPage
+from .pages.password_requests import PasswordRequestsPage
 from .pages.pricelist import PriceListPage
 from .pages.products import ProductsPage
 from .pages.reports import ReportsPage
@@ -57,6 +61,7 @@ NAV_ITEMS = (
     ("catalog", "مدل‌های سایت", "link", CATALOG_VIEW),
     ("reports", "گزارش‌ها", "reports", REPORTS_VIEW),
     ("settings", "تنظیمات", "settings", SETTINGS_VIEW),
+    ("password_requests", "درخواست‌های گذرواژه", "key", PASSWORDS_DECIDE),
     ("users", "کاربران سیستم", "users", USERS_VIEW),
     ("server", "سرور فروشگاه", "server", SERVER_MANAGE),
 )
@@ -74,6 +79,7 @@ log = get_logger("main_window")
 BADGE_KINDS = {
     "customers": ("customer_registered",),
     "orders": ("order_created", "receipt_uploaded"),
+    "password_requests": ("password_request",),
 }
 
 
@@ -308,6 +314,8 @@ class MainWindow(QMainWindow):
             "خروج", icon_name="logout", on_click=self._request_logout,
             tooltip="خروج از حساب کاربری",
         )
+        # Server edition has no sign-in at all, so nothing to sign out of.
+        self.logout_button.setVisible(not is_server_edition())
         layout.addWidget(self.logout_button)
 
         self._status_dot_ok = theme.dot_pixmap(theme.SUCCESS, 14)
@@ -354,6 +362,7 @@ class MainWindow(QMainWindow):
             "catalog": CatalogModelsPage,
             "reports": ReportsPage,
             "settings": SettingsPage,
+            "password_requests": PasswordRequestsPage,
             "users": UsersPage,
             "server": ServerPage,
         }
@@ -431,6 +440,12 @@ class MainWindow(QMainWindow):
                 f"padding: 3px 10px; font-weight: 600;"
             )
         self._update_connection_ui()
+
+    def _on_connection_changed(self, _ok: bool) -> None:
+        try:
+            self._refresh_header()
+        except sqlite3.Error:
+            pass   # a late signal after the local store was closed (shutdown)
 
     def _update_connection_ui(self) -> None:
         if not self.context.store.base_url:
@@ -532,7 +547,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ events
     def _connect_context(self) -> None:
-        self.context.connection_changed.connect(lambda _ok: self._refresh_header())
+        self.context.connection_changed.connect(self._on_connection_changed)
         self.context.system_info_changed.connect(lambda _info: self._update_banner())
         self.context.data_changed.connect(self._on_data_changed)
         notifier = self.context.notifier

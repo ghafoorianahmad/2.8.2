@@ -144,6 +144,12 @@ class UsersPage(BasePage):
         reset.setEnabled(can_manage)
         layout.addWidget(reset)
 
+        default = widgets.button("بازنشانی به ۱۲۳۴۵", icon_name="key",
+                                 on_click=lambda u=user: self._reset_default(u),
+                                 tooltip="گذرواژه ۱۲۳۴۵ می‌شود و کاربر در ورود بعدی باید عوضش کند")
+        default.setEnabled(can_manage)
+        layout.addWidget(default)
+
         if user.get("locked"):
             unlock = widgets.button("رفع قفل", icon_name="key",
                                     on_click=lambda u=user: self._unlock(u))
@@ -196,11 +202,34 @@ class UsersPage(BasePage):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         user_id, password = int(user["id"]), dialog.new_password
+        must_change = dialog.must_change
         self.run(
-            lambda: self.context.auth.reset_password(user_id, password),
+            lambda: self.context.auth.reset_password(user_id, password,
+                                                     must_change_password=must_change),
             on_success=lambda _r: (self.notify_success(
-                "گذرواژهٔ موقت تعیین شد؛ کاربر در ورود بعدی باید آن را عوض کند"), self.load()),
+                "گذرواژهٔ جدید تعیین شد؛ کاربر در ورود بعدی باید آن را عوض کند" if must_change
+                else "گذرواژهٔ جدید تعیین شد"), self.load()),
             on_error=lambda m, _k: widgets.error(self, "تغییر گذرواژه انجام نشد", m),
+        )
+
+    def _reset_default(self, user: dict) -> None:
+        if not self._manage_allowed():
+            return
+        name = str(user.get("username") or "")
+        if not widgets.confirm(
+            self, "بازنشانی گذرواژه",
+            f"گذرواژهٔ «{name}» به ۱۲۳۴۵ برگردانده شود؟",
+            confirm_text="بازنشانی", kind="warning",
+            detail="کاربر از همهٔ رایانه‌ها خارج می‌شود و در ورود بعدی فقط می‌تواند گذرواژهٔ "
+                   "تازه انتخاب کند.",
+        ):
+            return
+        user_id = int(user["id"])
+        self.run(
+            lambda: self.context.auth.reset_password_to_default(user_id),
+            on_success=lambda _r: (self.notify_success(
+                "گذرواژه ۱۲۳۴۵ شد؛ کاربر در ورود بعدی باید آن را عوض کند"), self.load()),
+            on_error=lambda m, _k: widgets.error(self, "بازنشانی انجام نشد", m),
         )
 
     def _unlock(self, user: dict) -> None:
@@ -464,6 +493,7 @@ class ResetPasswordDialog(QDialog):
     def __init__(self, parent: QWidget | None, username: str) -> None:
         super().__init__(parent)
         self.new_password = ""
+        self.must_change = True
         self.setWindowTitle("تغییر گذرواژهٔ کاربر")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setMinimumWidth(460)
@@ -473,8 +503,8 @@ class ResetPasswordDialog(QDialog):
         root.setSpacing(14)
         root.addWidget(widgets.label("تغییر گذرواژهٔ کاربر", size=14, bold=True))
         root.addWidget(widgets.label(
-            f"یک گذرواژهٔ موقت برای «{username}» تعیین کنید. او در ورود بعدی باید آن را "
-            "عوض کند و از همهٔ رایانه‌ها خارج می‌شود.", wrap=True
+            f"گذرواژهٔ جدید «{username}» را تعیین کنید. او از همهٔ رایانه‌ها خارج می‌شود. "
+            "گذرواژه به‌صورت رمزنگاری‌شده ذخیره می‌شود و بعداً قابل نمایش نیست.", wrap=True
         ))
 
         form = QFormLayout()
@@ -490,6 +520,9 @@ class ResetPasswordDialog(QDialog):
         form.addRow(widgets.label("گذرواژهٔ جدید:"), self.password_input)
         form.addRow(widgets.label("تکرار گذرواژه:"), self.confirm_input)
         root.addLayout(form)
+        self.must_change_check = QCheckBox("کاربر در ورود بعدی گذرواژه را خودش عوض کند (توصیه می‌شود)")
+        self.must_change_check.setChecked(True)
+        root.addWidget(self.must_change_check)
 
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
         self.error_label.setVisible(False)
@@ -513,4 +546,5 @@ class ResetPasswordDialog(QDialog):
             self.error_label.setVisible(True)
             return
         self.new_password = password
+        self.must_change = self.must_change_check.isChecked()
         self.accept()

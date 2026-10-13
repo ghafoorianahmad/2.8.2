@@ -244,6 +244,19 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     expires_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_idem_expires ON idempotency_keys(expires_at);
+
+CREATE TABLE IF NOT EXISTS password_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    staff_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','approved','rejected','used','expired')),
+    token_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    decided_by TEXT NOT NULL DEFAULT '',
+    expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pwreq_staff ON password_requests(staff_id);
 """
 
 #: Columns added after the first release: (table, column, declaration).
@@ -689,6 +702,43 @@ class OwnDB:
         with self._lock:
             self._conn.execute("DELETE FROM staff_sessions WHERE user_id=?", (staff_id,))
             self._conn.execute("DELETE FROM staff_users WHERE id=?", (staff_id,))
+            self._commit()
+
+    # ---- forgot-password requests (the token is stored hashed, like sessions) ----
+    def create_password_request(self, staff_id: int, token_hash: str, expires_at: str) -> dict:
+        with self._lock:
+            # one open request per account: a new one replaces the old
+            self._conn.execute(
+                "UPDATE password_requests SET status='expired' "
+                "WHERE staff_id=? AND status IN ('pending','approved')", (staff_id,))
+            cur = self._conn.execute(
+                "INSERT INTO password_requests (staff_id, token_hash, created_at, expires_at) "
+                "VALUES (?,?,?,?)", (staff_id, token_hash, now_iso(), expires_at))
+            self._commit()
+            return self.get_password_request(cur.lastrowid)
+
+    def get_password_request(self, request_id: int) -> dict | None:
+        with self._lock:
+            return self._fetchone(
+                "SELECT r.*, u.username, u.full_name, u.role FROM password_requests r "
+                "JOIN staff_users u ON u.id = r.staff_id WHERE r.id=?", (request_id,))
+
+    def list_pending_password_requests(self) -> list[dict]:
+        with self._lock:
+            return self._fetchall(
+                "SELECT r.id, r.staff_id, r.status, r.created_at, r.expires_at, "
+                "u.username, u.full_name, u.role FROM password_requests r "
+                "JOIN staff_users u ON u.id = r.staff_id "
+                "WHERE r.status='pending' AND r.expires_at > ? ORDER BY r.id",
+                (now_iso(),))
+
+    def set_password_request_status(self, request_id: int, status: str,
+                                    decided_by: str = "", expires_at: str | None = None) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE password_requests SET status=?, decided_at=?, decided_by=?, "
+                "expires_at=COALESCE(?, expires_at) WHERE id=?",
+                (status, now_iso(), decided_by, expires_at, request_id))
             self._commit()
 
     # ---- staff sessions ----

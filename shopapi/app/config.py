@@ -260,7 +260,16 @@ class Settings:
             return None
         return Path(self.sqlite_path).resolve().parent / "pricelists"
 
+    #: The accounting copy used for testing. Connected to it, reads and writes
+    #: are fully enabled with no switch (nothing real can be damaged there).
+    TEST_DATABASE = "hesab5 t"
+
+    def is_test_db(self) -> bool:
+        return self.accounting_database.strip().lower() == self.TEST_DATABASE
+
     def write_allowed(self) -> bool:
+        if self.is_test_db():
+            return True
         allowed = {h.lower() for h in self.accounting_allowed_hosts}
         return self.accounting_write_enabled and self.accounting_server.lower() in allowed
 

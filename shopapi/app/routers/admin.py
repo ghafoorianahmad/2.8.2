@@ -61,7 +61,8 @@ def system_info(
     Contains no secrets and performs no writes.
     """
     return {
-        "accounting_write_enabled": settings.accounting_write_enabled,
+        "accounting_write_enabled": settings.accounting_write_enabled or settings.is_test_db(),
+        "test_mode": settings.is_test_db(),
         "write_allowed_on_host": settings.write_allowed(),
         "price_level_bot": settings.price_level_bot,
         "price_level_site": settings.price_level_site,

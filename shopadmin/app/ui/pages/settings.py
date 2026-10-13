@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from ... import autostart
 from ...logging_setup import get_logger
 from ...paths import APP_VERSION, data_dir, db_path, log_path
+from ...edition import is_server_edition
 from ...permissions import (
     SETTINGS_CHANGE_OWN_PASSWORD,
     SETTINGS_EDIT_CONNECTION,
@@ -220,6 +221,7 @@ class SettingsPage(BasePage):
             "تغییر گذرواژه", icon_name="key", variant="primary", on_click=self._change_password
         )
         self.change_password_button.setEnabled(self.context.can(SETTINGS_CHANGE_OWN_PASSWORD))
+        self.change_password_button.setVisible(not is_server_edition())
         buttons.addWidget(self.change_password_button)
         panel.body.addLayout(buttons)
         return panel
@@ -299,7 +301,8 @@ class SettingsPage(BasePage):
                 "روی رایانهٔ سرور به‌روز کنید."
             )
             return
-        mode = "فعال (ثبت واقعی در حسابداری)" if info.accounting_write_enabled \
+        mode = "فعال کامل — پایگاه آزمایشی (خواندن و نوشتن آزاد)" if info.test_mode else \
+            "فعال (ثبت واقعی در حسابداری)" if info.accounting_write_enabled \
             else "غیرفعال (حالت آزمایشی — بدون ثبت واقعی)"
         self._set_status(
             f"ارتباط با سرور فروشگاه برقرار است. ثبت در حسابداری: {mode}",

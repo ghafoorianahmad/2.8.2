@@ -2,6 +2,18 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## v2.4.0 — forgot password, server edition without login, test-DB mode (2026-10-13, branch `claude/amazing-mccarthy-dob95x`, from `claude/invoice-card-v3`) — DONE in code (Linux); GUI/Windows UNVERIFIED
+
+- **Version 2.4.0** in `shopapi/app/control.py` and `shopadmin/installer/ShopAdmin.iss`; `shopapi/tests/test_v240.py::test_server_and_installer_versions_match` fails if they differ.
+- **Remember-me checkmark**: Qt style sheets do not load `data:` URIs, so the glyph never showed. `theme.indicator_images()` now renders the check/radio PNGs to `%TEMP%\ShopAdmin-ui` and the stylesheet points at the files. Test renders a checked box offscreen and looks for the white mark.
+- **Forgot password**: public `POST /auth/forgot` (+ `/forgot/status`, `/forgot/complete`) with a per-request secret (stored hashed), new table `password_requests`, event `password_request`; admins (`admin`, `super_admin`; permission `passwords.decide`) approve/reject in the new ShopAdmin page «درخواست‌های گذرواژه»; an admin cannot decide a super admin's request. After approval (30 min window) the requester picks the new password in the login window's dialog; the old password and all sessions die. Unknown usernames get an identical answer. Passwords stay salted scrypt hashes (the server has always used scrypt, not bcrypt).
+- **Super admin**: «بازنشانی به ۱۲۳۴۵» (`POST /admin/staff/{id}/reset-default`: hash of 12345 + must-change-password, sessions dropped; until changed the account can do nothing but change its password) and the existing «تغییر گذرواژه» (now with an optional must-change checkbox).
+- **Server edition** (the full build / ShopServerSetup; detected by the presence of `app.server_setup`, override `SHOPADMIN_EDITION`): no login screen, no logout/lock/change-password. It signs in with `POST /auth/console-login` — service key from `%ProgramData%\ShopServer\.env` + loopback only → session of the first active super admin. Client edition, bot/API keys unchanged.
+- **Test mode**: `Settings.is_test_db()` (`ACCOUNTING_DATABASE` = `hesab5 t`) ⇒ `write_allowed()` is true with no switch/host check; `/admin/system-info` and `/admin/server/status` report `test_mode` and write enabled. Any other database keeps the old `ACCOUNTING_WRITE_ENABLED` + allowed-host rule.
+- Also fixed two Linux-only test races (login window prefill / main-window header after the store closed).
+- Tests: shopapi 303, shopadmin all green offscreen, shopbots 218, shoptg 45 (+2 skipped), shopsystem 36 (+12 skipped; `test_local_backup_dir` fails only because it asserts a Windows path).
+- **Not verified**: anything on Windows (UAC/ACL read of the server `.env` by the server edition, real window rendering, installer build), live `hesab5 t` writes, the checkmark on a real display.
+
 ## Idempotency, e2e scripts, ShopAdmin UI leftovers (2026-10-13, branch `claude/magical-ride-7p262r`, from `claude/invoice-card-v3`) — DONE in code (Linux)
 
 - `POST /orders` accepts `Idempotency-Key` (8–128 chars): same key + same customer → the original order (HTTP 200, no new reservation); another customer's key → 409; keys live 24 h in SQLite (`idempotency_keys`). The bot keeps one key per cart in its `kv` (retry/double tap reuses it; a changed cart or a finished checkout gets a new one). Tests: shopapi 293, shopbots 219.

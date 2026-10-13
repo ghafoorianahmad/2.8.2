@@ -221,6 +221,35 @@ class PasswordResetIn(BaseModel):
     must_change_password: bool = True
 
 
+class ForgotIn(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+
+
+class ForgotOut(BaseModel):
+    """Same shape whether or not the username exists (no enumeration)."""
+    request_id: int
+    token: str
+
+
+class ForgotStatusIn(BaseModel):
+    request_id: int
+    token: str = Field(min_length=1, max_length=200)
+
+
+class ForgotCompleteIn(ForgotStatusIn):
+    new_password: str = Field(min_length=1, max_length=128)
+
+
+class PasswordRequestOut(BaseModel):
+    id: int
+    staff_id: int
+    username: str
+    full_name: str = ""
+    role: str
+    created_at: str
+    expires_at: str
+
+
 class BootstrapIn(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     full_name: str = Field("", max_length=100)

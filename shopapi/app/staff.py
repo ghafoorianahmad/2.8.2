@@ -35,6 +35,7 @@ P_SHOP_STATE = "shop.state"              # open / close the shop (closed mode)
 P_PRICELIST = "pricelist.manage"        # upload / approve price lists, map rows
 P_CATALOG = "catalog.manage"            # site models <-> accounting products (§9a)
 P_PROXIES = "proxies.manage"             # Telegram proxy pool
+P_PASSWORD_REQUESTS = "passwords.decide"  # approve / reject forgot-password requests
 P_STAFF_MANAGE = "staff.manage"
 P_SERVER_MANAGE = "server.manage"
 
@@ -45,9 +46,10 @@ _WORKFLOW = {
 PERMISSIONS: dict[str, frozenset[str]] = {
     ROLE_VIEWER: frozenset({P_VIEW}),
     ROLE_OPERATOR: frozenset({P_VIEW, P_ORDERS_SHIP}),
-    ROLE_ADMIN: frozenset(_WORKFLOW | {P_PRICELIST, P_CATALOG}),
+    ROLE_ADMIN: frozenset(_WORKFLOW | {P_PRICELIST, P_CATALOG, P_PASSWORD_REQUESTS}),
     ROLE_SUPER_ADMIN: frozenset(
-        _WORKFLOW | {P_PRICELIST, P_CATALOG, P_PROXIES, P_STAFF_MANAGE, P_SERVER_MANAGE}
+        _WORKFLOW | {P_PRICELIST, P_CATALOG, P_PROXIES, P_STAFF_MANAGE, P_SERVER_MANAGE,
+                 P_PASSWORD_REQUESTS}
     ),
     ROLE_SERVICE: frozenset(_WORKFLOW),
 }
@@ -56,6 +58,11 @@ PERMISSIONS: dict[str, frozenset[str]] = {
 def has_permission(role: str | None, permission: str) -> bool:
     return permission in PERMISSIONS.get(str(role or ""), frozenset())
 
+
+#: Password a super admin can reset an account to. It is deliberately weak and
+#: therefore ALWAYS paired with must_change_password: the account can do
+#: nothing but pick a new (policy-checked) password until it has.
+DEFAULT_RESET_PASSWORD = "12345"
 
 # --- validation ------------------------------------------------------------
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
