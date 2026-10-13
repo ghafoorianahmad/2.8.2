@@ -27,6 +27,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import tempfile
 from pathlib import Path
 
@@ -44,6 +45,7 @@ LOGO_FILE = ASSETS / "logo.png"       # shop logo (transparent PNG)
 W = 1080
 WINDOW_PAD = 200            # extra window height; the image is cropped to the page
 RENDER_TIMEOUT = 40          # seconds for one screenshot
+OUTPUT_WAIT = 15.0           # extra seconds to wait for the PNG after the browser returns
 
 _FA_DIGITS = str.maketrans("0123456789,.", "۰۱۲۳۴۵۶۷۸۹٬٫")
 
@@ -95,6 +97,23 @@ def find_browser() -> str | None:
     return None
 
 
+def _wait_for_file(path: Path, timeout: float) -> bool:
+    """True once ``path`` exists with a non-zero size that stopped changing."""
+    deadline = time.monotonic() + timeout
+    last = -1
+    while True:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = -1
+        if size > 0 and size == last:
+            return True
+        if time.monotonic() >= deadline:
+            return size > 0
+        last = size
+        time.sleep(0.2)
+
+
 def _screenshot(page_html: str, height: int) -> bytes | None:
     browser = find_browser()
     if not browser:
@@ -119,7 +138,9 @@ def _screenshot(page_html: str, height: int) -> bytes | None:
         except subprocess.TimeoutExpired:
             logger.warning("cards: browser timed out - text fallback")
             return None
-        if not out.exists():
+        # On Windows msedge.exe can hand off to another process and return before
+        # the screenshot is written: wait (bounded) until the file exists and is stable.
+        if not _wait_for_file(out, OUTPUT_WAIT):
             logger.warning("cards: browser produced no image - text fallback")
             return None
         data = out.read_bytes()

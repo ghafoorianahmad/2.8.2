@@ -228,7 +228,9 @@ def test_update_ids_grow_and_survive_a_restart():
         ids = [u["update_id"] for u in await adapter.get_updates(timeout=0)]
         assert len(ids) == 3 and ids == sorted(set(ids))
         # a new process starts counting again, but the engine stored the old last id:
-        # ids are time based, so they still come out larger
+        # ids are time based, so they still come out larger (a real restart takes
+        # seconds; Windows' clock is coarse, so let some time pass first)
+        await asyncio.sleep(0.05)
         world2 = FakeWorld()
         restarted, _ = tg_adapter(world2, [None])
         await restarted.get_updates(timeout=0)
