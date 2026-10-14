@@ -189,3 +189,16 @@ def test_price_channel_is_polled_every_10_minutes_by_default(monkeypatch):
     monkeypatch.delenv("TG_PRICE_INTERVAL_MIN", raising=False)
     assert Settings().price_interval_sec == 600
     assert Settings.from_env(load_file=False).price_interval_sec == 600
+
+
+def test_tests_never_read_a_real_env_file(tmp_path, monkeypatch):
+    import os
+
+    from app import config
+
+    (tmp_path / ".env").write_text("TG_PRICE_INTERVAL_MIN=99\n", encoding="utf-8")
+    monkeypatch.setattr(config, "BASE_DIR", tmp_path)
+    monkeypatch.delenv("TG_PRICE_INTERVAL_MIN", raising=False)
+    monkeypatch.delenv("SHOPTG_ENV", raising=False)
+    assert Settings.from_env().price_interval_sec == 600
+    assert "TG_PRICE_INTERVAL_MIN" not in os.environ

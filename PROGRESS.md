@@ -2,6 +2,12 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## v2.5.0 follow-up — sales gate for phones only, tests isolated from .env (2026-10-14, same branch `feature/order-flow-v250`) — DONE (Linux)
+
+- **Closed sales block only phones.** `POST /orders` returns 409 `Sales are closed: …` only when the order contains a product priced from the price list (`phones.has(code)`); accessories / other items are always accepted (no list, Friday, holiday, manual close). A mixed cart with a phone is refused as a whole. Bot: the closed banner appears only on product pages that show a phone and on the color view; the cart hides «ثبت سفارش» only when it contains a phone; `SALES_CLOSED*` texts say «فروش گوشی بسته است… گوشی را از سبد حذف کنید تا بقیهٔ کالاها سفارش داده شوند». shopapi state messages, ShopAdmin dashboard panel («وضعیت فروش گوشی»), confirm dialogs, notifications and server-setting labels say «گوشی» and that accessories stay orderable. Supersedes item 2's "Scope" note above.
+- **Tests never read a real `.env`.** Autouse fixture `_no_real_dotenv` in every suite's `tests/conftest.py`: shopapi/shopbots patch `app.config._load_dotenv`, shoptg `app.config.load_env_file`, shopadmin/shopsystem `dotenv.load_dotenv` (their code imports it inside functions). Opt-out for live runs only: `SHOP_TESTS_USE_DOTENV=1`. Regression tests write a temporary `.env` with `ACCOUNTING_STATUS_CODE=0` and check it is ignored (this is what failed on the Windows dev PC in `test_status_code_has_no_default`).
+- Version stays 2.5.0. Tests (Linux): shopapi 353 ✓, shopbots 228 ✓, shoptg 47 ✓ + 2 skipped, shopadmin 448 ✓ + 3 skipped, shopsystem 36 ✓ + 12 skipped + 1 ✗ pre-existing (`test_local_backup_dir`, Windows path).
+
 ## v2.5.0 — order flow: 30-min receipt, sales windows, Status config, DB guards (2026-10-14, branch `feature/order-flow-v250`, from `merge/v240-into-magical-ride`) — DONE in code (Linux, fakes only); Windows / SQL / Bale UNVERIFIED
 
 Decisions: `REQUIREMENTS.md` §7a. Nothing was run against SQL Server, Bale, Telegram or Windows.

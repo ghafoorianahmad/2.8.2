@@ -1,6 +1,7 @@
 """Shared test fixtures with a fake accounting layer (no real SQL)."""
 from __future__ import annotations
 
+import os
 import threading
 
 import pytest
@@ -225,3 +226,16 @@ def register_and_approve(client, platform="bale", chat_id="111", person_code=700
     client.post(f"/admin/users/{user['id']}/approve", json={"person_code": person_code},
                 headers=h("admin"))
     return user["id"]
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dotenv(monkeypatch):
+    """Tests never read a real .env (a developer's ACCOUNTING_STATUS_CODE=0 or
+    tokens would change results). Opt out only for live runs:
+    SHOP_TESTS_USE_DOTENV=1."""
+    if os.environ.get("SHOP_TESTS_USE_DOTENV") == "1":
+        return
+    from app import config
+
+    monkeypatch.setattr(config, "_load_dotenv", lambda: None)
+    config.reset_settings()

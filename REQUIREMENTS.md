@@ -71,6 +71,7 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 - No 12-hour reservation, no payment gateway. The customer uploads the receipt right after ordering; deadline `RECEIPT_DEADLINE_MINUTES` = 30. Then the order is cancelled **locally** (our SQLite). Nothing is ever deleted from the Sazeh DB; an order that already exists there is only reported to the admin.
 - Price channel polled every 10 min (`TG_PRICE_INTERVAL_MIN`), new lists auto-imported (the >15% hold stays).
 - Sales windows (Asia/Tehran): a list posted before 13:30 opens sales until 13:30; before 20:30 until 20:30; otherwise closed; Fridays closed. While closed the bot shows the last prices + «لیست به‌روز نشده، فروش بسته است» and refuses orders.
+- **Scope (user, 2026-10-14): the closed state (windows, Friday, «تعطیلی امروز», «بستن فروش») blocks ONLY phones** (items priced from the Telegram list). Accessories and other accounting-priced items stay orderable at all times; a cart with a phone is refused as a whole until the phone is removed.
 - ShopAdmin buttons (stored on the server, audited, one event each): «تعطیلی امروز» (closed until next morning), «بستن فروش» (now, until the next list or «باز کردن»), «باز کردن فروش» (until the next transition: a new list or the next closing time; can be closed any time).
 - `KalaOrder.Status` = `ACCOUNTING_STATUS_CODE`, no default (6808 is invalid; value from GUI test G2). Unset = nothing committed. Production writes stay disabled by default.
 - Every order stores the accounting DB name; invoices are only looked up in that DB.

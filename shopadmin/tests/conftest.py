@@ -188,8 +188,8 @@ class FakeShopApi:
         if self.shop_closed and reason in ("list", "manual_open"):
             reason = "manual_close"
         return {"closed": self.shop_closed, "sales_open": not self.shop_closed,
-                "reason": reason, "message_fa": "فروش بسته است." if self.shop_closed
-                else "فروش باز است.", "until": None, "list_date": "1405/07/22",
+                "reason": reason, "message_fa": "فروش گوشی بسته است." if self.shop_closed
+                else "فروش گوشی باز است.", "until": None, "list_date": "1405/07/22",
                 "list_slot": "morning", "override_by": "", "receipt_deadline_minutes": 30}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -864,3 +864,16 @@ def top_level_windows(admin_qapp):
         except RuntimeError:
             pass  # the C++ object is already gone
     admin_qapp.processEvents()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dotenv(monkeypatch):
+    """Tests never read a real .env (a developer's ACCOUNTING_STATUS_CODE=0 or
+    tokens would change results). Opt out only for live runs:
+    SHOP_TESTS_USE_DOTENV=1."""
+    if os.environ.get("SHOP_TESTS_USE_DOTENV") == "1":
+        return
+    import dotenv
+
+    # app.main imports load_dotenv inside the function, so patch the source.
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)

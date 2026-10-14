@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -41,3 +42,15 @@ def env(settings):
                               client_factory=tg.factory, clock=clock)
     worker = Worker(settings, api, gateway, load_session=lambda: "SESSION", clock=clock)
     return worker, tg, shop, clock
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dotenv(monkeypatch):
+    """Tests never read a real .env (a developer's ACCOUNTING_STATUS_CODE=0 or
+    tokens would change results). Opt out only for live runs:
+    SHOP_TESTS_USE_DOTENV=1."""
+    if os.environ.get("SHOP_TESTS_USE_DOTENV") == "1":
+        return
+    from app import config
+
+    monkeypatch.setattr(config, "load_env_file", lambda: None)

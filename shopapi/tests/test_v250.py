@@ -149,31 +149,74 @@ def order_req(client, chat_id="111"):
                        headers=h("bot"))
 
 
-def test_orders_are_refused_while_sales_are_closed(client, reader, db, win):
+def add_phone(db, kala_code=104) -> int:
+    """An active list with one row mapped to ``kala_code``; returns the color id."""
+    repo = PriceListRepo(db)
+    row = {"row_key": "iphone|256|blk", "block": 0, "section": "iPHONE", "description": "17 Pro",
+           "kind": "شرکتی", "color": "BLACK", "naghd": 50000, "raval": 52500,
+           "price_rial": 525_000_000}
+    list_id = repo.insert_list(list_date="1405/07/22", sha256="phone", source="manual",
+                               source_ref="", posted_at=None, status="held", reason="",
+                               rows=[row])
+    repo.activate(list_id)
+    return repo.upsert_mapping(row_key=row["row_key"], action="map", kala_code=kala_code,
+                               color_label="مشکی", section="iPHONE", description="17 Pro",
+                               kind="شرکتی", color="BLACK", actor="test")["id"]
+
+
+def phone_req(client, color_id, chat_id="111"):
+    return client.post("/orders", json={"platform": "bale", "chat_id": chat_id,
+                                        "items": [{"kala_code": 104, "qty": 1,
+                                                   "variant_id": color_id}]},
+                       headers=h("bot"))
+
+
+def test_closed_sales_refuse_phones_only(client, reader, db, win):
     seed_products(reader)
     register_and_approve(client)
+    color = add_phone(db)
+    # the manual upload has no Telegram post time: freshly activated now -> close it
+    client.post("/admin/sales/action", json={"action": "close"}, headers=h("admin"))
     state = client.get("/shop/state", headers=h("bot")).json()
     assert state["closed"] is True and state["sales_open"] is False
-    assert state["reason"] == sales.REASON_NO_LIST and state["message_fa"]
-    r = order_req(client)
+    assert "گوشی" in state["message_fa"]
+    r = phone_req(client, color)
     assert r.status_code == 409 and r.json()["detail"].startswith("Sales are closed")
+    # accessories / other accounting-priced items stay orderable
+    assert order_req(client).status_code == 201
+    # a mixed cart with a phone is refused as a whole
+    mixed = client.post("/orders", json={"platform": "bale", "chat_id": "111", "items": [
+        {"kala_code": 101, "qty": 1}, {"kala_code": 104, "qty": 1, "variant_id": color}]},
+        headers=h("bot"))
+    assert mixed.status_code == 409
     # «باز کردن فروش» in ShopAdmin
     r = client.post("/admin/sales/action", json={"action": "open"}, headers=h("admin"))
     assert r.status_code == 200 and r.json()["sales_open"] is True
+    assert phone_req(client, color).status_code == 201
+    client.post("/admin/sales/action", json={"action": "holiday"}, headers=h("admin"))
+    assert phone_req(client, color).status_code == 409
     assert order_req(client).status_code == 201
-    r = client.post("/admin/sales/action", json={"action": "close"}, headers=h("admin"))
-    assert r.json()["closed"] is True and order_req(client).status_code == 409
     assert client.post("/admin/sales/action", json={"action": "holiday"},
                        headers=h("bot")).status_code == 403
     assert client.post("/admin/sales/action", json={"action": "x"},
                        headers=h("admin")).status_code == 422
 
 
+def test_accessories_are_orderable_without_any_price_list(client, reader, db, win):
+    seed_products(reader)
+    register_and_approve(client)
+    state = client.get("/shop/state", headers=h("bot")).json()
+    assert state["reason"] == sales.REASON_NO_LIST and state["closed"] is True
+    assert order_req(client).status_code == 201
+
+
 def test_a_retry_of_an_order_placed_before_closing_gets_the_same_order(client, reader, db, win):
     seed_products(reader)
     register_and_approve(client)
+    color = add_phone(db)
     client.post("/admin/sales/action", json={"action": "open"}, headers=h("admin"))
-    body = {"platform": "bale", "chat_id": "111", "items": [{"kala_code": 101, "qty": 1}]}
+    body = {"platform": "bale", "chat_id": "111",
+            "items": [{"kala_code": 104, "qty": 1, "variant_id": color}]}
     first = client.post("/orders", json=body, headers={**h("bot"), "Idempotency-Key": "k" * 16})
     client.post("/admin/sales/action", json={"action": "close"}, headers=h("admin"))
     again = client.post("/orders", json=body, headers={**h("bot"), "Idempotency-Key": "k" * 16})
@@ -511,3 +554,16 @@ def test_installer_ships_the_grant_script():
 def test_writer_fake_result_shape():
     res = WriteResult(1, 1, "", 0, None, 1, 1)
     assert res.duplicate_after_commit is False
+
+
+def test_tests_never_read_a_real_env_file(tmp_path, monkeypatch):
+    """A developer's shopapi/.env (e.g. ACCOUNTING_STATUS_CODE=0) must not leak in."""
+    from app import config
+
+    (tmp_path / ".env").write_text("ACCOUNTING_STATUS_CODE=0\nACCOUNTING_DATABASE=prod\n",
+                                   encoding="utf-8")
+    monkeypatch.setattr(config, "BASE_DIR", tmp_path)
+    monkeypatch.delenv("ACCOUNTING_STATUS_CODE", raising=False)
+    monkeypatch.delenv("ACCOUNTING_DATABASE", raising=False)
+    s = Settings.from_env()
+    assert s.accounting_status_code is None and s.accounting_database == "hesab5 t"

@@ -29,3 +29,15 @@ def test_admin_errors_for_status_and_duplicate_are_persian():
                           detail="Duplicate accounting order number; nothing was written")
     assert format_admin_error(status) == texts.ADMIN_STATUS_NOT_CONFIGURED
     assert format_admin_error(dup) == texts.ADMIN_DUPLICATE_ORDER_NO
+
+
+def test_tests_never_read_a_real_env_file(tmp_path, monkeypatch):
+    from app import config
+
+    (tmp_path / ".env").write_text("BOT_IMAGE_CARDS=true\n", encoding="utf-8")
+    monkeypatch.setattr(config, "BASE_DIR", tmp_path)
+    monkeypatch.delenv("BOT_IMAGE_CARDS", raising=False)
+    config._load_dotenv()
+    import os
+
+    assert "BOT_IMAGE_CARDS" not in os.environ

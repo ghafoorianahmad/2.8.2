@@ -54,11 +54,12 @@ SERVER_WARNINGS = {
 
 #: Sales window changes (v2.5.0): informational, no counter.
 SALES_NOTICES = {
-    "sales_opened": "فروش با لیست قیمت جدید باز شد.",
-    "sales_closed": "فروش بسته شد (ساعت پایان فروش، جمعه یا نرسیدن لیست قیمت جدید).",
-    "sales_opened_manual": "فروش به‌دست یکی از کاربران باز شد.",
-    "sales_closed_manual": "فروش به‌دست یکی از کاربران بسته شد.",
-    "sales_holiday": "امروز تعطیل اعلام شد؛ فروش تا صبح فردا بسته است.",
+    "sales_opened": "فروش گوشی با لیست قیمت جدید باز شد.",
+    "sales_closed": "فروش گوشی بسته شد (ساعت پایان فروش، جمعه یا نرسیدن لیست قیمت جدید)؛ "
+                    "لوازم جانبی قابل سفارش است.",
+    "sales_opened_manual": "فروش گوشی به‌دست یکی از کاربران باز شد.",
+    "sales_closed_manual": "فروش گوشی به‌دست یکی از کاربران بسته شد.",
+    "sales_holiday": "امروز تعطیل اعلام شد؛ فروش گوشی تا صبح فردا بسته است.",
 }
 KIND_AUTO_CANCELLED = "order_auto_cancelled"
 
@@ -132,7 +133,7 @@ def notice_for(event: dict) -> Optional[Notice]:
         return Notice(kind, "سفارش لغو شد",
                       f"سفارش شمارهٔ {ref_fa} چون رسید پرداخت در مهلت نرسید، خودکار لغو شد.", ref)
     if kind in SALES_NOTICES:
-        return Notice(kind, "وضعیت فروش", SALES_NOTICES[kind], None)
+        return Notice(kind, "وضعیت فروش گوشی", SALES_NOTICES[kind], None)
     return None
 
 

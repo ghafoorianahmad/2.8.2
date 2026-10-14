@@ -39,6 +39,7 @@ logger = logging.getLogger("shopapi.public")
 
 IDEMPOTENCY_HOURS = 24
 #: shopapi detail when an order is refused because sales are closed (bot maps it).
+#: Only orders with phones (price-list items) are refused; the detail is unchanged.
 SALES_CLOSED_DETAIL = "Sales are closed"
 RECEIPT_TOO_LATE_DETAIL = "Receipt deadline passed; order cancelled"
 
@@ -295,9 +296,10 @@ def create_order(
                                         "Idempotency-Key belongs to another customer")
                 response.status_code = status.HTTP_200_OK
                 return _out(db.get_order(seen["order_id"]))
-        if not sales_state.open:
-            # Closed (no fresh list, closing time, Friday, holiday, manual close):
-            # the bot shows the last prices but refuses orders.
+        if not sales_state.open and any(phones.has(code) for code, _ in merged):
+            # Closed (no fresh list, closing time, Friday, holiday, manual close)
+            # blocks ONLY phones (priced from the Telegram list); accessories and
+            # other accounting-priced items stay orderable.
             raise HTTPException(status.HTTP_409_CONFLICT,
                                 f"{SALES_CLOSED_DETAIL}: {sales_state.reason}")
         # Orders past their receipt deadline must not keep holding stock.

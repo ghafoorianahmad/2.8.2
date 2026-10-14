@@ -545,10 +545,7 @@ def test_closed_shop_notice_and_tracking_messages(tg, shopapi):
         await c.press("prod:101")
         await c.press("add:101:1")
         await c.press("checkout")
-        assert c.last() == texts.SALES_CLOSED and len(shopapi.orders) == 0
-        shopapi.closed = False
-        c.engine._shop_state = None
-        await c.press("checkout")
+        # v2.5.0: closed sales block only phones; this accessory is ordered
         assert len(shopapi.orders) == 1
 
         oid = next(iter(shopapi.orders))

@@ -186,6 +186,8 @@ def test_dashboard_sales_buttons(ui_context, fake_api, admin_qapp, monkeypatch):
     _render_page(admin_qapp, page, load=False)
     assert fake_api.sales_actions == ["holiday"] and page._shop_closed is True
     assert "تعطیلی امروز" in page.shop_state_detail.text()
+    # only phones are closed: the label says accessories stay orderable
+    assert "گوشی" in page.shop_state_label.text() and "لوازم جانبی" in page.shop_state_label.text()
     assert page.sales_buttons["open"].isVisibleTo(page)
     page._sales_action("open")
     _render_page(admin_qapp, page, load=False)

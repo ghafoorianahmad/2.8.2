@@ -658,8 +658,9 @@ class BotEngine:
         )
 
     async def _sales_state(self) -> dict:
-        """Sales window state from shopapi (price list, Friday, ShopAdmin buttons),
-        cached briefly; unknown = open (shopapi still refuses orders when closed)."""
+        """Phone sales state from shopapi (price list, Friday, ShopAdmin buttons),
+        cached briefly; unknown = open (shopapi still refuses phone orders when
+        closed). Accessories and other items are never affected."""
         now = time.monotonic()
         if self._shop_state is not None and now - self._shop_state[0] < SHOP_STATE_TTL:
             return self._shop_state[1]
@@ -673,6 +674,11 @@ class BotEngine:
 
     async def _shop_closed(self) -> bool:
         return bool((await self._sales_state()).get("closed"))
+
+    @staticmethod
+    def _has_phones(items) -> bool:
+        """Cart lines with a color are phones (priced from the price list)."""
+        return any(int(it.get("variant_id") or 0) for it in items or [])
 
     @staticmethod
     def _sales_closed_text(state: dict) -> str:
@@ -717,7 +723,8 @@ class BotEngine:
     ) -> None:
         result = await self.catalog.products(q=q, group=group, page=page)
         page, pages = result.page, result.pages
-        closed = await self._shop_closed()
+        # Sales windows close ONLY phones (priced from the Telegram list).
+        closed = any(p.has_colors for p in result.items) and await self._shop_closed()
 
         cache: dict[str, dict] = {}
         rows: list = []
@@ -945,8 +952,11 @@ class BotEngine:
             return
         rows = self._color_rows(code, colors)
         rows.append([(texts.BTN_MENU, "menu")])
+        body = texts.CHOOSE_COLOR.format(name=product["name"])
+        if await self._shop_closed():
+            body = f"{texts.SHOP_CLOSED_NOTICE}\n\n{body}"
         await self._send_options(
-            adapter, platform, chat_id, texts.CHOOSE_COLOR.format(name=product["name"]), rows,
+            adapter, platform, chat_id, body, rows,
             state=STATE_NONE, data=data, edit_message_id=edit_message_id,
         )
 
@@ -1112,7 +1122,8 @@ class BotEngine:
             )
         lines.append(texts.CART_TOTAL.format(total=fmt_num(self.cart.total(items))))
         state = await self._sales_state()
-        if state.get("closed"):
+        if state.get("closed") and self._has_phones(items):
+            # Only phones are closed: the customer may remove them and order the rest.
             lines.append("")
             lines.append(self._sales_closed_text(state))
         else:
@@ -1142,7 +1153,7 @@ class BotEngine:
 
     async def _checkout(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
         state = await self._sales_state()
-        if state.get("closed") and self.cart.items(platform, chat_id):
+        if state.get("closed") and self._has_phones(self.cart.items(platform, chat_id)):
             await self._send_options(
                 adapter, platform, chat_id, self._sales_closed_text(state),
                 [[(texts.BTN_MENU, "menu")]],

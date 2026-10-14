@@ -10,6 +10,9 @@ Sales follow the distributor's price list, in Iran time (Asia/Tehran):
   Friday) sales are closed. The bot then shows the last prices with
   «لیست به‌روز نشده، فروش بسته است» and refuses orders.
 
+The state applies ONLY to phones (products priced from the Telegram list);
+accessories and other accounting-priced products stay orderable at all times.
+
 Staff can override in ShopAdmin (stored here, audited, an event each):
 
 * ``holiday``: closed until the next morning (00:00 of the next day);
@@ -47,14 +50,14 @@ REASON_LIST_EXPIRED = "list_not_updated"  # window passed / no list today / list
 REASON_DISABLED = "windows_disabled"      # SALES_WINDOWS_ENABLED=false: open unless closed
 
 MESSAGES_FA = {
-    REASON_LIST: "فروش باز است.",
-    REASON_MANUAL_OPEN: "فروش به‌صورت دستی باز شده است.",
-    REASON_MANUAL_CLOSE: "فروش به‌صورت دستی بسته شده است.",
-    REASON_HOLIDAY: "امروز تعطیل است؛ فروش تا صبح فردا بسته است.",
-    REASON_WEEKDAY: "جمعه‌ها فروش بسته است.",
-    REASON_NO_LIST: "هنوز لیست قیمتی دریافت نشده؛ فروش بسته است.",
-    REASON_LIST_EXPIRED: "لیست قیمت به‌روز نشده است؛ فروش بسته است.",
-    REASON_DISABLED: "فروش باز است.",
+    REASON_LIST: "فروش گوشی باز است.",
+    REASON_MANUAL_OPEN: "فروش گوشی به‌صورت دستی باز شده است.",
+    REASON_MANUAL_CLOSE: "فروش گوشی به‌صورت دستی بسته شده است.",
+    REASON_HOLIDAY: "امروز تعطیل است؛ فروش گوشی تا صبح فردا بسته است.",
+    REASON_WEEKDAY: "جمعه‌ها فروش گوشی بسته است.",
+    REASON_NO_LIST: "هنوز لیست قیمتی دریافت نشده؛ فروش گوشی بسته است.",
+    REASON_LIST_EXPIRED: "لیست قیمت به‌روز نشده است؛ فروش گوشی بسته است.",
+    REASON_DISABLED: "فروش گوشی باز است.",
 }
 
 

@@ -64,7 +64,9 @@ class DashboardPage(BasePage):
         # Sales state (v2.5.0): sales follow the distributor's price list
         # (morning list until 13:30, evening list until 20:30, Friday closed).
         # The buttons override it; the decision is stored and audited on the server.
-        shop_panel = widgets.Panel("وضعیت فروش")
+        # Only phones (priced from the Telegram list) are affected; accessories
+        # and other items stay orderable at all times.
+        shop_panel = widgets.Panel("وضعیت فروش گوشی")
         self.shop_state_label = widgets.label("…", bold=True)
         self.shop_state_label.setWordWrap(True)
         shop_panel.body.addWidget(self.shop_state_label)
@@ -196,7 +198,7 @@ class DashboardPage(BasePage):
     def _render_shop_state(self, state: object) -> None:
         if not isinstance(state, dict):
             self._shop_closed = None
-            self.shop_state_label.setText("وضعیت فروش از سرور خوانده نشد.")
+            self.shop_state_label.setText("وضعیت فروش گوشی از سرور خوانده نشد.")
             self.shop_state_detail.setText("")
             for btn in self.sales_buttons.values():
                 btn.setVisible(False)
@@ -206,10 +208,11 @@ class DashboardPage(BasePage):
         message = str(state.get("message_fa") or "").strip()
         if closed:
             self.shop_state_label.setText(
-                "🔒 " + (message or "فروش بسته است.")
-                + " ربات آخرین قیمت‌ها را نشان می‌دهد ولی سفارش نمی‌گیرد.")
+                "🔒 " + (message or "فروش گوشی بسته است.")
+                + " ربات آخرین قیمت‌های گوشی را نشان می‌دهد ولی سفارش گوشی نمی‌گیرد؛ "
+                "لوازم جانبی و سایر کالاها همچنان قابل سفارش‌اند.")
         else:
-            self.shop_state_label.setText("✅ " + (message or "فروش باز است."))
+            self.shop_state_label.setText("✅ " + (message or "فروش گوشی باز است."))
         self.shop_state_detail.setText(sales_detail_text(state))
         allowed = self.context.can(SHOP_STATE)
         for action, btn in self.sales_buttons.items():
@@ -220,13 +223,15 @@ class DashboardPage(BasePage):
         if self._shop_closed is None:
             return
         questions = {
-            "open": "فروش همین حالا باز شود؟ تا رسیدن لیست قیمت جدید یا ساعت پایان فروش "
+            "open": "فروش گوشی همین حالا باز شود؟ تا رسیدن لیست قیمت جدید یا ساعت پایان فروش "
                     "(۱۳:۳۰ / ۲۰:۳۰) باز می‌ماند و هر زمان می‌توانید آن را ببندید.",
-            "close": "فروش همین حالا بسته شود؟ ربات آخرین قیمت‌ها را نشان می‌دهد ولی سفارش "
-                     "نمی‌گیرد، تا لیست قیمت بعدی یا تا وقتی دوباره باز کنید.",
-            "holiday": "امروز تعطیل اعلام شود؟ فروش تا صبح فردا بسته می‌ماند.",
+            "close": "فروش گوشی همین حالا بسته شود؟ ربات آخرین قیمت‌ها را نشان می‌دهد ولی "
+                     "سفارش گوشی نمی‌گیرد، تا لیست قیمت بعدی یا تا وقتی دوباره باز کنید. "
+                     "لوازم جانبی و سایر کالاها قابل سفارش می‌مانند.",
+            "holiday": "امروز تعطیل اعلام شود؟ فروش گوشی تا صبح فردا بسته می‌ماند "
+                       "(لوازم جانبی قابل سفارش می‌ماند).",
         }
-        if not widgets.confirm(self, "وضعیت فروش", questions[action]):
+        if not widgets.confirm(self, "وضعیت فروش گوشی", questions[action]):
             return
         for btn in self.sales_buttons.values():
             btn.setEnabled(False)

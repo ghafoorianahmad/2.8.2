@@ -195,39 +195,90 @@ def test_statement_is_paginated(env, settings, bot_apis, shopapi):
 
 
 # ---- closed mode -------------------------------------------------------------
-def test_closed_sales_show_last_prices_and_refuse_orders(env, bot_apis, shopapi):
-    """v2.5.0: list not updated / closing time / Friday / holiday -> no orders."""
+PHONE = {
+    "code": 900, "name": "گوشی آزمایشی", "group": 1, "unit_price": 525_000_000.0,
+    "available_qty": 1.0, "image": None, "priced_by": "pricelist",
+    "variants": [{"id": 11, "color": "مشکی", "unit_price": 525_000_000.0, "available": True}],
+}
+
+
+def _with_phone(shopapi):
+    shopapi.products.append(dict(PHONE, variants=[dict(v) for v in PHONE["variants"]]))
+
+
+async def _phone_in_cart(engine, start=1):
+    await push_message(engine, "bale", start, CUSTOMER_CHAT, text="900")
+    await push_callback(engine, "bale", start + 1, CUSTOMER_CHAT, "col:900:11")
+    await push_callback(engine, "bale", start + 2, CUSTOMER_CHAT, "vadd:900:11:1")
+
+
+def test_closed_sales_block_only_phones(env, bot_apis, shopapi):
+    """v2.5.0: list not updated / closing time / Friday / holiday -> no PHONE orders;
+    accessories and other items stay orderable."""
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+    _with_phone(shopapi)
+    shopapi.closed = True
+
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+        await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "grp:1")
+        first = bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        assert texts.SHOP_CLOSED_NOTICE not in first and "1,000" in first   # no phone here
+        await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "pg:1:2")
+        body = bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        assert body.startswith(texts.SHOP_CLOSED_NOTICE)        # this page shows the phone
+        assert "گوشی آزمایشی" in body                            # last prices stay visible
+        await _phone_in_cart(engine, start=4)
+        await push_callback(engine, "bale", 7, CUSTOMER_CHAT, "cart")
+        assert "checkout" not in _callbacks(bot_apis["bale"], CUSTOMER_CHAT)
+        await push_callback(engine, "bale", 8, CUSTOMER_CHAT, "checkout")
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.SALES_CLOSED
+        assert len(shopapi.orders) == 0
+        # remove the phone: the accessory alone is ordered
+        await push_callback(engine, "bale", 9, CUSTOMER_CHAT, "vdel:900:11")
+        await push_callback(engine, "bale", 10, CUSTOMER_CHAT, "grp:1")
+        await push_callback(engine, "bale", 11, CUSTOMER_CHAT, "prod:101")
+        await push_callback(engine, "bale", 12, CUSTOMER_CHAT, "add:101:1")
+        await push_callback(engine, "bale", 13, CUSTOMER_CHAT, "checkout")
+        assert len(shopapi.orders) == 1
+
+    env(scenario)
+
+
+def test_accessories_order_normally_while_phone_sales_are_closed(env, bot_apis, shopapi):
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
     shopapi.closed = True
 
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
         await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "grp:1")
-        body = bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
-        assert body.startswith(texts.SHOP_CLOSED_NOTICE)
-        assert "1,000" in body                       # the last prices stay visible
+        # a list without phones: no closed banner
+        assert texts.SHOP_CLOSED_NOTICE not in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
         await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "prod:101")
         await push_callback(engine, "bale", 4, CUSTOMER_CHAT, "add:101:1")
         await push_callback(engine, "bale", 5, CUSTOMER_CHAT, "cart")
-        assert "checkout" not in _callbacks(bot_apis["bale"], CUSTOMER_CHAT)
+        assert "checkout" in _callbacks(bot_apis["bale"], CUSTOMER_CHAT)
         await push_callback(engine, "bale", 6, CUSTOMER_CHAT, "checkout")
-        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.SALES_CLOSED
-        assert len(shopapi.orders) == 0
+        assert len(shopapi.orders) == 1
+        assert texts.RECEIPT_DEADLINE_NOTE.format(minutes="30") in \
+            bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
 
     env(scenario)
 
 
 def test_holiday_and_friday_have_their_own_closed_text(env, bot_apis, shopapi):
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+    _with_phone(shopapi)
     shopapi.closed = True
     shopapi.closed_reason = "holiday"
 
     async def scenario(engine, adapters, api):
-        await _order_and_wait_for_receipt(engine)
+        await _phone_in_cart(engine)
+        await push_callback(engine, "bale", 4, CUSTOMER_CHAT, "checkout")
         assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.SALES_CLOSED_HOLIDAY
         engine._shop_state = None
         shopapi.closed_reason = "weekday_closed"
-        await push_callback(engine, "bale", 7, CUSTOMER_CHAT, "checkout")
+        await push_callback(engine, "bale", 5, CUSTOMER_CHAT, "checkout")
         assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.SALES_CLOSED_FRIDAY
 
     env(scenario)
@@ -235,13 +286,12 @@ def test_holiday_and_friday_have_their_own_closed_text(env, bot_apis, shopapi):
 
 def test_sales_closed_between_cart_and_checkout_is_refused_cleanly(env, bot_apis, shopapi):
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+    _with_phone(shopapi)
 
     async def scenario(engine, adapters, api):
-        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
-        await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "grp:1")
-        await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "prod:101")
-        await push_callback(engine, "bale", 4, CUSTOMER_CHAT, "add:101:1")
-        shopapi.closed = True            # the bot's cached state still says open
+        await _phone_in_cart(engine)
+        await push_callback(engine, "bale", 4, CUSTOMER_CHAT, "cart")   # caches "open"
+        shopapi.closed = True
         await push_callback(engine, "bale", 5, CUSTOMER_CHAT, "checkout")
         assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.SALES_CLOSED
         assert len(shopapi.orders) == 0

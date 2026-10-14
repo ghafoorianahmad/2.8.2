@@ -10,6 +10,8 @@ import contextlib
 import json
 
 import httpx
+import os
+
 import pytest
 
 from app.config import Settings
@@ -425,7 +427,8 @@ class FakeShopApi:
             if user["status"] == "rejected" or (
                     user["status"] != "approved" and not self.pending_can_order):
                 return self._err(403, "User is not approved")
-            if self.closed:
+            if self.closed and any(line.get("variant_id") for line in body.get("items", [])):
+                # v2.5.0: closed sales block only phones (price-list items)
                 return self._err(409, f"Sales are closed: {self.closed_reason}")
             items = []
             total = 0.0
@@ -621,3 +624,15 @@ def env(settings, store, shopapi, bot_apis):
         return asyncio.run(wrapper())
 
     return _run
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dotenv(monkeypatch):
+    """Tests never read a real .env (a developer's ACCOUNTING_STATUS_CODE=0 or
+    tokens would change results). Opt out only for live runs:
+    SHOP_TESTS_USE_DOTENV=1."""
+    if os.environ.get("SHOP_TESTS_USE_DOTENV") == "1":
+        return
+    from app import config
+
+    monkeypatch.setattr(config, "_load_dotenv", lambda: None)

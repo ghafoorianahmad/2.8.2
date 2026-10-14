@@ -215,7 +215,7 @@ def test_v250_kinds_have_persian_notices():
     for kind in ("sales_opened", "sales_closed", "sales_holiday", "sales_opened_manual",
                  "sales_closed_manual"):
         notice = notice_for({"kind": kind})
-        assert notice is not None and not notice.warning and "فروش" in notice.body
+        assert notice is not None and not notice.warning and "فروش گوشی" in notice.body
 
 
 def test_new_order_and_receipt_show_an_in_app_notification(tmp_path, fake_api, notifier,

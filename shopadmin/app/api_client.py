@@ -146,7 +146,8 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"own database unavailable", re.I), "پایگاه‌دادهٔ سرور فروشگاه در دسترس نیست."),
     # ---- v2.5.0: order flow and accounting guards ----
     (re.compile(r"sales are closed", re.I),
-     "فروش در حال حاضر بسته است (لیست قیمت به‌روز نشده، ساعت پایان فروش، جمعه یا تعطیلی)."),
+     "فروش گوشی در حال حاضر بسته است (لیست قیمت به‌روز نشده، ساعت پایان فروش، جمعه یا "
+     "تعطیلی). لوازم جانبی و سایر کالاها قابل سفارش‌اند."),
     (re.compile(r"receipt deadline passed", re.I),
      "مهلت ارسال رسید این سفارش گذشته و سفارش لغو شده است."),
     (re.compile(r"order status code is not configured", re.I),
