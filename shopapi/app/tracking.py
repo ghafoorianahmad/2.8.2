@@ -26,9 +26,14 @@ def invoice_state(ordered: float, invoiced: float) -> str | None:
     return STATE_FULL if invoiced >= ordered else STATE_PARTIAL
 
 
-def sync_invoices(db: OwnDB, reader, actor: str = "system:tracking") -> int:
-    """Record invoice progress for written orders. Returns the number of changes."""
-    pending = db.orders_awaiting_invoice()
+def sync_invoices(db: OwnDB, reader, accounting_db: str,
+                  actor: str = "system:tracking") -> int:
+    """Record invoice progress for orders written to ``accounting_db`` (the
+    connected database). Returns the number of changes. Orders written to any
+    other database are never reported as invoiced from this one."""
+    if not (accounting_db or "").strip():
+        return 0
+    pending = db.orders_awaiting_invoice(accounting_db)
     if not pending:
         return 0
     by_codlp = {int(o["accounting_order_no"]): o for o in pending}
@@ -57,7 +62,8 @@ async def invoice_sync_loop(settings, db_factory, reader_factory) -> None:
     while True:
         await asyncio.sleep(interval)
         try:
-            await asyncio.to_thread(sync_invoices, db_factory(), reader_factory())
+            await asyncio.to_thread(sync_invoices, db_factory(), reader_factory(),
+                                    settings.database_name())
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # accounting down etc.: try again next round

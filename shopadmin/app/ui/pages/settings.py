@@ -312,7 +312,7 @@ class SettingsPage(BasePage):
             self.connection_hint.setText(
                 f"سطح قیمت ربات: {to_persian_digits(info.price_level_bot)} — "
                 f"سطح قیمت سایت: {to_persian_digits(info.price_level_site)} — "
-                f"مهلت پرداخت: {to_persian_digits(info.reserve_hours)} ساعت"
+                f"مهلت ارسال رسید: {to_persian_digits(info.receipt_deadline_minutes)} دقیقه"
             )
 
     def _set_status(self, text: str, color: str) -> None:
@@ -385,7 +385,10 @@ class SettingsPage(BasePage):
             f"ثبت در حسابداری: {'فعال' if info.accounting_write_enabled else 'غیرفعال (حالت آزمایشی)'}",
             f"سطح قیمت ربات: {to_persian_digits(info.price_level_bot)}",
             f"سطح قیمت سایت: {to_persian_digits(info.price_level_site)}",
-            f"مهلت پرداخت: {to_persian_digits(info.reserve_hours)} ساعت",
+            f"مهلت ارسال رسید: {to_persian_digits(info.receipt_deadline_minutes)} دقیقه",
+            f"پایگاه‌دادهٔ حسابداری: {info.accounting_database or '—'}",
+            "کد وضعیت سفارش: " + ("تنظیم شده" if info.status_code_configured
+                                   else "تنظیم نشده (ثبت واقعی انجام نمی‌شود)"),
             f"حداکثر تعداد هر قلم: {to_persian_digits(info.max_order_qty)}",
             "اجازهٔ کد شخص مشترک: " + ("بله" if info.allow_shared_person_code else "خیر"),
         ]

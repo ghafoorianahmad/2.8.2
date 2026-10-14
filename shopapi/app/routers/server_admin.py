@@ -9,7 +9,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
-from .. import control, deps, monitor
+from .. import control, deps, monitor, sql_errors
 from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
@@ -38,7 +38,9 @@ def server_status(
         reader.ping()
         accounting = {"ok": True, "latency_ms": round((time.perf_counter() - started) * 1000)}
     except Exception as exc:  # noqa: BLE001 - reported, never raised
-        accounting = {"ok": False, "error": type(exc).__name__}
+        info = sql_errors.describe(exc)
+        accounting = {"ok": False, "error": type(exc).__name__, "error_code": info.code,
+                      "message_fa": info.message_fa}
     counts = {
         "customers_pending": len(db.list_users("pending")),
         "orders_awaiting_payment": len(db.list_orders("awaiting_payment")),
@@ -53,7 +55,9 @@ def server_status(
         "accounting": accounting,
         "accounting_server": settings.accounting_server,
         "accounting_database": settings.accounting_database,
-        "accounting_write_enabled": settings.accounting_write_enabled or settings.is_test_db(),
+        "accounting_write_enabled": settings.write_allowed(),
+        "database_allowlisted": settings.database_allowlisted() or settings.is_test_db(),
+        "status_code_configured": settings.status_code_problem() is None,
         "test_mode": settings.is_test_db(),
         "write_allowed_on_host": settings.write_allowed(),
         "tls_fingerprint": control.STATE.tls_fingerprint,

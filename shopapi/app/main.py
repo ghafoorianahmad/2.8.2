@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import math
+import logging
 import sqlite3
 from contextlib import asynccontextmanager
 
@@ -13,7 +14,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from . import catalog_models, deps, monitor, tracking
+from . import catalog_models, control, deps, monitor, order_timeout, sql_errors, tracking
 from .db_own import OwnDB
 from .routers import admin, auth, catalog, pricelist, public, server_admin, staff_admin
 
@@ -56,6 +57,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(monitor.health_loop(settings, db_factory, reader_factory)),
         # Nightly check of the site model mapping (§9a): hide + Bale alert on loss.
         asyncio.create_task(catalog_models.nightly_loop(settings, db_factory, reader_factory)),
+        # Receipt deadline (30 min) -> local cancel; sales window transitions -> events.
+        asyncio.create_task(order_timeout.order_timeout_loop(settings, db_factory)),
     ]
     try:
         yield
@@ -70,7 +73,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     application = FastAPI(
         title="shopapi",
-        version="0.1.0",
+        version=control.VERSION,
         lifespan=lifespan,
         default_response_class=UTF8JSONResponse,
     )
@@ -92,9 +95,15 @@ def create_app() -> FastAPI:
 
     @application.exception_handler(pyodbc.Error)
     async def _accounting_unavailable(request: Request, exc: pyodbc.Error) -> JSONResponse:
-        # Clear, generic error instead of a crash; never leak SQL or a stack trace.
+        # Clear error instead of a crash; never leak SQL, the server name, the
+        # login or a stack trace: only the error number and a Persian sentence.
+        info = sql_errors.describe(exc)
+        logging.getLogger("shopapi.sql").warning(
+            "accounting error %s on %s", info.code or "?", request.url.path)
         return JSONResponse(
-            status_code=503, content={"detail": "Accounting database unavailable"}
+            status_code=503,
+            content={"detail": "Accounting database unavailable",
+                     "error_code": info.code, "message_fa": info.message_fa},
         )
 
     @application.exception_handler(sqlite3.Error)

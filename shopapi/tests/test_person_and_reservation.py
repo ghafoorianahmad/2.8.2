@@ -105,9 +105,11 @@ def test_groups_skip_the_root_group():
     assert "WHERE Code > 0" in conn.sql[-1][0]
 
 
-def test_status_code_default_is_zero(monkeypatch):
+def test_status_code_has_no_default(monkeypatch):
+    """Never guessed: 6808 does not exist and the real value comes from GUI test G2."""
     monkeypatch.delenv("ACCOUNTING_STATUS_CODE", raising=False)
-    assert Settings().accounting_status_code == 0
+    assert Settings().accounting_status_code is None
+    assert Settings.from_env().accounting_status_code is None
 
 
 def test_invoice_numbers_sql_is_parameterized_facto_numfact_by_ordercode():

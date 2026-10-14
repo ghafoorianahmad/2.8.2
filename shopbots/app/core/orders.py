@@ -25,6 +25,7 @@ class ReceiptOutcome(enum.Enum):
     TOO_LARGE = "too_large"
     DOWNLOAD_FAILED = "download_failed"
     NOT_AWAITING = "not_awaiting"    # shopapi: the order no longer waits for payment
+    TOO_LATE = "too_late"            # shopapi: receipt deadline passed, order cancelled
     REJECTED = "rejected"            # shopapi refused for another reason (message_fa)
 
 
@@ -150,6 +151,8 @@ class OrderService:
                 int(order_id), picked.file_ref, platform, chat_id, data_b64=data_b64
             )
         except ShopApiRejected as exc:
+            if exc.status == 409 and "deadline" in (exc.detail or "").lower():
+                return ReceiptResult(ReceiptOutcome.TOO_LATE)
             if exc.status == 409:
                 return ReceiptResult(ReceiptOutcome.NOT_AWAITING)
             return ReceiptResult(ReceiptOutcome.REJECTED, message_fa=exc.message_fa)

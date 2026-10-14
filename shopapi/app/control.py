@@ -22,7 +22,7 @@ from typing import Callable, Optional
 
 from .util import now_utc
 
-VERSION = "2.4.0"
+VERSION = "2.5.0"
 STARTED_AT = now_utc()
 
 
@@ -125,6 +125,12 @@ def _warehouses(value: str) -> Optional[str]:
     return None if all(_WAREHOUSES_RE.match(p) for p in parts) else "use warehouse codes separated by commas"
 
 
+def _hhmm(value: str) -> Optional[str]:
+    if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", value):
+        return None
+    return "must be a time like 13:30"
+
+
 def _token(value: str) -> Optional[str]:
     return None if value == "" or _TOKEN_RE.match(value) else "does not look like a bot token"
 
@@ -137,7 +143,10 @@ EDITABLE: dict[str, tuple[Callable[[str], Optional[str]], bool]] = {
     "PAYMENT_CARD_NUMBER": (_card_number, False),
     "PAYMENT_SHEBA": (_sheba, False),
     "PAYMENT_OWNER": (_text(80), False),
-    "RESERVE_HOURS": (_int_range(1, 168), False),
+    "RECEIPT_DEADLINE_MINUTES": (_int_range(5, 1440), False),
+    "SALES_WINDOWS_ENABLED": (_bool, False),
+    "SALES_MORNING_CLOSE": (_hhmm, False),
+    "SALES_EVENING_CLOSE": (_hhmm, False),
     "MAX_ORDER_QTY": (_int_range(1, 1_000_000), False),
     "PRICE_LEVEL_BOT": (_int_range(1, 5), False),
     "PRICE_LEVEL_SITE": (_int_range(1, 5), False),

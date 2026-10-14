@@ -966,12 +966,13 @@ FIRST_RUN_DEFAULTS = {
     "DB_ENCRYPT": "no",
     "PRICE_LEVEL_BOT": "3",      # accessories: gey3 (REQUIREMENTS §4)
     "PRICE_LEVEL_SITE": "3",
-    "RESERVE_HOURS": "12",
+    "RECEIPT_DEADLINE_MINUTES": "30",   # receipt within 30 min, then cancelled locally
     "MAX_ORDER_QTY": "10000",
     "ALLOW_SHARED_PERSON_CODE": "false",
     "PENDING_MAX_ORDER_ITEMS": "3",
     "INVOICE_SYNC_SECONDS": "300",
-    "ACCOUNTING_STATUS_CODE": "0",   # 6808 does not exist (SAZEH_DB_REFERENCE §9.2)
+    # ACCOUNTING_STATUS_CODE is deliberately NOT defaulted: 6808 does not exist
+    # and the real value comes from GUI test G2. Unset = orders are never committed.
     "ACCOUNTING_USERCODE": "1",
     "ACCOUNTING_ANBARCODE": "1",
     "LOG_LEVEL": "INFO",
@@ -1046,8 +1047,12 @@ def check_db() -> int:
         reader.ping()
         groups = len(reader.list_groups())
     except Exception as exc:  # noqa: BLE001 - reported to the setup screen
+        from shopapi_app.sql_errors import describe
+
+        info = describe(exc)
         message = str(exc).splitlines()[0][:300] if str(exc) else ""
-        _emit({"ok": False, "error": type(exc).__name__, "message": message})
+        _emit({"ok": False, "error": type(exc).__name__, "message": message,
+               "error_code": info.code, "message_fa": info.message_fa})
         return 1
     _emit({"ok": True, "groups": groups})
     return EXIT_OK

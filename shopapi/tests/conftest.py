@@ -165,6 +165,9 @@ def settings():
         bank_account_text="pay to account 123",
         # TestClient connects as host "testclient"; loopback rules have own tests.
         service_keys_local_only=False,
+        # Sales windows (price list / Friday) have their own tests (test_v250.py).
+        sales_windows_enabled=False,
+        accounting_status_code=0,
     )
 
 

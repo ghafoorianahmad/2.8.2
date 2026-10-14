@@ -63,7 +63,8 @@ def test_connection_string_keeps_a_spaced_database_name():
 def test_reader_brackets_the_database_name():
     conn = RecordingConn()
     reader = AccountingReader(
-        Settings(accounting_database="hesab5 t"), connection_factory=lambda: conn
+        Settings(accounting_database="hesab5 t", accounting_status_code=0),
+        connection_factory=lambda: conn
     )
     reader.list_groups()
     reader.find_person_by_mobile("09121234567")
@@ -75,7 +76,8 @@ def test_reader_brackets_the_database_name():
 def test_writer_brackets_the_database_name():
     conn = FakeConn(max_codlp=0)
     writer = AccountingWriter(
-        Settings(accounting_database="hesab5 t"), connection_factory=lambda: conn
+        Settings(accounting_database="hesab5 t", accounting_status_code=0),
+        connection_factory=lambda: conn
     )
     writer.write_order(1, 7001, [(101, 1.0, 100.0)])
     statements = [sql for sql, _ in conn.executed]

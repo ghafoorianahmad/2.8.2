@@ -21,7 +21,7 @@
 
 #define MyAppName "ShopAdmin"
 #define MyAppNameFa "مدیریت فروشگاه"
-#define MyAppVersion "2.4.0"
+#define MyAppVersion "2.5.0"
 #define MyAppPublisher "فروشگاه"
 #define MyAppExeName "ShopAdmin.exe"
 #define MyServiceExeName "ShopSystem.exe"
@@ -128,6 +128,12 @@ Source: "{#STAGING_DIR}\ShopAdmin\*"; DestDir: "{app}"; \
 Source: "{#STAGING_DIR}\ShopSystem\*"; DestDir: "{app}\ShopSystem"; \
     Excludes: ".env,*.db,*.db-journal,*.log,*.log.*,tls\*"; \
     Flags: ignoreversion recursesubdirs createallsubdirs
+; ---- least-privilege SQL role shop_app (v2.5.0) -------------------------
+; Run by the DBA/owner on the server: deploy\grant_shop_app.ps1 -Server ... -Database ...
+; (dry run without -Apply). Paths are relative to this .iss (installer\).
+Source: "..\..\shopapi\sql\grant_shop_app.sql"; DestDir: "{app}\sql"; Flags: ignoreversion
+Source: "..\..\shopapi\sql\verify_permissions.sql"; DestDir: "{app}\sql"; Flags: ignoreversion
+Source: "..\..\shopsystem\deploy\grant_shop_app.ps1"; DestDir: "{app}"; Flags: ignoreversion
 #endif
 
 ; ---- documentation ----------------------------------------------------

@@ -44,6 +44,7 @@ from .ratelimit import RateLimiter
 from .shopapi import (
     ShopApiClient,
     ShopApiError,
+    ShopApiRejected,
     ShopApiUnavailable,
     format_admin_error,
 )
@@ -116,6 +117,7 @@ CUSTOMER_EVENT_KINDS = frozenset(
     {
         "customer_approved", "customer_rejected", "payment_approved", "payment_rejected",
         "order_partially_invoiced", "order_invoiced", "order_shipped",
+        "order_auto_cancelled",
     }
 )
 INVOICE_EVENT_KINDS = frozenset({"order_partially_invoiced", "order_invoiced"})
@@ -126,6 +128,8 @@ ORDER_EVENT_TEXTS = {
     "order_partially_invoiced": "ORDER_PARTIALLY_INVOICED",
     "order_invoiced": "ORDER_INVOICED",
     "order_shipped": "ORDER_SHIPPED",
+    # v2.5.0: no receipt within the deadline -> cancelled locally by shopapi
+    "order_auto_cancelled": "ORDER_AUTO_CANCELLED",
 }
 #: shopapi event kinds that mean "tell the owner" (admin chats) -> text key.
 OWNER_EVENT_TEXTS = {
@@ -135,8 +139,13 @@ OWNER_EVENT_TEXTS = {
     "telegram_login_required": "TG_LOGIN_NOTICE",
     "telegram_unreachable": "TG_UNREACHABLE_NOTICE",
     "price_inquiry": "INQUIRY_NOTICE",
+    # v2.5.0: never deleted in the accounting DB; the owner decides there
+    "accounting_duplicate_order": "DUPLICATE_ORDER_NOTICE",
+    "order_timeout_written": "TIMEOUT_WRITTEN_NOTICE",
 }
-SHOP_STATE_TTL = 60.0
+SHOP_STATE_TTL = 30.0
+#: Receipt deadline when shopapi does not say (minutes).
+DEFAULT_RECEIPT_MINUTES = 30
 EVENT_CURSOR_KEY = "shopapi_event_cursor"
 MAX_CALLBACK_LEN = 64
 MAX_CALLBACK_ARG = 1_000_000_000
@@ -209,7 +218,7 @@ class BotEngine:
         self.receipt_limiter = RateLimiter(
             settings.receipt_rate_count, settings.receipt_rate_window
         )
-        self._shop_state: tuple[float, bool] | None = None
+        self._shop_state: tuple[float, dict] | None = None
         #: (kind, platform, chat) -> monotonic time of the last security report
         self._security_reported: dict[tuple[str, str, str], float] = {}
 
@@ -648,17 +657,31 @@ class BotEngine:
             self._main_menu_rows(status == STATUS_APPROVED), state=STATE_NONE, data={},
         )
 
-    async def _shop_closed(self) -> bool:
-        """Closed mode (set in ShopAdmin), cached for a minute; unknown = open."""
+    async def _sales_state(self) -> dict:
+        """Sales window state from shopapi (price list, Friday, ShopAdmin buttons),
+        cached briefly; unknown = open (shopapi still refuses orders when closed)."""
         now = time.monotonic()
         if self._shop_state is not None and now - self._shop_state[0] < SHOP_STATE_TTL:
             return self._shop_state[1]
         try:
-            closed = bool((await self.api.shop_state()).get("closed"))
+            state = await self.api.shop_state()
+            state = state if isinstance(state, dict) else {}
         except ShopApiError:
-            closed = False
-        self._shop_state = (now, closed)
-        return closed
+            state = {}
+        self._shop_state = (now, state)
+        return state
+
+    async def _shop_closed(self) -> bool:
+        return bool((await self._sales_state()).get("closed"))
+
+    @staticmethod
+    def _sales_closed_text(state: dict) -> str:
+        reason = str((state or {}).get("reason") or "")
+        if reason == "holiday":
+            return texts.SALES_CLOSED_HOLIDAY
+        if reason == "weekday_closed":
+            return texts.SALES_CLOSED_FRIDAY
+        return texts.SALES_CLOSED
 
     async def _show_static(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, text: str
@@ -694,6 +717,7 @@ class BotEngine:
     ) -> None:
         result = await self.catalog.products(q=q, group=group, page=page)
         page, pages = result.page, result.pages
+        closed = await self._shop_closed()
 
         cache: dict[str, dict] = {}
         rows: list = []
@@ -729,6 +753,9 @@ class BotEngine:
             if nav:
                 rows.append(nav)
             body = "\n".join(lines)
+        if closed:
+            # Last prices stay visible; orders are refused until sales reopen.
+            body = f"{texts.SHOP_CLOSED_NOTICE}\n\n{body}"
         rows.append([(texts.BTN_MENU, "menu")])
         await self._send_options(
             adapter, platform, chat_id, body, rows,
@@ -1084,7 +1111,12 @@ class BotEngine:
                 ]
             )
         lines.append(texts.CART_TOTAL.format(total=fmt_num(self.cart.total(items))))
-        rows.append([(texts.BTN_CHECKOUT, "checkout")])
+        state = await self._sales_state()
+        if state.get("closed"):
+            lines.append("")
+            lines.append(self._sales_closed_text(state))
+        else:
+            rows.append([(texts.BTN_CHECKOUT, "checkout")])
         rows.append([(texts.BTN_CLEAR_CART, "cclear"), (texts.BTN_MENU, "menu")])
         await self._send_options(
             adapter, platform, chat_id, "\n".join(lines), rows, state=STATE_NONE, data={}
@@ -1109,7 +1141,25 @@ class BotEngine:
         await self._show_cart(adapter, platform, chat_id)
 
     async def _checkout(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
-        result = await self.orders.checkout(platform, chat_id)
+        state = await self._sales_state()
+        if state.get("closed") and self.cart.items(platform, chat_id):
+            await self._send_options(
+                adapter, platform, chat_id, self._sales_closed_text(state),
+                [[(texts.BTN_MENU, "menu")]],
+            )
+            return
+        try:
+            result = await self.orders.checkout(platform, chat_id)
+        except ShopApiRejected as exc:
+            if exc.status == 409 and "sales are closed" in (exc.detail or "").lower():
+                self._shop_state = None          # closed meanwhile: refresh next time
+                await self._send_options(
+                    adapter, platform, chat_id,
+                    self._sales_closed_text(await self._sales_state()),
+                    [[(texts.BTN_MENU, "menu")]],
+                )
+                return
+            raise
         if result.empty_cart:
             await self._send_text(adapter, chat_id, texts.CART_EMPTY)
             return
@@ -1122,8 +1172,8 @@ class BotEngine:
         parts = [texts.CHECKOUT_OK.format(order_id=order_id, total=total)]
         if order.get("customer_pending"):
             parts.append(texts.PENDING_ORDER_NOTE)
-        if await self._shop_closed():
-            parts.append(texts.SHOP_CLOSED_NOTICE)
+        minutes = state.get("receipt_deadline_minutes") or DEFAULT_RECEIPT_MINUTES
+        parts.append(texts.RECEIPT_DEADLINE_NOTE.format(minutes=fmt_num(minutes)))
         parts.append(
             self._payment_text(order_id, total, order.get("payment_instructions"))
         )
@@ -1194,10 +1244,12 @@ class BotEngine:
         if retry:
             await self._send_text(adapter, chat_id, retry)
             return
-        if result.outcome in (ReceiptOutcome.NOT_AWAITING, ReceiptOutcome.REJECTED):
+        if result.outcome in (ReceiptOutcome.NOT_AWAITING, ReceiptOutcome.REJECTED,
+                              ReceiptOutcome.TOO_LATE):
             self.store.clear_conversation(platform, chat_id)
-            message = (texts.ORDER_NOT_AWAITING if result.outcome is ReceiptOutcome.NOT_AWAITING
-                       else result.message_fa)
+            message = {ReceiptOutcome.NOT_AWAITING: texts.ORDER_NOT_AWAITING,
+                       ReceiptOutcome.TOO_LATE: texts.RECEIPT_TOO_LATE}.get(
+                           result.outcome, result.message_fa)
             await self._send_text(adapter, chat_id, message)
             return
         order = result.order

@@ -72,7 +72,8 @@ class Settings:
     shopapi_ca_file: str = ""
     worker_api_key: str = field(default="", repr=False)
 
-    price_interval_sec: int = 30 * 60
+    #: Price channel poll (decision 2026-10-14: every 10 min; sales windows follow the list).
+    price_interval_sec: int = 10 * 60
     proxy_collect_days: int = 7
     health_interval_sec: int = 180
     probe_interval_sec: int = 60 * 60
@@ -119,7 +120,7 @@ class Settings:
             shopapi_base_url=_env("SHOPAPI_BASE_URL", "http://127.0.0.1:8000").rstrip("/"),
             shopapi_ca_file=_env("SHOPAPI_CA_FILE"),
             worker_api_key=_env("WORKER_API_KEY"),
-            price_interval_sec=max(300, _env_int("TG_PRICE_INTERVAL_MIN", 30) * 60),
+            price_interval_sec=max(300, _env_int("TG_PRICE_INTERVAL_MIN", 10) * 60),
             proxy_collect_days=max(1, _env_int("TG_PROXY_COLLECT_DAYS", 7)),
             health_interval_sec=max(30, _env_int("TG_HEALTH_INTERVAL_SEC", 180)),
             probe_interval_sec=max(600, _env_int("TG_PROBE_INTERVAL_MIN", 60) * 60),

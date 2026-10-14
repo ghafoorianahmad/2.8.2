@@ -52,6 +52,10 @@ def format_admin_error(exc: ShopApiError) -> str:
         return texts.ADMIN_PERSON_CODE_IN_USE
     if "not approved yet" in detail:
         return texts.ADMIN_CUSTOMER_NOT_APPROVED
+    if "status code is not configured" in detail:
+        return texts.ADMIN_STATUS_NOT_CONFIGURED
+    if "duplicate accounting order number" in detail:
+        return texts.ADMIN_DUPLICATE_ORDER_NO
     return texts.ADMIN_ACTION_FAILED.format(reason=exc.detail or exc.message_fa)
 
 
@@ -91,6 +95,10 @@ class ShopApiClient:
             return texts.ADMIN_INSUFFICIENT_STOCK
         if status == 422 and detail and "awaiting approval" in detail.lower():
             return texts.PENDING_LIMIT
+        if status == 409 and detail and "sales are closed" in detail.lower():
+            return texts.SALES_CLOSED
+        if status == 409 and detail and "deadline" in detail.lower():
+            return texts.RECEIPT_TOO_LATE
         if status == 503:
             return texts.SERVICE_UNAVAILABLE
         return _STATUS_MESSAGES.get(status, "خطای نامشخص از سامانهٔ فروش.")

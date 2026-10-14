@@ -582,11 +582,19 @@ class MainWindow(QMainWindow):
             self.context.mark_seen(*BADGE_KINDS[key])
         if page is not None and hasattr(page, "refresh") and self.isVisible():
             page.refresh()
-        from ..notifications import notice_for
+        from ..notifications import ATTENTION_KINDS, notice_for
 
+        # In-app notification (every install, also the server edition): new
+        # orders and receipts stay longer; server problems are warnings.
         for event in events:
             notice = notice_for(event)
-            if notice is not None:
+            if notice is None:
+                continue
+            if notice.warning:
+                self.toasts.show(f"{notice.title}: {notice.body}", "warning", 10000)
+            elif notice.kind in ATTENTION_KINDS:
+                self.toasts.show(f"{notice.title}: {notice.body}", "info", 9000)
+            else:
                 self.toasts.show(f"{notice.title}: {notice.body}", "info", 5000)
 
     def _on_data_changed(self) -> None:

@@ -545,7 +545,11 @@ def test_closed_shop_notice_and_tracking_messages(tg, shopapi):
         await c.press("prod:101")
         await c.press("add:101:1")
         await c.press("checkout")
-        assert texts.SHOP_CLOSED_NOTICE in c.last() and len(shopapi.orders) == 1
+        assert c.last() == texts.SALES_CLOSED and len(shopapi.orders) == 0
+        shopapi.closed = False
+        c.engine._shop_state = None
+        await c.press("checkout")
+        assert len(shopapi.orders) == 1
 
         oid = next(iter(shopapi.orders))
         await c.engine.notify_customers_from_events()                # first run: position only

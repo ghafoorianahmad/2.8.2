@@ -144,6 +144,16 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"accounting database unavailable", re.I),
      "سرویس حسابداری در دسترس نیست. اتصال سرور فروشگاه به حسابداری را بررسی کنید."),
     (re.compile(r"own database unavailable", re.I), "پایگاه‌دادهٔ سرور فروشگاه در دسترس نیست."),
+    # ---- v2.5.0: order flow and accounting guards ----
+    (re.compile(r"sales are closed", re.I),
+     "فروش در حال حاضر بسته است (لیست قیمت به‌روز نشده، ساعت پایان فروش، جمعه یا تعطیلی)."),
+    (re.compile(r"receipt deadline passed", re.I),
+     "مهلت ارسال رسید این سفارش گذشته و سفارش لغو شده است."),
+    (re.compile(r"order status code is not configured", re.I),
+     "کد وضعیت سفارش حسابداری (ACCOUNTING_STATUS_CODE) روی سرور تنظیم نشده است؛ "
+     "سفارش در حسابداری ثبت نشد. پس از آزمایش G2 مقدار درست را در تنظیمات سرور وارد کنید."),
+    (re.compile(r"duplicate accounting order number", re.I),
+     "شمارهٔ سفارش در حسابداری تکراری بود؛ چیزی ثبت نشد. چند لحظه بعد دوباره تأیید کنید."),
     # ---- sign-in and staff accounts ----
     (re.compile(r"invalid username or password", re.I), MSG_BAD_CREDENTIALS),
     (re.compile(r"account temporarily locked", re.I), MSG_LOCKED),
@@ -284,7 +294,13 @@ class SystemInfo:
     test_mode: bool = False
     price_level_bot: int = 3
     price_level_site: int = 3
-    reserve_hours: int = 12
+    #: v2.5.0: the customer sends the receipt within this many minutes, then
+    #: the order is cancelled on the server (no 12-hour hold any more).
+    receipt_deadline_minutes: int = 30
+    #: The accounting database orders are written to.
+    accounting_database: str = ""
+    #: ACCOUNTING_STATUS_CODE is set (orders can be committed).
+    status_code_configured: bool = True
     max_order_qty: int = 10000
     allow_shared_person_code: bool = False
     bank_account_text: Optional[str] = None
@@ -442,14 +458,19 @@ class ShopApiClient:
                                raw=response.text[:200]) from exc
 
         detail: Any = None
+        server_fa = ""
         try:
             payload = response.json()
             if isinstance(payload, dict):
                 detail = payload.get("detail", payload)
+                # v2.5.0: SQL errors come with a Persian explanation (18456, 4060, ...)
+                server_fa = str(payload.get("message_fa") or "").strip()
         except ValueError:
             detail = response.text[:300]
 
         message = translate_detail(detail, status_code)
+        if server_fa:
+            message = to_persian_digits(server_fa)
         if status_code == 401:
             if with_auth and self.token:
                 # The server no longer accepts our session (expired, revoked,
@@ -574,6 +595,13 @@ class ShopApiClient:
 
     def set_shop_closed(self, closed: bool) -> dict:
         return self._request("PUT", "/admin/shop/state", json_body={"closed": bool(closed)}) or {}
+
+    def sales_action(self, action: str) -> dict:
+        """«تعطیلی امروز» (holiday) / «بستن فروش» (close) / «باز کردن فروش» (open).
+        Stored and audited on the server; returns the new sales state."""
+        if action not in ("holiday", "close", "open"):
+            raise ValueError(action)
+        return self._request("POST", "/admin/sales/action", json_body={"action": action}) or {}
 
     def list_groups(self) -> list[dict]:
         payload = self._request("GET", "/groups")

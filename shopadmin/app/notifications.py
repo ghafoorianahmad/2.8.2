@@ -45,7 +45,22 @@ SERVER_WARNINGS = {
     "security_alert": "فعالیت مشکوک (ربات یا ورود به کنسول) دیده شد؛ گزارش ممیزی را ببینید.",
     "model_review": "بررسی شبانه: کالای یک مدل سایت در حسابداری پیدا نشد یا نامش عوض شده؛ "
                     "مدل تا تأیید شما از دید مشتری پنهان است.",
+    # v2.5.0: nothing is ever deleted in the accounting DB; a person decides there.
+    "accounting_duplicate_order": "شمارهٔ سفارش حسابداری تکراری شد (برنامهٔ دیگری هم‌زمان همان "
+                                  "شماره را نوشت). چیزی حذف نشده؛ در «سازه حساب» بررسی کنید.",
+    "order_timeout_written": "مهلت رسید یک سفارش گذشته ولی آن سفارش قبلاً در حسابداری ثبت شده؛ "
+                             "لغو نشد. در «سازه حساب» تصمیم بگیرید.",
 }
+
+#: Sales window changes (v2.5.0): informational, no counter.
+SALES_NOTICES = {
+    "sales_opened": "فروش با لیست قیمت جدید باز شد.",
+    "sales_closed": "فروش بسته شد (ساعت پایان فروش، جمعه یا نرسیدن لیست قیمت جدید).",
+    "sales_opened_manual": "فروش به‌دست یکی از کاربران باز شد.",
+    "sales_closed_manual": "فروش به‌دست یکی از کاربران بسته شد.",
+    "sales_holiday": "امروز تعطیل اعلام شد؛ فروش تا صبح فردا بسته است.",
+}
+KIND_AUTO_CANCELLED = "order_auto_cancelled"
 
 #: Which page (and filter) a notification opens.
 TARGETS = {
@@ -57,6 +72,9 @@ TARGETS = {
     "pricelist_failed": ("pricelist", ""),
     "proxies_all_dead": ("pricelist", ""),
     "model_review": ("catalog", "review"),
+    KIND_AUTO_CANCELLED: ("orders", "cancelled"),
+    "accounting_duplicate_order": ("orders", "written"),
+    "order_timeout_written": ("orders", "awaiting_payment"),
     # the accounting program was opened (sazeh_watch)
     "sazeh_orders": ("orders", "awaiting_payment"),
     "sazeh_customers": ("customers", "pending"),
@@ -110,6 +128,11 @@ def notice_for(event: dict) -> Optional[Notice]:
         return Notice(kind, "سرور فروشگاه", f"{label} دوباره کار می‌کند.", None)
     if kind in SERVER_WARNINGS:
         return Notice(kind, "هشدار سرور فروشگاه", SERVER_WARNINGS[kind], ref, warning=True)
+    if kind == KIND_AUTO_CANCELLED:
+        return Notice(kind, "سفارش لغو شد",
+                      f"سفارش شمارهٔ {ref_fa} چون رسید پرداخت در مهلت نرسید، خودکار لغو شد.", ref)
+    if kind in SALES_NOTICES:
+        return Notice(kind, "وضعیت فروش", SALES_NOTICES[kind], None)
     return None
 
 

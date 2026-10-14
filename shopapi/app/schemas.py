@@ -93,8 +93,13 @@ class OrderOut(BaseModel):
     status: str
     price_level: int
     total: float
+    #: Receipt deadline: the order is cancelled locally when no receipt arrived by then.
     reserve_until: Optional[str] = None
     accounting_order_no: Optional[int] = None
+    #: The accounting database the order belongs to / was written to.
+    accounting_db: Optional[str] = None
+    #: Why a cancelled order was cancelled ('receipt_timeout').
+    cancel_reason: Optional[str] = None
     created_at: str
     items: list[OrderItemOut]
     payment_instructions: Optional[str] = None
@@ -129,12 +134,32 @@ class ApproveUserIn(BaseModel):
 
 
 class ShopStateIn(BaseModel):
+    """Old switch: closed=true = «بستن فروش», false = «باز کردن فروش»."""
     closed: bool
+
+
+class SalesActionIn(BaseModel):
+    action: Literal["holiday", "close", "open"]
 
 
 class ShopStateOut(BaseModel):
+    """Sales state (v2.5.0). ``closed`` = orders are refused right now."""
     closed: bool
     updated_at: Optional[str] = None
+    sales_open: bool = True
+    #: list | manual_open | manual_close | holiday | weekday_closed | no_list |
+    #: list_not_updated | windows_disabled
+    reason: str = ""
+    message_fa: str = ""
+    #: When the current state ends by itself (ISO UTC), if known.
+    until: Optional[str] = None
+    list_id: Optional[int] = None
+    list_date: str = ""
+    list_slot: str = ""
+    override: Optional[str] = None
+    override_by: str = ""
+    override_at: Optional[str] = None
+    receipt_deadline_minutes: int = 30
 
 
 class StatementItem(BaseModel):

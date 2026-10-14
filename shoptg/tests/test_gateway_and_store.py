@@ -182,3 +182,10 @@ def test_image_document_is_not_a_pdf():
     named = fake_message(2, pdf=b"%PDF", name="LIST.PDF")
     named.file.mime_type = "application/octet-stream"
     assert to_message(named).is_pdf
+
+
+def test_price_channel_is_polled_every_10_minutes_by_default(monkeypatch):
+    """v2.5.0: sales windows follow the list, so new lists are picked up within 10 min."""
+    monkeypatch.delenv("TG_PRICE_INTERVAL_MIN", raising=False)
+    assert Settings().price_interval_sec == 600
+    assert Settings.from_env(load_file=False).price_interval_sec == 600

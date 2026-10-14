@@ -7,7 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 
-from .. import deps, receipts, security_watch
+from .. import deps, order_timeout, receipts, sales, security_watch
 from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
@@ -37,12 +37,19 @@ from ..util import now_utc, round_half_up
 router = APIRouter()
 logger = logging.getLogger("shopapi.public")
 
-SHOP_CLOSED_KEY = "shop_closed"
 IDEMPOTENCY_HOURS = 24
+#: shopapi detail when an order is refused because sales are closed (bot maps it).
+SALES_CLOSED_DETAIL = "Sales are closed"
+RECEIPT_TOO_LATE_DETAIL = "Receipt deadline passed; order cancelled"
 
 
-def shop_state(db: OwnDB) -> ShopStateOut:
-    return ShopStateOut(closed=db.get_state(SHOP_CLOSED_KEY, "0") == "1")
+def shop_state(db: OwnDB, settings: Settings) -> ShopStateOut:
+    state = sales.compute(db, settings)
+    return ShopStateOut(
+        closed=not state.open, sales_open=state.open,
+        receipt_deadline_minutes=settings.receipt_deadline_minutes,
+        **{k: v for k, v in state.as_dict().items() if k != "open"},
+    )
 
 
 def auto_match(db: OwnDB, reader: AccountingReader, settings: Settings, user: dict) -> dict:
@@ -65,6 +72,12 @@ def auto_match(db: OwnDB, reader: AccountingReader, settings: Settings, user: di
     db.audit("system:auto_match", "user_auto_approve", f"user id={user['id']} person_code={code}")
     db.add_event("customer_auto_approved", user["id"], "system:auto_match")
     return user
+
+
+def same_database(order_db: str | None, settings: Settings) -> bool:
+    """The order belongs to the connected accounting database (never a guess:
+    an order without a recorded database matches none)."""
+    return bool(order_db) and order_db.strip().lower() == settings.database_name().lower()
 
 
 @router.get("/health")
@@ -176,9 +189,10 @@ def create_inquiry(
 @router.get("/shop/state", response_model=ShopStateOut)
 def get_shop_state(
     db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
     _: str = Depends(get_api_identity),
 ) -> ShopStateOut:
-    return shop_state(db)
+    return shop_state(db, settings)
 
 
 @router.post("/users/register", response_model=UserOut)
@@ -266,6 +280,9 @@ def create_order(
     merged = _merge_items(payload.items)
     level = settings.price_level_for(role)
     phones = phone_catalog.load(db, settings)
+    # A retry of an order placed just before closing time must still get it back,
+    # so the sales check comes after the idempotency lookup (inside the guard).
+    sales_state = sales.compute(db, settings)
 
     # Serialize availability-check + reservation: without this lock two
     # concurrent orders can both pass the check and oversell the same stock.
@@ -278,6 +295,13 @@ def create_order(
                                         "Idempotency-Key belongs to another customer")
                 response.status_code = status.HTTP_200_OK
                 return _out(db.get_order(seen["order_id"]))
+        if not sales_state.open:
+            # Closed (no fresh list, closing time, Friday, holiday, manual close):
+            # the bot shows the last prices but refuses orders.
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                f"{SALES_CLOSED_DETAIL}: {sales_state.reason}")
+        # Orders past their receipt deadline must not keep holding stock.
+        order_timeout.cancel_overdue(db)
         our_res = db.pending_reservations()
         codes = list(dict.fromkeys(code for code, _ in merged))
         detail = reader.get_products_for_order(codes, level, our_res)
@@ -348,8 +372,9 @@ def create_order(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Order exceeds the limit for customers awaiting approval",
                 )
+        # The receipt deadline: no receipt by then = cancelled locally.
         reserve_until = (
-            now_utc() + timedelta(hours=settings.reserve_hours)
+            now_utc() + timedelta(minutes=settings.receipt_deadline_minutes)
         ).isoformat(timespec="seconds")
 
         order = db.create_order(
@@ -359,6 +384,7 @@ def create_order(
             reserve_until,
             [(it.kala_code, it.name, it.qty, it.unit_price, it.variant_id, it.variant)
              for it in items_out],
+            accounting_db=settings.database_name(),
         )
         if idem is not None:
             db.save_idempotent(
@@ -399,7 +425,14 @@ def upload_receipt(
             if user is None or user["id"] != order["user_id"]:
                 security_watch.report(db, "order_probe", f"{platform}:{chat_id}")
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+        if order["status"] == "awaiting_payment" and order.get("reserve_until") \
+                and order["reserve_until"] <= now_utc().isoformat(timespec="seconds"):
+            # Past the deadline but the background check has not run yet.
+            order_timeout.cancel_overdue(db)
+            raise HTTPException(status.HTTP_409_CONFLICT, RECEIPT_TOO_LATE_DETAIL)
         if order["status"] != "awaiting_payment":
+            if order.get("cancel_reason") == "receipt_timeout":
+                raise HTTPException(status.HTTP_409_CONFLICT, RECEIPT_TOO_LATE_DETAIL)
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 f"Order in status {order['status']}; receipt not expected",
@@ -424,6 +457,7 @@ def get_order(
     role: str = Depends(get_api_identity),
     db: OwnDB = Depends(deps.get_db),
     reader: AccountingReader = Depends(deps.get_reader),
+    settings: Settings = Depends(deps.get_settings),
 ) -> OrderOut:
     order = db.get_order(order_id)
     if order is None:
@@ -437,7 +471,9 @@ def get_order(
             security_watch.report(db, "order_probe", f"{platform}:{chat_id}")
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
     numbers: list[str] = []
-    if role == "admin" and order.get("accounting_order_no") and order.get("invoice_state"):
+    if role == "admin" and order.get("accounting_order_no") and order.get("invoice_state") \
+            and same_database(order.get("accounting_db"), settings):
+        # Invoice numbers only from the database the order was written to.
         try:   # accounting down = no numbers (the card then says only that it was issued)
             numbers = reader.invoice_numbers([int(order["accounting_order_no"])]).get(
                 int(order["accounting_order_no"]), [])

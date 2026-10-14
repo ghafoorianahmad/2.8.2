@@ -45,7 +45,9 @@ def test_receipt_image_ship_and_shop_state(fake_api, api):
     fake_api.receipts[order["id"]] = PNG
     assert api.receipt_image(order["id"]) == PNG
     assert api.ship_order(order["id"])["shipped_at"]
-    assert api.shop_state() == {"closed": False}
+    assert api.shop_state()["closed"] is False
+    assert api.sales_action("holiday")["reason"] == "holiday"
+    assert api.sales_action("open")["closed"] is False
     assert api.set_shop_closed(True)["closed"] is True
 
 
@@ -168,5 +170,24 @@ def test_dashboard_hides_toggle_without_permission(ui_context, fake_api, admin_q
     context = make_context_with_role(ui_context, ROLE_OPERATOR)
     page = DashboardPage(context)
     _render_page(admin_qapp, page)
-    assert not page.shop_toggle.isVisibleTo(page)
+    assert not any(b.isVisibleTo(page) for b in page.sales_buttons.values())
+    page.close()
+
+
+def test_dashboard_sales_buttons(ui_context, fake_api, admin_qapp, monkeypatch):
+    """v2.5.0: «تعطیلی امروز» / «بستن فروش» / «باز کردن فروش» go to the server."""
+    monkeypatch.setattr("app.ui.widgets.confirm", lambda *a, **k: True)
+    context = make_context_with_role(ui_context, ROLE_SUPER_ADMIN)
+    page = DashboardPage(context)
+    _render_page(admin_qapp, page)
+    assert not page.sales_buttons["open"].isVisibleTo(page)        # already open
+    assert page.sales_buttons["holiday"].isVisibleTo(page)
+    page._sales_action("holiday")
+    _render_page(admin_qapp, page, load=False)
+    assert fake_api.sales_actions == ["holiday"] and page._shop_closed is True
+    assert "تعطیلی امروز" in page.shop_state_detail.text()
+    assert page.sales_buttons["open"].isVisibleTo(page)
+    page._sales_action("open")
+    _render_page(admin_qapp, page, load=False)
+    assert fake_api.sales_actions == ["holiday", "open"] and page._shop_closed is False
     page.close()

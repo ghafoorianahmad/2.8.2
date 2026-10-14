@@ -85,7 +85,7 @@ class FakeShopApi:
         self.login_bodies: list[dict] = []
         self.tls_fingerprint = ":".join(["AB"] * 32)
         self.server_settings: dict[str, str] = {
-            "BANK_ACCOUNT_TEXT": "حساب قدیم", "RESERVE_HOURS": "12",
+            "BANK_ACCOUNT_TEXT": "حساب قدیم", "RECEIPT_DEADLINE_MINUTES": "30",
             "ALLOW_SHARED_PERSON_CODE": "false", "BALE_TOKEN": "123:secret",
         }
         self.settings_puts: list[dict] = []
@@ -93,6 +93,8 @@ class FakeShopApi:
         #: order id -> stored receipt image
         self.receipts: dict[int, bytes] = {}
         self.shop_closed = False
+        self.sales_reason = "list"
+        self.sales_actions: list[str] = []
         self.approve_bodies: list[dict] = []
         # ---- Phase 3: distributor price list / mapping / proxies ----
         self.pricelists: list[dict] = []
@@ -180,6 +182,16 @@ class FakeShopApi:
                                     "last_login_at")}
 
     # ---- request handler -------------------------------------------------
+    def _sales_state(self) -> dict:
+        reason = self.sales_reason if self.shop_closed or self.sales_reason == "manual_open" \
+            else "list"
+        if self.shop_closed and reason in ("list", "manual_open"):
+            reason = "manual_close"
+        return {"closed": self.shop_closed, "sales_open": not self.shop_closed,
+                "reason": reason, "message_fa": "فروش بسته است." if self.shop_closed
+                else "فروش باز است.", "until": None, "list_date": "1405/07/22",
+                "list_slot": "morning", "override_by": "", "receipt_deadline_minutes": 30}
+
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         self.requests.append((request.method, path))
@@ -343,7 +355,7 @@ class FakeShopApi:
                 "write_allowed_on_host": self.write_enabled,
                 "price_level_bot": 1,
                 "price_level_site": 1,
-                "reserve_hours": 12,
+                "receipt_deadline_minutes": 30,
                 "max_order_qty": 10000,
                 "allow_shared_person_code": False,
                 "bank_account_text": None,
@@ -408,7 +420,19 @@ class FakeShopApi:
                 if user["role"] not in ("super_admin", "admin"):
                     return detail(403, "Not permitted for this account")
                 self.shop_closed = bool(body.get("closed"))
-            return reply(200, {"closed": self.shop_closed})
+            return reply(200, self._sales_state())
+
+        if path == "/admin/sales/action" and request.method == "POST":
+            if user["role"] not in ("super_admin", "admin"):
+                return detail(403, "Not permitted for this account")
+            action = body.get("action")
+            if action not in ("open", "close", "holiday"):
+                return detail(422, [{"loc": ["body", "action"], "msg": "bad"}])
+            self.sales_actions.append(action)
+            self.shop_closed = action != "open"
+            self.sales_reason = {"open": "manual_open", "close": "manual_close",
+                                 "holiday": "holiday"}[action]
+            return reply(200, self._sales_state())
 
         if path.startswith("/admin/orders/") and path.endswith("/receipt"):
             data = self.receipts.get(int(path.split("/")[3]))
@@ -699,8 +723,8 @@ class FakeShopApi:
         if path == "/admin/server/settings" and request.method == "PUT":
             values = body.get("values") or {}
             bad = {k: "cannot be changed remotely" for k in values if k not in self.server_settings}
-            if "RESERVE_HOURS" in values and not str(values["RESERVE_HOURS"]).isdigit():
-                bad["RESERVE_HOURS"] = "must be a whole number between 1 and 168"
+            if "RECEIPT_DEADLINE_MINUTES" in values and not str(values["RECEIPT_DEADLINE_MINUTES"]).isdigit():
+                bad["RECEIPT_DEADLINE_MINUTES"] = "must be a whole number between 5 and 1440"
             if bad:
                 return reply(422, {"detail": {"message": "Invalid settings", "fields": bad}})
             self.settings_puts.append(dict(values))

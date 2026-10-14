@@ -229,10 +229,10 @@ def _written_order(client):
 def test_invoice_sync_partial_then_full(client, reader, db):
     seed_products(reader)
     order_id, codlp = _written_order(client)
-    assert tracking.sync_invoices(db, reader) == 0          # not invoiced yet
+    assert tracking.sync_invoices(db, reader, "hesab5") == 0          # not invoiced yet
     reader.invoices = {codlp: {"ordered": 2, "invoiced": 1}}
-    assert tracking.sync_invoices(db, reader) == 1
-    assert tracking.sync_invoices(db, reader) == 0          # recorded once
+    assert tracking.sync_invoices(db, reader, "hesab5") == 1
+    assert tracking.sync_invoices(db, reader, "hesab5") == 0          # recorded once
     reader.invoices = {codlp: {"ordered": 2, "invoiced": 2}}
     r = client.post("/admin/orders/sync-invoices", headers=h("admin"))
     assert r.json() == {"changed": 1}
@@ -306,7 +306,7 @@ def test_shop_closed_toggle(client, reader, db):
     assert client.get("/shop/state", headers=h("bot")).json()["closed"] is True
     assert client.put("/admin/shop/state", json={"closed": False},
                       headers=h("bot")).status_code == 403
-    assert "shop_closed" in events(db)
+    assert "sales_closed_manual" in events(db)
 
 
 def test_single_product_for_deep_link(client, reader):
@@ -333,7 +333,7 @@ def test_invoice_numbers_come_from_facto_numfact_by_ordercode(client, reader, db
     assert client.get(f"/orders/{order_id}", params=params, headers=h("bot")).json()["invoice_numbers"] == []
     reader.invoices = {codlp: {"ordered": 2, "invoiced": 1}}
     reader.invoice_nums = {codlp: ["2672", "2680"]}
-    tracking.sync_invoices(db, reader)
+    tracking.sync_invoices(db, reader, "hesab5")
     got = client.get(f"/orders/{order_id}", headers=h("admin")).json()
     assert got["invoice_numbers"] == ["2672", "2680"]                 # partial: every invoice
     # customers' own (non-admin) reads never trigger an accounting query
@@ -345,7 +345,7 @@ def test_invoice_numbers_survive_accounting_being_down(client, reader, db, monke
     seed_products(reader)
     order_id, codlp = _written_order(client)
     reader.invoices = {codlp: {"ordered": 2, "invoiced": 2}}
-    tracking.sync_invoices(db, reader)
+    tracking.sync_invoices(db, reader, "hesab5")
 
     def boom(codlps):
         raise RuntimeError("accounting down")

@@ -1,7 +1,10 @@
 """Order and person writer for the accounting DB (dry-run by default).
 
-Runs the full insert transaction and ROLLS BACK unless real writes are enabled
-for the connected host. Idempotent on Sharhlp = 'API-<our order id>'. SQL Server
+A dry run only READS (lock, idempotency check, next code, Shamsi date) and
+never sends an INSERT/UPDATE; a real write happens only when
+``Settings.write_allowed()`` (test copy on the test allowlist, or switch +
+allowed host + allowlisted database) and, for orders, a configured
+``ACCOUNTING_STATUS_CODE``. Idempotent on Sharhlp = 'API-<our order id>'. SQL Server
 2008 R2 compatible. Codes are MAX+1 (the tables have no unique index), so every
 write first takes an application lock with sp_getapplock (SAZEH_DB_REFERENCE
 §5.0: no duplicates and no deadlocks, unlike UPDLOCK/HOLDLOCK).
@@ -66,6 +69,24 @@ class AccountingLockTimeout(RuntimeError):
     """sp_getapplock did not grant the lock within its timeout."""
 
 
+class AccountingWriteRefused(RuntimeError):
+    """A real write was asked for a database/host where writes are not allowed."""
+
+
+class AccountingConfigError(RuntimeError):
+    """A setting needed for a real write is missing or known to be wrong
+    (``ACCOUNTING_STATUS_CODE``)."""
+
+
+class DuplicateOrderNumber(RuntimeError):
+    """Another KalaOrder row has the Codlp we just inserted (rolled back)."""
+
+    def __init__(self, codlp: int, count: int):
+        super().__init__(f"expected exactly 1 KalaOrder row for Codlp={codlp}, found {count}")
+        self.codlp = codlp
+        self.count = count
+
+
 def take_applock(conn, resource: str) -> None:
     row = conn.execute(APPLOCK_SQL, resource).fetchone()
     result = int(row[0]) if row is not None and row[0] is not None else -999
@@ -94,13 +115,22 @@ class WriteResult:
     person_code: int
     datelp: str
     mablp: float
-    status_code: int
+    status_code: int | None
     usercode: int
     anbarcode: int
     items: list = field(default_factory=list)  # [{num, codekala, meg, gey}]
     idempotent: bool = False
     committed: bool = False
     rolled_back: bool = False
+    #: The database the order was (or would be) written to.
+    database: str = ""
+    #: Rows with our Codlp found right after COMMIT (1 = fine; >1 = another
+    #: program wrote the same number; nothing is deleted, the admin is alerted).
+    codlp_rows_after_commit: int = 0
+
+    @property
+    def duplicate_after_commit(self) -> bool:
+        return self.committed and self.codlp_rows_after_commit > 1
 
 
 @dataclass
@@ -137,6 +167,15 @@ class AccountingWriter:
     def write_allowed(self) -> bool:
         return self.settings.write_allowed()
 
+    def _resolve_dry_run(self, dry_run: bool | None) -> bool:
+        """None = follow the settings; False (a real write) must also be allowed."""
+        if dry_run is None:
+            return not self.write_allowed()
+        if not dry_run and not self.write_allowed():
+            raise AccountingWriteRefused(
+                f"real writes are not allowed for database {self.settings.database_name()!r}")
+        return bool(dry_run)
+
     def write_order(
         self,
         our_order_id: int,
@@ -145,8 +184,12 @@ class AccountingWriter:
         dry_run: bool | None = None,
     ) -> WriteResult:
         """items: list of (kala_code, qty, unit_price)."""
-        if dry_run is None:
-            dry_run = not self.write_allowed()
+        dry_run = self._resolve_dry_run(dry_run)
+        if not dry_run:
+            problem = self.settings.status_code_problem()
+            if problem:
+                # Never guess KalaOrder.Status (6808 does not exist; GUI test G2).
+                raise AccountingConfigError(problem)
 
         sharhlp = f"API-{our_order_id}"
         mablp = sum(qty * price for _, qty, price in items)  # §5.2: no rounding
@@ -201,8 +244,7 @@ class AccountingWriter:
         last_name = (last_name or "").strip()
         if not last_name:
             raise ValueError("last name is required")
-        if dry_run is None:
-            dry_run = not self.write_allowed()
+        dry_run = self._resolve_dry_run(dry_run)
         phone = "0" + key  # 09xxxxxxxxx, as the software stores it
 
         conn = self.connection()
@@ -235,6 +277,10 @@ class AccountingWriter:
             conn.execute(f"SELECT ISNULL(MAX(Code),0)+1 AS n FROM {db}.dbo.name_mo").fetchone()[0]
         )
         today = conn.execute(f"SELECT {db}.dbo.MiladiToShamsi(GETDATE()) AS d").fetchone()[0]
+        if dry_run:
+            # A dry run never sends an INSERT/UPDATE: report what would be created.
+            conn.rollback()
+            return PersonResult(person_code=code, rolled_back=True)
 
         columns = (
             "Code", "Gcod", "fname", "Name", "Addres2", "datestart", "l_gey", "tartavalod",
@@ -274,9 +320,6 @@ class AccountingWriter:
         )
         conn.execute(sql, *params)
 
-        if dry_run:
-            conn.rollback()
-            return PersonResult(person_code=code, taf_code=taf, rolled_back=True)
         conn.commit()
         return PersonResult(person_code=code, taf_code=taf, committed=True)
 
@@ -287,7 +330,7 @@ class AccountingWriter:
         items: list[tuple[int, float, float]],
         sharhlp: str,
         mablp: float,
-        status_code: int,
+        status_code: int | None,
         usercode: int,
         anbarcode: int,
         dry_run: bool,
@@ -324,6 +367,7 @@ class AccountingWriter:
                 idempotent=True,
                 committed=False,
                 rolled_back=False,
+                database=self.settings.database_name(),
             )
 
         codlp = int(
@@ -334,6 +378,25 @@ class AccountingWriter:
         datelp = conn.execute(
             f"SELECT {db}.dbo.MiladiToShamsi(CONVERT(varchar(20), CONVERT(date, GETDATE()))) AS d"
         ).fetchone()[0]
+
+        database = self.settings.database_name()
+        if dry_run:
+            # A dry run never sends an INSERT: the would-be Codlp/date/sum only.
+            conn.rollback()
+            return WriteResult(
+                accounting_order_no=codlp,
+                person_code=person_code,
+                datelp=datelp,
+                mablp=mablp,
+                status_code=status_code,
+                usercode=usercode,
+                anbarcode=anbarcode,
+                items=written_items,
+                idempotent=False,
+                committed=False,
+                rolled_back=True,
+                database=database,
+            )
 
         header_sql, header_values = insert_statement(
             f"{db}.dbo.KalaOrder",
@@ -352,34 +415,20 @@ class AccountingWriter:
             )
             conn.execute(detail_sql, *detail_values)
 
-        count = int(
-            conn.execute(
-                f"SELECT COUNT(*) AS n FROM {db}.dbo.KalaOrder WHERE Codlp = ?", codlp
-            ).fetchone()[0]
-        )
+        count = self._codlp_rows(conn, codlp)
         if count != 1:
             conn.rollback()
-            raise RuntimeError(
-                f"expected exactly 1 KalaOrder row for Codlp={codlp}, found {count}"
-            )
-
-        if dry_run:
-            conn.rollback()
-            return WriteResult(
-                accounting_order_no=codlp,
-                person_code=person_code,
-                datelp=datelp,
-                mablp=mablp,
-                status_code=status_code,
-                usercode=usercode,
-                anbarcode=anbarcode,
-                items=written_items,
-                idempotent=False,
-                committed=False,
-                rolled_back=True,
-            )
+            raise DuplicateOrderNumber(codlp, count)
 
         conn.commit()
+        # The desktop software takes no lock (MAX+1), so it can still write the
+        # same Codlp next to ours: look again after COMMIT. Nothing is deleted;
+        # the caller alerts the admin when there is more than one row.
+        try:
+            after = self._codlp_rows(conn, codlp)
+            conn.rollback()   # end the read-only transaction
+        except pyodbc.Error:
+            after = 0         # unknown; the order itself is committed
         return WriteResult(
             accounting_order_no=codlp,
             person_code=person_code,
@@ -392,4 +441,12 @@ class AccountingWriter:
             idempotent=False,
             committed=True,
             rolled_back=False,
+            database=database,
+            codlp_rows_after_commit=after,
         )
+
+    def _codlp_rows(self, conn, codlp: int) -> int:
+        row = conn.execute(
+            f"SELECT COUNT(*) AS n FROM {self._db()}.dbo.KalaOrder WHERE Codlp = ?", codlp
+        ).fetchone()
+        return int(row[0]) if row is not None and row[0] is not None else 0

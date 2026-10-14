@@ -11,9 +11,15 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 
-from .. import deps, receipts, tracking
+from .. import deps, receipts, sales, tracking
 from ..accounting_reader import AccountingReader
-from ..accounting_writer import AccountingLockTimeout, AccountingWriter
+from ..accounting_writer import (
+    AccountingConfigError,
+    AccountingLockTimeout,
+    AccountingWriteRefused,
+    AccountingWriter,
+    DuplicateOrderNumber,
+)
 from ..config import Settings
 from ..db_own import OwnDB
 from ..schemas import (
@@ -21,6 +27,7 @@ from ..schemas import (
     OrderOut,
     PersonMatch,
     RejectIn,
+    SalesActionIn,
     ShopStateIn,
     ShopStateOut,
     UserOut,
@@ -34,7 +41,7 @@ from ..staff import (
     P_SHOP_STATE,
     P_VIEW,
 )
-from .public import SHOP_CLOSED_KEY, shop_state
+from .public import shop_state
 
 router = APIRouter(prefix="/admin")
 
@@ -44,6 +51,9 @@ CAN_DECIDE_PAYMENTS = Depends(require_permission(P_PAYMENTS_DECIDE))
 CAN_EXPIRE = Depends(require_permission(P_ORDERS_EXPIRE))
 CAN_SHIP = Depends(require_permission(P_ORDERS_SHIP))
 CAN_SET_SHOP_STATE = Depends(require_permission(P_SHOP_STATE))
+
+#: Event: our Codlp exists more than once in KalaOrder (alert the admin; nothing deleted).
+EVENT_DUPLICATE_ORDER_NO = "accounting_duplicate_order"
 
 #: Orders that may be marked as shipped (paid and accepted).
 SHIPPABLE_STATUSES = ("approved", "written")
@@ -61,12 +71,15 @@ def system_info(
     Contains no secrets and performs no writes.
     """
     return {
-        "accounting_write_enabled": settings.accounting_write_enabled or settings.is_test_db(),
+        "accounting_write_enabled": settings.write_allowed(),
         "test_mode": settings.is_test_db(),
         "write_allowed_on_host": settings.write_allowed(),
+        "accounting_database": settings.database_name(),
+        "database_allowlisted": settings.database_allowlisted() or settings.is_test_db(),
+        "status_code_configured": settings.status_code_problem() is None,
         "price_level_bot": settings.price_level_bot,
         "price_level_site": settings.price_level_site,
-        "reserve_hours": settings.reserve_hours,
+        "receipt_deadline_minutes": settings.receipt_deadline_minutes,
         "max_order_qty": settings.max_order_qty,
         "allow_shared_person_code": settings.allow_shared_person_code,
         "bank_account_text": settings.bank_account_text or None,
@@ -119,6 +132,9 @@ def _create_person(writer: AccountingWriter, user: dict, payload: ApproveUserIn)
         result = writer.create_person(first, last, user["phone"])
     except AccountingLockTimeout:
         raise HTTPException(status.HTTP_409_CONFLICT, "Accounting is busy; try again") from None
+    except AccountingWriteRefused:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Accounting writes are disabled; the person was not created") from None
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
     if result.existing:
@@ -213,6 +229,7 @@ def approve_payment(
     reader: AccountingReader = Depends(deps.get_reader),
     writer: AccountingWriter = Depends(deps.get_writer),
     db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
     who: Identity = CAN_DECIDE_PAYMENTS,
 ) -> OrderOut:
     # Serialize the re-check + write so concurrent approvals cannot write the
@@ -249,22 +266,45 @@ def approve_payment(
                 )
 
         write_items = [(it["kala_code"], it["qty"], it["unit_price"]) for it in items]
-        result = writer.write_order(order_id, order["user_person_code"], write_items)
+        try:
+            result = writer.write_order(order_id, order["user_person_code"], write_items)
+        except AccountingLockTimeout:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Accounting is busy; try again") from None
+        except AccountingConfigError as exc:
+            db.audit(who.actor, "approve_payment_refused", f"order id={order_id} config: {exc}")
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "Order status code is not configured") from None
+        except DuplicateOrderNumber as exc:
+            # Rolled back: nothing was written. Tell the admin; retry is safe.
+            db.audit(who.actor, "approve_payment_duplicate",
+                     f"order id={order_id} codlp={exc.codlp} rows={exc.count} (rolled back)")
+            db.add_event(EVENT_DUPLICATE_ORDER_NO, order_id, who.actor)
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "Duplicate accounting order number; nothing was written") from None
 
         # The order is only "written" when a row really exists in the accounting DB:
         # either we committed it now, or an identical header was already there
         # (idempotent replay). A dry-run is rolled back and must NOT be reported
         # as written, otherwise the order could never be retried.
         if result.committed or result.idempotent:
-            order = db.set_order_status(order_id, "written", result.accounting_order_no)
+            order = db.set_order_status(order_id, "written", result.accounting_order_no,
+                                        accounting_db=result.database or settings.database_name())
             db.set_payment_decided(order_id, "approved")
             db.audit(
                 who.actor,
                 "approve_payment",
                 f"order id={order_id} accounting_order_no={result.accounting_order_no} "
+                f"db={result.database or settings.database_name()} "
                 f"committed={result.committed} idempotent={result.idempotent}",
             )
             db.add_event("payment_approved", order_id, who.actor)
+            if result.duplicate_after_commit:
+                # Another program wrote the same Codlp next to ours. Never delete
+                # anything in the accounting DB: only alert the admin.
+                db.audit("system:writer", "accounting_duplicate_order",
+                         f"order id={order_id} codlp={result.accounting_order_no} "
+                         f"rows={result.codlp_rows_after_commit}")
+                db.add_event(EVENT_DUPLICATE_ORDER_NO, order_id, "system:writer")
         else:
             db.audit(
                 who.actor,
@@ -366,24 +406,43 @@ def ship_order(
 def sync_invoices(
     reader: AccountingReader = Depends(deps.get_reader),
     db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
     who: Identity = CAN_EXPIRE,
 ) -> dict:
     """Check written orders for invoices now (also runs in the background)."""
-    return {"changed": tracking.sync_invoices(db, reader, who.actor)}
+    return {"changed": tracking.sync_invoices(db, reader, settings.database_name(), who.actor)}
 
 
 @router.get("/shop/state", response_model=ShopStateOut)
-def get_shop_state(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_VIEW) -> ShopStateOut:
-    return shop_state(db)
+def get_shop_state(
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+    _: Identity = CAN_VIEW,
+) -> ShopStateOut:
+    return shop_state(db, settings)
 
 
 @router.put("/shop/state", response_model=ShopStateOut)
 def set_shop_state(
     payload: ShopStateIn,
     db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
     who: Identity = CAN_SET_SHOP_STATE,
 ) -> ShopStateOut:
-    db.set_state(SHOP_CLOSED_KEY, "1" if payload.closed else "0", who.actor)
-    db.audit(who.actor, "shop_state", f"closed={payload.closed}")
-    db.add_event("shop_closed" if payload.closed else "shop_opened", None, who.actor)
-    return shop_state(db)
+    """Old switch (kept for older clients): closed -> «بستن فروش», else «باز کردن فروش»."""
+    sales.set_override(db, settings, "close" if payload.closed else "open", who.actor)
+    return shop_state(db, settings)
+
+
+@router.post("/sales/action", response_model=ShopStateOut)
+def sales_action(
+    payload: SalesActionIn,
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+    who: Identity = CAN_SET_SHOP_STATE,
+) -> ShopStateOut:
+    """ShopAdmin buttons: «تعطیلی امروز» (holiday, closed until the next morning),
+    «بستن فروش» (close now), «باز کردن فروش» (open until the next transition:
+    a new list or the next closing time). Stored on the server and audited."""
+    sales.set_override(db, settings, payload.action, who.actor)
+    return shop_state(db, settings)

@@ -15,6 +15,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Host names (SQL Server names) that may receive real writes.
 _DEFAULT_ALLOWED_HOSTS = ("localhost", r".\SQLEXPRESS")
+# The accounting copies used for testing (test mode only for these).
+_DEFAULT_TEST_DATABASES = ("hesab5 t",)
+#: Status codes known to be wrong: refused even when configured.
+INVALID_STATUS_CODES = frozenset({6808})
 
 
 def _load_dotenv() -> None:
@@ -40,6 +44,18 @@ def _env_int(key: str, default: int) -> int:
 def _env_float(key: str, default: float) -> float:
     raw = _env(key)
     return float(raw) if raw else default
+
+
+def _env_list(key: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    raw = _env(key)
+    if not raw:
+        return default
+    return tuple(p.strip() for p in raw.split(",") if p.strip())
+
+
+def _env_optional_int(key: str) -> int | None:
+    raw = _env(key)
+    return int(raw) if raw else None
 
 
 def _env_int_list(key: str) -> tuple[int, ...]:
@@ -79,9 +95,18 @@ class Settings:
     # --- Writer safety ---
     accounting_write_enabled: bool = False
     accounting_allowed_hosts: tuple[str, ...] = _DEFAULT_ALLOWED_HOSTS
+    #: Databases that may receive real (production) writes. Empty = none: a
+    #: production database must be named here explicitly (with the switch and
+    #: the host) before anything is committed to it.
+    accounting_allowed_databases: tuple[str, ...] = ()
+    #: Test copies: only these switch on test mode (writes without the switch).
+    accounting_test_databases: tuple[str, ...] = _DEFAULT_TEST_DATABASES
 
     # --- Accounting config values ---
-    accounting_status_code: int = 0  # 6808 does not exist (reference §9.2); confirm with GUI test G2
+    #: KalaOrder.Status for our orders. No default on purpose: 6808 does not
+    #: exist (reference §9.2) and the real value comes from GUI test G2. Until
+    #: it is set, orders are never committed (a dry run still works).
+    accounting_status_code: int | None = None
     accounting_usercode: int = 1
     accounting_anbarcode: int = 1
     stock_warehouses: tuple[int, ...] = ()
@@ -89,7 +114,21 @@ class Settings:
     # --- Business ---
     price_level_bot: int = 3
     price_level_site: int = 3
-    reserve_hours: int = 12
+    #: The customer uploads the payment receipt within this many minutes of
+    #: ordering; afterwards the order is cancelled locally (no gateway).
+    receipt_deadline_minutes: int = 30
+    #: Seconds between checks for orders past the receipt deadline (0 = off).
+    order_timeout_check_seconds: int = 30
+
+    # --- Sales windows (Asia/Tehran; decision 2026-10-14) ---
+    #: false = sales follow only the manual buttons in ShopAdmin.
+    sales_windows_enabled: bool = True
+    #: A list posted before this time is the morning list: sales open until then.
+    sales_morning_close: str = "13:30"
+    #: A list posted before this time is the evening list: sales open until then.
+    sales_evening_close: str = "20:30"
+    #: Python weekday numbers without sales (4 = Friday).
+    sales_closed_weekdays: tuple[int, ...] = (4,)
     bank_account_text: str = ""
     #: Payment details shown on the bot's pre-invoice card (all optional; empty = no section).
     payment_card_number: str = ""
@@ -178,13 +217,22 @@ class Settings:
             accounting_query_timeout=_env_int("ACCOUNTING_QUERY_TIMEOUT", 15),
             accounting_write_enabled=_env_bool("ACCOUNTING_WRITE_ENABLED", False),
             accounting_allowed_hosts=allowed,
-            accounting_status_code=_env_int("ACCOUNTING_STATUS_CODE", 0),
+            accounting_allowed_databases=_env_list("ACCOUNTING_ALLOWED_DATABASES"),
+            accounting_test_databases=_env_list(
+                "ACCOUNTING_TEST_DATABASES", _DEFAULT_TEST_DATABASES),
+            accounting_status_code=_env_optional_int("ACCOUNTING_STATUS_CODE"),
             accounting_usercode=_env_int("ACCOUNTING_USERCODE", 1),
             accounting_anbarcode=_env_int("ACCOUNTING_ANBARCODE", 1),
             stock_warehouses=_env_int_list("STOCK_WAREHOUSES"),
             price_level_bot=_env_int("PRICE_LEVEL_BOT", 3),
             price_level_site=_env_int("PRICE_LEVEL_SITE", 3),
-            reserve_hours=_env_int("RESERVE_HOURS", 12),
+            receipt_deadline_minutes=max(1, _env_int("RECEIPT_DEADLINE_MINUTES", 30)),
+            order_timeout_check_seconds=_env_int("ORDER_TIMEOUT_CHECK_SECONDS", 30),
+            sales_windows_enabled=_env_bool("SALES_WINDOWS_ENABLED", True),
+            sales_morning_close=_env("SALES_MORNING_CLOSE", "13:30"),
+            sales_evening_close=_env("SALES_EVENING_CLOSE", "20:30"),
+            sales_closed_weekdays=(
+                _env_int_list("SALES_CLOSED_WEEKDAYS") if _env("SALES_CLOSED_WEEKDAYS") else (4,)),
             bank_account_text=_env("BANK_ACCOUNT_TEXT", ""),
             payment_card_number=_env("PAYMENT_CARD_NUMBER", ""),
             payment_sheba=_env("PAYMENT_SHEBA", ""),
@@ -260,18 +308,43 @@ class Settings:
             return None
         return Path(self.sqlite_path).resolve().parent / "pricelists"
 
-    #: The accounting copy used for testing. Connected to it, reads and writes
-    #: are fully enabled with no switch (nothing real can be damaged there).
+    #: The default accounting copy used for testing.
     TEST_DATABASE = "hesab5 t"
 
+    def database_name(self) -> str:
+        """The configured accounting database, as stored with every order."""
+        return self.accounting_database.strip()
+
     def is_test_db(self) -> bool:
-        return self.accounting_database.strip().lower() == self.TEST_DATABASE
+        """Test mode: the database is on the test allowlist
+        (``ACCOUNTING_TEST_DATABASES``, default ``hesab5 t``). Connected to a test
+        copy, writes need no switch (nothing real can be damaged there)."""
+        name = self.database_name().lower()
+        return bool(name) and name in {d.strip().lower() for d in self.accounting_test_databases}
+
+    def database_allowlisted(self) -> bool:
+        """The database is a production database named in
+        ``ACCOUNTING_ALLOWED_DATABASES`` (never true while that is empty)."""
+        name = self.database_name().lower()
+        return bool(name) and name in {d.strip().lower() for d in self.accounting_allowed_databases}
+
+    def status_code_problem(self) -> str | None:
+        """Why orders cannot be committed with the configured Status, or None."""
+        if self.accounting_status_code is None:
+            return "ACCOUNTING_STATUS_CODE is not set"
+        if self.accounting_status_code in INVALID_STATUS_CODES:
+            return f"ACCOUNTING_STATUS_CODE={self.accounting_status_code} is not a valid status"
+        return None
 
     def write_allowed(self) -> bool:
+        """Real (committed) writes. Test mode: allowlisted test copies. Otherwise
+        all three: the switch, an allowed host and an allowlisted database."""
         if self.is_test_db():
             return True
         allowed = {h.lower() for h in self.accounting_allowed_hosts}
-        return self.accounting_write_enabled and self.accounting_server.lower() in allowed
+        return (self.accounting_write_enabled
+                and self.accounting_server.lower() in allowed
+                and self.database_allowlisted())
 
 
 _settings: Settings | None = None

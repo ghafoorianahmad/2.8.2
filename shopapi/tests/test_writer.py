@@ -87,11 +87,26 @@ class FlakyLockConn(FakeConn):
 
 
 def _writer(max_codlp=5, verify_count=1, idempotent_codlp=0):
+    """A dry-run writer (production database, writes off)."""
     conn = FakeConn(max_codlp=max_codlp, verify_count=verify_count,
                     idempotent_codlp=idempotent_codlp)
     settings = Settings(accounting_database="hesab5", accounting_write_enabled=False)
     writer = AccountingWriter(settings, connection_factory=lambda: conn)
     return writer, conn
+
+
+def _committing_writer(max_codlp=5, verify_count=1, idempotent_codlp=0, status=0):
+    """A writer on the allowlisted test copy with a configured Status."""
+    conn = FakeConn(max_codlp=max_codlp, verify_count=verify_count,
+                    idempotent_codlp=idempotent_codlp)
+    settings = Settings(accounting_database="hesab5 t", accounting_status_code=status)
+    writer = AccountingWriter(settings, connection_factory=lambda: conn)
+    return writer, conn
+
+
+def _writes(conn):
+    return [sql for sql, _ in conn.executed
+            if sql.strip().upper().startswith(("INSERT", "UPDATE", "DELETE"))]
 
 
 def test_dry_run_rolls_back_and_returns_values():
@@ -100,16 +115,18 @@ def test_dry_run_rolls_back_and_returns_values():
     assert res.accounting_order_no == 6
     assert res.person_code == 7001
     assert res.mablp == 250.0
-    assert res.status_code == 0
+    assert res.status_code is None          # not configured: never guessed
     assert res.datelp == "1405/07/13"
     assert res.rolled_back is True
     assert res.committed is False
+    assert res.database == "hesab5"
     assert conn.rolled_back is True
     assert conn.committed is False
+    assert _writes(conn) == []              # a dry run never INSERTs
 
 
 def test_empty_string_rule_for_sharh_fields_and_tavasot():
-    writer, conn = _writer()
+    writer, conn = _committing_writer()
     writer.write_order(1, 7001, [(101, 1.0, 100.0)])
 
     inserts = [(sql, params) for sql, params in conn.executed
@@ -129,7 +146,7 @@ def test_empty_string_rule_for_sharh_fields_and_tavasot():
     assert header_params[5] == -100            # Codf
     assert header_params[7] == ""              # tavasot (empty string, not None)
     assert header_params[9] == 0               # va (sales order)
-    assert header_params[10] == 0              # Status (6808 does not exist)
+    assert header_params[10] == 0              # Status = ACCOUNTING_STATUS_CODE (configured)
     assert header_params[12] == 1              # usercode
     assert "Taf2" not in header_sql
     assert header_params[0] == 6               # Codlp
@@ -152,7 +169,7 @@ def test_idempotent_write_returns_existing_codlp():
 
 
 def test_duplicate_codlp_rolls_back():
-    writer, conn = _writer(verify_count=0)
+    writer, conn = _committing_writer(verify_count=0)
     with pytest.raises(RuntimeError):
         writer.write_order(1, 7001, [(101, 1.0, 100.0)])
     assert conn.rolled_back is True
@@ -193,7 +210,7 @@ def test_insert_statements_have_matching_columns_placeholders_and_params():
     fail with "The SQL contains 18 parameter markers, but 17 parameters were
     supplied" (only the real-database integration run caught it).
     """
-    writer, conn = _writer()
+    writer, conn = _committing_writer()
     writer.write_order(7, 7001, [(101, 2.0, 100.0), (102, 1.0, 50.0)])
 
     inserts = [(sql, params) for sql, params in conn.executed
@@ -275,11 +292,22 @@ def test_create_person_reports_a_shared_mobile_as_ambiguous():
     assert res.existing and res.ambiguous and res.person_code == 812
 
 
-def test_create_person_new_mobile_follows_recipe_and_dry_run_rolls_back():
-    writer, conn = _person_writer(max_person=41, taf_code=900)
+def test_create_person_dry_run_reports_the_code_without_writing():
+    writer, conn = _person_writer(max_person=41)
+    res = writer.create_person("علی", "رضایی", "09121234567")
+    assert res.existing is False and res.person_code == 42 and res.taf_code is None
+    assert res.rolled_back and not res.committed and conn.rolled_back
+    assert _writes(conn) == []
+
+
+def test_create_person_new_mobile_follows_recipe():
+    conn = FakeConn(max_person=41, taf_code=900)
+    writer = AccountingWriter(
+        Settings(accounting_database="hesab5", accounting_test_databases=("hesab5",)),
+        connection_factory=lambda: conn)
     res = writer.create_person("علی", "رضایی", "۰۹۱۲۱۲۳۴۵۶۷", address="مشهد")
     assert res.existing is False and res.person_code == 42 and res.taf_code == 900
-    assert res.rolled_back and not res.committed and conn.rolled_back
+    assert res.committed and conn.committed
 
     writes = [(sql, p) for sql, p in conn.executed
               if sql.strip().upper().startswith(("INSERT", "UPDATE"))]
@@ -303,7 +331,18 @@ def test_create_person_new_mobile_follows_recipe_and_dry_run_rolls_back():
 
 
 def test_create_person_commits_only_when_asked_and_allowed():
-    writer, conn = _person_writer()
+    from app.accounting_writer import AccountingWriteRefused
+
+    writer, conn = _person_writer()          # production DB, writes off
+    with pytest.raises(AccountingWriteRefused):
+        writer.create_person("علی", "رضایی", "09121234567", dry_run=False)
+    assert conn.executed == [] and not conn.committed
+
+    conn = FakeConn()
+    writer = AccountingWriter(
+        Settings(accounting_server=r".\SQLEXPRESS", accounting_database="hesab5",
+                 accounting_write_enabled=True, accounting_allowed_databases=("hesab5",)),
+        connection_factory=lambda: conn)
     res = writer.create_person("علی", "رضایی", "09121234567", dry_run=False)
     assert res.committed and conn.committed
 

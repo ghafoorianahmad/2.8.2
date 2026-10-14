@@ -110,11 +110,11 @@ def test_only_changed_values_are_sent(server_context, admin_qapp, fake_api, monk
 def test_invalid_setting_is_explained_in_persian(server_context, admin_qapp, fake_api):
     page = _open_page(server_context, admin_qapp)
     try:
-        page._inputs["RESERVE_HOURS"].setText("abc")
+        page._inputs["RECEIPT_DEADLINE_MINUTES"].setText("abc")
         page._save_settings()
         _pump(admin_qapp)
         text = page.settings_message.text()
-        assert "مهلت پرداخت" in text and "۱" in text and "۱۶۸" in text
+        assert "مهلت ارسال رسید" in text and "۵" in text and "۱۴۴۰" in text
         assert fake_api.settings_puts == []
     finally:
         page.close()

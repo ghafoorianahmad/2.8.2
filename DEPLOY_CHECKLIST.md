@@ -8,7 +8,7 @@
 - **IP ثابت** برای سرور (یا رزرو DHCP در MikroTik) و پورت 8443 آزاد.
 - نوع شبکهٔ ویندوز روی سرور و کلاینت‌ها **Private** باشد. قانون فایروال فقط Private/Domain + LocalSubnet است و روی شبکهٔ Public کلاینت‌ها وصل نمی‌شوند.
 - کلاینت‌ها در همان زیرشبکهٔ سرور باشند، یا قانون فایروال عمداً گسترده شود.
-- **کاربر SQL کم‌دسترسی** با `shopapi/sql/create_api_user.sql` (توسط DBA و با گذرواژهٔ قوی):
+- **نقش SQL کم‌دسترسی `shop_app`** (v2.5.0) با `grant_shop_app.ps1` (همراه ShopServerSetup؛ منبع: `shopsystem/deploy/grant_shop_app.ps1` + `shopapi/sql/grant_shop_app.sql`) یا قدیمی‌تر `shopapi/sql/create_api_user.sql` (توسط DBA و با گذرواژهٔ قوی):
   - SELECT فقط روی جدول‌های کاتالوگ/موجودی و ستون‌های `Code, Name, fname, mobile` از `name_mo`.
   - **INSERT فقط روی `KalaOrder` و `KalaOrderDetail`**، با `DENY UPDATE, DELETE` روی هر دو.
   - EXECUTE روی `MiladiToShamsi`.
@@ -39,7 +39,9 @@
   - `Sharhlp = API-<شماره>`، مبلغ، اقلام، شخص.
   - وضعیت سفارش در فرم نرم‌افزار درست دیده شود.
 - `%ProgramData%\ShopServer\app.log` بدون ERROR باشد. دیسک و زمان سیستم سرور درست باشند.
-- رزروها: سفارش پرداخت‌نشده بعد از `RESERVE_HOURS` (۱۲ ساعت) منقضی شود.
+- مهلت رسید: سفارش بدون رسید بعد از `RECEIPT_DEADLINE_MINUTES` (۳۰ دقیقه) فقط در سرور فروشگاه لغو شود (در حسابداری چیزی حذف نمی‌شود).
+- پنجرهٔ فروش: لیست صبح تا ۱۳:۳۰، لیست عصر تا ۲۰:۳۰، جمعه بسته؛ دکمه‌های «تعطیلی امروز / بستن فروش / باز کردن فروش» در داشبورد ShopAdmin.
+- `ACCOUNTING_STATUS_CODE` پس از آزمایش G2 تنظیم شده باشد (بدون آن هیچ سفارشی ثبت واقعی نمی‌شود)؛ پایگاه production در `ACCOUNTING_ALLOWED_DATABASES` باشد.
 
 ## بازگشت (rollback)
 - **توقف فوری ثبت:** `ACCOUNTING_WRITE_ENABLED=false` و سپس راه‌اندازی دوبارهٔ task (`schtasks /End` و `/Run /TN ShopServer`).

@@ -195,14 +195,95 @@ def test_statement_is_paginated(env, settings, bot_apis, shopapi):
 
 
 # ---- closed mode -------------------------------------------------------------
-def test_closed_shop_still_takes_orders_with_notice(env, bot_apis, shopapi):
+def test_closed_sales_show_last_prices_and_refuse_orders(env, bot_apis, shopapi):
+    """v2.5.0: list not updated / closing time / Friday / holiday -> no orders."""
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
     shopapi.closed = True
 
     async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+        await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "grp:1")
+        body = bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        assert body.startswith(texts.SHOP_CLOSED_NOTICE)
+        assert "1,000" in body                       # the last prices stay visible
+        await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "prod:101")
+        await push_callback(engine, "bale", 4, CUSTOMER_CHAT, "add:101:1")
+        await push_callback(engine, "bale", 5, CUSTOMER_CHAT, "cart")
+        assert "checkout" not in _callbacks(bot_apis["bale"], CUSTOMER_CHAT)
+        await push_callback(engine, "bale", 6, CUSTOMER_CHAT, "checkout")
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.SALES_CLOSED
+        assert len(shopapi.orders) == 0
+
+    env(scenario)
+
+
+def test_holiday_and_friday_have_their_own_closed_text(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+    shopapi.closed = True
+    shopapi.closed_reason = "holiday"
+
+    async def scenario(engine, adapters, api):
         await _order_and_wait_for_receipt(engine)
-        assert texts.SHOP_CLOSED_NOTICE in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
-        assert len(shopapi.orders) == 1
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.SALES_CLOSED_HOLIDAY
+        engine._shop_state = None
+        shopapi.closed_reason = "weekday_closed"
+        await push_callback(engine, "bale", 7, CUSTOMER_CHAT, "checkout")
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.SALES_CLOSED_FRIDAY
+
+    env(scenario)
+
+
+def test_sales_closed_between_cart_and_checkout_is_refused_cleanly(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+        await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "grp:1")
+        await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "prod:101")
+        await push_callback(engine, "bale", 4, CUSTOMER_CHAT, "add:101:1")
+        shopapi.closed = True            # the bot's cached state still says open
+        await push_callback(engine, "bale", 5, CUSTOMER_CHAT, "checkout")
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.SALES_CLOSED
+        assert len(shopapi.orders) == 0
+        assert engine.store.cart_list("bale", CUSTOMER_CHAT) != []   # cart kept
+
+    env(scenario)
+
+
+def test_checkout_states_the_30_minute_receipt_deadline(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        await _order_and_wait_for_receipt(engine)
+        assert texts.RECEIPT_DEADLINE_NOTE.format(minutes="30") in \
+            bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+
+    env(scenario)
+
+
+def test_receipt_after_the_deadline_is_answered_clearly(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        await _order_and_wait_for_receipt(engine)
+        shopapi.receipt_too_late = True
+        await push_message(engine, "bale", 6, CUSTOMER_CHAT, photo=[{"file_id": "P1"}])
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.RECEIPT_TOO_LATE
+
+    env(scenario)
+
+
+def test_auto_cancelled_order_is_announced_to_the_customer(env, bot_apis, shopapi):
+    shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+
+    async def scenario(engine, adapters, api):
+        await _order_and_wait_for_receipt(engine)
+        oid = next(iter(shopapi.orders))
+        await engine.notify_customers_from_events()          # first run: position only
+        shopapi.add_event("order_auto_cancelled", oid)
+        assert await engine.notify_customers_from_events() == 1
+        assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == \
+            texts.ORDER_AUTO_CANCELLED.format(order_id=oid)
 
     env(scenario)
 

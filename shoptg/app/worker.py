@@ -1,6 +1,6 @@
 """The worker loop (REQUIREMENTS §5–6).
 
-* price channel every ``TG_PRICE_INTERVAL_MIN`` (30): PDFs newer than the cursor
+* price channel every ``TG_PRICE_INTERVAL_MIN`` (10): PDFs newer than the cursor
   go to ``/worker/pricelists`` (shopapi decides duplicate / older / held); the
   cursor moves past images and text posts too. First run: newest PDF only;
 * proxy channels every ``TG_PROXY_COLLECT_DAYS`` (7): links -> candidates;

@@ -271,7 +271,15 @@ MIGRATIONS = (
     ("payments", "created_at", "TEXT"),
     ("order_items", "variant_id", "INTEGER"),   # price_mappings.id (phone color)
     ("order_items", "variant", "TEXT"),         # the color shown to the customer
+    # v2.5.0: the accounting database the order belongs to (ACCOUNTING_DATABASE
+    # when created; replaced by the one it was really written to). Invoices are
+    # only ever looked up in this database.
+    ("orders", "accounting_db", "TEXT"),
+    ("orders", "cancel_reason", "TEXT"),        # 'receipt_timeout' | ...
 )
+
+#: cancel_reason of an order whose receipt did not arrive in time.
+CANCEL_RECEIPT_TIMEOUT = "receipt_timeout"
 
 # Orders in these statuses hold a stock reservation.
 RESERVING_STATUSES = ("awaiting_payment", "receipt_uploaded")
@@ -401,14 +409,16 @@ class OwnDB:
         total: float,
         reserve_until: str,
         items: list[tuple[int, str, float, float]],
+        accounting_db: str | None = None,
     ) -> dict:
-        """items: (kala_code, name, qty, unit_price[, variant_id, variant])."""
+        """items: (kala_code, name, qty, unit_price[, variant_id, variant]).
+        ``reserve_until`` = the receipt deadline (the stock is held until then)."""
         with self._lock:
             ts = now_iso()
             self._conn.execute(
                 "INSERT INTO orders (user_id, status, price_level, total, reserve_until, "
-                "created_at, updated_at) VALUES (?,'awaiting_payment',?,?,?,?,?)",
-                (user_id, price_level, total, reserve_until, ts, ts),
+                "accounting_db, created_at, updated_at) VALUES (?,'awaiting_payment',?,?,?,?,?,?)",
+                (user_id, price_level, total, reserve_until, accounting_db, ts, ts),
             )
             row = self._conn.execute("SELECT last_insert_rowid() AS id").fetchone()
             order_id = row["id"]
@@ -492,13 +502,15 @@ class OwnDB:
             return [self.get_order(i) for i in ids]
 
     def set_order_status(
-        self, order_id: int, status_value: str, accounting_order_no: int | None = None
+        self, order_id: int, status_value: str, accounting_order_no: int | None = None,
+        accounting_db: str | None = None,
     ) -> dict:
         with self._lock:
             self._conn.execute(
                 "UPDATE orders SET status=?, "
-                "accounting_order_no=COALESCE(?, accounting_order_no), updated_at=? WHERE id=?",
-                (status_value, accounting_order_no, now_iso(), order_id),
+                "accounting_order_no=COALESCE(?, accounting_order_no), "
+                "accounting_db=COALESCE(?, accounting_db), updated_at=? WHERE id=?",
+                (status_value, accounting_order_no, accounting_db, now_iso(), order_id),
             )
             self._commit()
             return self.get_order(order_id)
@@ -522,15 +534,18 @@ class OwnDB:
             )
 
     # ---- tracking (invoice / shipping) ----
-    def orders_awaiting_invoice(self, limit: int = 200) -> list[dict]:
-        """Orders written to accounting whose invoice is not complete yet."""
+    def orders_awaiting_invoice(self, accounting_db: str, limit: int = 200) -> list[dict]:
+        """Orders written to ``accounting_db`` whose invoice is not complete yet.
+        Orders of another database (or of an unknown one) are never checked
+        against this one: the same Codlp there is a different order."""
         with self._lock:
             return self._fetchall(
-                "SELECT id, accounting_order_no, invoice_state FROM orders "
+                "SELECT id, accounting_order_no, invoice_state, accounting_db FROM orders "
                 "WHERE status='written' AND accounting_order_no IS NOT NULL "
+                "AND accounting_db IS NOT NULL AND lower(trim(accounting_db)) = lower(trim(?)) "
                 "AND COALESCE(invoice_state,'') <> 'full' AND shipped_at IS NULL "
                 "ORDER BY id LIMIT ?",
-                (limit,),
+                (accounting_db, limit),
             )
 
     def set_invoice_state(self, order_id: int, state: str, invoiced_qty: float) -> None:
@@ -599,16 +614,33 @@ class OwnDB:
             )
             return {r["kala_code"]: r["qty"] for r in rows}
 
-    def expire_awaiting_orders(self) -> int:
+    def overdue_awaiting_orders(self, now: str | None = None) -> list[dict]:
+        """Orders still waiting for a receipt after their deadline."""
+        with self._lock:
+            return self._fetchall(
+                "SELECT id, accounting_order_no, accounting_db FROM orders "
+                "WHERE status='awaiting_payment' AND reserve_until IS NOT NULL "
+                "AND reserve_until <= ? ORDER BY id",
+                (now or now_iso(),),
+            )
+
+    def cancel_order_locally(self, order_id: int, reason: str) -> bool:
+        """Cancel an order that still waits for its receipt. Only our SQLite row
+        changes; nothing is ever deleted (here or in the accounting DB)."""
         with self._lock:
             cur = self._conn.execute(
-                "UPDATE orders SET status='expired', updated_at=? "
-                "WHERE status='awaiting_payment' AND reserve_until IS NOT NULL "
-                "AND reserve_until < ?",
-                (now_iso(), now_iso()),
+                "UPDATE orders SET status='cancelled', cancel_reason=?, updated_at=? "
+                "WHERE id=? AND status='awaiting_payment'",
+                (reason, now_iso(), order_id),
             )
             self._commit()
-            return cur.rowcount
+            return cur.rowcount == 1
+
+    def expire_awaiting_orders(self) -> int:
+        """Cancel every order past its receipt deadline (see order_timeout)."""
+        from .order_timeout import cancel_overdue
+
+        return len(cancel_overdue(self, "system:expire"))
 
     # ---- audit ----
     def audit(self, actor: str, action: str, detail: str) -> None:

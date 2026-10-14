@@ -43,6 +43,16 @@
 ۴. در صفحهٔ آخر «نشانی سرور» و «اثرانگشت امنیتی» نمایش داده می‌شود. این
    دو را برای نصب روی رایانه‌های کارکنان یادداشت کنید.
 
+دسترسی محدود SQL (نقش shop_app، نسخهٔ ۲٫۵٫۰): در پوشهٔ نصب، فایل
+grant_shop_app.ps1 و پوشهٔ sql هست. مسئول SQL (با حساب ویندوزی که روی
+SQL Server مدیر است) آن را در PowerShell اجرا کند؛ بدون -Apply فقط نشان
+می‌دهد چه می‌کند:
+      .\grant_shop_app.ps1 -Server .\SAZEHHESAB -Database hesab5 -LoginName shopbot
+      .\grant_shop_app.ps1 -Server .\SAZEHHESAB -Database hesab5 -LoginName shopbot -CreateLogin -Apply
+اول روی پایگاه آزمایشی (hesab5 t) امتحان کنید و با sql\verify_permissions.sql
+بررسی کنید. فروشگاه هرگز از sa استفاده نمی‌کند. (این اسکریپت هنوز روی
+ویندوز واقعی آزموده نشده است.)
+
 اگر نوع شبکهٔ ویندوز «عمومی» (Public) باشد، کارکنان به سرور وصل نمی‌شوند؛
 آن را در تنظیمات ویندوز «خصوصی» (Private) کنید. بهتر است در مودم/روتر
 برای رایانهٔ سرور یک IP ثابت تعیین کنید.

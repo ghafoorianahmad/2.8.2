@@ -169,7 +169,9 @@ Two kinds of callers:
 | GET | `/admin/orders?status=receipt_uploaded` | admin |
 | POST | `/admin/orders/{id}/approve-payment` | re-checks availability, writes (dry-run default) |
 | POST | `/admin/orders/{id}/reject-payment` | admin |
-| POST | `/admin/orders/expire` | expires `awaiting_payment` orders past `reserve_until` |
+| POST | `/admin/orders/expire` | cancels (locally) `awaiting_payment` orders past their receipt deadline `reserve_until` (also runs every 30 s) |
+| GET/PUT | `/admin/shop/state` | sales state (`closed`, `reason`, `message_fa`, `until`, list slot); PUT `{closed}` = close/open button |
+| POST | `/admin/sales/action` | `{"action": "holiday"\|"close"\|"open"}` — ShopAdmin sales buttons (stored, audited, event) |
 | GET | `/admin/events?after=` | notification feed (`customer_registered`, `order_created`, `receipt_uploaded`, decisions); no `after` → current position only |
 | GET | `/auth/status` | public: `{bootstrap_required}` |
 | POST | `/auth/bootstrap` | first super admin (service key only) |
@@ -189,7 +191,10 @@ for the full list. Key ones:
 
 - `ACCOUNTING_*` — connection and writer-safety settings.
 - `PRICE_LEVEL_BOT` / `PRICE_LEVEL_SITE` — price level per channel (1-5).
-- `RESERVE_HOURS` — how long an order reserves stock.
+- `RECEIPT_DEADLINE_MINUTES` — the receipt must arrive within this time (default 30); then the order is cancelled locally (never deleted in accounting).
+- `SALES_WINDOWS_ENABLED`, `SALES_MORNING_CLOSE` (13:30), `SALES_EVENING_CLOSE` (20:30), `SALES_CLOSED_WEEKDAYS` (4 = Friday) — sales follow the distributor list (Asia/Tehran).
+- `ACCOUNTING_STATUS_CODE` — KalaOrder.Status; **no default** (6808 is invalid; set after GUI test G2). Unset = nothing is committed.
+- `ACCOUNTING_ALLOWED_DATABASES` — production databases that may receive real writes (empty = none); `ACCOUNTING_TEST_DATABASES` (default `hesab5 t`) — the only databases with test mode. A dry run never sends an INSERT.
 - `STOCK_WAREHOUSES` — comma-separated warehouse codes; empty = all warehouses.
 - `MAX_ORDER_QTY` — maximum quantity per line item (default 10000).
 - `ALLOW_SHARED_PERSON_CODE` — allow two customers to share one person code (default `false`).

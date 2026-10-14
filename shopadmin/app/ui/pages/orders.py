@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from ...permissions import ORDERS_APPROVE_PAYMENT, ORDERS_REJECT_PAYMENT, ORDERS_SHIP
 from ...persian import (
+    format_datetime_shamsi,
     format_money,
     format_qty,
     format_shamsi,
@@ -31,6 +32,7 @@ from ...persian import (
 from ...statuses import (
     ORDER_APPROVED,
     ORDER_AWAITING_PAYMENT,
+    ORDER_CANCELLED,
     ORDER_EXPIRED,
     ORDER_RECEIPT_UPLOADED,
     ORDER_REJECTED,
@@ -42,13 +44,15 @@ from ..async_utils import run_async
 from ..base_page import BasePage
 from ..context import AppContext
 
-HEADERS = ("شماره سفارش", "نام مشتری", "تعداد اقلام", "مبلغ کل", "وضعیت", "مهلت پرداخت", "تاریخ ثبت")
+HEADERS = ("شماره سفارش", "نام مشتری", "تعداد اقلام", "مبلغ کل", "وضعیت", "مهلت ارسال رسید", "تاریخ ثبت")
 
 TABS = (
     ("awaiting_payment", "در انتظار پرداخت", ORDER_AWAITING_PAYMENT),
     ("receipt_uploaded", "فیش ارسال‌شده", ORDER_RECEIPT_UPLOADED),
     ("approved", "تأییدشده", ORDER_APPROVED),
     ("rejected", "ردشده", ORDER_REJECTED),
+    # v2.5.0: no receipt within the deadline (30 min) -> cancelled on the shop server
+    ("cancelled", "لغوشده", ORDER_CANCELLED),
     ("expired", "منقضی", ORDER_EXPIRED),
     ("written", "نوشته‌شده در حسابداری", ORDER_WRITTEN),
 )
@@ -58,7 +62,9 @@ EMPTY_HINTS = {
     "receipt_uploaded": "به‌محض ارسال فیش توسط مشتری، سفارش در این زبانه قرار می‌گیرد.",
     "approved": "سفارش‌های تأییدشده در این زبانه دیده می‌شوند.",
     "rejected": "سفارش‌هایی که پرداختشان رد شده است اینجا نمایش داده می‌شوند.",
-    "expired": "سفارش‌هایی که مهلت پرداختشان تمام شده است.",
+    "cancelled": "سفارش‌هایی که رسیدشان در مهلت نرسید و خودکار لغو شدند "
+                 "(فقط در سرور فروشگاه؛ در حسابداری چیزی حذف نمی‌شود).",
+    "expired": "سفارش‌های قدیمی که مهلت پرداختشان تمام شده است.",
     "written": "سفارش‌هایی که در نرم‌افزار حسابداری ثبت شده‌اند.",
 }
 
@@ -269,8 +275,9 @@ class OrderDetailDialog(QDialog):
         left.setSpacing(6)
         left.addWidget(_kv("مشتری", self._customer_label(order)))
         left.addWidget(_kv("تاریخ ثبت", format_shamsi(order.get("created_at"))))
-        left.addWidget(_kv("مهلت پرداخت", format_shamsi(order.get("reserve_until"))
+        left.addWidget(_kv("مهلت ارسال رسید", format_datetime_shamsi(order.get("reserve_until"))
                            if order.get("reserve_until") else "—"))
+        left.addWidget(_kv("پایگاه‌دادهٔ حسابداری", str(order.get("accounting_db") or "—")))
         right = QVBoxLayout()
         right.setSpacing(6)
         right.addWidget(_kv("مبلغ کل", format_money(order.get("total", 0))))

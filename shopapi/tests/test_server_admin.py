@@ -47,7 +47,8 @@ def test_status_reports_accounting_down_without_failing(client, reader):
     owner = owner_token(client)
     reader.down = True
     body = client.get("/admin/server/status", headers=bearer(owner)).json()
-    assert body["accounting"] == {"ok": False, "error": "RuntimeError"}
+    assert body["accounting"]["ok"] is False and body["accounting"]["error"] == "RuntimeError"
+    assert body["accounting"]["message_fa"]          # v2.5.0: Persian explanation
 
 
 def test_status_includes_registered_components(client):
@@ -80,7 +81,7 @@ def test_settings_update_keeps_other_lines(client, env_file, db):
     owner = owner_token(client)
     r = client.put("/admin/server/settings", headers=bearer(owner), json={"values": {
         "BANK_ACCOUNT_TEXT": "کارت ۶۰۳۷ به نام فروشگاه",
-        "RESERVE_HOURS": "24",
+        "RECEIPT_DEADLINE_MINUTES": "45",
         "BALE_TOKEN": "987654:ZYXWVUTSRQPONMLKJIHGFEDCBAzyxw",
     }})
     assert r.status_code == 200 and r.json()["restart_required"] is True
@@ -88,7 +89,7 @@ def test_settings_update_keeps_other_lines(client, env_file, db):
     assert "# shop server" in text
     assert "ACCOUNTING_SERVER=.\\SQLEXPRESS" in text
     assert 'BANK_ACCOUNT_TEXT="کارت ۶۰۳۷ به نام فروشگاه"' in text
-    assert "RESERVE_HOURS=24" in text
+    assert "RECEIPT_DEADLINE_MINUTES=45" in text
     assert "BALE_TOKEN=987654:ZYXWVUTSRQPONMLKJIHGFEDCBAzyxw" in text
     from dotenv import dotenv_values
 
@@ -102,8 +103,9 @@ def test_settings_update_keeps_other_lines(client, env_file, db):
     ("ACCOUNTING_SERVER", "evil"),
     ("ADMIN_API_KEY", "x"),
     ("API_HOST", "0.0.0.0"),
-    ("RESERVE_HOURS", "0"),
-    ("RESERVE_HOURS", "abc"),
+    ("RECEIPT_DEADLINE_MINUTES", "0"),
+    ("RECEIPT_DEADLINE_MINUTES", "abc"),
+    ("SALES_MORNING_CLOSE", "25:00"),
     ("PRICE_LEVEL_BOT", "9"),
     ("BALE_TOKEN", "not-a-token"),
     ("ADMIN_CHAT_IDS", "bale:12; rm -rf"),

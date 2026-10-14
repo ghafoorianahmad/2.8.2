@@ -8,7 +8,13 @@ from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from ...api_client import ApiError
 from ...permissions import SHOP_STATE
-from ...persian import format_int, format_money, format_shamsi, to_persian_digits
+from ...persian import (
+    format_datetime_shamsi,
+    format_int,
+    format_money,
+    format_shamsi,
+    to_persian_digits,
+)
 from ...statuses import (
     ORDER_APPROVED,
     ORDER_RECEIPT_UPLOADED,
@@ -55,18 +61,34 @@ class DashboardPage(BasePage):
         self.card_receipts.clicked.connect(lambda: self._go("orders", ORDER_RECEIPT_UPLOADED))
         self.card_today.clicked.connect(lambda: self._go("orders", ORDER_WRITTEN))
 
-        # Closed mode: the bot keeps taking orders and tells customers they will
-        # be reviewed when the shop reopens (REQUIREMENTS §7).
-        shop_panel = widgets.Panel("وضعیت فروشگاه")
-        shop_row = QHBoxLayout()
+        # Sales state (v2.5.0): sales follow the distributor's price list
+        # (morning list until 13:30, evening list until 20:30, Friday closed).
+        # The buttons override it; the decision is stored and audited on the server.
+        shop_panel = widgets.Panel("وضعیت فروش")
         self.shop_state_label = widgets.label("…", bold=True)
-        shop_row.addWidget(self.shop_state_label, 1)
-        self.shop_toggle = widgets.button("", on_click=self._toggle_shop)
-        self.shop_toggle.setVisible(False)
-        shop_row.addWidget(self.shop_toggle)
-        shop_panel.body.addLayout(shop_row)
+        self.shop_state_label.setWordWrap(True)
+        shop_panel.body.addWidget(self.shop_state_label)
+        self.shop_state_detail = widgets.label("", name="Faint")
+        self.shop_state_detail.setWordWrap(True)
+        shop_panel.body.addWidget(self.shop_state_detail)
+        buttons = QHBoxLayout()
+        self.sales_buttons: dict[str, object] = {}
+        for action, text, variant in (
+            ("open", "باز کردن فروش", "primary"),
+            ("close", "بستن فروش", "default"),
+            ("holiday", "تعطیلی امروز", "default"),
+        ):
+            btn = widgets.button(text, variant=variant,
+                                 on_click=lambda _=False, a=action: self._sales_action(a))
+            btn.setVisible(False)
+            buttons.addWidget(btn)
+            self.sales_buttons[action] = btn
+        buttons.addStretch(1)
+        shop_panel.body.addLayout(buttons)
         self.body.addWidget(shop_panel)
         self._shop_closed: bool | None = None
+        # Old name kept for callers/tests that look for "the" toggle.
+        self.shop_toggle = self.sales_buttons["close"]
 
         chart_panel = widgets.Panel("سفارش‌های ۷ روز اخیر")
         self.chart = widgets.BarChart()
@@ -170,45 +192,64 @@ class DashboardPage(BasePage):
         self.table._empty_widget = None if orders else self.table._empty_widget
         self.table._refresh_states()
 
-    # ------------------------------------------------------------------ shop state
+    # ------------------------------------------------------------------ sales state
     def _render_shop_state(self, state: object) -> None:
         if not isinstance(state, dict):
             self._shop_closed = None
-            self.shop_state_label.setText("وضعیت باز/بسته از سرور خوانده نشد.")
-            self.shop_toggle.setVisible(False)
+            self.shop_state_label.setText("وضعیت فروش از سرور خوانده نشد.")
+            self.shop_state_detail.setText("")
+            for btn in self.sales_buttons.values():
+                btn.setVisible(False)
             return
         closed = bool(state.get("closed"))
         self._shop_closed = closed
+        message = str(state.get("message_fa") or "").strip()
         if closed:
             self.shop_state_label.setText(
-                "🔒 فروشگاه بسته است — ربات سفارش می‌گیرد و می‌گوید پس از بازگشایی بررسی می‌شود."
-            )
-            self.shop_toggle.setText("باز کردن فروشگاه")
+                "🔒 " + (message or "فروش بسته است.")
+                + " ربات آخرین قیمت‌ها را نشان می‌دهد ولی سفارش نمی‌گیرد.")
         else:
-            self.shop_state_label.setText("✅ فروشگاه باز است.")
-            self.shop_toggle.setText("بستن فروشگاه")
-        self.shop_toggle.setVisible(self.context.can(SHOP_STATE))
+            self.shop_state_label.setText("✅ " + (message or "فروش باز است."))
+        self.shop_state_detail.setText(sales_detail_text(state))
+        allowed = self.context.can(SHOP_STATE)
+        for action, btn in self.sales_buttons.items():
+            # «باز کردن» only while closed; «بستن» and «تعطیلی» are always offered.
+            btn.setVisible(allowed and (closed if action == "open" else True))
 
-    def _toggle_shop(self) -> None:
+    def _sales_action(self, action: str) -> None:
         if self._shop_closed is None:
             return
-        closing = not self._shop_closed
-        question = ("فروشگاه بسته شود؟ ربات همچنان سفارش می‌گیرد و به مشتری می‌گوید "
-                    "پس از بازگشایی بررسی می‌شود." if closing else "فروشگاه باز شود؟")
-        if not widgets.confirm(self, "وضعیت فروشگاه", question):
+        questions = {
+            "open": "فروش همین حالا باز شود؟ تا رسیدن لیست قیمت جدید یا ساعت پایان فروش "
+                    "(۱۳:۳۰ / ۲۰:۳۰) باز می‌ماند و هر زمان می‌توانید آن را ببندید.",
+            "close": "فروش همین حالا بسته شود؟ ربات آخرین قیمت‌ها را نشان می‌دهد ولی سفارش "
+                     "نمی‌گیرد، تا لیست قیمت بعدی یا تا وقتی دوباره باز کنید.",
+            "holiday": "امروز تعطیل اعلام شود؟ فروش تا صبح فردا بسته می‌ماند.",
+        }
+        if not widgets.confirm(self, "وضعیت فروش", questions[action]):
             return
-        self.shop_toggle.setEnabled(False)
+        for btn in self.sales_buttons.values():
+            btn.setEnabled(False)
         self.run(
-            lambda: self.context.api.set_shop_closed(closing),
-            on_success=self._shop_toggled,
+            lambda: self.context.api.sales_action(action),
+            on_success=lambda state: self._shop_toggled(state, action),
             on_error=lambda message, kind: (
-                self.shop_toggle.setEnabled(True), self.default_error(message, kind)
+                [b.setEnabled(True) for b in self.sales_buttons.values()],
+                self.default_error(message, kind),
             ),
         )
 
-    def _shop_toggled(self, state: object) -> None:
-        self.shop_toggle.setEnabled(True)
-        self.context.audit("shop_state", f"closed={bool((state or {}).get('closed'))}")
+    def _toggle_shop(self) -> None:
+        """Old single switch: closes when open, opens when closed."""
+        if self._shop_closed is None:
+            return
+        self._sales_action("open" if self._shop_closed else "close")
+
+    def _shop_toggled(self, state: object, action: str = "") -> None:
+        for btn in self.sales_buttons.values():
+            btn.setEnabled(True)
+        self.context.audit("sales_" + (action or "state"),
+                           f"closed={bool((state or {}).get('closed'))}")
         self._render_shop_state(state)
 
     # ------------------------------------------------------------------ nav
@@ -217,6 +258,37 @@ class DashboardPage(BasePage):
         navigate = getattr(window, "navigate", None)
         if callable(navigate):
             navigate(page_key, filter_key)
+
+
+_REASONS_FA = {
+    "list": "طبق لیست قیمت",
+    "manual_open": "باز شده به‌دست کاربر",
+    "manual_close": "بسته شده به‌دست کاربر",
+    "holiday": "تعطیلی امروز",
+    "weekday_closed": "جمعه",
+    "no_list": "لیست قیمتی نرسیده",
+    "list_not_updated": "لیست قیمت به‌روز نشده",
+    "windows_disabled": "زمان‌بندی فروش خاموش است",
+}
+
+
+def sales_detail_text(state: dict) -> str:
+    """One Persian line: why, until when, by whom, which list."""
+    parts = []
+    reason = _REASONS_FA.get(str(state.get("reason") or ""))
+    if reason:
+        parts.append(f"علت: {reason}")
+    if state.get("until"):
+        parts.append(f"تا {format_datetime_shamsi(state['until'])}")
+    if state.get("override_by"):
+        by = str(state["override_by"]).split(":", 1)[-1]
+        parts.append(f"به‌دست {by}")
+    slot = {"morning": "صبح", "evening": "عصر"}.get(str(state.get("list_slot") or ""))
+    if state.get("list_date"):
+        parts.append(f"لیست {slot + ' ' if slot else ''}{state['list_date']}")
+    if state.get("receipt_deadline_minutes"):
+        parts.append(f"مهلت رسید: {state['receipt_deadline_minutes']} دقیقه")
+    return to_persian_digits(" — ".join(parts))
 
 
 def _shop_state(api) -> dict | None:

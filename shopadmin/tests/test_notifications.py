@@ -202,3 +202,51 @@ def test_sidebar_badges_and_close_to_tray(tmp_path, fake_api, notifier, admin_qa
         window.close()
         client.close()
         store.close()
+
+
+# ---- v2.5.0 -------------------------------------------------------------------------
+def test_v250_kinds_have_persian_notices():
+    cancelled = notice_for({"kind": "order_auto_cancelled", "ref_id": 7})
+    assert cancelled is not None and "۷" in cancelled.body
+    assert cancelled.target == ("orders", "cancelled")
+    for kind in ("accounting_duplicate_order", "order_timeout_written"):
+        notice = notice_for({"kind": kind, "ref_id": 3})
+        assert notice is not None and notice.warning and "سازه حساب" in notice.body
+    for kind in ("sales_opened", "sales_closed", "sales_holiday", "sales_opened_manual",
+                 "sales_closed_manual"):
+        notice = notice_for({"kind": kind})
+        assert notice is not None and not notice.warning and "فروش" in notice.body
+
+
+def test_new_order_and_receipt_show_an_in_app_notification(tmp_path, fake_api, notifier,
+                                                           admin_qapp, monkeypatch):
+    """All installs: the main window shows the order/receipt itself (not only the tray)."""
+    from app.auth import AuthService
+    from app.store import Store
+    from app.ui.context import AppContext
+    from app.ui.main_window import MainWindow
+
+    store = Store(tmp_path / "inapp.db")
+    store.configure_connection("http://shopapi.test")
+    client = make_client(fake_api)
+    auth = AuthService(store, client)
+    principal = auth.authenticate("owner", "Secret123").principal
+    context = AppContext(store=store, auth=auth, api=client, principal=principal,
+                         notifier=notifier)
+    window = MainWindow(context)
+    shown: list[tuple[str, str, int]] = []
+    monkeypatch.setattr(window.toasts, "show",
+                        lambda message, kind="success", duration_ms=0:
+                        shown.append((message, kind, duration_ms)))
+    try:
+        window._on_server_events([{"kind": KIND_ORDER, "ref_id": 5},
+                                  {"kind": KIND_RECEIPT, "ref_id": 5},
+                                  {"kind": "accounting_duplicate_order", "ref_id": 5}])
+        assert [k for _, k, _ in shown] == ["info", "info", "warning"]
+        assert "سفارش جدید" in shown[0][0] and "فیش" in shown[1][0]
+        assert shown[0][2] >= 8000
+    finally:
+        window.allow_close = True
+        window.close()
+        client.close()
+        store.close()

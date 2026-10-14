@@ -163,6 +163,10 @@ class FakeShopApi:
         #: PENDING_MAX_ORDER_ITEMS > 0: customers awaiting approval may order
         self.pending_can_order = True
         self.closed = False
+        #: v2.5.0 sales state reason while closed (list_not_updated / holiday / weekday_closed)
+        self.closed_reason = "list_not_updated"
+        #: receipts are refused: the 30-minute deadline has passed
+        self.receipt_too_late = False
         self.statement: dict | None = None
         self.statement_requests: list[dict] = []
         self.order_bodies: list[dict] = []
@@ -261,7 +265,9 @@ class FakeShopApi:
             return self._ok(self.groups)
 
         if method == "GET" and path == "/shop/state":
-            return self._ok({"closed": self.closed})
+            return self._ok({"closed": self.closed, "sales_open": not self.closed,
+                             "reason": self.closed_reason if self.closed else "list",
+                             "receipt_deadline_minutes": 30})
 
         if method == "GET" and path.startswith("/products/"):
             code = int(path.split("/")[2])
@@ -419,6 +425,8 @@ class FakeShopApi:
             if user["status"] == "rejected" or (
                     user["status"] != "approved" and not self.pending_can_order):
                 return self._err(403, "User is not approved")
+            if self.closed:
+                return self._err(409, f"Sales are closed: {self.closed_reason}")
             items = []
             total = 0.0
             self.order_bodies.append(body)
@@ -452,7 +460,7 @@ class FakeShopApi:
             self._next_order += 1
             order = {
                 "id": order_id, "status": "awaiting_payment", "price_level": 3, "total": total,
-                "reserve_until": "t+12h", "accounting_order_no": None, "created_at": "t",
+                "reserve_until": "t+30m", "accounting_order_no": None, "created_at": "t",
                 "items": items, "payment_instructions": "واریز به کارت 1234",
                 "user_id": user["id"], "customer_pending": user["status"] != "approved",
                 "_platform": platform, "_chat_id": chat_id,
@@ -470,6 +478,10 @@ class FakeShopApi:
             if (not platform or not chat_id or order["_platform"] != platform
                     or order["_chat_id"] != str(chat_id)):
                 return self._err(404, "Order not found")
+            if self.receipt_too_late and order["status"] == "awaiting_payment":
+                order["status"] = "cancelled"
+            if order["status"] == "cancelled" and self.receipt_too_late:
+                return self._err(409, "Receipt deadline passed; order cancelled")
             if order["status"] != "awaiting_payment":
                 return self._err(409, f"Order in status {order['status']}")
             order["status"] = "receipt_uploaded"
