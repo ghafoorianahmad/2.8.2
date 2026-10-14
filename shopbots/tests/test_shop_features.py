@@ -54,7 +54,7 @@ def test_builtin_texts_have_shop_name_and_keep_message_placeholders():
 def test_operator_file_overrides_key_by_key(tmp_path):
     custom = tmp_path / "messages.fa.json"
     custom.write_text(json.dumps({
-        "shop": {"shop_name": "فروشگاه آزمایشی", "card_number": "6037-0000-1111-2222"},
+        "shop": {"shop_name": "فروشگاه آزمایشی", "shop_phone": "021-0000-1111"},
         "messages": {"WELCOME": "سلام از {shop_name}"},
         "buttons": {"BTN_MENU": "خانه"},
     }, ensure_ascii=False), encoding="utf-8")
@@ -62,7 +62,7 @@ def test_operator_file_overrides_key_by_key(tmp_path):
     assert texts.WELCOME == "سلام از فروشگاه آزمایشی"
     assert texts.BTN_MENU == "خانه"
     assert "فروشگاه آزمایشی" in texts.MAIN_MENU          # default text, new shop name
-    assert "6037-0000-1111-2222" in texts.PAYMENT_INSTRUCTIONS
+    assert "021-0000-1111" in texts.SUPPORT
     assert texts.BTN_CART                                # missing key -> default
 
 
@@ -129,7 +129,8 @@ def test_main_menu_has_support_and_info(env, bot_apis, shopapi):
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
         callbacks = _callbacks(bot_apis["bale"], CUSTOMER_CHAT)
-        assert callbacks == ["groups", "search", "cart", "orders", "stmt:1", "support", "info"]
+        assert callbacks == ["groups", "search", "cart", "orders", "ireq", "stmt:1", "support",
+                             "info"]
         await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "info")
         assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.SHOP_INFO
         await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "support")
@@ -232,17 +233,19 @@ def test_dry_run_approval_says_so_and_still_informs_customer(env, bot_apis, shop
     env(scenario)
 
 
-def test_card_number_from_messages_file_is_used(env, bot_apis, shopapi, tmp_path):
+def test_card_comes_from_shopapi_never_from_the_messages_file(env, bot_apis, shopapi, tmp_path):
+    """v2.6.0: an old operator copy with a placeholder card changes nothing."""
     custom = tmp_path / "m.json"
-    custom.write_text(json.dumps({"shop": {"card_number": "6037-9911-2233-4455"}}), encoding="utf-8")
+    custom.write_text(json.dumps({"shop": {"card_number": "XXXX-XXXX-XXXX-XXXX"}}), encoding="utf-8")
     texts.load(custom)
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
+    shopapi.payment_card = "6037991122334455"
 
     async def scenario(engine, adapters, api):
         await _order_one(engine)
         body = bot_apis["bale"].last_text(CUSTOMER_CHAT)
         assert "6037-9911-2233-4455" in body and "2,000" in body
-        assert "واریز به کارت 1234" not in body             # shopapi fallback not used
+        assert "XXXX" not in body
 
     env(scenario)
 

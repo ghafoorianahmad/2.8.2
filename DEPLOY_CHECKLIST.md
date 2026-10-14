@@ -13,6 +13,7 @@
   - **INSERT فقط روی `KalaOrder` و `KalaOrderDetail`**، با `DENY UPDATE, DELETE` روی هر دو.
   - EXECUTE روی `MiladiToShamsi`.
 - توکن ربات بله/تلگرام، `ADMIN_CHAT_IDS`، متن حساب بانکی و (برای تلگرام) `PROXY_URL` آماده باشد.
+- **v2.6.0:** (۱) `grant_shop_app.ps1 -Apply` را دوباره اجرا کنید (ستون‌های `fname, Name` از `name_mo` برای نام مشتری در ShopAdmin و PDF گردش حساب). (۲) در ShopAdmin › سرور فروشگاه › تنظیمات **شمارهٔ کارت ۱۶ رقمی** و `ACCOUNTING_STATUS_CODE` را وارد کنید؛ بدون کارت، ربات سفارش نهایی نمی‌گیرد. (۳) در صفحهٔ «گروه‌های کالا» گروه‌های «نمایش در ربات» و «گروه گوشی» را تیک بزنید؛ تا آن موقع ربات هیچ کالایی نشان نمی‌دهد.
 
 ## مراحل نصب (به ترتیب)
 1. روی سرور `ShopServerSetup.exe` را **به‌عنوان مدیر** اجرا کنید (هشدار SmartScreen: «More info → Run anyway»).

@@ -87,7 +87,7 @@ echo   Copy the whole "dist\ShopAdmin" folder to the target computer.
 echo   Python does NOT need to be installed there.
 echo =====================================================================
 echo.
-pause
+if not defined SHOP_NOPAUSE pause
 exit /b 0
 
 :fail
@@ -96,5 +96,5 @@ echo =====================================================================
 echo   BUILD FAILED - see the messages above.
 echo =====================================================================
 echo.
-pause
+if not defined SHOP_NOPAUSE pause
 exit /b 1

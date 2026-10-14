@@ -41,7 +41,9 @@ from . import theme, widgets
 from .context import AppContext
 from .pages.customers import CustomersPage
 from .pages.dashboard import DashboardPage
+from .pages.item_requests import ItemRequestsPage
 from .pages.orders import OrdersPage
+from .pages.product_groups import ProductGroupsPage
 from .pages.catalog_models import CatalogModelsPage
 from .pages.password_requests import PasswordRequestsPage
 from .pages.pricelist import PriceListPage
@@ -56,7 +58,9 @@ NAV_ITEMS = (
     ("dashboard", "داشبورد", "dashboard", DASHBOARD_VIEW),
     ("customers", "مشتریان", "customers", CUSTOMERS_VIEW),
     ("orders", "سفارش‌ها", "orders", ORDERS_VIEW),
+    ("item_requests", "درخواست کالا", "inbox", ORDERS_VIEW),
     ("products", "محصولات", "products", PRODUCTS_VIEW),
+    ("product_groups", "گروه‌های کالا", "box", CATALOG_VIEW),
     ("pricelist", "لیست قیمت", "receipt", PRICELIST_VIEW),
     ("catalog", "مدل‌های سایت", "link", CATALOG_VIEW),
     ("reports", "گزارش‌ها", "reports", REPORTS_VIEW),
@@ -80,6 +84,7 @@ BADGE_KINDS = {
     "customers": ("customer_registered",),
     "orders": ("order_created", "receipt_uploaded"),
     "password_requests": ("password_request",),
+    "item_requests": ("item_request",),
 }
 
 
@@ -357,7 +362,9 @@ class MainWindow(QMainWindow):
             "dashboard": DashboardPage,
             "customers": CustomersPage,
             "orders": OrdersPage,
+            "item_requests": ItemRequestsPage,
             "products": ProductsPage,
+            "product_groups": ProductGroupsPage,
             "pricelist": PriceListPage,
             "catalog": CatalogModelsPage,
             "reports": ReportsPage,

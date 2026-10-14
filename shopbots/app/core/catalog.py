@@ -91,10 +91,9 @@ class ProductPage:
 
 
 class CatalogService:
-    def __init__(self, api: ShopApiClient, *, page_size: int, show_out_of_stock: bool):
+    def __init__(self, api: ShopApiClient, *, page_size: int):
         self.api = api
         self.page_size = max(1, int(page_size))
-        self.show_out_of_stock = show_out_of_stock
 
     async def groups(self) -> list[dict]:
         return [g for g in (await self.api.get_groups() or []) if isinstance(g, dict)]
@@ -104,9 +103,11 @@ class CatalogService:
     ) -> ProductPage:
         page = max(1, int(page or 1))
         query = (normalize_search(q) or None) if q is not None else None
+        # v2.6.0: lists show only what can be ordered now (phones: in the current
+        # valid price list; everything else: in stock). Out-of-stock items are
+        # reached through «درخواست کالای ناموجود».
         result = await self.api.get_products(
-            q=query, group=group, page=page, page_size=self.page_size,
-            in_stock=not self.show_out_of_stock,
+            q=query, group=group, page=page, page_size=self.page_size, in_stock=True,
         )
         items = [
             _product(it)

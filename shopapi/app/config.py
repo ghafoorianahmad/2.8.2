@@ -130,7 +130,9 @@ class Settings:
     #: Python weekday numbers without sales (4 = Friday).
     sales_closed_weekdays: tuple[int, ...] = (4,)
     bank_account_text: str = ""
-    #: Payment details shown on the bot's pre-invoice card (all optional; empty = no section).
+    #: Payment details shown to the customer after checkout. v2.6.0: a valid
+    #: 16-digit PAYMENT_CARD_NUMBER is REQUIRED; without it orders are refused
+    #: (the bot never shows a placeholder card) and ShopAdmin warns.
     payment_card_number: str = ""
     payment_sheba: str = ""
     payment_owner: str = ""
@@ -327,6 +329,17 @@ class Settings:
         ``ACCOUNTING_ALLOWED_DATABASES`` (never true while that is empty)."""
         name = self.database_name().lower()
         return bool(name) and name in {d.strip().lower() for d in self.accounting_allowed_databases}
+
+    def payment_card_digits(self) -> str:
+        """The configured card number as 16 digits, or "" when missing/invalid."""
+        digits = "".join(ch for ch in str(self.payment_card_number or "") if ch.isdigit())
+        if len(digits) != 16 or len(set(digits)) == 1:
+            return ""
+        return digits
+
+    def payment_ready(self) -> bool:
+        """Customers can be told where to pay (v2.6.0: else no checkout)."""
+        return bool(self.payment_card_digits())
 
     def status_code_problem(self) -> str | None:
         """Why orders cannot be committed with the configured Status, or None."""

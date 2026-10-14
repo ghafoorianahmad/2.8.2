@@ -209,10 +209,7 @@ class OrdersPage(BasePage):
 
     @staticmethod
     def _customer_label(order: dict) -> str:
-        name = order.get("user_name")
-        if name:
-            return str(name)
-        return f"مشتری #{to_persian_digits(order.get('user_id', '—'))}"
+        return customer_label(order)
 
     # ------------------------------------------------------------------ detail
     def _open_row(self, row: int) -> None:
@@ -274,6 +271,9 @@ class OrderDetailDialog(QDialog):
         left = QVBoxLayout()
         left.setSpacing(6)
         left.addWidget(_kv("مشتری", self._customer_label(order)))
+        code = order.get("user_person_code")
+        left.addWidget(_kv("کد شخص در حسابداری",
+                           to_persian_digits(code) if code is not None else "هنوز وصل نشده"))
         left.addWidget(_kv("تاریخ ثبت", format_shamsi(order.get("created_at"))))
         left.addWidget(_kv("مهلت ارسال رسید", format_datetime_shamsi(order.get("reserve_until"))
                            if order.get("reserve_until") else "—"))
@@ -332,9 +332,9 @@ class OrderDetailDialog(QDialog):
         ref_panel = widgets.Panel("فیش پرداخت مشتری")
         ref_row = QHBoxLayout()
         ref_row.addWidget(widgets.label("شمارهٔ پیگیری فیش:", name="Muted"))
-        ref_row.addWidget(widgets.label(
-            to_persian_digits(receipt_ref) if receipt_ref else "فیشی ثبت نشده است", bold=bool(receipt_ref)
-        ))
+        self.receipt_ref_label = widgets.label(receipt_ref_text(order, receipt_ref),
+                                               bold=bool(receipt_ref))
+        ref_row.addWidget(self.receipt_ref_label)
         ref_row.addStretch(1)
         self.receipt_button = widgets.button(
             "نمایش تصویر رسید", icon_name="receipt", on_click=self._show_receipt
@@ -408,10 +408,7 @@ class OrderDetailDialog(QDialog):
     # ---- helpers ---------------------------------------------------------
     @staticmethod
     def _customer_label(order: dict) -> str:
-        name = order.get("user_name")
-        if name:
-            return str(name)
-        return f"مشتری #{to_persian_digits(order.get('user_id', '—'))}"
+        return customer_label(order)
 
     @staticmethod
     def _payment_ref(order: dict) -> str:
@@ -538,6 +535,28 @@ class OrderDetailDialog(QDialog):
 
 #: Paid orders that may be marked as shipped (server: SHIPPABLE_STATUSES).
 SHIPPABLE = (ORDER_APPROVED, ORDER_WRITTEN)
+
+
+def customer_label(order: dict) -> str:
+    """v2.6.0: the person's name in «سازه حساب» + the person code; before the
+    customer is linked (or without the name grant) the registration name."""
+    code = order.get("user_person_code")
+    name = str(order.get("person_name") or order.get("user_name") or "").strip()
+    if code is not None:
+        code_fa = to_persian_digits(code)
+        return f"{name} (کد شخص {code_fa})" if name else f"کد شخص {code_fa}"
+    if name:
+        return name
+    return f"مشتری #{to_persian_digits(order.get('user_id', '—'))}"
+
+
+def receipt_ref_text(order: dict, receipt_ref: str) -> str:
+    """v2.6.0: a receipt image without a typed tracking number is not «no receipt»."""
+    if receipt_ref:
+        return to_persian_digits(receipt_ref)
+    if order.get("has_receipt"):
+        return "شمارهٔ پیگیری وارد نشده"
+    return "فیشی ثبت نشده است"
 
 
 def tracking_fa(order: dict) -> str:

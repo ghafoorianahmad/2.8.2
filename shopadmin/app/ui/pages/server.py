@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from ...api_client import short_fingerprint
 from ...permissions import SERVER_MANAGE
 from ...persian import format_shamsi, to_persian_digits
-from ...server_settings import SETTINGS_FA
+from ...server_settings import SETTINGS_FA, local_problem, translate_field_errors
 from .. import theme, widgets
 from ..base_page import BasePage
 
@@ -280,6 +280,10 @@ class ServerPage(BasePage):
         changes = self._collect_changes()
         if not changes:
             self._show_settings_message("تغییری برای ذخیره وجود ندارد.", ok=True)
+            return
+        problems = {k: p for k, v in changes.items() if (p := local_problem(k, v))}
+        if problems:
+            self._show_settings_message(translate_field_errors(problems), ok=False)
             return
 
         def ok(_result) -> None:

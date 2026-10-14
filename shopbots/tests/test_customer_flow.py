@@ -237,7 +237,8 @@ def test_checkout_and_receipt_upload(env, bot_apis, shopapi):
         assert "شمارهٔ سفارش" in body
         assert "2,000" in body
         assert "واریز به کارت 1234" in body      # payment text comes from the API
-        assert body.endswith(texts.ASK_RECEIPT.format(order_id=1))
+        assert body.endswith(texts.PAYMENT_SEND_RECEIPT)
+        assert "6037-0000-1111-2222" in body               # the card configured in shopapi
         assert engine.store.cart_list("bale", CUSTOMER_CHAT) == []
 
         order = next(iter(shopapi.orders.values()))
@@ -303,17 +304,19 @@ def test_out_of_stock_product_cannot_be_added(env, bot_apis, shopapi):
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
 
     async def scenario(engine, adapters, api):
-        # product 103 has 0 available: listed as "ناموجود", but it cannot be ordered
+        # v2.6.0: lists show only in-stock items; 103 (0 available) is not listed
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
         await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "grp:2")
         listing = bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
-        assert texts.OUT_OF_STOCK_LABEL in listing and texts.IN_STOCK in listing
+        assert texts.OUT_OF_STOCK_LABEL not in listing and texts.IN_STOCK in listing
         callbacks = [cb for row in bot_apis["bale"].buttons_for(CUSTOMER_CHAT) for _, cb in row]
-        assert "prod:103" in callbacks and "prod:104" in callbacks
-        await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "prod:103")
+        assert "prod:103" not in callbacks and "prod:104" in callbacks
+        # opened by its code it is out of stock: no add, but «درخواست این کالا»
+        await push_message(engine, "bale", 3, CUSTOMER_CHAT, text="103")
         assert texts.OUT_OF_STOCK in bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
         callbacks = [cb for row in bot_apis["bale"].buttons_for(CUSTOMER_CHAT) for _, cb in row]
         assert not any(cb.startswith(("add:", "qty:")) for cb in callbacks)
+        assert "ireqk:103" in callbacks
         # a forged "add" callback is refused too
         await push_callback(engine, "bale", 4, CUSTOMER_CHAT, "add:103:1")
         assert api is not None

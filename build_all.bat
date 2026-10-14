@@ -11,6 +11,9 @@ REM  Usage:  build_all.bat
 REM =====================================================================
 setlocal
 set "ROOT=%~dp0"
+REM The caller's SHOP_NOPAUSE (e.g. "set SHOP_NOPAUSE=1" in a scripted run)
+REM decides whether THIS script pauses at the end; the sub-scripts never do.
+set "CALLER_NOPAUSE=%SHOP_NOPAUSE%"
 set "SHOP_NOPAUSE=1"
 
 echo.
@@ -40,7 +43,7 @@ echo.
 echo =====================================================================
 echo   ALL DONE:  shopadmin\dist\installer\ShopAdminSetup.exe
 echo =====================================================================
-pause
+if not defined CALLER_NOPAUSE pause
 exit /b 0
 
 :fail
@@ -48,5 +51,5 @@ echo.
 echo =====================================================================
 echo   BUILD FAILED - see the messages above.
 echo =====================================================================
-pause
+if not defined CALLER_NOPAUSE pause
 exit /b 1

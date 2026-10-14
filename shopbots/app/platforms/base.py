@@ -58,6 +58,13 @@ class PlatformAdapter(ABC):
         """Upload an in-memory image (the branded cards). Adapters override it."""
         raise BotApiError("sendPhoto", "upload not supported")
 
+    async def send_document_bytes(
+        self, chat_id: str | int, data: bytes, filename: str, caption: str | None = None,
+        content_type: str = "application/pdf",
+    ) -> dict | None:
+        """Upload an in-memory file (the statement PDF). Adapters override it."""
+        raise BotApiError("sendDocument", "upload not supported")
+
     @abstractmethod
     async def edit_text(
         self,
@@ -229,6 +236,32 @@ class HttpBotAdapter(PlatformAdapter):
             raise BotApiError("sendPhoto", "invalid JSON response") from None
         if not isinstance(body, dict) or not body.get("ok", False):
             raise BotApiError("sendPhoto", str((body or {}).get("description", "unknown error")))
+        return body.get("result")
+
+    async def send_document_bytes(
+        self, chat_id: str | int, data: bytes, filename: str, caption: str | None = None,
+        content_type: str = "application/pdf",
+    ) -> dict | None:
+        """sendDocument as a multipart upload (nothing touches the disk)."""
+        client = await self._http()
+        form = {"chat_id": str(chat_id)}
+        if caption:
+            form["caption"] = caption[:1024]
+        try:
+            response = await client.post(
+                self._url("sendDocument"), data=form,
+                files={"document": (filename, data, content_type)},
+            )
+        except httpx.HTTPError as exc:
+            raise self._network_error("sendDocument", exc) from None
+        if response.status_code >= 400:
+            raise BotApiError("sendDocument", f"HTTP {response.status_code}")
+        try:
+            body = response.json()
+        except ValueError:
+            raise BotApiError("sendDocument", "invalid JSON response") from None
+        if not isinstance(body, dict) or not body.get("ok", False):
+            raise BotApiError("sendDocument", str((body or {}).get("description", "unknown error")))
         return body.get("result")
 
     async def edit_text(

@@ -6,7 +6,7 @@ overrides them key by key, so a key missing from an older copy falls back to
 the default. A broken file never stops the bots: the defaults are used and the
 problem is logged. Changes take effect on restart.
 
-Shop placeholders ({shop_name}, {shop_phone}, {card_number}, ...) are filled in
+Shop placeholders ({shop_name}, {shop_phone}, {currency}, ...) are filled in
 at load time; per-message placeholders ({order_id}, {total}, ...) stay for
 `str.format` in the engine. Every text is available as a module constant
 (`texts.WELCOME`, `texts.BTN_MENU`, ...).

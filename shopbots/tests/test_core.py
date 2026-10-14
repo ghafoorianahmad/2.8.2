@@ -77,20 +77,21 @@ def test_search_text_is_normalized_for_arabic_letters_and_digits():
 
 def test_catalog_pages_and_normalized_query():
     api = StubApi()
-    catalog = CatalogService(api, page_size=2, show_out_of_stock=True)
+    catalog = CatalogService(api, page_size=2)
     page = run(catalog.products(q="كابل", page=0))
     assert page.page == 1 and page.pages == 3 and page.total == 5
     assert [p.code for p in page.items] == [101, 102]
     assert page.items[0].in_stock and not page.items[1].in_stock
     assert page.items[0].as_cache() == {"name": "کابل", "price": 100.0, "qty": 3.0}
     sent = api.calls[-1][1]
-    assert sent["q"] == "کابل" and sent["in_stock"] is False and sent["page_size"] == 2
+    # v2.6.0: the bot always asks for in-stock items only
+    assert sent["q"] == "کابل" and sent["in_stock"] is True and sent["page_size"] == 2
     assert run(catalog.groups()) == [{"code": 1, "name": "قاب"}]
 
 
 def test_catalog_blank_query_means_no_filter():
     api = StubApi()
-    run(CatalogService(api, page_size=5, show_out_of_stock=False).products(q="   "))
+    run(CatalogService(api, page_size=5).products(q="   "))
     assert api.calls[-1][1]["q"] is None and api.calls[-1][1]["in_stock"] is True
 
 

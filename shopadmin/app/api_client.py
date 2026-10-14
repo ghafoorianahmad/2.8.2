@@ -722,6 +722,26 @@ class ShopApiClient:
         return self._dict(self._request("POST",
                                         f"/admin/catalog-models/{int(model_id)}/confirm"))
 
+    # ---- v2.6.0: product groups and unavailable item requests ----
+    def product_groups(self) -> list[dict]:
+        """Accounting groups with «show in bot» / «phone group»."""
+        return list(self._request("GET", "/admin/product-groups") or [])
+
+    def save_product_groups(self, groups: list[dict]) -> list[dict]:
+        body = {"groups": [{"code": int(g["code"]), "show_in_bot": bool(g.get("show_in_bot")),
+                            "is_phone": bool(g.get("is_phone"))} for g in groups]}
+        return list(self._request("PUT", "/admin/product-groups", json_body=body) or [])
+
+    def list_item_requests(self, status: str | None = None) -> list[dict]:
+        params = {"status": status} if status else None
+        return list(self._request("GET", "/admin/item-requests", params=params) or [])
+
+    def set_item_request_status(self, request_id: int, status: str) -> dict:
+        if status not in ("new", "seen", "done"):
+            raise ValueError(status)
+        return self._request("POST", f"/admin/item-requests/{int(request_id)}/status",
+                             json_body={"status": status}) or {}
+
     def list_inquiries(self, limit: int = 100) -> list[dict]:
         return list(self._request("GET", "/admin/inquiries", params={"limit": limit}) or [])
 

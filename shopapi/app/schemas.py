@@ -117,6 +117,11 @@ class OrderOut(BaseModel):
     #: The customer is not approved yet: the order is written to accounting
     #: only after approval.
     customer_pending: bool = False
+    #: v2.6.0 (staff only): the customer's registration name, the linked
+    #: accounting person code and the person's name in the accounting DB.
+    user_name: Optional[str] = None
+    user_person_code: Optional[int] = None
+    person_name: Optional[str] = None
 
 
 class ReceiptIn(BaseModel):
@@ -160,6 +165,10 @@ class ShopStateOut(BaseModel):
     override_by: str = ""
     override_at: Optional[str] = None
     receipt_deadline_minutes: int = 30
+    #: v2.6.0: a valid payment card is configured (else no checkout, ShopAdmin warns).
+    payment_ready: bool = True
+    #: v2.6.0: at least one product group is shown in the bot.
+    catalog_ready: bool = True
 
 
 class StatementItem(BaseModel):
@@ -304,3 +313,85 @@ class SecurityReportIn(BaseModel):
     kind: str = Field(min_length=1, max_length=40)
     platform: Platform
     chat_id: str = Field(min_length=1, max_length=40)
+
+
+# ---- v2.6.0: product groups, unavailable item requests, statement PDF data ----
+class ProductGroupOut(BaseModel):
+    code: int
+    name: str
+    show_in_bot: bool = False
+    is_phone: bool = False
+    #: The group is configured here but no longer exists in the accounting DB.
+    missing: bool = False
+
+
+class ProductGroupSetting(BaseModel):
+    code: int = Field(ge=0)
+    show_in_bot: bool
+    is_phone: bool
+
+
+class ProductGroupsIn(BaseModel):
+    groups: list[ProductGroupSetting] = Field(max_length=5000)
+
+
+class ItemRequestIn(BaseModel):
+    platform: Platform
+    chat_id: str = Field(min_length=1)
+    #: A product picked from the search (optional) ...
+    kala_code: Optional[int] = Field(default=None, gt=0)
+    #: ... and/or what the customer typed.
+    text: str = Field("", max_length=300)
+
+
+class ItemRequestOut(BaseModel):
+    id: int
+    user_id: int
+    kala_code: Optional[int] = None
+    product_name: str = ""
+    text: str = ""
+    status: str
+    created_at: str
+    handled_at: Optional[str] = None
+    handled_by: str = ""
+    customer_name: Optional[str] = None
+    person_code: Optional[int] = None
+    platform: Optional[str] = None
+
+
+class ItemRequestStatusIn(BaseModel):
+    status: Literal["new", "seen", "done"]
+
+
+class RequestSearchItem(BaseModel):
+    code: int
+    name: str
+
+
+class StatementRow(BaseModel):
+    date: str
+    kind: str
+    doc_no: str
+    description: str = ""
+    debit: float
+    credit: float
+    balance: float
+    side: str
+
+
+class StatementFullOut(BaseModel):
+    """Everything the statement PDF needs, oldest row first (v2.6.0)."""
+    person_code: int
+    customer_name: str = ""
+    from_date: str = ""
+    to_date: str = ""
+    #: Balance carried over from rows older than the ones listed.
+    opening_balance: float = 0.0
+    opening_side: str = "zero"
+    rows: list[StatementRow]
+    #: Sums of the listed rows.
+    total_debit: float = 0.0
+    total_credit: float = 0.0
+    balance: float
+    side: str
+    truncated: bool = False

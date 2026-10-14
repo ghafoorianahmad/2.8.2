@@ -111,6 +111,12 @@ class FakeShopApi:
         self.catalog_last_check: dict | None = None
         # ---- v2.4.0: forgot password ----
         self.pw_requests: dict[int, dict] = {}
+        # ---- v2.6.0: product groups, item requests, payment card ----
+        self.product_groups: list[dict] = []
+        self.group_puts: list[dict] = []
+        self.item_requests: list[dict] = []
+        self.payment_ready = True
+        self.catalog_ready = True
 
     # ---- helpers used by tests ------------------------------------------
     def add_staff(self, username: str, password: str = OWNER_PASSWORD, role: str = "operator",
@@ -190,7 +196,8 @@ class FakeShopApi:
         return {"closed": self.shop_closed, "sales_open": not self.shop_closed,
                 "reason": reason, "message_fa": "فروش گوشی بسته است." if self.shop_closed
                 else "فروش گوشی باز است.", "until": None, "list_date": "1405/07/22",
-                "list_slot": "morning", "override_by": "", "receipt_deadline_minutes": 30}
+                "list_slot": "morning", "override_by": "", "receipt_deadline_minutes": 30,
+                "payment_ready": self.payment_ready, "catalog_ready": self.catalog_ready}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -414,6 +421,30 @@ class FakeShopApi:
                     order["accounting_order_no"] = 5001
                     return reply(200, order)
             return detail(404, "Order not found")
+
+        if path == "/admin/product-groups":
+            if request.method == "PUT":
+                if user["role"] not in ("super_admin", "admin"):
+                    return detail(403, "Not permitted for this account")
+                self.group_puts.append(body)
+                by = {g["code"]: g for g in body.get("groups", [])}
+                for group in self.product_groups:
+                    if group["code"] in by:
+                        group.update(show_in_bot=by[group["code"]]["show_in_bot"],
+                                     is_phone=by[group["code"]]["is_phone"])
+            return reply(200, self.product_groups)
+
+        if path == "/admin/item-requests" and request.method == "GET":
+            status = request.url.params.get("status")
+            return reply(200, [r for r in self.item_requests if not status or r["status"] == status])
+
+        if path.startswith("/admin/item-requests/") and path.endswith("/status"):
+            request_id = int(path.split("/")[3])
+            row = next((r for r in self.item_requests if r["id"] == request_id), None)
+            if row is None:
+                return detail(404, "Request not found")
+            row["status"] = body.get("status")
+            return reply(200, row)
 
         if path == "/admin/shop/state":
             if request.method == "PUT":

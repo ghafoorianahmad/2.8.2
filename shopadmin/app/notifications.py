@@ -23,8 +23,10 @@ KIND_CUSTOMER = "customer_registered"
 KIND_ORDER = "order_created"
 KIND_RECEIPT = "receipt_uploaded"
 KIND_PASSWORD = "password_request"
+#: v2.6.0: a customer asked for an unavailable item in the bot.
+KIND_ITEM_REQUEST = "item_request"
 #: Kinds that ask a person to act; the rest only refresh the screens.
-ATTENTION_KINDS = (KIND_CUSTOMER, KIND_ORDER, KIND_RECEIPT, KIND_PASSWORD)
+ATTENTION_KINDS = (KIND_CUSTOMER, KIND_ORDER, KIND_RECEIPT, KIND_PASSWORD, KIND_ITEM_REQUEST)
 
 #: Server health (REQUIREMENTS §8): ``health_<check>_down`` / ``health_<check>_up``.
 HEALTH_PREFIX = "health_"
@@ -69,6 +71,7 @@ TARGETS = {
     KIND_ORDER: ("orders", "awaiting_payment"),
     KIND_RECEIPT: ("orders", "receipt_uploaded"),
     KIND_PASSWORD: ("password_requests", ""),
+    KIND_ITEM_REQUEST: ("item_requests", "open"),
     "pricelist_held": ("pricelist", ""),
     "pricelist_failed": ("pricelist", ""),
     "proxies_all_dead": ("pricelist", ""),
@@ -114,6 +117,9 @@ def notice_for(event: dict) -> Optional[Notice]:
     if kind == KIND_PASSWORD:
         return Notice(kind, "درخواست گذرواژه",
                       "یکی از کاربران گذرواژه‌اش را فراموش کرده و منتظر تأیید شماست.", ref)
+    if kind == KIND_ITEM_REQUEST:
+        return Notice(kind, "درخواست کالای ناموجود",
+                      "یک مشتری در ربات کالای ناموجودی درخواست کرده است.", ref)
     if kind.startswith(HEALTH_PREFIX):
         check, _, state = kind[len(HEALTH_PREFIX):].rpartition("_")
         label = HEALTH_LABELS.get(check)
@@ -146,7 +152,7 @@ def summarize(notices: list[Notice]) -> Notice:
         counts[n.kind] = counts.get(n.kind, 0) + 1
     parts = []
     labels = {KIND_CUSTOMER: "مشتری جدید", KIND_ORDER: "سفارش جدید", KIND_RECEIPT: "فیش جدید",
-              KIND_PASSWORD: "درخواست گذرواژه"}
+              KIND_PASSWORD: "درخواست گذرواژه", KIND_ITEM_REQUEST: "درخواست کالا"}
     for kind in ATTENTION_KINDS:
         if counts.get(kind):
             parts.append(f"{to_persian_digits(counts[kind])} {labels[kind]}")

@@ -2,6 +2,35 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## v2.6.0 — findings from the Windows test on `hesab5 t` (2026-10-14, same branch `feature/order-flow-v250`) — DONE in code (Linux, fakes only); Windows / SQL / Bale UNVERIFIED
+
+Decisions: `REQUIREMENTS.md` §7b. Version **2.6.0** in `shopapi/app/control.py`, `shopadmin/installer/ShopAdmin.iss` and now also `shopadmin/app/paths.py` (`test_v260.py` fails if the three differ).
+
+### Bugs
+1. **Sidebar version** showed `APP_VERSION = "1.0.0"` (never bumped) → 2.6.0, kept equal to the installer by a test.
+2. **Order dialog «فیشی ثبت نشده است»** although an image existed: the bot sends only an image (no tracking number) → «شمارهٔ پیگیری وارد نشده» when `has_receipt`, «فیشی ثبت نشده است» only without one (`orders.receipt_ref_text`).
+3. **«مشتری #4»**: `GET /admin/orders` (and admin `GET /orders/{id}`) now carry `user_name`, `user_person_code` and `person_name` (Sazeh `name_mo.fname + Name`, one batched query, `reader.person_names`; never raises — without the column grant ShopAdmin shows the registration name). Dialog: «نام (کد شخص N)» + a «کد شخص در حسابداری» row. `grant_shop_app.sql` grants `fname, Name` (re-run `grant_shop_app.ps1`).
+4. **Approve/Reject on approved customers**: decided customers get no buttons at all («تصمیم گرفته شده»); `_approve/_reject` ignore non-pending rows.
+5. **`build_all.bat` paused with `SHOP_NOPAUSE=1`**: it set the variable itself and then paused unconditionally. Now it remembers the caller's value (`CALLER_NOPAUSE`) and pauses only when the caller did not set it; `build_shopadmin.bat` honours `SHOP_NOPAUSE` too. Untested on Windows.
+6. **Bot rate limit**: callbacks have their own limiter (`RATE_LIMIT_CALLBACKS`, 120 per `RATE_LIMIT_WINDOW`), messages keep 20; a refused tap only answers the callback (no alert); the warning goes out once per window (`ratelimit.WarnOnce`); `/start` is never counted or refused.
+7. **CRITICAL — phone sold while sales were closed**: a phone was "an item mapped in the price list"; with no list nothing was mapped, so the Samsung A26 was sold as an accessory at the Sazeh price. Now a phone = an item of a **phone group** (bug 10), read from the accounting DB inside the order lock: closed sales → 409 for any phone-group item (also from a stale cart without a color); a phone without a sellable entry in the current valid list → hidden (`/products`, `/products/{code}` 404) and 422 on order. The bot re-reads the sales state (no 30 s cache) at the final checkout.
+8. **Placeholder card `XXXX-XXXX`**: `PAYMENT_CARD_NUMBER` (16 digits, not all equal) is required: `POST /orders` → 409 «Payment details are not configured» (after the idempotency lookup), `/shop/state.payment_ready=false`, the bot's cart shows `PAYMENT_NOT_READY` instead of «ثبت نهایی», checkout refuses, ShopAdmin dashboard shows a warning. Card/owner/sheba come only from shopapi; `card_number/card_owner/bank_name` and `PAYMENT_INSTRUCTIONS` were removed from `messages.fa.json` (new keys `PAYMENT_DETAILS`, `PAYMENT_OWNER_LINE`, `PAYMENT_SHEBA_LINE`, `PAYMENT_SEND_RECEIPT`, `PAYMENT_NOT_READY`; an old operator copy with a placeholder card is ignored).
+9. **`ACCOUNTING_STATUS_CODE` in ShopAdmin**: in `control.EDITABLE` with the same rule as `status_code_problem` (required, whole number, not 6808); ShopAdmin checks it before sending and translates the server's message.
+
+### New features
+10. **«گروه‌های کالا»** (ShopAdmin page, `catalog.view` to see, `catalog.manage` to save): `GET/PUT /admin/product-groups`, SQLite `product_groups` (`app/groups.py`). Customers see only «نمایش در ربات» groups (`/groups`, `/products`, `/products/{code}`, orders); none chosen = nothing shown + dashboard warning (`catalog_ready`). Staff (ShopAdmin products page) still see every group.
+11. **Lists only in stock**: the bot always asks `in_stock=true` (`SHOW_OUT_OF_STOCK` removed); phones only when sellable in the current valid list and priced only from it; a price-list mapping outside a phone group is ignored.
+12. **«درخواست کالای ناموجود»**: menu button → the customer types a name → up to 8 matching product names (`GET /item-requests/search`, no prices) + «ثبت همین متن» → `POST /item-requests` (SQLite `item_requests`; 10 per customer per day; nothing written to Sazeh; no payment). Out-of-stock product → «درخواست این کالا». Event `item_request` → ShopAdmin toast + badge + page «درخواست کالا» (open / handled / all; «دیده شد», «رسیدگی شد») and a notice in the admin chats.
+13. **Statement PDF**: `GET /users/{p}/{c}/statement/full` (oldest first, running balance, opening balance, sums, final balance, Sazeh name + person code) → `shopbots/app/cards/statement_pdf.py` (HTML + Vazirmatn → headless Edge/Chromium `--print-to-pdf`, A4, RTL, Jalali print date, header row repeated on every page) → `sendDocument` (Bale multipart / Telethon `force_document`). No browser / failure → the old paged text. Checked on Linux Chromium (3-page sample).
+
+### Tests (Linux, 2026-10-14)
+shopapi **371** ✓ (+18 `test_v260.py`), shopbots **239** ✓ (+11), shoptg 47 ✓ + 2 skipped, shopadmin **463** ✓ + 3 skipped (+15), shopsystem 36 ✓ + 12 skipped + 1 ✗ pre-existing (`test_local_backup_dir`, Windows path).
+
+### Not verified / for the owner
+- Windows: `build_all.bat` with `SHOP_NOPAUSE=1`, the two new ShopAdmin pages on a real display, the statement PDF with **Edge** on the server (Bale must accept `sendDocument` multipart — not tried live).
+- `hesab5 t`: `person_names` with and without the new grant (re-run `grant_shop_app.ps1 -Apply`), group codes from `Gkala`.
+- **Before customers use v2.6.0**: choose the groups in «گروه‌های کالا» (until then the bot shows nothing), enter the card number and `ACCOUNTING_STATUS_CODE` in server settings.
+
 ## v2.5.0 follow-up — sales gate for phones only, tests isolated from .env (2026-10-14, same branch `feature/order-flow-v250`) — DONE (Linux)
 
 - **Closed sales block only phones.** `POST /orders` returns 409 `Sales are closed: …` only when the order contains a product priced from the price list (`phones.has(code)`); accessories / other items are always accepted (no list, Friday, holiday, manual close). A mixed cart with a phone is refused as a whole. Bot: the closed banner appears only on product pages that show a phone and on the color view; the cart hides «ثبت سفارش» only when it contains a phone; `SALES_CLOSED*` texts say «فروش گوشی بسته است… گوشی را از سبد حذف کنید تا بقیهٔ کالاها سفارش داده شوند». shopapi state messages, ShopAdmin dashboard panel («وضعیت فروش گوشی»), confirm dialogs, notifications and server-setting labels say «گوشی» and that accessories stay orderable. Supersedes item 2's "Scope" note above.

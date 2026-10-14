@@ -150,7 +150,9 @@ def order_req(client, chat_id="111"):
 
 
 def add_phone(db, kala_code=104) -> int:
-    """An active list with one row mapped to ``kala_code``; returns the color id."""
+    """An active list with one row mapped to ``kala_code``; returns the color id.
+    v2.6.0: a phone is an item of a phone group, so group 2 (104's) becomes one."""
+    db.set_group_settings([(2, True, True)], "test")
     repo = PriceListRepo(db)
     row = {"row_key": "iphone|256|blk", "block": 0, "section": "iPHONE", "description": "17 Pro",
            "kind": "شرکتی", "color": "BLACK", "naghd": 50000, "raval": 52500,

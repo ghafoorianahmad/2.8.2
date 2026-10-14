@@ -71,11 +71,11 @@ parameters:
 | `BALE_TOKEN` | Bale bot token |
 | `BALE_API_BASE` | Bale Bot API base URL |
 | `BOT_MESSAGES_FILE` | operator copy of `messages.fa.json` (empty = built-in texts) |
-| `SHOW_OUT_OF_STOCK` | list out-of-stock products marked «ناموجود» (default `true`; they can never be ordered) |
 | `ADMIN_CHAT_IDS` | comma-separated admin chats: `bale:456` or a bare id (entries for other platforms are ignored) |
 | `SQLITE_PATH` | bot state database (default `shopbots.db`) |
 | `POLL_TIMEOUT`, `ADMIN_SWEEP_SECONDS` | long-poll timeout, admin poll interval |
-| `RATE_LIMIT_MESSAGES`, `RATE_LIMIT_WINDOW` | per-user rate limit (default 20 / 60s) |
+| `RATE_LIMIT_MESSAGES`, `RATE_LIMIT_WINDOW` | per-user rate limit for messages (default 20 / 60s); one warning per window; `/start` is never limited |
+| `RATE_LIMIT_CALLBACKS` | per-user limit for button taps in the same window (default 120) |
 | `MAX_INPUT_LEN`, `MAX_NAME_LEN`, `HTTP_TIMEOUT`, `PRODUCT_PAGE_SIZE` | limits |
 
 Tokens come only from `.env` (never from code, never logged). `.env` is ignored

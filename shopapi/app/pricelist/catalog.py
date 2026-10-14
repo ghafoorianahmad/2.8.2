@@ -1,9 +1,10 @@
 """Phones in the catalogue: products priced per color from the active list.
 
-A product is "priced from the list" as soon as one PDF row is mapped to it.
-Its colors are the mapped rows present in the *active* list — unmapped or
-ignored rows never reach a customer. Phones are sold on the distributor's
-availability (a price in the list), not on the accounting stock.
+Which products are phones is decided by their group (``app/groups.py``, v2.6.0);
+this module only knows the list side: a product's colors are the mapped rows
+present in the *active* list — unmapped or ignored rows never reach a customer.
+Phones are sold on the distributor's availability (a price in the current
+valid list), not on the accounting stock; a phone without one is hidden.
 """
 from __future__ import annotations
 
@@ -42,6 +43,10 @@ class PhoneCatalog:
             if v["id"] == int(variant_id):
                 return v
         return None
+
+    def sellable(self, code: int) -> bool:
+        """In the current valid list with at least one available color."""
+        return self.has(code) and any(v["available"] for v in self.colors(code))
 
     def overlay(self, product: dict) -> dict:
         """A product dict from the reader, priced from the list when mapped."""

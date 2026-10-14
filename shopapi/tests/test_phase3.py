@@ -456,10 +456,10 @@ def test_stale_list_is_not_sold(client, db, settings, phone_shop):
     settings.pricelist_max_age_hours = 1
     old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(timespec="seconds")
     db._conn.execute("UPDATE price_lists SET activated_at=? WHERE status='active'", (old,))
-    p = client.get("/products/900", headers=h("bot")).json()
-    assert not any(v["available"] for v in p["variants"])
+    # v2.6.0: a phone outside the current valid list is hidden and not sold
+    assert client.get("/products/900", headers=h("bot")).status_code == 404
     assert _order(client, [{"kala_code": 900, "qty": 1, "variant_id": phone_shop["black"]}]
-                  ).status_code == 409
+                  ).status_code == 422
 
 
 def test_approve_payment_skips_stock_for_phones(client, db, writer, phone_shop):

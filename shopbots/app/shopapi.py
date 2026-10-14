@@ -313,6 +313,36 @@ class ShopApiClient:
             return False
         return True
 
+    async def get_statement_full(self, platform: str, chat_id: str | int) -> dict | None:
+        """The whole statement for the PDF (v2.6.0)."""
+        return await self._request(
+            "GET", f"/users/{platform}/{chat_id}/statement/full", key=self._settings.bot_api_key,
+        )
+
+    async def item_request_search(self, q: str) -> list[dict]:
+        """Names of products matching ``q`` («درخواست کالای ناموجود», v2.6.0)."""
+        result = await self._request(
+            "GET", "/item-requests/search", key=self._settings.bot_api_key,
+            params={"q": str(q)[:100]},
+        )
+        return [r for r in (result or []) if isinstance(r, dict)]
+
+    async def create_item_request(
+        self, platform: str, chat_id: str | int, *, kala_code: int | None = None, text: str = ""
+    ) -> dict | None:
+        body: dict[str, Any] = {"platform": platform, "chat_id": str(chat_id),
+                                "text": str(text or "")[:300]}
+        if kala_code:
+            body["kala_code"] = int(kala_code)
+        return await self._request(
+            "POST", "/item-requests", key=self._settings.bot_api_key, json_body=body
+        )
+
+    async def admin_get_item_request(self, request_id: int) -> dict | None:
+        return await self._request(
+            "GET", f"/admin/item-requests/{int(request_id)}", key=self._settings.admin_api_key
+        )
+
     async def admin_get_inquiry(self, inquiry_id: int) -> dict | None:
         return await self._request(
             "GET", f"/admin/inquiries/{int(inquiry_id)}", key=self._settings.admin_api_key

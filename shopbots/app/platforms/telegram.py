@@ -404,6 +404,18 @@ class TelethonBotAdapter(PlatformAdapter):
             int(chat_id), buffer, caption=(caption or "")[:1024], force_document=False))
         return {"message_id": getattr(sent, "id", None)}
 
+    async def send_document_bytes(
+        self, chat_id: str | int, data: bytes, filename: str, caption: str | None = None,
+        content_type: str = "application/pdf",
+    ) -> dict | None:
+        import io
+
+        buffer = io.BytesIO(data)
+        buffer.name = filename
+        sent = await self._call("sendDocument", lambda c: c.send_file(
+            int(chat_id), buffer, caption=(caption or "")[:1024], force_document=True))
+        return {"message_id": getattr(sent, "id", None)}
+
     async def edit_text(
         self,
         chat_id: str | int,

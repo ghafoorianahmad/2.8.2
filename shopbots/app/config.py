@@ -97,6 +97,9 @@ class Settings:
     admin_sweep_seconds: int = 30
     rate_limit_messages: int = 20
     rate_limit_window: float = 60.0
+    #: v2.6.0: button taps (+/−, colors, pages) have their own, much higher limit:
+    #: tapping quickly is normal use, not flooding. /start is never limited.
+    rate_limit_callbacks: int = 120
     max_input_len: int = 500
     max_name_len: int = 80
     http_timeout: float = 15.0
@@ -107,8 +110,6 @@ class Settings:
     receipt_rate_count: int = 5
     receipt_rate_window: float = 600.0
     statement_page_size: int = 8
-    #: List out-of-stock products too (marked "ناموجود"); they cannot be ordered.
-    show_out_of_stock: bool = True
     #: Send branded image cards (price / pre-invoice / invoice) as photos. Off by
     #: default; any rendering or upload failure falls back to the plain text.
     bot_image_cards: bool = False
@@ -140,6 +141,7 @@ class Settings:
             admin_sweep_seconds=_env_int("ADMIN_SWEEP_SECONDS", 30),
             rate_limit_messages=_env_int("RATE_LIMIT_MESSAGES", 20),
             rate_limit_window=_env_float("RATE_LIMIT_WINDOW", 60.0),
+            rate_limit_callbacks=_env_int("RATE_LIMIT_CALLBACKS", 120),
             max_input_len=_env_int("MAX_INPUT_LEN", 500),
             max_name_len=_env_int("MAX_NAME_LEN", 80),
             http_timeout=_env_float("HTTP_TIMEOUT", 15.0),
@@ -148,7 +150,6 @@ class Settings:
             receipt_rate_count=_env_int("RECEIPT_RATE_COUNT", 5),
             receipt_rate_window=_env_float("RECEIPT_RATE_WINDOW", 600.0),
             statement_page_size=_env_int("STATEMENT_PAGE_SIZE", 8),
-            show_out_of_stock=_env_bool("SHOW_OUT_OF_STOCK", True),
             bot_image_cards=_env_bool("BOT_IMAGE_CARDS", False),
             messages_file=_env("BOT_MESSAGES_FILE", ""),
         )

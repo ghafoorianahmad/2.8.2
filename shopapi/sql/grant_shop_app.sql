@@ -39,7 +39,9 @@ GRANT SELECT ON dbo.kardex_an (Codekala, Megv, Megs, Codanbar) TO shop_app;
 GRANT SELECT ON dbo.KalaOrder TO shop_app;
 GRANT SELECT ON dbo.KalaOrderDetail TO shop_app;
 GRANT SELECT ON dbo.facto (Numfact, Codekala, Meg, ordercode, orderdetailcode) TO shop_app;
-GRANT SELECT ON dbo.name_mo (Code, Gcod, l_gey, codetaf) TO shop_app;
+-- v2.6.0: fname/Name = the linked customer's name in ShopAdmin's order dialog and on the
+-- customer's own statement PDF. Still NO mobile/address/balance columns.
+GRANT SELECT ON dbo.name_mo (Code, Gcod, l_gey, codetaf, fname, Name) TO shop_app;
 GRANT SELECT ON dbo.DetailTBL (IDMaster, TabaghehBandiID, Va, Comment) TO shop_app;
 GRANT SELECT ON dbo.taf (Code, Cota, codgtaf) TO shop_app;
 GRANT SELECT ON dbo.KOL (Noa, Codkol, Bed, Bes, Va, Cod_n, Num_kol, Date1, N_sanad, Sharh) TO shop_app;

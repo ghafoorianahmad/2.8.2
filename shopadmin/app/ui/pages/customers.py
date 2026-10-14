@@ -183,25 +183,33 @@ class CustomersPage(BasePage):
         layout.setSpacing(6)
 
         is_pending = customer.get("status") == CUSTOMER_PENDING
+        if not is_pending:
+            # v2.6.0: a decided customer has no Approve/Reject buttons at all
+            # (they used to stay visible and looked clickable).
+            layout.addWidget(widgets.label("تصمیم گرفته شده", name="Muted"))
+            layout.addStretch(1)
+            return holder
         can_approve = self.context.can(CUSTOMERS_APPROVE)
         can_reject = self.context.can(CUSTOMERS_REJECT)
 
         approve = widgets.button("تأیید", variant="success", on_click=lambda c=customer: self._approve(c))
-        approve.setEnabled(is_pending and can_approve)
-        if is_pending and not can_approve:
-            approve.setToolTip("نقش شما اجازهٔ تأیید مشتری را ندارد")
+        approve.setEnabled(can_approve)
+        approve.setVisible(can_approve)
         layout.addWidget(approve)
 
         reject = widgets.button("رد", variant="danger", on_click=lambda c=customer: self._reject(c))
-        reject.setEnabled(is_pending and can_reject)
-        if is_pending and not can_reject:
-            reject.setToolTip("نقش شما اجازهٔ رد کردن مشتری را ندارد")
+        reject.setEnabled(can_reject)
+        reject.setVisible(can_reject)
         layout.addWidget(reject)
+        if not (can_approve or can_reject):
+            layout.addWidget(widgets.label("در انتظار تأیید مدیر", name="Muted"))
         layout.addStretch(1)
         return holder
 
     # ------------------------------------------------------------------ actions
     def _approve(self, customer: dict) -> None:
+        if customer.get("status") != CUSTOMER_PENDING:
+            return
         dialog = ApproveCustomerDialog(self.context, customer, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -234,6 +242,8 @@ class CustomersPage(BasePage):
             self.context.mark_offline()
 
     def _reject(self, customer: dict) -> None:
+        if customer.get("status") != CUSTOMER_PENDING:
+            return
         name = str(customer.get("name") or "")
         dialog = RejectCustomerDialog(self, name)
         if dialog.exec() != QDialog.DialogCode.Accepted:

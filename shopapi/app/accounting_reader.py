@@ -3,8 +3,12 @@
 Every query is parameterized and SQL Server 2008 R2 compatible (no OFFSET/FETCH,
 STRING_AGG, CONCAT, TRY_CONVERT, IIF or THROW). Only column names, counts and
 aggregates are used for stock/reservation math. Product tables (Kala, Gkala) are
-read for names; name_mo/DetailTBL are used only for existence checks (COUNT) and
-mobile matching (recipe R4), which return person codes only - never names.
+read for names; name_mo/DetailTBL are used for existence checks (COUNT) and
+mobile matching (recipe R4), which return person codes only. Since v2.6.0 the
+person's name (``name_mo.fname`` + ``Name``) is read for linked customers only -
+ShopAdmin's order dialog and the customer's own statement PDF - and only when
+the SQL login was granted those two columns (``sql/grant_shop_app.sql``);
+without the grant the name is simply missing.
 """
 from __future__ import annotations
 
@@ -232,6 +236,32 @@ class AccountingReader:
             return int(row[0]) > 0
         finally:
             conn.close()
+
+    def person_names(self, codes) -> dict[int, str]:
+        """{person code: "fname Name"} for linked customers (v2.6.0). Never raises:
+        a missing column grant or a down server = {} (callers show the code only)."""
+        codes = sorted({int(c) for c in codes if c is not None})[:500]
+        if not codes:
+            return {}
+        db = self._db()
+        try:
+            conn = self.connection()
+            try:
+                rows = self._rows(conn.execute(
+                    f"SELECT Code, fname, Name FROM {db}.dbo.name_mo "
+                    f"WHERE Code IN ({self._in_placeholders(codes)})",
+                    codes,
+                ))
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001 - permission denied (no grant), timeouts
+            return {}
+        out: dict[int, str] = {}
+        for r in rows:
+            name = " ".join(str(part or "").strip() for part in (r["fname"], r["Name"])).strip()
+            if name:
+                out[int(r["Code"])] = name
+        return out
 
     def find_person_by_mobile(self, mobile: str) -> Optional[dict]:
         """The single person whose mobile matches (recipe R4), as ``{"code": …}``.

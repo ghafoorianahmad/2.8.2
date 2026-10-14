@@ -218,9 +218,14 @@ def reject_user(
 def list_orders(
     status_filter: str = Query("receipt_uploaded", alias="status"),
     db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
     _: Identity = CAN_VIEW,
 ) -> list[OrderOut]:
-    return [OrderOut(**o) for o in db.list_orders(status_filter)]
+    orders = db.list_orders(status_filter)
+    # v2.6.0: the linked person's name from the accounting DB (one query; the
+    # list still works without it - ShopAdmin then shows the code).
+    names = reader.person_names(o.get("user_person_code") for o in orders)
+    return [OrderOut(**o, person_name=names.get(o.get("user_person_code"))) for o in orders]
 
 
 @router.post("/orders/{order_id}/approve-payment", response_model=OrderOut)

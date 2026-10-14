@@ -7,7 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 
-from .. import deps, order_timeout, receipts, sales, security_watch
+from .. import deps, groups as group_config, order_timeout, receipts, sales, security_watch
 from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
@@ -17,20 +17,24 @@ from ..schemas import (
     GroupOut,
     InquiryIn,
     InquiryOut,
+    ItemRequestIn,
+    ItemRequestOut,
     OrderCreate,
     OrderItemOut,
     OrderOut,
     ProductOut,
     ProductPage,
     ReceiptIn,
+    RequestSearchItem,
     SecurityReportIn,
     ShopStateOut,
+    StatementFullOut,
     StatementOut,
     UserOut,
     UserRegister,
 )
 from ..security import get_api_identity, get_catalog_channel
-from ..statement import build_statement
+from ..statement import build_full_statement, build_statement
 from ..text import mobile_key
 from ..util import now_utc, round_half_up
 
@@ -42,6 +46,10 @@ IDEMPOTENCY_HOURS = 24
 #: Only orders with phones (price-list items) are refused; the detail is unchanged.
 SALES_CLOSED_DETAIL = "Sales are closed"
 RECEIPT_TOO_LATE_DETAIL = "Receipt deadline passed; order cancelled"
+#: v2.6.0: no valid payment card configured -> no checkout (never a placeholder card).
+PAYMENT_NOT_CONFIGURED_DETAIL = "Payment details are not configured"
+#: v2.6.0: unavailable item requests per customer and day (spam guard).
+ITEM_REQUESTS_PER_DAY = 10
 
 
 def shop_state(db: OwnDB, settings: Settings) -> ShopStateOut:
@@ -49,8 +57,33 @@ def shop_state(db: OwnDB, settings: Settings) -> ShopStateOut:
     return ShopStateOut(
         closed=not state.open, sales_open=state.open,
         receipt_deadline_minutes=settings.receipt_deadline_minutes,
+        payment_ready=settings.payment_ready(),
+        catalog_ready=group_config.load(db).configured,
         **{k: v for k, v in state.as_dict().items() if k != "open"},
     )
+
+
+def customer_view(product: dict, cfg: group_config.GroupConfig,
+                  phones: phone_catalog.PhoneCatalog, *, in_stock: bool) -> dict | None:
+    """A reader product as a customer may see it, or None (hidden). v2.6.0:
+
+    * only groups chosen «show in bot»;
+    * a phone (an item of a phone group) only while it is in the current valid
+      price list with an available color, priced only from the list;
+    * anything else at its accounting price, with ``in_stock`` only in stock.
+    """
+    group = product.get("group")
+    if not cfg.visible(group):
+        return None
+    if cfg.is_phone(group):
+        if not phones.sellable(product["code"]):
+            return None
+        return phones.overlay(product)
+    if product.get("unit_price") is None or float(product["unit_price"]) <= 0:
+        return None
+    if in_stock and float(product.get("available_qty") or 0) <= 0:
+        return None
+    return {**product, "priced_by": "accounting", "variants": None}
 
 
 def auto_match(db: OwnDB, reader: AccountingReader, settings: Settings, user: dict) -> dict:
@@ -89,9 +122,14 @@ def health() -> dict:
 @router.get("/groups", response_model=list[GroupOut])
 def groups(
     reader: AccountingReader = Depends(deps.get_reader),
-    _: str = Depends(get_catalog_channel),
+    db: OwnDB = Depends(deps.get_db),
+    role: str = Depends(get_catalog_channel),
 ) -> list[GroupOut]:
-    return [GroupOut(**g) for g in reader.list_groups()]
+    """Customers: only the groups chosen «show in bot» in ShopAdmin (v2.6.0).
+    Staff (ShopAdmin's products page) see every group."""
+    cfg = group_config.load(db)
+    return [GroupOut(**g) for g in reader.list_groups()
+            if role == "staff" or cfg.visible(g.get("code"))]
 
 
 @router.get("/products", response_model=ProductPage)
@@ -107,17 +145,33 @@ def products(
     settings: Settings = Depends(deps.get_settings),
 ) -> dict:
     level = settings.price_level_for(role)
+    if role == "staff":
+        return _staff_products(reader, db, settings, q=q, group=group, in_stock=in_stock,
+                               page=page, page_size=page_size, level=level)
+    cfg = group_config.load(db)
+    if group is not None and not cfg.visible(group):
+        return {"total": 0, "page": page, "page_size": page_size, "items": []}
     our_res = db.pending_reservations()
     phones = phone_catalog.load(db, settings)
-    if not phones.codes:
-        return reader.list_products(
-            q=q, group=group, in_stock=in_stock, page=page, page_size=page_size,
-            level=level, our_reservations=our_res,
-        )
-    # Phones are priced here, so filtering and paging happen after the overlay.
+    # Groups and phones are decided here, so filtering and paging happen after.
     everything = reader.list_products(
         q=q, group=group, in_stock=in_stock, page=1, page_size=1_000_000,
         level=level, our_reservations=our_res, include_codes=phones.codes,
+    )
+    items = [view for it in everything["items"]
+             if (view := customer_view(it, cfg, phones, in_stock=in_stock)) is not None]
+    start = (page - 1) * page_size
+    return {"total": len(items), "page": page, "page_size": page_size,
+            "items": items[start:start + page_size]}
+
+
+def _staff_products(reader: AccountingReader, db: OwnDB, settings: Settings, *, q, group,
+                    in_stock: bool, page: int, page_size: int, level: int) -> dict:
+    """ShopAdmin's products page: every group, list prices where mapped."""
+    phones = phone_catalog.load(db, settings)
+    everything = reader.list_products(
+        q=q, group=group, in_stock=in_stock, page=1, page_size=1_000_000,
+        level=level, our_reservations=db.pending_reservations(), include_codes=phones.codes,
     )
     items = [phones.overlay(it) for it in everything["items"]]
     if in_stock:
@@ -135,14 +189,15 @@ def product(
     db: OwnDB = Depends(deps.get_db),
     settings: Settings = Depends(deps.get_settings),
 ) -> ProductOut:
-    """One product (deep link ``kala_<code>``), also when out of stock."""
+    """One product (deep link ``kala_<code>``). An accessory also when out of
+    stock (the bot offers a request then); a phone only while it is in the
+    current valid list; nothing of a hidden group (v2.6.0)."""
     level = settings.price_level_for(role)
     found = reader.get_products_for_order([code], level, db.pending_reservations()).get(code)
-    phones = phone_catalog.load(db, settings)
-    if found is not None and phones.has(code):
-        # Also when every color is out: the customer may still send an inquiry.
-        found = phones.overlay({**found, "code": code})
-    elif found is None or not found.get("unit_price") or found["unit_price"] <= 0:
+    if found is not None:
+        found = customer_view({**found, "code": code}, group_config.load(db),
+                              phone_catalog.load(db, settings), in_stock=False)
+    if found is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Product not found")
     return ProductOut(
         code=code,
@@ -281,6 +336,7 @@ def create_order(
     merged = _merge_items(payload.items)
     level = settings.price_level_for(role)
     phones = phone_catalog.load(db, settings)
+    cfg = group_config.load(db)
     # A retry of an order placed just before closing time must still get it back,
     # so the sales check comes after the idempotency lookup (inside the guard).
     sales_state = sales.compute(db, settings)
@@ -296,17 +352,25 @@ def create_order(
                                         "Idempotency-Key belongs to another customer")
                 response.status_code = status.HTTP_200_OK
                 return _out(db.get_order(seen["order_id"]))
-        if not sales_state.open and any(phones.has(code) for code, _ in merged):
-            # Closed (no fresh list, closing time, Friday, holiday, manual close)
-            # blocks ONLY phones (priced from the Telegram list); accessories and
-            # other accounting-priced items stay orderable.
-            raise HTTPException(status.HTTP_409_CONFLICT,
-                                f"{SALES_CLOSED_DETAIL}: {sales_state.reason}")
+        if not settings.payment_ready():
+            # v2.6.0: the customer could not be told where to pay.
+            raise HTTPException(status.HTTP_409_CONFLICT, PAYMENT_NOT_CONFIGURED_DETAIL)
         # Orders past their receipt deadline must not keep holding stock.
         order_timeout.cancel_overdue(db)
         our_res = db.pending_reservations()
         codes = list(dict.fromkeys(code for code, _ in merged))
         detail = reader.get_products_for_order(codes, level, our_res)
+        # v2.6.0: a phone = an item of a phone group (never "has a price-list
+        # mapping": without a list nothing was mapped and phones slipped through
+        # as accessories while sales were closed). Read from the accounting DB
+        # now, so the gate holds even for a stale cart.
+        phone_codes = {code for code in codes
+                       if detail.get(code) is not None and cfg.is_phone(detail[code].get("group"))}
+        if not sales_state.open and phone_codes:
+            # Closed (no fresh list, closing time, Friday, holiday, manual close)
+            # blocks ONLY phones; accessories and other items stay orderable.
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                f"{SALES_CLOSED_DETAIL}: {sales_state.reason}")
 
         items_out: list[OrderItemOut] = []
         for (kala_code, variant_id), qty in merged.items():
@@ -317,10 +381,13 @@ def create_order(
                     f"{settings.max_order_qty}",
                 )
             prod = detail.get(kala_code)
-            if phones.has(kala_code):
-                # Phone: priced per color from the active list, read now
-                # (REQUIREMENTS §4), sold on the distributor's availability.
-                if prod is None:
+            if prod is None or not cfg.visible(prod.get("group")):
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                    f"Product {kala_code} is not available for sale")
+            if kala_code in phone_codes:
+                # Phone: priced per color ONLY from the current valid list, read
+                # now (REQUIREMENTS §4), sold on the distributor's availability.
+                if not phones.sellable(kala_code):
                     raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                         f"Product {kala_code} is not available for sale")
                 if variant_id is None:
@@ -347,7 +414,7 @@ def create_order(
             if variant_id is not None:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                     f"Product {kala_code} has no colors")
-            if prod is None or prod.get("unit_price") is None or prod["unit_price"] <= 0:
+            if prod.get("unit_price") is None or prod["unit_price"] <= 0:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                     f"Product {kala_code} is not available for sale")
             if prod["available_qty"] < qty:
@@ -481,7 +548,11 @@ def get_order(
                 int(order["accounting_order_no"]), [])
         except Exception as exc:  # noqa: BLE001
             logger.warning("invoice numbers unavailable: %s", type(exc).__name__)
-    return OrderOut(**order, invoice_numbers=numbers)
+    person_name = None
+    if role == "admin" and order.get("user_person_code") is not None:
+        person_name = reader.person_names([order["user_person_code"]]).get(
+            int(order["user_person_code"]))
+    return OrderOut(**order, invoice_numbers=numbers, person_name=person_name)
 
 
 @router.get("/users/{platform}/{chat_id}/orders", response_model=list[OrderOut])
@@ -518,6 +589,89 @@ def statement(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "User is not approved")
     data = reader.customer_statement(int(user["person_code"]), settings.statement_max_rows)
     return build_statement(data, page, page_size)
+
+
+@router.get("/users/{platform}/{chat_id}/statement/full", response_model=StatementFullOut)
+def statement_full(
+    platform: str,
+    chat_id: str,
+    db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    settings: Settings = Depends(deps.get_settings),
+    role: str = Depends(get_api_identity),
+) -> dict:
+    """The whole statement for the bot's PDF (v2.6.0): own verified account only."""
+    if role not in ("bot", "admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not available on this channel")
+    user = db.get_user_by_platform(platform, chat_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if user["status"] != "approved" or user["person_code"] is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "User is not approved")
+    code = int(user["person_code"])
+    data = reader.customer_statement(code, settings.statement_max_rows)
+    name = reader.person_names([code]).get(code) or str(user.get("name") or "")
+    return {"person_code": code, "customer_name": name,
+            **build_full_statement(data, settings.statement_max_rows)}
+
+
+def _requesting_user(db: OwnDB, platform: str, chat_id: str) -> dict:
+    user = db.get_user_by_platform(platform, chat_id)
+    if user is None or user["status"] == "rejected":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    return user
+
+
+@router.get("/item-requests/search", response_model=list[RequestSearchItem])
+def item_request_search(
+    q: str = Query(min_length=2, max_length=100),
+    role: str = Depends(get_catalog_channel),
+    reader: AccountingReader = Depends(deps.get_reader),
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+) -> list[RequestSearchItem]:
+    """«درخواست کالای ناموجود»: names (no price, no stock) of products of the
+    groups shown in the bot that match ``q`` (v2.6.0)."""
+    cfg = group_config.load(db)
+    found = reader.list_products(q=q, in_stock=False, page=1, page_size=1_000_000,
+                                 level=settings.price_level_for(role))
+    out = [RequestSearchItem(code=int(p["code"]), name=str(p["name"] or ""))
+           for p in found["items"] if cfg.visible(p.get("group"))]
+    return out[:8]
+
+
+@router.post("/item-requests", response_model=ItemRequestOut,
+             status_code=status.HTTP_201_CREATED)
+def create_item_request(
+    payload: ItemRequestIn,
+    role: str = Depends(get_api_identity),
+    reader: AccountingReader = Depends(deps.get_reader),
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+) -> dict:
+    """A customer asks for an item that is not available (v2.6.0): no order,
+    no payment and nothing written to the accounting DB - only a note for staff
+    (in-app notification + the requests list in ShopAdmin)."""
+    if role not in ("bot", "admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not available on this channel")
+    user = _requesting_user(db, payload.platform, payload.chat_id)
+    text = " ".join(payload.text.split())[:300]
+    name = ""
+    if payload.kala_code is not None:
+        found = reader.get_products_for_order(
+            [payload.kala_code], settings.price_level_for(role), {}).get(payload.kala_code)
+        if found is None or not group_config.load(db).visible(found.get("group")):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Product not found")
+        name = str(found.get("name") or "")
+    if not name and len(text) < 2:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Describe the item")
+    since = (now_utc() - timedelta(days=1)).isoformat(timespec="seconds")
+    if db.count_item_requests_since(user["id"], since) >= ITEM_REQUESTS_PER_DAY:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many requests today")
+    row = db.add_item_request(user["id"], payload.kala_code, name, text)
+    db.audit(role, "item_request_create", f"request id={row['id']}")
+    db.add_event("item_request", row["id"], role)
+    return {**row, "customer_name": None, "person_code": None}
 
 
 @router.post("/security/report", status_code=status.HTTP_204_NO_CONTENT)

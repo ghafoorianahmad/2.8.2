@@ -61,6 +61,16 @@ class DashboardPage(BasePage):
         self.card_receipts.clicked.connect(lambda: self._go("orders", ORDER_RECEIPT_UPLOADED))
         self.card_today.clicked.connect(lambda: self._go("orders", ORDER_WRITTEN))
 
+        # v2.6.0: setup problems that stop the bot from selling (no payment card,
+        # no product group shown in the bot). Hidden while everything is fine.
+        self.setup_warning = widgets.label("", color=theme.WARNING_TEXT, bold=True, wrap=True)
+        self.setup_warning.setObjectName("SetupWarning")
+        self.setup_warning.setStyleSheet(
+            f"QLabel#SetupWarning {{ background: {theme.WARNING_BG}; border: 1px solid {theme.BORDER};"
+            f" border-radius: 8px; padding: 10px 14px; }}")
+        self.setup_warning.setVisible(False)
+        self.body.addWidget(self.setup_warning)
+
         # Sales state (v2.5.0): sales follow the distributor's price list
         # (morning list until 13:30, evening list until 20:30, Friday closed).
         # The buttons override it; the decision is stored and audited on the server.
@@ -195,7 +205,13 @@ class DashboardPage(BasePage):
         self.table._refresh_states()
 
     # ------------------------------------------------------------------ sales state
+    def _render_setup_warning(self, state: object) -> None:
+        problems = setup_problems(state)
+        self.setup_warning.setText("⚠️ " + "\n⚠️ ".join(problems) if problems else "")
+        self.setup_warning.setVisible(bool(problems))
+
     def _render_shop_state(self, state: object) -> None:
+        self._render_setup_warning(state)
         if not isinstance(state, dict):
             self._shop_closed = None
             self.shop_state_label.setText("وضعیت فروش گوشی از سرور خوانده نشد.")
@@ -294,6 +310,20 @@ def sales_detail_text(state: dict) -> str:
     if state.get("receipt_deadline_minutes"):
         parts.append(f"مهلت رسید: {state['receipt_deadline_minutes']} دقیقه")
     return to_persian_digits(" — ".join(parts))
+
+
+def setup_problems(state: object) -> list[str]:
+    """v2.6.0: why the bot cannot sell right now (empty = nothing to fix)."""
+    if not isinstance(state, dict):
+        return []
+    problems = []
+    if state.get("payment_ready") is False:
+        problems.append("شمارهٔ کارت پرداخت تنظیم نشده است؛ ربات سفارش نهایی را نمی‌پذیرد. "
+                        "در «سرور فروشگاه › تنظیمات» شمارهٔ کارت ۱۶ رقمی را وارد کنید.")
+    if state.get("catalog_ready") is False:
+        problems.append("هیچ گروه کالایی برای نمایش در ربات انتخاب نشده؛ ربات کالایی نشان "
+                        "نمی‌دهد. از صفحهٔ «گروه‌های کالا» گروه‌ها را انتخاب کنید.")
+    return problems
 
 
 def _shop_state(api) -> dict | None:

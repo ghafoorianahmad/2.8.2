@@ -40,7 +40,7 @@ from .platforms import (
     remove_keyboard,
     reply_keyboard,
 )
-from .ratelimit import RateLimiter
+from .ratelimit import RateLimiter, WarnOnce
 from .shopapi import (
     ShopApiClient,
     ShopApiError,
@@ -66,6 +66,8 @@ STATE_AWAIT_CONTACT = "await_contact"
 LEGACY_REGISTRATION_STATES = frozenset({"await_name", "await_phone"})
 STATE_AWAIT_SEARCH = "await_search"
 STATE_AWAIT_RECEIPT = "await_receipt"
+#: v2.6.0: «درخواست کالای ناموجود» - waiting for the item's name
+STATE_AWAIT_ITEM_REQUEST = "await_item_request"
 STATE_ADMIN_PERSON_CODE = "admin_person_code"
 
 # --- callback payloads ------------------------------------------------------
@@ -108,6 +110,10 @@ CALLBACK_ARG_COUNTS: dict[str, int] = {
     # site models (REQUIREMENTS §9a): a product of the model / one of the options
     "kp": 1,
     "mdl": 1,
+    # v2.6.0: unavailable item request: start / submit the typed text / a product
+    "ireq": 0,
+    "ireqt": 0,
+    "ireqk": 1,
 }
 ADMIN_ACTIONS = frozenset({"addu", "adru", "adap", "adrp", "adsug", "adst"})
 #: Screens anyone may open, even before registration is approved.
@@ -142,6 +148,8 @@ OWNER_EVENT_TEXTS = {
     # v2.5.0: never deleted in the accounting DB; the owner decides there
     "accounting_duplicate_order": "DUPLICATE_ORDER_NOTICE",
     "order_timeout_written": "TIMEOUT_WRITTEN_NOTICE",
+    # v2.6.0: a customer asked for an unavailable item
+    "item_request": "ITEM_REQUEST_NOTICE",
 }
 SHOP_STATE_TTL = 30.0
 #: Receipt deadline when shopapi does not say (minutes).
@@ -203,12 +211,15 @@ class BotEngine:
         self.rate_limiter = rate_limiter or RateLimiter(
             settings.rate_limit_messages, settings.rate_limit_window
         )
+        #: v2.6.0: button taps have their own, much higher limit (quick +/− taps are
+        #: normal use); the warning goes out once per window; /start is never limited.
+        self.callback_limiter = RateLimiter(
+            settings.rate_limit_callbacks, settings.rate_limit_window
+        )
+        self.rate_warner = WarnOnce(settings.rate_limit_window)
         self.logger = logger or logging.getLogger("shopbots.engine")
         # channel-independent shop logic (app/core)
-        self.catalog = CatalogService(
-            api, page_size=settings.product_page_size,
-            show_out_of_stock=settings.show_out_of_stock,
-        )
+        self.catalog = CatalogService(api, page_size=settings.product_page_size)
         self.cart = CartService(store)
         self.orders = OrderService(
             api, store, self.cart, receipt_max_bytes=settings.receipt_max_bytes
@@ -246,9 +257,13 @@ class BotEngine:
                 log_event(self.logger, platform, update_id, "non_private_ignored")
                 return False
             chat_id = str(event["chat_id"])
-            if not self.rate_limiter.allow(platform, chat_id):
+            if not self._allowed(platform, chat_id, event):
                 await self._report_security("rate_limited", platform, chat_id)
-                await self._send_text(adapter, chat_id, texts.RATE_LIMITED)
+                if event["type"] == "callback":
+                    # stop the button's spinner; no alert per tap
+                    await self._answer_callback(adapter, event.get("callback_id"))
+                if self.rate_warner.should_warn(platform, chat_id):
+                    await self._send_text(adapter, chat_id, texts.RATE_LIMITED)
                 return False
             if event["type"] == "message":
                 await self._handle_message(adapter, platform, chat_id, event)
@@ -268,6 +283,17 @@ class BotEngine:
             return False
         finally:
             self.store.set_last_update_id(platform, update_id)
+
+    def _allowed(self, platform: str, chat_id: str, event: dict) -> bool:
+        """Rate limits (v2.6.0): /start always passes (a customer who tapped too
+        fast must be able to start over); button taps and messages are counted
+        separately, taps with a much higher limit."""
+        if event["type"] == "callback":
+            return self.callback_limiter.allow(platform, chat_id)
+        text = str(event.get("text") or "").strip().lower()
+        if text.split("@", 1)[0].split(" ", 1)[0] == "/start":
+            return True
+        return self.rate_limiter.allow(platform, chat_id)
 
     @staticmethod
     def _parse_update(update: dict) -> dict | None:
@@ -500,6 +526,9 @@ class BotEngine:
             await self._show_not_approved(adapter, platform, chat_id, status)
             return
 
+        if state == STATE_AWAIT_ITEM_REQUEST and text and not photo and not document:
+            await self._item_request_text(adapter, platform, chat_id, text)
+            return
         if state == STATE_AWAIT_SEARCH and text:
             self.store.clear_conversation(platform, chat_id)
             await self._show_products(adapter, platform, chat_id, q=text, group=None, page=1)
@@ -635,6 +664,7 @@ class BotEngine:
         rows = [
             [(texts.BTN_GROUPS, "groups"), (texts.BTN_SEARCH, "search")],
             [(texts.BTN_CART, "cart"), (texts.BTN_ORDERS, "orders")],
+            [(texts.BTN_ITEM_REQUEST, "ireq")],
         ]
         if approved:
             # the statement belongs to a verified, linked customer only
@@ -796,8 +826,8 @@ class BotEngine:
         if not in_stock:
             await self._send_options(
                 adapter, platform, chat_id, f"{body}\n{texts.OUT_OF_STOCK}",
-                [[(texts.BTN_MENU, "menu")]], state=STATE_NONE, data=data,
-                edit_message_id=edit_message_id,
+                [[(texts.BTN_REQUEST_THIS, f"ireqk:{code}")], [(texts.BTN_MENU, "menu")]],
+                state=STATE_NONE, data=data, edit_message_id=edit_message_id,
             )
             return
         rows = [
@@ -1122,7 +1152,11 @@ class BotEngine:
             )
         lines.append(texts.CART_TOTAL.format(total=fmt_num(self.cart.total(items))))
         state = await self._sales_state()
-        if state.get("closed") and self._has_phones(items):
+        if state.get("payment_ready") is False:
+            # v2.6.0: no card configured -> never a placeholder, no checkout
+            lines.append("")
+            lines.append(texts.PAYMENT_NOT_READY)
+        elif state.get("closed") and self._has_phones(items):
             # Only phones are closed: the customer may remove them and order the rest.
             lines.append("")
             lines.append(self._sales_closed_text(state))
@@ -1152,7 +1186,15 @@ class BotEngine:
         await self._show_cart(adapter, platform, chat_id)
 
     async def _checkout(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
+        # The final step reads the state fresh (never the 30 s cache): sales may
+        # have closed since the cart was shown. shopapi checks again anyway.
+        self._shop_state = None
         state = await self._sales_state()
+        if state.get("payment_ready") is False:
+            await self._send_options(
+                adapter, platform, chat_id, texts.PAYMENT_NOT_READY, [[(texts.BTN_MENU, "menu")]],
+            )
+            return
         if state.get("closed") and self._has_phones(self.cart.items(platform, chat_id)):
             await self._send_options(
                 adapter, platform, chat_id, self._sales_closed_text(state),
@@ -1162,6 +1204,13 @@ class BotEngine:
         try:
             result = await self.orders.checkout(platform, chat_id)
         except ShopApiRejected as exc:
+            if exc.status == 409 and "payment details" in (exc.detail or "").lower():
+                self._shop_state = None
+                await self._send_options(
+                    adapter, platform, chat_id, texts.PAYMENT_NOT_READY,
+                    [[(texts.BTN_MENU, "menu")]],
+                )
+                return
             if exc.status == 409 and "sales are closed" in (exc.detail or "").lower():
                 self._shop_state = None          # closed meanwhile: refresh next time
                 await self._send_options(
@@ -1185,9 +1234,7 @@ class BotEngine:
             parts.append(texts.PENDING_ORDER_NOTE)
         minutes = state.get("receipt_deadline_minutes") or DEFAULT_RECEIPT_MINUTES
         parts.append(texts.RECEIPT_DEADLINE_NOTE.format(minutes=fmt_num(minutes)))
-        parts.append(
-            self._payment_text(order_id, total, order.get("payment_instructions"))
-        )
+        parts.append(self._payment_text(order, total))
         self.store.set_conversation(
             platform, chat_id, STATE_AWAIT_RECEIPT, {"order_id": order_id}
         )
@@ -1223,14 +1270,29 @@ class BotEngine:
                 "bot_id": texts.SHOP.get("bot_id", ""), "thanks": texts.SHOP.get("invoice_thanks", "")}
 
     @staticmethod
-    def _payment_text(order_id, total: str, api_instructions) -> str:
-        """Card details from messages.fa.json; shopapi's BANK_ACCOUNT_TEXT is the
-        fallback while the card number there is still a placeholder."""
-        card = str(texts.SHOP.get("card_number") or "")
-        fallback = str(api_instructions or "").strip()
-        if fallback and not any(ch.isdigit() for ch in card):
-            return f"{fallback}\n\n" + texts.ASK_RECEIPT.format(order_id=order_id)
-        return texts.PAYMENT_INSTRUCTIONS.format(order_id=order_id, total=total)
+    def _payment_text(order: dict, total: str) -> str:
+        """Payment details from shopapi (PAYMENT_CARD_NUMBER / OWNER / SHEBA, set in
+        ShopAdmin), never from a placeholder: shopapi refuses orders while no valid
+        card is configured (v2.6.0). BANK_ACCOUNT_TEXT is an optional extra note."""
+        order_id = order.get("id")
+        card = str(order.get("payment_card_number") or "").strip()
+        if not card:      # an older shopapi: no card -> no made-up number either
+            return texts.PAYMENT_NOT_READY + "\n\n" + texts.ASK_RECEIPT.format(order_id=order_id)
+        digits = "".join(ch for ch in card if ch.isdigit())
+        if len(digits) == 16:
+            card = "-".join(digits[i:i + 4] for i in range(0, 16, 4))
+        owner = str(order.get("payment_owner") or "").strip()
+        sheba = str(order.get("payment_sheba") or "").strip()
+        note = str(order.get("payment_instructions") or "").strip()
+        lines = [texts.PAYMENT_DETAILS.format(order_id=order_id, total=total, card=card)]
+        if owner:
+            lines.append(texts.PAYMENT_OWNER_LINE.format(owner=owner))
+        if sheba:
+            lines.append(texts.PAYMENT_SHEBA_LINE.format(sheba=sheba))
+        if note and "xxxx" not in note.lower():
+            lines.append(note)
+        lines.append(texts.PAYMENT_SEND_RECEIPT)
+        return "\n".join(lines)
 
     async def _save_receipt(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, photo, document,
@@ -1355,6 +1417,91 @@ class BotEngine:
             adapter, platform, chat_id, "\n".join(lines), rows, state=STATE_NONE, data={},
             edit_message_id=edit_message_id,
         )
+
+    async def _send_statement_pdf(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str
+    ) -> bool:
+        """The statement as ONE PDF document (v2.6.0). False = not sent (no browser,
+        rendering or upload failed, an old shopapi) -> the caller sends the text."""
+        result = await self.api.get_statement_full(platform, chat_id)
+        if not isinstance(result, dict):
+            return False
+        from .cards.statement_pdf import statement_pdf
+
+        currency = texts.SHOP.get("currency", "ریال")
+        await self._send_text(adapter, chat_id, texts.STATEMENT_PDF_WAIT)
+        try:
+            pdf = await asyncio.to_thread(
+                statement_pdf, result, shop=texts.SHOP.get("shop_name", ""),
+                currency=currency, contact=self._card_contact(),
+            )
+            if not pdf:
+                return False
+            sides = {"debtor": texts.SIDE_DEBTOR, "creditor": texts.SIDE_CREDITOR,
+                     "zero": texts.SIDE_ZERO}
+            caption = texts.STATEMENT_PDF_CAPTION.format(
+                balance=fmt_num(result.get("balance")), side=sides.get(str(result.get("side")), ""))
+            await adapter.send_document_bytes(
+                chat_id, pdf, f"statement-{result.get('person_code') or ''}.pdf", caption)
+        except BotApiError as exc:
+            self.logger.warning("platform=%s statement_pdf_send_failed=%s", adapter.platform, exc.method)
+            return False
+        except Exception as exc:  # noqa: BLE001 - the text statement is the fallback
+            self.logger.warning("platform=%s statement_pdf_failed=%s", adapter.platform,
+                                type(exc).__name__)
+            return False
+        await self._send_options(
+            adapter, platform, chat_id, texts.MAIN_MENU, self._main_menu_rows(True),
+            state=STATE_NONE, data={},
+        )
+        return True
+
+    # ---- «درخواست کالای ناموجود» (v2.6.0): no order, no payment, no accounting write ----
+    async def _ask_item_request(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
+        await self._send_options(
+            adapter, platform, chat_id, texts.ITEM_REQUEST_ASK, [[(texts.BTN_MENU, "menu")]],
+            state=STATE_AWAIT_ITEM_REQUEST, data={},
+        )
+
+    async def _item_request_text(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, text: str
+    ) -> None:
+        typed = " ".join(text.split())[:300]
+        if len(typed) < 2:
+            await self._send_text(adapter, chat_id, texts.ITEM_REQUEST_SHORT)
+            return
+        try:
+            found = await self.api.item_request_search(typed) if len(typed) <= 100 else []
+        except ShopApiRejected:
+            found = []
+        rows = [[(shorten(str(f.get("name") or ""), 40) or str(f.get("code")),
+                  f"ireqk:{int(f['code'])}")]
+                for f in found[:8] if f.get("code") is not None]
+        rows.append([(texts.BTN_REQUEST_TEXT, "ireqt")])
+        rows.append([(texts.BTN_MENU, "menu")])
+        body = (texts.ITEM_REQUEST_PICK if found else texts.ITEM_REQUEST_NONE).format(text=typed)
+        await self._send_options(
+            adapter, platform, chat_id, body, rows,
+            state=STATE_AWAIT_ITEM_REQUEST, data={"ireq_text": typed},
+        )
+
+    async def _submit_item_request(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, kala_code: int | None,
+        text: str,
+    ) -> None:
+        if not kala_code and len(text) < 2:
+            await self._ask_item_request(adapter, platform, chat_id)
+            return
+        try:
+            await self.api.create_item_request(platform, chat_id, kala_code=kala_code, text=text)
+        except ShopApiRejected as exc:
+            message = {429: texts.ITEM_REQUEST_TOO_MANY, 422: texts.ITEM_REQUEST_SHORT,
+                       404: texts.PRODUCT_NOT_FOUND}.get(exc.status or 0, exc.message_fa)
+            await self._send_options(adapter, platform, chat_id, message,
+                                     [[(texts.BTN_MENU, "menu")]], state=STATE_NONE, data={})
+            return
+        await self._send_options(adapter, platform, chat_id, texts.ITEM_REQUEST_SENT,
+                                 [[(texts.BTN_MENU, "menu")]], state=STATE_NONE, data={})
 
     async def _ask_receipt(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, order_id: int
@@ -1516,9 +1663,24 @@ class BotEngine:
             await self._ask_search(adapter, platform, chat_id)
         elif action == "stmt":
             await self._answer_callback(adapter, callback_id)
+            if args[0] == 1 and await self._send_statement_pdf(adapter, platform, chat_id):
+                return
             await self._show_statement(
                 adapter, platform, chat_id, args[0], edit_message_id=message_id
             )
+        elif action == "ireq":
+            await self._answer_callback(adapter, callback_id)
+            await self._ask_item_request(adapter, platform, chat_id)
+        elif action == "ireqt":
+            await self._answer_callback(adapter, callback_id)
+            _state, data = self.store.get_conversation(platform, chat_id)
+            await self._submit_item_request(adapter, platform, chat_id, None,
+                                            str((data or {}).get("ireq_text") or ""))
+        elif action == "ireqk":
+            await self._answer_callback(adapter, callback_id)
+            _state, data = self.store.get_conversation(platform, chat_id)
+            await self._submit_item_request(adapter, platform, chat_id, args[0],
+                                            str((data or {}).get("ireq_text") or ""))
         else:  # pragma: no cover - parse_callback already restricts actions
             await self._answer_callback(adapter, callback_id, texts.BAD_CALLBACK)
 
@@ -1657,7 +1819,17 @@ class BotEngine:
         if not self.settings.admin_targets(tuple(self.adapters.keys())):
             return False
         template = getattr(texts, OWNER_EVENT_TEXTS[kind])
-        if kind == "price_inquiry":
+        if kind == "item_request":
+            try:
+                request = await self.api.admin_get_item_request(int(ref_id))
+            except ShopApiError:
+                request = None
+            request = request if isinstance(request, dict) else {}
+            text = template.format(
+                product=request.get("product_name") or request.get("text") or "-",
+                name=request.get("customer_name") or "-",
+            )
+        elif kind == "price_inquiry":
             try:
                 inquiry = await self.api.admin_get_inquiry(int(ref_id))
             except ShopApiError:

@@ -16,7 +16,9 @@ from fastapi.responses import JSONResponse
 
 from . import catalog_models, control, deps, monitor, order_timeout, sql_errors, tracking
 from .db_own import OwnDB
-from .routers import admin, auth, catalog, pricelist, public, server_admin, staff_admin
+from .routers import (
+    admin, auth, catalog, pricelist, public, server_admin, shop_catalog, staff_admin,
+)
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -84,6 +86,7 @@ def create_app() -> FastAPI:
     application.include_router(server_admin.router)
     application.include_router(pricelist.router)
     application.include_router(catalog.router)
+    application.include_router(shop_catalog.router)
 
     @application.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:

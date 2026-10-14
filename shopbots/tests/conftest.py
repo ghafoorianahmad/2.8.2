@@ -35,6 +35,8 @@ class FakeBotApi:
         self.updates: list[dict] = []
         self.sent: list[dict] = []
         self.photos: list[dict] = []
+        #: v2.6.0: raw multipart bodies of sendDocument (the statement PDF)
+        self.documents: list[bytes] = []
         self.edited: list[dict] = []
         self.answered: list[dict] = []
         self.fail_methods: set[str] = set()
@@ -65,6 +67,9 @@ class FakeBotApi:
         if method == "sendMessage":
             self.sent.append(payload)
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 100 + len(self.sent)}})
+        if method == "sendDocument":
+            self.documents.append(request.content)
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 300 + len(self.documents)}})
         if method == "sendPhoto":
             self.photos.append(payload)
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 200 + len(self.photos)}})
@@ -170,6 +175,15 @@ class FakeShopApi:
         #: receipts are refused: the 30-minute deadline has passed
         self.receipt_too_late = False
         self.statement: dict | None = None
+        #: v2.6.0: GET .../statement/full (None = 404, an older shopapi -> text statement)
+        self.statement_full: dict | None = None
+        #: v2.6.0: PAYMENT_CARD_NUMBER of shopapi ("" = not configured -> no checkout)
+        self.payment_card = "6037-0000-1111-2222"
+        #: the card was removed between the state check and the order
+        self.card_removed_meanwhile = False
+        #: v2.6.0: «درخواست کالای ناموجود»
+        self.item_requests: list[dict] = []
+        self.item_request_limit = 10
         self.statement_requests: list[dict] = []
         self.order_bodies: list[dict] = []
         self.inquiries: list[dict] = []
@@ -269,7 +283,8 @@ class FakeShopApi:
         if method == "GET" and path == "/shop/state":
             return self._ok({"closed": self.closed, "sales_open": not self.closed,
                              "reason": self.closed_reason if self.closed else "list",
-                             "receipt_deadline_minutes": 30})
+                             "receipt_deadline_minutes": 30,
+                             "payment_ready": bool(self.payment_card), "catalog_ready": True})
 
         if method == "GET" and path.startswith("/products/"):
             code = int(path.split("/")[2])
@@ -289,6 +304,46 @@ class FakeShopApi:
                 return self._err(404, "Inquiry not found")
             return self._ok({"id": inquiry_id, "product_name": "گوشی آزمایشی",
                              "color": "آبی", "customer_name": "علی"})
+
+        if method == "GET" and path.startswith("/users/") and path.endswith("/statement/full"):
+            parts = path.split("/")
+            user = self.users.get((parts[2], parts[3]))
+            if user is None or self.statement_full is None:
+                return self._err(404, "Not found")
+            if user["status"] != "approved":
+                return self._err(403, "User is not approved")
+            return self._ok(self.statement_full)
+
+        if method == "GET" and path == "/item-requests/search":
+            q = str(params.get("q") or "")
+            return self._ok([{"code": p["code"], "name": p["name"]}
+                             for p in self.products if q and q in p["name"]][:8])
+
+        if method == "POST" and path == "/item-requests":
+            user = self.users.get((str(body.get("platform")), str(body.get("chat_id"))))
+            if user is None:
+                return self._err(404, "User not found")
+            if len(self.item_requests) >= self.item_request_limit:
+                return self._err(429, "Too many requests today")
+            name = ""
+            if body.get("kala_code"):
+                product = next((p for p in self.products if p["code"] == body["kala_code"]), None)
+                if product is None:
+                    return self._err(404, "Product not found")
+                name = product["name"]
+            if not name and len(str(body.get("text") or "")) < 2:
+                return self._err(422, "Describe the item")
+            row = {"id": len(self.item_requests) + 1, "user_id": user["id"], "status": "new",
+                   "kala_code": body.get("kala_code"), "product_name": name,
+                   "text": body.get("text") or "", "created_at": "t"}
+            self.item_requests.append(row)
+            return httpx.Response(201, json=row)
+
+        if method == "GET" and path.startswith("/admin/item-requests/"):
+            request_id = int(path.split("/")[3])
+            if request_id > len(self.item_requests):
+                return self._err(404, "Request not found")
+            return self._ok({**self.item_requests[request_id - 1], "customer_name": "علی"})
 
         if method == "GET" and path.startswith("/users/") and path.endswith("/statement"):
             parts = path.split("/")
@@ -427,6 +482,8 @@ class FakeShopApi:
             if user["status"] == "rejected" or (
                     user["status"] != "approved" and not self.pending_can_order):
                 return self._err(403, "User is not approved")
+            if not self.payment_card or self.card_removed_meanwhile:
+                return self._err(409, "Payment details are not configured")
             if self.closed and any(line.get("variant_id") for line in body.get("items", [])):
                 # v2.5.0: closed sales block only phones (price-list items)
                 return self._err(409, f"Sales are closed: {self.closed_reason}")
@@ -465,6 +522,8 @@ class FakeShopApi:
                 "id": order_id, "status": "awaiting_payment", "price_level": 3, "total": total,
                 "reserve_until": "t+30m", "accounting_order_no": None, "created_at": "t",
                 "items": items, "payment_instructions": "واریز به کارت 1234",
+                "payment_card_number": self.payment_card or None, "payment_sheba": None,
+                "payment_owner": "فروشگاه نمونه",
                 "user_id": user["id"], "customer_pending": user["status"] != "approved",
                 "_platform": platform, "_chat_id": chat_id,
             }

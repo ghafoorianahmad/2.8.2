@@ -80,6 +80,17 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 - Least-privilege role `shop_app` (`shopapi/sql/grant_shop_app.sql`, `grant_shop_app.ps1` in the ShopServer installer).
 - DB allowlist: real writes only to databases in `ACCOUNTING_ALLOWED_DATABASES` (+ switch + host); test mode only for `ACCOUNTING_TEST_DATABASES`; a dry run never sends an INSERT.
 
+## 7b. v2.6.0 (decision 2026-10-14, after the Windows test on `hesab5 t`; supersedes "phone = mapped in the price list")
+- **Product groups** (ShopAdmin «گروه‌های کالا», `shopapi` table `product_groups`): two checkboxes per Sazeh group, «نمایش در ربات» and «گروه گوشی». The bot shows and sells only items of groups shown in the bot; no group chosen = nothing shown (fail closed).
+- **A phone = an item of a phone group.** Phones are shown and orderable only while present and available (a price) in the current valid price list; their price comes only from the list; a phone not in the list is hidden and refused (never the accounting price). The sales gate applies to phone-group items, read from the accounting DB at order time (also for stale carts). A price-list mapping on a non-phone group is ignored.
+- Lists show only in-stock items (phones: available in the list). An out-of-stock item opened by code offers «درخواست این کالا».
+- **Payment card required**: without a valid 16-digit `PAYMENT_CARD_NUMBER` (ShopAdmin › server settings) shopapi refuses orders (409), the bot refuses checkout and ShopAdmin's dashboard warns. The bot never shows a placeholder card; card details come only from shopapi (not `messages.fa.json`).
+- **«درخواست کالای ناموجود»** (menu button): the customer types an item, picks a match or submits the text. No order, no payment, nothing written to Sazeh. Event `item_request` → ShopAdmin toast + «درخواست کالا» page + admin chats. Max 10 per customer per day.
+- **Statement = one A4 PDF** (RTL, Vazirmatn, Jalali dates): header (logo, shop name, customer name + code, date range, print date), table (date, description, debit, credit, running balance + side), totals and final balance in bold. Rendered by the headless Edge/Chromium the cards use; without a browser the paged text statement is the fallback.
+- The customer's **Sazeh name** (`name_mo.fname` + `Name`) is read for linked customers only: ShopAdmin order dialog («نام (کد شخص N)») and the customer's own PDF. Needs the column grant in `grant_shop_app.sql`; without it the registration name is shown.
+- `ACCOUNTING_STATUS_CODE` is editable from ShopAdmin's server settings (super admin), same rule (required, whole number, not 6808).
+- Rate limits: button taps have their own limit (`RATE_LIMIT_CALLBACKS`, 120/min), messages 20/min, one warning per window, `/start` is never limited.
+
 ## 8. Alerts to the owner
 - Bale message to the owner's chat (ChatId in .env) on every new order and pending customer.
 - Windows tray app: detects when the Sazeh Hesab program starts (process watch) → "X new orders, Y customers awaiting approval" + link to shopadmin.

@@ -22,7 +22,7 @@ from typing import Callable, Optional
 
 from .util import now_utc
 
-VERSION = "2.5.0"
+VERSION = "2.6.0"
 STARTED_AT = now_utc()
 
 
@@ -131,6 +131,20 @@ def _hhmm(value: str) -> Optional[str]:
     return "must be a time like 13:30"
 
 
+def _status_code(value: str) -> Optional[str]:
+    """ACCOUNTING_STATUS_CODE: the same rule as ``Settings.status_code_problem``
+    (required, a whole number, never a known-invalid code such as 6808)."""
+    from .config import INVALID_STATUS_CODES
+
+    if value == "":
+        return "ACCOUNTING_STATUS_CODE is required"
+    if not re.fullmatch(r"\d{1,9}", value):
+        return "must be a whole number between 0 and 999999999"
+    if int(value) in INVALID_STATUS_CODES:
+        return f"{int(value)} is not a valid status code"
+    return None
+
+
 def _token(value: str) -> Optional[str]:
     return None if value == "" or _TOKEN_RE.match(value) else "does not look like a bot token"
 
@@ -144,6 +158,8 @@ EDITABLE: dict[str, tuple[Callable[[str], Optional[str]], bool]] = {
     "PAYMENT_SHEBA": (_sheba, False),
     "PAYMENT_OWNER": (_text(80), False),
     "RECEIPT_DEADLINE_MINUTES": (_int_range(5, 1440), False),
+    # v2.6.0: KalaOrder.Status of written orders (see SAZEH_DB_REFERENCE §10 / G1-G4).
+    "ACCOUNTING_STATUS_CODE": (_status_code, False),
     "SALES_WINDOWS_ENABLED": (_bool, False),
     "SALES_MORNING_CLOSE": (_hhmm, False),
     "SALES_EVENING_CLOSE": (_hhmm, False),

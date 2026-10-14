@@ -79,6 +79,13 @@ class FakeReader:
     def person_code_exists(self, code):
         return code in self.person_codes
 
+    #: v2.6.0: {person code: "fname Name"} (fake names only)
+    person_name_map: dict = {}
+
+    def person_names(self, codes):
+        return {int(c): self.person_name_map[int(c)] for c in codes
+                if c is not None and int(c) in self.person_name_map}
+
     def find_person_by_mobile(self, mobile):
         if getattr(self, "down", False):
             raise RuntimeError("accounting down")
@@ -164,6 +171,8 @@ def settings():
         admin_api_key="admin-key",
         sqlite_path=":memory:",
         bank_account_text="pay to account 123",
+        # v2.6.0: no valid card = no checkout (obviously fake test card).
+        payment_card_number="6037-0000-1111-2222",
         # TestClient connects as host "testclient"; loopback rules have own tests.
         service_keys_local_only=False,
         # Sales windows (price list / Friday) have their own tests (test_v250.py).
@@ -172,9 +181,15 @@ def settings():
     )
 
 
+#: v2.6.0 product groups of the test data: 1 and 2 = accessories, 3 = phones.
+TEST_GROUPS = [(1, True, False), (2, True, False), (3, True, True)]
+
+
 @pytest.fixture
 def db(settings):
-    return OwnDB(":memory:")
+    own = OwnDB(":memory:")
+    own.set_group_settings(TEST_GROUPS, "test")
+    return own
 
 
 @pytest.fixture

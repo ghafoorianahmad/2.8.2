@@ -34,3 +34,24 @@ class RateLimiter:
             self._buckets.clear()
             return
         self._buckets.pop((platform, str(chat_id)), None)
+
+
+class WarnOnce:
+    """At most one "slow down" message per chat and window (v2.6.0: a flood of
+    taps used to get the warning once per refused update)."""
+
+    def __init__(self, window: float = 60.0, clock: Callable[[], float] = time.monotonic):
+        self.window = float(window)
+        self._clock = clock
+        self._last: dict[tuple[str, str], float] = {}
+
+    def should_warn(self, platform: str, chat_id: str | int) -> bool:
+        key = (platform, str(chat_id))
+        now = self._clock()
+        last = self._last.get(key)
+        if last is not None and now - last < self.window:
+            return False
+        self._last[key] = now
+        if len(self._last) > 5000:
+            self._last = {k: v for k, v in self._last.items() if now - v < self.window}
+        return True

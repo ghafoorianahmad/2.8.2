@@ -54,7 +54,8 @@ def test_approval_flow_then_order(client, reader):
     assert body["items"][0]["kala_code"] == 101
     assert body["payment_instructions"] == "pay to account 123"
     # structured payment details are None unless configured (the card then has no section)
-    assert body["payment_card_number"] is None and body["payment_sheba"] is None
+    # v2.6.0: a card is required (the fixture's fake card); sheba stays optional
+    assert body["payment_card_number"] == "6037-0000-1111-2222" and body["payment_sheba"] is None
 
 
 def test_order_rejects_insufficient_stock(client, reader):

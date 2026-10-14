@@ -14,9 +14,10 @@ from .persian import to_persian_digits
 #: key -> (label, help text, kind) ; kind: text | int | bool | secret
 SETTINGS_FA: dict[str, tuple[str, str, str]] = {
     "BANK_ACCOUNT_TEXT": ("متن حساب بانکی", "پس از ثبت سفارش برای مشتری فرستاده می‌شود.", "text"),
-    "PAYMENT_CARD_NUMBER": ("شمارهٔ کارت پرداخت", "۱۶ رقم؛ روی پیش‌فاکتور تصویری نمایش داده می‌شود. خالی = بخش پرداخت نمایش داده نمی‌شود.", "text"),
+    "PAYMENT_CARD_NUMBER": ("شمارهٔ کارت پرداخت", "۱۶ رقم؛ پس از ثبت سفارش برای مشتری فرستاده می‌شود. الزامی: بدون کارت معتبر ربات سفارش نهایی را نمی‌پذیرد.", "text"),
     "PAYMENT_SHEBA": ("شمارهٔ شبا", "به شکل IR و ۲۴ رقم؛ خالی = نمایش داده نمی‌شود.", "text"),
     "PAYMENT_OWNER": ("نام صاحب حساب", "روی پیش‌فاکتور تصویری نمایش داده می‌شود.", "text"),
+    "ACCOUNTING_STATUS_CODE": ("کد وضعیت سفارش در حسابداری (Status)", "کد وضعیتی که سفارش ثبت‌شده در «سازه حساب» می‌گیرد (KalaOrder.Status)؛ الزامی، عدد صحیح؛ ۶۸۰۸ معتبر نیست. پس از آزمایش در «سازه حساب» تعیین کنید.", "int"),
     "RECEIPT_DEADLINE_MINUTES": ("مهلت ارسال رسید (دقیقه)", "پس از این مدت سفارش بدون رسید خودکار لغو می‌شود (فقط در سرور فروشگاه، نه در حسابداری).", "int"),
     "SALES_WINDOWS_ENABLED": ("فروش گوشی طبق لیست قیمت", "بله = فروش گوشی فقط پس از لیست صبح (تا ۱۳:۳۰) یا عصر (تا ۲۰:۳۰)؛ جمعه بسته. لوازم جانبی همیشه قابل سفارش است.", "bool"),
     "SALES_MORNING_CLOSE": ("پایان فروش گوشی (لیست صبح)", "مثلاً 13:30 (ساعت ایران).", "text"),
@@ -53,7 +54,27 @@ _PROBLEMS = (
     (re.compile(r"use entries like"), "به شکل bale:123456 و با کاما جدا کنید"),
     (re.compile(r"use warehouse codes"), "کد انبارها را با کاما جدا کنید"),
     (re.compile(r"must be a time like"), "ساعت را به شکل 13:30 بنویسید"),
+    (re.compile(r"ACCOUNTING_STATUS_CODE is required"), "کد وضعیت الزامی است"),
+    (re.compile(r"(\d+) is not a valid status code"), "کد وضعیت {0} معتبر نیست"),
 )
+
+#: Same rule as the server (shopapi ``control._status_code`` /
+#: ``Settings.status_code_problem``): required, a whole number, not a known-invalid code.
+INVALID_STATUS_CODES = frozenset({6808})
+
+
+def local_problem(key: str, value: str) -> str | None:
+    """The server's message for a value it would refuse, checked before sending
+    (only where the rule is fixed; the server checks everything again)."""
+    if key == "ACCOUNTING_STATUS_CODE":
+        value = value.strip()
+        if value == "":
+            return "ACCOUNTING_STATUS_CODE is required"
+        if not re.fullmatch(r"\d{1,9}", value):
+            return "must be a whole number between 0 and 999999999"
+        if int(value) in INVALID_STATUS_CODES:
+            return f"{int(value)} is not a valid status code"
+    return None
 
 
 def label(key: str) -> str:

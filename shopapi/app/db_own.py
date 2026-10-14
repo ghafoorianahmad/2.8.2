@@ -257,6 +257,32 @@ CREATE TABLE IF NOT EXISTS password_requests (
     expires_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pwreq_staff ON password_requests(staff_id);
+
+-- v2.6.0: accounting product groups (Gkala) chosen in ShopAdmin. Only groups with
+-- show_in_bot = 1 reach customers; is_phone = 1 = phones (priced and sold only
+-- from the current valid distributor price list). No row = hidden.
+CREATE TABLE IF NOT EXISTS product_groups (
+    group_code INTEGER PRIMARY KEY,
+    show_in_bot INTEGER NOT NULL DEFAULT 0,
+    is_phone INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL DEFAULT ''
+);
+
+-- v2.6.0: «درخواست کالای ناموجود» from the bot. No payment and nothing is
+-- written to the accounting DB; staff see the list in ShopAdmin.
+CREATE TABLE IF NOT EXISTS item_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    kala_code INTEGER,
+    product_name TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','seen','done')),
+    created_at TEXT NOT NULL,
+    handled_at TEXT,
+    handled_by TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_item_requests_user ON item_requests(user_id);
 """
 
 #: Columns added after the first release: (table, column, declaration).
@@ -455,6 +481,7 @@ class OwnDB:
         with self._lock:
             order = self._fetchone(
                 "SELECT o.*, u.person_code AS user_person_code, u.status AS user_status, "
+                "u.name AS user_name, "
                 "EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id "
                 "AND p.file_name IS NOT NULL) AS has_receipt "
                 "FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id=?",
@@ -641,6 +668,75 @@ class OwnDB:
         from .order_timeout import cancel_overdue
 
         return len(cancel_overdue(self, "system:expire"))
+
+    # ---- product groups (v2.6.0) ----
+    def list_group_settings(self) -> dict[int, dict]:
+        with self._lock:
+            return {
+                int(r["group_code"]): r
+                for r in self._fetchall("SELECT * FROM product_groups ORDER BY group_code")
+            }
+
+    def set_group_settings(self, entries: list[tuple[int, bool, bool]], actor: str) -> None:
+        """entries: (group_code, show_in_bot, is_phone); other groups keep theirs."""
+        with self._lock:
+            ts = now_iso()
+            for code, shown, phone in entries:
+                self._conn.execute(
+                    "INSERT INTO product_groups (group_code, show_in_bot, is_phone, updated_at, "
+                    "updated_by) VALUES (?,?,?,?,?) ON CONFLICT(group_code) DO UPDATE SET "
+                    "show_in_bot=excluded.show_in_bot, is_phone=excluded.is_phone, "
+                    "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+                    (int(code), int(bool(shown)), int(bool(phone)), ts, actor),
+                )
+            self._commit()
+
+    # ---- unavailable item requests (v2.6.0) ----
+    def add_item_request(self, user_id: int, kala_code: int | None, product_name: str,
+                         text: str) -> dict:
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO item_requests (user_id, kala_code, product_name, text, created_at) "
+                "VALUES (?,?,?,?,?)",
+                (user_id, kala_code, product_name, text, now_iso()),
+            )
+            self._commit()
+            return self.get_item_request(cur.lastrowid)
+
+    def get_item_request(self, request_id: int) -> dict | None:
+        with self._lock:
+            return self._fetchone(
+                "SELECT r.*, u.name AS customer_name, u.person_code, u.platform "
+                "FROM item_requests r JOIN users u ON u.id = r.user_id WHERE r.id=?",
+                (request_id,),
+            )
+
+    def list_item_requests(self, status_filter: str | None = None, limit: int = 500) -> list[dict]:
+        with self._lock:
+            where, params = ("WHERE r.status=?", (status_filter,)) if status_filter else ("", ())
+            return self._fetchall(
+                "SELECT r.*, u.name AS customer_name, u.person_code, u.platform "
+                f"FROM item_requests r JOIN users u ON u.id = r.user_id {where} "
+                "ORDER BY r.id DESC LIMIT ?",
+                params + (limit,),
+            )
+
+    def count_item_requests_since(self, user_id: int, since: str) -> int:
+        with self._lock:
+            row = self._fetchone(
+                "SELECT COUNT(*) AS n FROM item_requests WHERE user_id=? AND created_at>=?",
+                (user_id, since),
+            )
+            return int(row["n"])
+
+    def set_item_request_status(self, request_id: int, status_value: str, actor: str) -> dict | None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE item_requests SET status=?, handled_at=?, handled_by=? WHERE id=?",
+                (status_value, now_iso(), actor, request_id),
+            )
+            self._commit()
+            return self.get_item_request(request_id)
 
     # ---- audit ----
     def audit(self, actor: str, action: str, detail: str) -> None:
