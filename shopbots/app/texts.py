@@ -7,7 +7,8 @@ the default. A broken file never stops the bots: the defaults are used and the
 problem is logged. Changes take effect on restart.
 
 Shop placeholders ({shop_name}, {shop_phone}, {currency}, ...) are filled in
-at load time; per-message placeholders ({order_id}, {total}, ...) stay for
+at load time (v2.6.1: with no shop phone set, every line holding {shop_phone}
+is left out instead of showing an empty or placeholder number); per-message placeholders ({order_id}, {total}, ...) stay for
 `str.format` in the engine. Every text is available as a module constant
 (`texts.WELCOME`, `texts.BTN_MENU`, ...).
 """
@@ -52,6 +53,23 @@ def fill_shop(text: str, shop: dict[str, str]) -> str:
         return text
 
 
+#: The shipped placeholder of ``shop_phone`` (older operator copies still hold
+#: it): treated as "no phone set".
+PHONE_PLACEHOLDER = "شماره تلفن فروشگاه"
+
+
+def phone_missing(shop: dict[str, str]) -> bool:
+    value = str(shop.get("shop_phone") or "").strip()
+    return not value or value == PHONE_PLACEHOLDER
+
+
+def drop_phone_lines(text: str) -> str:
+    """Remove every line that shows the shop phone (no phone configured)."""
+    if "{shop_phone}" not in text:
+        return text
+    return "\n".join(line for line in text.split("\n") if "{shop_phone}" not in line)
+
+
 def _read(path: Path) -> dict:
     with open(path, "r", encoding="utf-8-sig") as handle:
         data = json.load(handle)
@@ -93,8 +111,11 @@ def load(path: str | os.PathLike | None = None) -> str:
             source = str(override)
 
     SHOP = dict(merged["shop"])
+    no_phone = phone_missing(SHOP)
+    if no_phone:
+        SHOP["shop_phone"] = ""       # the invoice cards skip an empty entry too
     for key, value in {**merged["buttons"], **merged["messages"]}.items():
-        globals()[key] = fill_shop(value, SHOP)
+        globals()[key] = fill_shop(drop_phone_lines(value) if no_phone else value, SHOP)
     ORDER_STATUS_FA = dict(merged["order_status"])
     SOURCE = source
     return source

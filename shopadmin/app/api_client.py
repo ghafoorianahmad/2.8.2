@@ -153,6 +153,13 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"order status code is not configured", re.I),
      "کد وضعیت سفارش حسابداری (ACCOUNTING_STATUS_CODE) روی سرور تنظیم نشده است؛ "
      "سفارش در حسابداری ثبت نشد. پس از آزمایش G2 مقدار درست را در تنظیمات سرور وارد کنید."),
+    # ---- v2.6.1: item requests ----
+    (re.compile(r"customer has no messenger", re.I),
+     "این مشتری پیام‌رسانی ندارد؛ پیام قابل ارسال نیست."),
+    (re.compile(r"only staff can message customers", re.I),
+     "فقط کاربران برنامهٔ مدیریت می‌توانند به مشتری پیام بدهند."),
+    (re.compile(r"message is empty", re.I), "متن پیام خالی است."),
+    (re.compile(r"request not found", re.I), "این درخواست پیدا نشد."),
     (re.compile(r"duplicate accounting order number", re.I),
      "شمارهٔ سفارش در حسابداری تکراری بود؛ چیزی ثبت نشد. چند لحظه بعد دوباره تأیید کنید."),
     # ---- sign-in and staff accounts ----
@@ -729,12 +736,32 @@ class ShopApiClient:
 
     def save_product_groups(self, groups: list[dict]) -> list[dict]:
         body = {"groups": [{"code": int(g["code"]), "show_in_bot": bool(g.get("show_in_bot")),
-                            "is_phone": bool(g.get("is_phone"))} for g in groups]}
+                            "is_phone": bool(g.get("is_phone")),
+                            "price_on_inquiry": bool(g.get("price_on_inquiry"))}
+                           for g in groups]}
         return list(self._request("PUT", "/admin/product-groups", json_body=body) or [])
 
-    def list_item_requests(self, status: str | None = None) -> list[dict]:
-        params = {"status": status} if status else None
+    def list_item_requests(self, status: str | None = None,
+                           kind: str | None = None) -> list[dict]:
+        params = {"status": status, "kind": kind}
         return list(self._request("GET", "/admin/item-requests", params=params) or [])
+
+    def get_item_request(self, request_id: int) -> dict:
+        return self._request("GET", f"/admin/item-requests/{int(request_id)}") or {}
+
+    def set_item_request_note(self, request_id: int, note: str) -> dict:
+        return self._request("PUT", f"/admin/item-requests/{int(request_id)}/note",
+                             json_body={"note": str(note or "")[:1000]}) or {}
+
+    def item_request_messages(self, request_id: int) -> list[dict]:
+        """v2.6.1: the staff replies sent to the customer (with delivery state)."""
+        return list(self._request("GET", f"/admin/item-requests/{int(request_id)}/messages")
+                    or [])
+
+    def send_item_request_message(self, request_id: int, text: str) -> dict:
+        """Queue a reply; the bot of the customer's messenger delivers it."""
+        return self._request("POST", f"/admin/item-requests/{int(request_id)}/messages",
+                             json_body={"text": str(text)}) or {}
 
     def set_item_request_status(self, request_id: int, status: str) -> dict:
         if status not in ("new", "seen", "done"):

@@ -117,6 +117,10 @@ class FakeShopApi:
         self.item_requests: list[dict] = []
         self.payment_ready = True
         self.catalog_ready = True
+        self.phone_groups_ready = True
+        # ---- v2.6.1: replies to item requests ----
+        self.item_request_messages: dict[int, list[dict]] = {}
+        self.message_fail: str = ""
 
     # ---- helpers used by tests ------------------------------------------
     def add_staff(self, username: str, password: str = OWNER_PASSWORD, role: str = "operator",
@@ -197,7 +201,8 @@ class FakeShopApi:
                 "reason": reason, "message_fa": "فروش گوشی بسته است." if self.shop_closed
                 else "فروش گوشی باز است.", "until": None, "list_date": "1405/07/22",
                 "list_slot": "morning", "override_by": "", "receipt_deadline_minutes": 30,
-                "payment_ready": self.payment_ready, "catalog_ready": self.catalog_ready}
+                "payment_ready": self.payment_ready, "catalog_ready": self.catalog_ready,
+                "phone_groups_ready": self.phone_groups_ready}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -431,12 +436,51 @@ class FakeShopApi:
                 for group in self.product_groups:
                     if group["code"] in by:
                         group.update(show_in_bot=by[group["code"]]["show_in_bot"],
-                                     is_phone=by[group["code"]]["is_phone"])
+                                     is_phone=by[group["code"]]["is_phone"],
+                                     price_on_inquiry=by[group["code"]].get("price_on_inquiry",
+                                                                            False))
             return reply(200, self.product_groups)
 
         if path == "/admin/item-requests" and request.method == "GET":
             status = request.url.params.get("status")
-            return reply(200, [r for r in self.item_requests if not status or r["status"] == status])
+            kind = request.url.params.get("kind")
+            return reply(200, [r for r in self.item_requests
+                               if (not status or r["status"] == status)
+                               and (not kind or r.get("kind", "unavailable") == kind)])
+
+        if path.startswith("/admin/item-requests/") and path.endswith("/messages"):
+            request_id = int(path.split("/")[3])
+            if not any(r["id"] == request_id for r in self.item_requests):
+                return detail(404, "Request not found")
+            rows = self.item_request_messages.setdefault(request_id, [])
+            if request.method == "POST":
+                if self.message_fail:
+                    return detail(409, self.message_fail)
+                text = str(body.get("text") or "").strip()
+                if not text:
+                    return detail(422, "Message is empty")
+                row = {"id": sum(len(v) for v in self.item_request_messages.values()) + 1,
+                       "request_id": request_id, "text": text, "status": "pending", "error": "",
+                       "created_at": "2026-10-15T08:00:05+00:00",
+                       "created_by": user["username"], "sent_at": None}
+                rows.append(row)
+                return reply(201, row)
+            return reply(200, rows)
+
+        if path.startswith("/admin/item-requests/") and path.endswith("/note"):
+            request_id = int(path.split("/")[3])
+            row = next((r for r in self.item_requests if r["id"] == request_id), None)
+            if row is None:
+                return detail(404, "Request not found")
+            row.update(admin_note=body.get("note", ""), note_at="2026-10-15T08:00:00+00:00",
+                       note_by=user["username"])
+            return reply(200, row)
+
+        if path.startswith("/admin/item-requests/") and request.method == "GET" \
+                and path.count("/") == 3:
+            request_id = int(path.split("/")[3])
+            row = next((r for r in self.item_requests if r["id"] == request_id), None)
+            return reply(200, row) if row else detail(404, "Request not found")
 
         if path.startswith("/admin/item-requests/") and path.endswith("/status"):
             request_id = int(path.split("/")[3])

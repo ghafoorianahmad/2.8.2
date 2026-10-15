@@ -11,6 +11,8 @@ Platform = Literal["bale", "telegram", "web"]
 class GroupOut(BaseModel):
     code: int
     name: str
+    #: v2.6.1: the parent group in «سازه حساب» (Gkala.g_kala; 0 = a main group).
+    parent: Optional[int] = None
 
 
 class VariantOut(BaseModel):
@@ -28,9 +30,11 @@ class ProductOut(BaseModel):
     unit_price: float
     available_qty: float
     image: Optional[str] = None
-    #: "accounting" (price level, stock) or "pricelist" (per color, see variants).
+    #: "accounting" (price level, stock), "pricelist" (per color, see variants) or
+    #: "inquiry" (v2.6.1: no price is shown and it cannot be ordered).
     priced_by: str = "accounting"
     variants: Optional[list[VariantOut]] = None
+    price_on_inquiry: bool = False
 
 
 class ProductPage(BaseModel):
@@ -169,6 +173,8 @@ class ShopStateOut(BaseModel):
     payment_ready: bool = True
     #: v2.6.0: at least one product group is shown in the bot.
     catalog_ready: bool = True
+    #: v2.6.1: at least one group is a phone group (else ShopAdmin warns).
+    phone_groups_ready: bool = True
 
 
 class StatementItem(BaseModel):
@@ -321,6 +327,13 @@ class ProductGroupOut(BaseModel):
     name: str
     show_in_bot: bool = False
     is_phone: bool = False
+    price_on_inquiry: bool = False
+    #: v2.6.1: parent group (None = a main group) and the flags in effect
+    #: (own or inherited from an ancestor).
+    parent: Optional[int] = None
+    effective_show_in_bot: bool = False
+    effective_is_phone: bool = False
+    effective_price_on_inquiry: bool = False
     #: The group is configured here but no longer exists in the accounting DB.
     missing: bool = False
 
@@ -329,6 +342,7 @@ class ProductGroupSetting(BaseModel):
     code: int = Field(ge=0)
     show_in_bot: bool
     is_phone: bool
+    price_on_inquiry: bool = False
 
 
 class ProductGroupsIn(BaseModel):
@@ -342,6 +356,8 @@ class ItemRequestIn(BaseModel):
     kala_code: Optional[int] = Field(default=None, gt=0)
     #: ... and/or what the customer typed.
     text: str = Field("", max_length=300)
+    #: v2.6.1: "inquiry" = «استعلام قیمت» of a price-on-inquiry product.
+    kind: Literal["unavailable", "inquiry"] = "unavailable"
 
 
 class ItemRequestOut(BaseModel):
@@ -357,10 +373,51 @@ class ItemRequestOut(BaseModel):
     customer_name: Optional[str] = None
     person_code: Optional[int] = None
     platform: Optional[str] = None
+    #: v2.6.1
+    kind: str = "unavailable"
+    admin_note: str = ""
+    note_at: Optional[str] = None
+    note_by: str = ""
+    customer_phone: Optional[str] = None
+    messages_count: int = 0
 
 
 class ItemRequestStatusIn(BaseModel):
     status: Literal["new", "seen", "done"]
+
+
+class ItemRequestNoteIn(BaseModel):
+    note: str = Field("", max_length=1000)
+
+
+class ItemRequestMessageIn(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class ItemRequestMessageOut(BaseModel):
+    """A staff reply to an item request (v2.6.1); the bot delivers it."""
+    id: int
+    request_id: int
+    text: str
+    status: str
+    error: str = ""
+    created_at: str
+    created_by: str = ""
+    sent_at: Optional[str] = None
+
+
+class ItemRequestMessageDelivery(ItemRequestMessageOut):
+    """What the bot needs to deliver one reply (service key only)."""
+    platform: str
+    chat_id: str
+    product_name: str = ""
+    request_text: str = ""
+    kind: str = "unavailable"
+
+
+class ItemRequestMessageResultIn(BaseModel):
+    ok: bool
+    error: str = Field("", max_length=300)
 
 
 class RequestSearchItem(BaseModel):

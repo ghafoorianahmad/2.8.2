@@ -328,10 +328,12 @@ class ShopApiClient:
         return [r for r in (result or []) if isinstance(r, dict)]
 
     async def create_item_request(
-        self, platform: str, chat_id: str | int, *, kala_code: int | None = None, text: str = ""
+        self, platform: str, chat_id: str | int, *, kala_code: int | None = None, text: str = "",
+        kind: str = "unavailable",
     ) -> dict | None:
+        """``kind="inquiry"``: «استعلام قیمت» of a price-on-inquiry product (v2.6.1)."""
         body: dict[str, Any] = {"platform": platform, "chat_id": str(chat_id),
-                                "text": str(text or "")[:300]}
+                                "text": str(text or "")[:300], "kind": kind}
         if kala_code:
             body["kala_code"] = int(kala_code)
         return await self._request(
@@ -341,6 +343,22 @@ class ShopApiClient:
     async def admin_get_item_request(self, request_id: int) -> dict | None:
         return await self._request(
             "GET", f"/admin/item-requests/{int(request_id)}", key=self._settings.admin_api_key
+        )
+
+    async def admin_get_item_request_message(self, message_id: int) -> dict | None:
+        """A staff reply to an item request and where to deliver it (v2.6.1)."""
+        return await self._request(
+            "GET", f"/admin/item-request-messages/{int(message_id)}",
+            key=self._settings.admin_api_key,
+        )
+
+    async def admin_item_request_message_result(
+        self, message_id: int, ok: bool, error: str = ""
+    ) -> dict | None:
+        return await self._request(
+            "POST", f"/admin/item-request-messages/{int(message_id)}/result",
+            key=self._settings.admin_api_key,
+            json_body={"ok": bool(ok), "error": str(error or "")[:300]},
         )
 
     async def admin_get_inquiry(self, inquiry_id: int) -> dict | None:

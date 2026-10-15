@@ -66,8 +66,8 @@ class DashboardPage(BasePage):
         self.setup_warning = widgets.label("", color=theme.WARNING_TEXT, bold=True, wrap=True)
         self.setup_warning.setObjectName("SetupWarning")
         self.setup_warning.setStyleSheet(
-            f"QLabel#SetupWarning {{ background: {theme.WARNING_BG}; border: 1px solid {theme.BORDER};"
-            f" border-radius: 8px; padding: 10px 14px; }}")
+            f"QLabel#SetupWarning {{ background: {theme.WARNING_BG}; border: 2px solid {theme.WARNING};"
+            f" border-radius: 8px; padding: 12px 16px; font-size: 14px; }}")
         self.setup_warning.setVisible(False)
         self.body.addWidget(self.setup_warning)
 
@@ -323,6 +323,12 @@ def setup_problems(state: object) -> list[str]:
     if state.get("catalog_ready") is False:
         problems.append("هیچ گروه کالایی برای نمایش در ربات انتخاب نشده؛ ربات کالایی نشان "
                         "نمی‌دهد. از صفحهٔ «گروه‌های کالا» گروه‌ها را انتخاب کنید.")
+    if state.get("phone_groups_ready") is False:
+        # v2.6.1: without a phone group nothing is treated as a phone: no price-list
+        # pricing and the phone sales window does not apply to any item.
+        problems.append("هیچ گروهی «گروه گوشی» علامت نخورده است؛ گوشی‌ها شناخته نمی‌شوند، "
+                        "قیمتشان از لیست قیمت نیست و بسته بودن فروش گوشی رویشان اثر ندارد. "
+                        "در صفحهٔ «گروه‌های کالا» گروه «گوشی» را تیک «گروه گوشی» بزنید.")
     return problems
 
 

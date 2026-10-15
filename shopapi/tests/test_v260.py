@@ -271,7 +271,7 @@ def test_status_code_is_editable_with_the_same_validation():
 
 
 def test_version():
-    assert control.VERSION == "2.6.0"
+    assert control.VERSION == "2.6.1"
 
 
 def test_staff_see_every_group(client, reader, db):

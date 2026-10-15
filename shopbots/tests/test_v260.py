@@ -153,7 +153,7 @@ def test_item_request_flow(env, bot_apis, shopapi):
             texts.ITEM_REQUEST_NONE.format(text="نوکیا 3310")
         await push_callback(engine, "bale", 7, CUSTOMER_CHAT, "ireqt")
         assert bot_apis["bale"].last_text_any(CUSTOMER_CHAT) == texts.ITEM_REQUEST_SENT
-        # the owner hears about it in the admin chat
+        # v2.6.1: announced ONLY inside ShopAdmin - never in the admin chat
         await engine.notify_customers_from_events()
         shopapi.add_event("item_request", 1)
         await engine.notify_customers_from_events()
@@ -162,8 +162,7 @@ def test_item_request_flow(env, bot_apis, shopapi):
     assert [r["kala_code"] for r in shopapi.item_requests] == [103, None]
     assert shopapi.item_requests[1]["text"] == "نوکیا 3310"
     assert not shopapi.orders                                  # no order, no payment
-    assert texts.ITEM_REQUEST_NOTICE.format(product="کالای ج", name="علی") in \
-        bot_apis["bale"].texts(ADMIN_CHAT)
+    assert not any("کالای ج" in t for t in bot_apis["bale"].texts(ADMIN_CHAT))
 
 
 def test_item_request_limit(env, bot_apis, shopapi):

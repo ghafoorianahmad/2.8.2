@@ -20,7 +20,7 @@ def test_server_and_installer_versions_match():
     match = re.search(r'^#define\s+MyAppVersion\s+"([^"]+)"', iss, re.MULTILINE)
     assert match, "MyAppVersion not found in ShopAdmin.iss"
     assert control.VERSION == match.group(1)
-    assert control.VERSION == "2.6.0"
+    assert control.VERSION == "2.6.1"
 
 
 # ---- forgot password ---------------------------------------------------------

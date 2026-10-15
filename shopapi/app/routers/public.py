@@ -50,15 +50,26 @@ RECEIPT_TOO_LATE_DETAIL = "Receipt deadline passed; order cancelled"
 PAYMENT_NOT_CONFIGURED_DETAIL = "Payment details are not configured"
 #: v2.6.0: unavailable item requests per customer and day (spam guard).
 ITEM_REQUESTS_PER_DAY = 10
+#: v2.6.1: why a cart item is refused at the final submit (the bot maps these;
+#: the product code follows "Product ").
+NOT_FOR_SALE_DETAIL = "is not available for sale"
+ON_INQUIRY_DETAIL = "is price on inquiry"
+NOT_IN_PRICE_LIST_DETAIL = "is not in the current price list"
+
+
+def _refuse(kala_code: int, reason: str) -> HTTPException:
+    return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Product {kala_code} {reason}")
 
 
 def shop_state(db: OwnDB, settings: Settings) -> ShopStateOut:
     state = sales.compute(db, settings)
+    cfg = group_config.load(db)
     return ShopStateOut(
         closed=not state.open, sales_open=state.open,
         receipt_deadline_minutes=settings.receipt_deadline_minutes,
         payment_ready=settings.payment_ready(),
-        catalog_ready=group_config.load(db).configured,
+        catalog_ready=cfg.configured,
+        phone_groups_ready=cfg.phone_configured,
         **{k: v for k, v in state.as_dict().items() if k != "open"},
     )
 
@@ -68,13 +79,19 @@ def customer_view(product: dict, cfg: group_config.GroupConfig,
     """A reader product as a customer may see it, or None (hidden). v2.6.0:
 
     * only groups chosen «show in bot»;
+    * v2.6.1: an item of a «price on inquiry» group without any price (also in
+      or out of stock), never orderable;
     * a phone (an item of a phone group) only while it is in the current valid
       price list with an available color, priced only from the list;
     * anything else at its accounting price, with ``in_stock`` only in stock.
+    Groups inherit every flag from their ancestors (``groups.py``).
     """
     group = product.get("group")
     if not cfg.visible(group):
         return None
+    if cfg.on_inquiry(group):
+        return {**product, "unit_price": 0.0, "priced_by": "inquiry", "variants": None,
+                "price_on_inquiry": True}
     if cfg.is_phone(group):
         if not phones.sellable(product["code"]):
             return None
@@ -127,8 +144,10 @@ def groups(
 ) -> list[GroupOut]:
     """Customers: only the groups chosen «show in bot» in ShopAdmin (v2.6.0).
     Staff (ShopAdmin's products page) see every group."""
+    rows = reader.list_groups()
     cfg = group_config.load(db)
-    return [GroupOut(**g) for g in reader.list_groups()
+    cfg.parents = group_config.parent_map(rows)
+    return [GroupOut(**g) for g in rows
             if role == "staff" or cfg.visible(g.get("code"))]
 
 
@@ -148,18 +167,21 @@ def products(
     if role == "staff":
         return _staff_products(reader, db, settings, q=q, group=group, in_stock=in_stock,
                                page=page, page_size=page_size, level=level)
-    cfg = group_config.load(db)
+    cfg = group_config.load(db, reader)
     if group is not None and not cfg.visible(group):
         return {"total": 0, "page": page, "page_size": page_size, "items": []}
     our_res = db.pending_reservations()
     phones = phone_catalog.load(db, settings)
     # Groups and phones are decided here, so filtering and paging happen after.
+    # A group lists its subgroups' items too (v2.6.1 tree).
     everything = reader.list_products(
-        q=q, group=group, in_stock=in_stock, page=1, page_size=1_000_000,
+        q=q, group=None, in_stock=in_stock, page=1, page_size=1_000_000,
         level=level, our_reservations=our_res, include_codes=phones.codes,
+        include_groups=cfg.inquiry_groups(),
     )
     items = [view for it in everything["items"]
-             if (view := customer_view(it, cfg, phones, in_stock=in_stock)) is not None]
+             if (group is None or int(group) in cfg.chain(it.get("group")))
+             and (view := customer_view(it, cfg, phones, in_stock=in_stock)) is not None]
     start = (page - 1) * page_size
     return {"total": len(items), "page": page, "page_size": page_size,
             "items": items[start:start + page_size]}
@@ -195,7 +217,7 @@ def product(
     level = settings.price_level_for(role)
     found = reader.get_products_for_order([code], level, db.pending_reservations()).get(code)
     if found is not None:
-        found = customer_view({**found, "code": code}, group_config.load(db),
+        found = customer_view({**found, "code": code}, group_config.load(db, reader),
                               phone_catalog.load(db, settings), in_stock=False)
     if found is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Product not found")
@@ -208,6 +230,7 @@ def product(
         image=found.get("image"),
         priced_by=found.get("priced_by", "accounting"),
         variants=found.get("variants"),
+        price_on_inquiry=bool(found.get("price_on_inquiry")),
     )
 
 
@@ -336,7 +359,7 @@ def create_order(
     merged = _merge_items(payload.items)
     level = settings.price_level_for(role)
     phones = phone_catalog.load(db, settings)
-    cfg = group_config.load(db)
+    cfg = group_config.load(db, reader)
     # A retry of an order placed just before closing time must still get it back,
     # so the sales check comes after the idempotency lookup (inside the guard).
     sales_state = sales.compute(db, settings)
@@ -360,10 +383,26 @@ def create_order(
         our_res = db.pending_reservations()
         codes = list(dict.fromkeys(code for code, _ in merged))
         detail = reader.get_products_for_order(codes, level, our_res)
+        # v2.6.1: a stale cart (the bot keeps it for days) is checked item by item
+        # against what a customer may order NOW, before anything else: a hidden
+        # group, a «price on inquiry» group, or a phone that is not in the current
+        # valid price list (while sales are open). The bot names the item and
+        # asks to remove it.
+        for code in codes:
+            prod = detail.get(code)
+            if prod is None or not cfg.visible(prod.get("group")):
+                raise _refuse(code, NOT_FOR_SALE_DETAIL)
+            if cfg.on_inquiry(prod.get("group")):
+                raise _refuse(code, ON_INQUIRY_DETAIL)
+            # While phone sales are closed the "sales closed" answer below says
+            # more (e.g. no valid list today); it comes first then.
+            if sales_state.open and cfg.is_phone(prod.get("group")) \
+                    and not phones.sellable(code):
+                raise _refuse(code, NOT_IN_PRICE_LIST_DETAIL)
         # v2.6.0: a phone = an item of a phone group (never "has a price-list
         # mapping": without a list nothing was mapped and phones slipped through
         # as accessories while sales were closed). Read from the accounting DB
-        # now, so the gate holds even for a stale cart.
+        # now, so the gate holds even for a stale cart. Subgroups inherit (v2.6.1).
         phone_codes = {code for code in codes
                        if detail.get(code) is not None and cfg.is_phone(detail[code].get("group"))}
         if not sales_state.open and phone_codes:
@@ -380,16 +419,10 @@ def create_order(
                     f"Quantity for product {kala_code} exceeds the maximum of "
                     f"{settings.max_order_qty}",
                 )
-            prod = detail.get(kala_code)
-            if prod is None or not cfg.visible(prod.get("group")):
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                    f"Product {kala_code} is not available for sale")
+            prod = detail[kala_code]          # checked above
             if kala_code in phone_codes:
                 # Phone: priced per color ONLY from the current valid list, read
                 # now (REQUIREMENTS §4), sold on the distributor's availability.
-                if not phones.sellable(kala_code):
-                    raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                        f"Product {kala_code} is not available for sale")
                 if variant_id is None:
                     raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                         f"Choose a color for product {kala_code}")
@@ -415,8 +448,7 @@ def create_order(
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                     f"Product {kala_code} has no colors")
             if prod.get("unit_price") is None or prod["unit_price"] <= 0:
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                    f"Product {kala_code} is not available for sale")
+                raise _refuse(kala_code, NOT_FOR_SALE_DETAIL)
             if prod["available_qty"] < qty:
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
@@ -632,9 +664,10 @@ def item_request_search(
 ) -> list[RequestSearchItem]:
     """«درخواست کالای ناموجود»: names (no price, no stock) of products of the
     groups shown in the bot that match ``q`` (v2.6.0)."""
-    cfg = group_config.load(db)
+    cfg = group_config.load(db, reader)
     found = reader.list_products(q=q, in_stock=False, page=1, page_size=1_000_000,
-                                 level=settings.price_level_for(role))
+                                 level=settings.price_level_for(role),
+                                 include_groups=cfg.inquiry_groups())
     out = [RequestSearchItem(code=int(p["code"]), name=str(p["name"] or ""))
            for p in found["items"] if cfg.visible(p.get("group"))]
     return out[:8]
@@ -649,29 +682,36 @@ def create_item_request(
     db: OwnDB = Depends(deps.get_db),
     settings: Settings = Depends(deps.get_settings),
 ) -> dict:
-    """A customer asks for an item that is not available (v2.6.0): no order,
-    no payment and nothing written to the accounting DB - only a note for staff
-    (in-app notification + the requests list in ShopAdmin)."""
+    """A customer asks for an item that is not available (v2.6.0) or asks the
+    price of a «price on inquiry» item (v2.6.1, ``kind=inquiry``): no order, no
+    payment and nothing written to the accounting DB - only a note for staff
+    (ShopAdmin notification + the «درخواست کالا» list; no admin-chat message)."""
     if role not in ("bot", "admin"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not available on this channel")
     user = _requesting_user(db, payload.platform, payload.chat_id)
     text = " ".join(payload.text.split())[:300]
     name = ""
+    if payload.kind == "inquiry" and payload.kala_code is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Choose the product")
     if payload.kala_code is not None:
         found = reader.get_products_for_order(
             [payload.kala_code], settings.price_level_for(role), {}).get(payload.kala_code)
-        if found is None or not group_config.load(db).visible(found.get("group")):
+        cfg = group_config.load(db, reader)
+        if found is None or not cfg.visible(found.get("group")):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Product not found")
+        if payload.kind == "inquiry" and not cfg.on_inquiry(found.get("group")):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Product is not price on inquiry")
         name = str(found.get("name") or "")
     if not name and len(text) < 2:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Describe the item")
     since = (now_utc() - timedelta(days=1)).isoformat(timespec="seconds")
     if db.count_item_requests_since(user["id"], since) >= ITEM_REQUESTS_PER_DAY:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many requests today")
-    row = db.add_item_request(user["id"], payload.kala_code, name, text)
-    db.audit(role, "item_request_create", f"request id={row['id']}")
+    row = db.add_item_request(user["id"], payload.kala_code, name, text, payload.kind)
+    db.audit(role, "item_request_create", f"request id={row['id']} kind={payload.kind}")
     db.add_event("item_request", row["id"], role)
-    return {**row, "customer_name": None, "person_code": None}
+    return {**row, "customer_name": None, "person_code": None, "customer_phone": None}
 
 
 @router.post("/security/report", status_code=status.HTTP_204_NO_CONTENT)

@@ -184,6 +184,11 @@ class FakeShopApi:
         #: v2.6.0: «درخواست کالای ناموجود»
         self.item_requests: list[dict] = []
         self.item_request_limit = 10
+        #: v2.6.1: staff replies {id: row}, delivery reports, and order refusals
+        #: {kala_code: reason} ("is price on inquiry", ...)
+        self.item_request_messages: dict[int, dict] = {}
+        self.message_results: list[dict] = []
+        self.refuse_items: dict[int, str] = {}
         self.statement_requests: list[dict] = []
         self.order_bodies: list[dict] = []
         self.inquiries: list[dict] = []
@@ -335,9 +340,23 @@ class FakeShopApi:
                 return self._err(422, "Describe the item")
             row = {"id": len(self.item_requests) + 1, "user_id": user["id"], "status": "new",
                    "kala_code": body.get("kala_code"), "product_name": name,
-                   "text": body.get("text") or "", "created_at": "t"}
+                   "text": body.get("text") or "", "created_at": "t",
+                   "kind": body.get("kind") or "unavailable"}
             self.item_requests.append(row)
             return httpx.Response(201, json=row)
+
+        if method == "GET" and path.startswith("/admin/item-request-messages/"):
+            row = self.item_request_messages.get(int(path.split("/")[3]))
+            return self._ok(row) if row else self._err(404, "Message not found")
+
+        if method == "POST" and path.startswith("/admin/item-request-messages/"):
+            message_id = int(path.split("/")[3])
+            self.message_results.append({"id": message_id, **body})
+            row = self.item_request_messages.get(message_id)
+            if row and row["status"] == "pending":
+                row["status"] = "sent" if body.get("ok") else "failed"
+                row["error"] = body.get("error") or ""
+            return self._ok(row)
 
         if method == "GET" and path.startswith("/admin/item-requests/"):
             request_id = int(path.split("/")[3])
@@ -370,7 +389,7 @@ class FakeShopApi:
             if q:
                 items = [p for p in items if q in p["name"]]
             if str(params.get("in_stock", "true")).lower() != "false":
-                items = [p for p in items if p["available_qty"] > 0]
+                items = [p for p in items if p["available_qty"] > 0 or p.get("price_on_inquiry")]
             page = int(params.get("page", 1))
             page_size = int(params.get("page_size", 5))
             start = (page - 1) * page_size
@@ -491,6 +510,9 @@ class FakeShopApi:
             total = 0.0
             self.order_bodies.append(body)
             for line in body.get("items", []):
+                if line["kala_code"] in self.refuse_items:
+                    return self._err(422, f"Product {line['kala_code']} "
+                                          f"{self.refuse_items[line['kala_code']]}")
                 product = next((p for p in self.products if p["code"] == line["kala_code"]), None)
                 if product is not None and product.get("variants") is not None:
                     color = next((v for v in product["variants"]

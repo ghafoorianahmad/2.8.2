@@ -40,19 +40,21 @@ class FakeReader:
         return True
 
     def list_products(self, *, q=None, group=None, in_stock=True, page=1, page_size=20,
-                      level=3, our_reservations=None, include_codes=None):
+                      level=3, our_reservations=None, include_codes=None, include_groups=None):
         our = our_reservations or {}
         extra = set(include_codes or ())
+        extra_groups = set(include_groups or ())
         items = []
         for code, p in self.products.items():
-            if p.get("unit_price", 0) <= 0 and code not in extra:  # the reader's "{col} > 0"
+            free = code in extra or p.get("group") in extra_groups
+            if p.get("unit_price", 0) <= 0 and not free:  # the reader's "{col} > 0"
                 continue
             if group is not None and p.get("group") != group:
                 continue
             if q and q not in p["name"]:
                 continue
             avail = max(0.0, p["stock"] - p.get("open", 0.0) - our.get(code, 0.0))
-            if in_stock and avail <= 0 and code not in extra:
+            if in_stock and avail <= 0 and not free:
                 continue
             items.append({**p, "code": code, "available_qty": avail})
         total = len(items)

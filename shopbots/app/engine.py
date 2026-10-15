@@ -11,6 +11,7 @@ produced only by `utils.log_event` (platform, update id, event type).
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -114,6 +115,8 @@ CALLBACK_ARG_COUNTS: dict[str, int] = {
     "ireq": 0,
     "ireqt": 0,
     "ireqk": 1,
+    # v2.6.1: «استعلام قیمت» of a price-on-inquiry product
+    "pinq": 1,
 }
 ADMIN_ACTIONS = frozenset({"addu", "adru", "adap", "adrp", "adsug", "adst"})
 #: Screens anyone may open, even before registration is approved.
@@ -148,8 +151,16 @@ OWNER_EVENT_TEXTS = {
     # v2.5.0: never deleted in the accounting DB; the owner decides there
     "accounting_duplicate_order": "DUPLICATE_ORDER_NOTICE",
     "order_timeout_written": "TIMEOUT_WRITTEN_NOTICE",
-    # v2.6.0: a customer asked for an unavailable item
-    "item_request": "ITEM_REQUEST_NOTICE",
+    # v2.6.1: item requests are announced ONLY inside ShopAdmin (no admin chat).
+}
+#: v2.6.1: a staff reply to an item request, delivered here to the customer.
+ITEM_REQUEST_MESSAGE_EVENT = "item_request_message"
+#: shopapi detail of a refused cart item: "Product <code> <reason>".
+_REFUSED_ITEM = re.compile(r"^Product (\d+) (.+)$")
+REFUSED_ITEM_TEXTS = {
+    "is not available for sale": "CART_ITEM_NOT_FOR_SALE",
+    "is price on inquiry": "CART_ITEM_ON_INQUIRY",
+    "is not in the current price list": "CART_ITEM_NOT_IN_LIST",
 }
 SHOP_STATE_TTL = 30.0
 #: Receipt deadline when shopapi does not say (minutes).
@@ -726,6 +737,28 @@ class BotEngine:
             adapter, platform, chat_id, text, [[(texts.BTN_MENU, "menu")]],
         )
 
+    @staticmethod
+    def _tree_order(groups: list[dict]) -> list[dict]:
+        """Groups with each subgroup right after its parent (shopapi order otherwise)."""
+        codes = {g.get("code") for g in groups}
+        children: dict = {}
+        for g in groups:
+            children.setdefault(g.get("parent") if g.get("parent") in codes else None, []).append(g)
+        out: list[dict] = []
+        seen: set = set()
+
+        def walk(parent) -> None:
+            for g in children.get(parent, []):
+                if g.get("code") in seen:
+                    continue
+                seen.add(g.get("code"))
+                out.append(g)
+                walk(g.get("code"))
+
+        walk(None)
+        out.extend(g for g in groups if g.get("code") not in seen)   # a cycle: keep it
+        return out
+
     async def _show_groups(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
         groups = await self.catalog.groups()
         if not groups:
@@ -734,7 +767,10 @@ class BotEngine:
                 state=STATE_NONE, data={},
             )
             return
-        rows = [[(str(g.get("name") or ""), f"grp:{g.get('code')}")] for g in groups]
+        # v2.6.1: a subgroup (e.g. a brand under گوشی) follows its parent, indented.
+        shown = {g.get("code") for g in groups}
+        rows = [[(("↳ " if g.get("parent") in shown else "") + str(g.get("name") or ""),
+                  f"grp:{g.get('code')}")] for g in self._tree_order(groups)]
         rows.append([(texts.BTN_MENU, "menu")])
         await self._send_options(
             adapter, platform, chat_id, texts.GROUPS_TITLE, rows, state=STATE_NONE, data={}
@@ -765,7 +801,9 @@ class BotEngine:
             for product in result.items:
                 code = product.code
                 cache[str(code)] = product.as_cache()
-                if product.has_colors:
+                if product.on_inquiry:
+                    lines.append(texts.PRODUCT_LINE_INQUIRY.format(name=product.name))
+                elif product.has_colors:
                     lines.append(
                         texts.PRODUCT_LINE_COLORS.format(
                             name=product.name, colors=fmt_num(len(product.colors)),
@@ -780,7 +818,8 @@ class BotEngine:
                         )
                     )
                 label = shorten(product.name, 40) or str(code)
-                rows.append([(label if product.in_stock else f"❌ {label}", f"prod:{code}")])
+                shown = label if product.in_stock or product.on_inquiry else f"❌ {label}"
+                rows.append([(shown, f"prod:{code}")])
             nav = []
             group_arg = int(group) if group is not None else 0
             if page > 1:
@@ -812,6 +851,15 @@ class BotEngine:
         product = (data.get("pcache") or {}).get(str(code))
         if not product:
             await self._send_text(adapter, chat_id, texts.NO_PRODUCTS)
+            return
+        if product.get("inquiry"):
+            # v2.6.1: no price and no cart; the customer asks the shop instead.
+            await self._send_options(
+                adapter, platform, chat_id,
+                texts.PRODUCT_DETAIL_INQUIRY.format(name=product["name"]),
+                [[(texts.BTN_INQUIRY, f"pinq:{code}")], [(texts.BTN_MENU, "menu")]],
+                state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+            )
             return
         if product.get("colors") is not None:
             await self._show_colors(adapter, platform, chat_id, code, product, data,
@@ -941,6 +989,9 @@ class BotEngine:
         if not product or product.get("colors") is not None:
             # a phone is added only with a color (vadd)
             await self._answer_callback(adapter, callback_id, texts.BAD_CALLBACK)
+            return
+        if product.get("inquiry"):
+            await self._answer_callback(adapter, callback_id, texts.PRICE_ON_INQUIRY_NO_CART, True)
             return
         if product["qty"] <= 0:
             await self._answer_callback(adapter, callback_id, texts.OUT_OF_STOCK)
@@ -1116,6 +1167,47 @@ class BotEngine:
         await self._answer_callback(adapter, callback_id, texts.INQUIRY_SENT)
         await self._send_text(adapter, chat_id, texts.INQUIRY_SENT)
 
+    async def _send_price_inquiry(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int, callback_id=None,
+    ) -> None:
+        """v2.6.1: «استعلام قیمت» of a price-on-inquiry product = an item request of
+        kind ``inquiry`` (ShopAdmin «درخواست کالا»); no order, no payment."""
+        _state, data = self.store.get_conversation(platform, chat_id)
+        product = (data.get("pcache") or {}).get(str(code)) or {}
+        name = str(product.get("name") or code)
+        marker = f"pinq:{code}"
+        sent_text = texts.PRICE_INQUIRY_SENT.format(name=name)
+        if marker in (data.get("inquired") or []):
+            await self._answer_callback(adapter, callback_id, sent_text)
+            return
+        try:
+            await self.api.create_item_request(platform, chat_id, kala_code=code, kind="inquiry")
+        except ShopApiRejected as exc:
+            message = {429: texts.ITEM_REQUEST_TOO_MANY,
+                       404: texts.PRODUCT_NOT_FOUND}.get(exc.status or 0, exc.message_fa)
+            await self._answer_callback(adapter, callback_id)
+            await self._send_options(adapter, platform, chat_id, message,
+                                     [[(texts.BTN_MENU, "menu")]], state=STATE_NONE, data={})
+            return
+        except ShopApiError:
+            await self._answer_callback(adapter, callback_id, texts.SERVICE_UNAVAILABLE, True)
+            return
+        data = {**data, "inquired": [*(data.get("inquired") or [])[-19:], marker]}
+        self.store.set_conversation(platform, chat_id, _state, data)
+        await self._answer_callback(adapter, callback_id, sent_text)
+        await self._send_options(adapter, platform, chat_id, sent_text,
+                                 [[(texts.BTN_MENU, "menu")]])
+
+    def _refused_item_text(self, platform: str, chat_id: str, detail: str | None) -> str | None:
+        """v2.6.1: a stale cart item refused at the final submit -> a clear message."""
+        match = _REFUSED_ITEM.match(str(detail or "").strip())
+        if not match or match.group(2) not in REFUSED_ITEM_TEXTS:
+            return None
+        code = int(match.group(1))
+        name = next((str(it.get("name") or "") for it in self.cart.items(platform, chat_id)
+                     if int(it.get("kala_code") or 0) == code), "") or str(code)
+        return getattr(texts, REFUSED_ITEM_TEXTS[match.group(2)]).format(name=name)
+
     async def _show_cart(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
         items = self.cart.items(platform, chat_id)
         if not items:
@@ -1217,6 +1309,14 @@ class BotEngine:
                     adapter, platform, chat_id,
                     self._sales_closed_text(await self._sales_state()),
                     [[(texts.BTN_MENU, "menu")]],
+                )
+                return
+            refused = self._refused_item_text(platform, chat_id, exc.detail) \
+                if exc.status == 422 else None
+            if refused:
+                await self._send_options(
+                    adapter, platform, chat_id, refused,
+                    [[(texts.BTN_CART, "cart")], [(texts.BTN_MENU, "menu")]],
                 )
                 return
             raise
@@ -1630,6 +1730,8 @@ class BotEngine:
             await self._cart_remove(adapter, platform, chat_id, args[0], callback_id, args[1])
         elif action == "inq":
             await self._send_inquiry(adapter, platform, chat_id, args[0], args[1], callback_id)
+        elif action == "pinq":
+            await self._send_price_inquiry(adapter, platform, chat_id, args[0], callback_id)
         elif action == "kp":
             await self._answer_callback(adapter, callback_id)
             await self._show_product_by_code(adapter, platform, chat_id, args[0])
@@ -1803,6 +1905,9 @@ class BotEngine:
             if kind in CUSTOMER_EVENT_KINDS and ref_id is not None:
                 if await self._notify_decision(kind, int(ref_id)):
                     sent += 1
+            elif kind == ITEM_REQUEST_MESSAGE_EVENT and ref_id is not None:
+                if await self._deliver_item_request_message(int(ref_id)):
+                    sent += 1
             elif kind in OWNER_EVENT_TEXTS:
                 if await self._notify_owner(kind, ref_id, int(event.get("id") or 0)):
                     sent += 1
@@ -1819,17 +1924,7 @@ class BotEngine:
         if not self.settings.admin_targets(tuple(self.adapters.keys())):
             return False
         template = getattr(texts, OWNER_EVENT_TEXTS[kind])
-        if kind == "item_request":
-            try:
-                request = await self.api.admin_get_item_request(int(ref_id))
-            except ShopApiError:
-                request = None
-            request = request if isinstance(request, dict) else {}
-            text = template.format(
-                product=request.get("product_name") or request.get("text") or "-",
-                name=request.get("customer_name") or "-",
-            )
-        elif kind == "price_inquiry":
+        if kind == "price_inquiry":
             try:
                 inquiry = await self.api.admin_get_inquiry(int(ref_id))
             except ShopApiError:
@@ -1844,6 +1939,46 @@ class BotEngine:
             text = template.format(list_id=ref_id if ref_id is not None else "-")
         await self._broadcast_admin(text, [])
         return True
+
+    async def _deliver_item_request_message(self, message_id: int) -> bool:
+        """v2.6.1: a staff reply from ShopAdmin «درخواست کالا» -> the customer, on the
+        messenger the request came from; the outcome goes back to shopapi (ShopAdmin
+        shows «ارسال شد» or the error). Each reply is delivered at most once."""
+        marker = "ireqmsg"
+        if self.store.is_announced(marker, message_id):
+            return False
+        try:
+            msg = await self.api.admin_get_item_request_message(message_id)
+        except ShopApiError:
+            return False
+        if not isinstance(msg, dict) or msg.get("status") != "pending":
+            self.store.mark_announced(marker, message_id, "", "")
+            return False
+        platform = str(msg.get("platform") or "")
+        chat_id = str(msg.get("chat_id") or "")
+        self.store.mark_announced(marker, message_id, platform, chat_id)
+        adapter = self.adapters.get(platform)
+        ok, error = False, ""
+        if adapter is None or not chat_id:
+            error = f"ربات پیام‌رسان «{platform or '-'}» روی سرور فعال نیست."
+        else:
+            product = str(msg.get("product_name") or msg.get("request_text") or "").strip()
+            body = texts.ITEM_REQUEST_REPLY.format(
+                product=f" («{shorten(product, 60)}»)" if product else "",
+                text=str(msg.get("text") or ""),
+            )
+            try:
+                await adapter.send_text(chat_id, body, None)
+                ok = True
+            except BotApiError as exc:
+                error = ("پیام‌رسان در دسترس نبود (اینترنت سرور)." if exc.network else
+                         f"پیام‌رسان پیام را نپذیرفت: {shorten(str(exc.description), 200)}")
+                self.logger.warning("platform=%s item_request_reply_failed", platform)
+        try:
+            await self.api.admin_item_request_message_result(message_id, ok, error)
+        except ShopApiError:
+            pass
+        return ok
 
     async def _notify_decision(self, kind: str, ref_id: int) -> bool:
         """Message the customer about one decision, at most once."""

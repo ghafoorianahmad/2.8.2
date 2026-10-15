@@ -22,7 +22,7 @@ def test_app_version_matches_the_installer_and_the_server():
     server = re.search(r'^VERSION = "([^"]+)"',
                        (ROOT.parent / "shopapi" / "app" / "control.py").read_text(encoding="utf-8"),
                        re.M).group(1)
-    assert APP_VERSION == installer == server == "2.6.0"
+    assert APP_VERSION == installer == server == "2.6.1"
 
 
 def test_sidebar_shows_the_real_version(ui_context, admin_qapp):
@@ -31,7 +31,7 @@ def test_sidebar_shows_the_real_version(ui_context, admin_qapp):
     window = MainWindow(ui_context)
     from app.persian import to_persian_digits
 
-    assert window.version_label.text() == f"نسخهٔ {to_persian_digits('2.6.0')}"
+    assert window.version_label.text() == f"نسخهٔ {to_persian_digits('2.6.1')}"
 
 
 # ---- 2 + 3: order dialog ------------------------------------------------------------------------
@@ -162,16 +162,15 @@ def test_product_groups_page(ui_context, admin_qapp, fake_api):
     page = ProductGroupsPage(make_context_with_role(ui_context, ROLE_ADMIN))
     page.load()
     _pump(admin_qapp)
-    assert page.table.rowCount() == 2 and not page.save_button.isEnabled()
-    shown, phone = page._checks[3]
-    shown.setChecked(True)
-    phone.setChecked(True)
+    assert page.tree.topLevelItemCount() == 2 and not page.save_button.isEnabled()
+    page._checks[3]["show_in_bot"].setChecked(True)
+    page._checks[3]["is_phone"].setChecked(True)
     assert page.save_button.isEnabled()
     page.save()
     _pump(admin_qapp)
     assert fake_api.group_puts[-1]["groups"] == [
-        {"code": 1, "show_in_bot": True, "is_phone": False},
-        {"code": 3, "show_in_bot": True, "is_phone": True}]
+        {"code": 1, "show_in_bot": True, "is_phone": False, "price_on_inquiry": False},
+        {"code": 3, "show_in_bot": True, "is_phone": True, "price_on_inquiry": False}]
     assert not page.save_button.isEnabled()
 
 
@@ -182,7 +181,7 @@ def test_product_groups_read_only_for_viewers(ui_context, admin_qapp, fake_api):
     page = ProductGroupsPage(make_context_with_role(ui_context, ROLE_VIEWER))
     page.load()
     _pump(admin_qapp)
-    assert not page._checks[1][0].isEnabled() and page.save_button.isHidden()
+    assert not page._checks[1]["show_in_bot"].isEnabled() and page.save_button.isHidden()
     assert "هیچ گروهی" in page.warning.text()
 
 

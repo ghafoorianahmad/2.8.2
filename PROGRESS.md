@@ -2,6 +2,18 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## v2.6.1 — owner follow-ups (2026-10-15, same branch `feature/order-flow-v250`) — DONE in code; Windows build only, SQL / Bale UNVERIFIED
+
+1. **Shop phone**: `shop_phone` empty (or the old placeholder «شماره تلفن فروشگاه») → every line holding `{shop_phone}` is dropped from the bot texts (`texts.drop_phone_lines`); the shipped default is now empty; invoice cards skip it.
+2. **Item requests only in ShopAdmin**: the `item_request` admin-chat notice of the bot is removed (`OWNER_EVENT_TEXTS`, `ITEM_REQUEST_NOTICE`).
+3. **Stale carts**: `POST /orders` checks every item before anything else: hidden group → `Product N is not available for sale`, «price on inquiry» → `Product N is price on inquiry`, phone not in the current valid list (sales open) → `Product N is not in the current price list` (422). The bot names the item and offers the cart (`CART_ITEM_*`).
+4. **Group tree**: `Gkala.g_kala` = parent (`list_groups` returns `parent`); every flag (show in bot / phone / inquiry) is inherited by subgroups in all backend checks (`groups.GroupConfig.chain`); a group lists its subgroups' items; reader errors → 503 (never "no inheritance"). ShopAdmin «گروه‌های کالا» is a `QTreeWidget`: a ticked parent shows its ticks on the children (greyed); only own ticks are saved. `GET /admin/product-groups` adds `parent` + `effective_*`.
+5. **Dashboard**: prominent warning (`phone_groups_ready` in `/shop/state`) when no group is a phone group.
+6. **«قیمت با استعلام»** (`product_groups.price_on_inquiry`, inherited): customers get the item with `priced_by="inquiry"`, `unit_price=0`, no stock filter; the bot shows no price and no add-to-cart, only «📨 استعلام قیمت» → `POST /item-requests` with `kind="inquiry"` (no payment, nothing to Sazeh).
+7. **«درخواست کالا» page**: type column + filter, new width key and `DataTable(keep_columns=…)` for the date; a stretching last column no longer counts as a user drag (that froze default widths — the truncation bug). Row click → dialog: full text, time to the second, customer name/code/mobile/messenger, status, staff note (`PUT …/note`), «دیده شد» / «رسیدگی شد» / «باز کردن دوباره», and «ارسال پیام به مشتری»: `POST /admin/item-requests/{id}/messages` (staff only) stores a `pending` row in `item_request_messages` + event `item_request_message`; the bot of that messenger delivers it and reports `POST /admin/item-request-messages/{id}/result` (service key only; `sent`/`failed` + reason). The dialog polls and shows history and errors.
+
+Tests (Windows, fakes): shopapi **382** ✓, shopbots **247** ✓, shoptg **49** ✓, shopsystem **49** ✓, shopadmin **475** ✓.
+
 ## v2.6.0 — findings from the Windows test on `hesab5 t` (2026-10-14, same branch `feature/order-flow-v250`) — DONE in code (Linux, fakes only); Windows / SQL / Bale UNVERIFIED
 
 Decisions: `REQUIREMENTS.md` §7b. Version **2.6.0** in `shopapi/app/control.py`, `shopadmin/installer/ShopAdmin.iss` and now also `shopadmin/app/paths.py` (`test_v260.py` fails if the three differ).

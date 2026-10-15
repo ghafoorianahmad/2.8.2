@@ -99,10 +99,12 @@ class AccountingReader:
         db = self._db()
         conn = self.connection()
         try:
-            rows = self._rows(conn.execute(f"SELECT Code, Name FROM {db}.dbo.Gkala WHERE Code > 0 ORDER BY Code"))
+            rows = self._rows(conn.execute(
+                f"SELECT Code, Name, g_kala FROM {db}.dbo.Gkala WHERE Code > 0 ORDER BY Code"))
         finally:
             conn.close()
-        return [{"code": r["Code"], "name": r["Name"]} for r in rows]
+        # g_kala = parent group (0 = a main group under the root), v2.6.1 tree.
+        return [{"code": r["Code"], "name": r["Name"], "parent": r["g_kala"]} for r in rows]
 
     def list_products(
         self,
@@ -115,23 +117,29 @@ class AccountingReader:
         level: int = 3,
         our_reservations: dict[int, float] | None = None,
         include_codes: set[int] | None = None,
+        include_groups: set[int] | None = None,
     ) -> dict:
-        """``include_codes``: products priced from the distributor list; they are
-        returned without the price/stock filters (the API prices them)."""
+        """``include_codes``: products priced from the distributor list;
+        ``include_groups`` (v2.6.1): groups whose items are «price on inquiry».
+        Both are returned without the price/stock filters (the API decides)."""
         col = price_column(level)
         our_res = our_reservations or {}
         extra = sorted(int(c) for c in (include_codes or ()))[:1000]
+        groups_extra = sorted(int(g) for g in (include_groups or ()))[:500]
         conn = self.connection()
         try:
             db = self._db()
-            where = f"{col} > 0"
+            ors = [f"{col} > 0"]
             if extra:
-                where = f"({col} > 0 OR Code IN ({self._in_placeholders(extra)}))"
+                ors.append(f"Code IN ({self._in_placeholders(extra)})")
+            if groups_extra:
+                ors.append(f"Gcod IN ({self._in_placeholders(groups_extra)})")
+            where = ors[0] if len(ors) == 1 else "(" + " OR ".join(ors) + ")"
             products = self._rows(
                 conn.execute(
                     f"SELECT Code, Name, Gcod, {col} AS unit_price, pic "
                     f"FROM {db}.dbo.Kala WHERE active = 1 AND {where} ORDER BY Code",
-                    *([extra] if extra else []),
+                    *([[*extra, *groups_extra]] if extra or groups_extra else []),
                 )
             )
             codes = [p["Code"] for p in products]
@@ -150,7 +158,7 @@ class AccountingReader:
             avail = compute_available(
                 stock.get(code, 0.0), open_res.get(code, 0.0), our_res.get(code, 0.0)
             )
-            if in_stock and avail <= 0 and code not in extra:
+            if in_stock and avail <= 0 and code not in extra and p["Gcod"] not in groups_extra:
                 continue
             items.append(
                 {

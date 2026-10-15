@@ -283,6 +283,20 @@ CREATE TABLE IF NOT EXISTS item_requests (
     handled_by TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_item_requests_user ON item_requests(user_id);
+
+-- v2.6.1: staff replies to an item request, delivered by the bot the customer
+-- used (shopbots follows the events feed). status: pending -> sent | failed.
+CREATE TABLE IF NOT EXISTS item_request_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id INTEGER NOT NULL REFERENCES item_requests(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sent','failed')),
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT '',
+    sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ireq_messages_request ON item_request_messages(request_id);
 """
 
 #: Columns added after the first release: (table, column, declaration).
@@ -302,7 +316,17 @@ MIGRATIONS = (
     # only ever looked up in this database.
     ("orders", "accounting_db", "TEXT"),
     ("orders", "cancel_reason", "TEXT"),        # 'receipt_timeout' | ...
+    # v2.6.1: «قیمت با استعلام» per product group (inherited by subgroups)
+    ("product_groups", "price_on_inquiry", "INTEGER NOT NULL DEFAULT 0"),
+    # v2.6.1: item request kind ('unavailable' | 'inquiry') and the staff note
+    ("item_requests", "kind", "TEXT NOT NULL DEFAULT 'unavailable'"),
+    ("item_requests", "admin_note", "TEXT NOT NULL DEFAULT ''"),
+    ("item_requests", "note_at", "TEXT"),
+    ("item_requests", "note_by", "TEXT NOT NULL DEFAULT ''"),
 )
+
+#: Item request kinds (v2.6.1).
+ITEM_REQUEST_KINDS = ("unavailable", "inquiry")
 
 #: cancel_reason of an order whose receipt did not arrive in time.
 CANCEL_RECEIPT_TIMEOUT = "receipt_timeout"
@@ -677,49 +701,114 @@ class OwnDB:
                 for r in self._fetchall("SELECT * FROM product_groups ORDER BY group_code")
             }
 
-    def set_group_settings(self, entries: list[tuple[int, bool, bool]], actor: str) -> None:
-        """entries: (group_code, show_in_bot, is_phone); other groups keep theirs."""
+    def set_group_settings(self, entries: list[tuple], actor: str) -> None:
+        """entries: (group_code, show_in_bot, is_phone[, price_on_inquiry]); other
+        groups keep theirs."""
         with self._lock:
             ts = now_iso()
-            for code, shown, phone in entries:
+            for entry in entries:
+                code, shown, phone = entry[:3]
+                inquiry = entry[3] if len(entry) > 3 else False
                 self._conn.execute(
-                    "INSERT INTO product_groups (group_code, show_in_bot, is_phone, updated_at, "
-                    "updated_by) VALUES (?,?,?,?,?) ON CONFLICT(group_code) DO UPDATE SET "
+                    "INSERT INTO product_groups (group_code, show_in_bot, is_phone, "
+                    "price_on_inquiry, updated_at, updated_by) VALUES (?,?,?,?,?,?) "
+                    "ON CONFLICT(group_code) DO UPDATE SET "
                     "show_in_bot=excluded.show_in_bot, is_phone=excluded.is_phone, "
+                    "price_on_inquiry=excluded.price_on_inquiry, "
                     "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
-                    (int(code), int(bool(shown)), int(bool(phone)), ts, actor),
+                    (int(code), int(bool(shown)), int(bool(phone)), int(bool(inquiry)), ts, actor),
                 )
             self._commit()
 
     # ---- unavailable item requests (v2.6.0) ----
+    _ITEM_REQUEST_SELECT = (
+        "SELECT r.*, u.name AS customer_name, u.person_code, u.platform, "
+        "u.phone AS customer_phone, "
+        "(SELECT COUNT(*) FROM item_request_messages m WHERE m.request_id = r.id) "
+        "AS messages_count FROM item_requests r JOIN users u ON u.id = r.user_id "
+    )
+
     def add_item_request(self, user_id: int, kala_code: int | None, product_name: str,
-                         text: str) -> dict:
+                         text: str, kind: str = "unavailable") -> dict:
+        if kind not in ITEM_REQUEST_KINDS:
+            raise ValueError(kind)
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO item_requests (user_id, kala_code, product_name, text, created_at) "
-                "VALUES (?,?,?,?,?)",
-                (user_id, kala_code, product_name, text, now_iso()),
+                "INSERT INTO item_requests (user_id, kala_code, product_name, text, kind, "
+                "created_at) VALUES (?,?,?,?,?,?)",
+                (user_id, kala_code, product_name, text, kind, now_iso()),
             )
             self._commit()
             return self.get_item_request(cur.lastrowid)
 
     def get_item_request(self, request_id: int) -> dict | None:
         with self._lock:
+            return self._fetchone(self._ITEM_REQUEST_SELECT + "WHERE r.id=?", (request_id,))
+
+    def list_item_requests(self, status_filter: str | None = None, limit: int = 500,
+                           kind: str | None = None) -> list[dict]:
+        with self._lock:
+            clauses, params = [], []
+            if status_filter:
+                clauses.append("r.status=?")
+                params.append(status_filter)
+            if kind:
+                clauses.append("r.kind=?")
+                params.append(kind)
+            where = ("WHERE " + " AND ".join(clauses) + " ") if clauses else ""
+            return self._fetchall(
+                self._ITEM_REQUEST_SELECT + where + "ORDER BY r.id DESC LIMIT ?",
+                tuple(params) + (limit,),
+            )
+
+    def set_item_request_note(self, request_id: int, note: str, actor: str) -> dict | None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE item_requests SET admin_note=?, note_at=?, note_by=? WHERE id=?",
+                (note, now_iso(), actor, request_id),
+            )
+            self._commit()
+            return self.get_item_request(request_id)
+
+    # ---- staff replies to item requests (v2.6.1) ----
+    def add_item_request_message(self, request_id: int, text: str, actor: str) -> dict:
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO item_request_messages (request_id, text, created_at, created_by) "
+                "VALUES (?,?,?,?)",
+                (request_id, text, now_iso(), actor),
+            )
+            self._commit()
+            return self.get_item_request_message(cur.lastrowid)
+
+    def get_item_request_message(self, message_id: int) -> dict | None:
+        with self._lock:
             return self._fetchone(
-                "SELECT r.*, u.name AS customer_name, u.person_code, u.platform "
-                "FROM item_requests r JOIN users u ON u.id = r.user_id WHERE r.id=?",
+                "SELECT m.*, r.product_name, r.text AS request_text, r.kind, "
+                "u.platform, u.chat_id FROM item_request_messages m "
+                "JOIN item_requests r ON r.id = m.request_id "
+                "JOIN users u ON u.id = r.user_id WHERE m.id=?",
+                (message_id,),
+            )
+
+    def list_item_request_messages(self, request_id: int) -> list[dict]:
+        with self._lock:
+            return self._fetchall(
+                "SELECT * FROM item_request_messages WHERE request_id=? ORDER BY id",
                 (request_id,),
             )
 
-    def list_item_requests(self, status_filter: str | None = None, limit: int = 500) -> list[dict]:
+    def set_item_request_message_result(self, message_id: int, ok: bool,
+                                        error: str) -> dict | None:
+        """Only a pending message changes (a late duplicate report is ignored)."""
         with self._lock:
-            where, params = ("WHERE r.status=?", (status_filter,)) if status_filter else ("", ())
-            return self._fetchall(
-                "SELECT r.*, u.name AS customer_name, u.person_code, u.platform "
-                f"FROM item_requests r JOIN users u ON u.id = r.user_id {where} "
-                "ORDER BY r.id DESC LIMIT ?",
-                params + (limit,),
+            self._conn.execute(
+                "UPDATE item_request_messages SET status=?, error=?, sent_at=? "
+                "WHERE id=? AND status='pending'",
+                ("sent" if ok else "failed", "" if ok else error, now_iso(), message_id),
             )
+            self._commit()
+            return self.get_item_request_message(message_id)
 
     def count_item_requests_since(self, user_id: int, since: str) -> int:
         with self._lock:

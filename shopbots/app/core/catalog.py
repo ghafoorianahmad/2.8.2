@@ -33,6 +33,8 @@ class Product:
     available: float
     #: Phones: the colors (price after the customer picks one). Empty = none.
     colors: tuple[Color, ...] = ()
+    #: v2.6.1: «قیمت با استعلام» - no price, no cart, only «استعلام قیمت».
+    on_inquiry: bool = False
 
     @property
     def in_stock(self) -> bool:
@@ -48,6 +50,8 @@ class Product:
     def as_cache(self) -> dict:
         """The shape kept in the conversation between screens."""
         cache = {"name": self.name, "price": self.price, "qty": self.available}
+        if self.on_inquiry:
+            cache["inquiry"] = True
         if self.colors:
             cache["colors"] = [
                 {"id": c.id, "name": c.name, "price": c.price, "available": c.available}
@@ -79,6 +83,7 @@ def _product(it: dict, code=None) -> Product:
         price=float(it.get("unit_price") or 0),
         available=float(it.get("available_qty") or 0),
         colors=_colors(it.get("variants")),
+        on_inquiry=bool(it.get("price_on_inquiry")) or it.get("priced_by") == "inquiry",
     )
 
 

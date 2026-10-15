@@ -100,9 +100,10 @@ def test_open_reservation_follows_recipe_r2():
 
 
 def test_groups_skip_the_root_group():
-    reader, conn = _reader([("Gkala", [(1, "x")], ["Code", "Name"])])
-    reader.list_groups()
-    assert "WHERE Code > 0" in conn.sql[-1][0]
+    reader, conn = _reader([("Gkala", [(1, "x", 0), (3, "y", 1)], ["Code", "Name", "g_kala"])])
+    assert reader.list_groups() == [{"code": 1, "name": "x", "parent": 0},
+                                    {"code": 3, "name": "y", "parent": 1}]
+    assert "WHERE Code > 0" in conn.sql[-1][0] and "g_kala" in conn.sql[-1][0]
 
 
 def test_status_code_has_no_default(monkeypatch):

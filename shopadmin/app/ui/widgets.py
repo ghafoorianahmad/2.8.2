@@ -453,9 +453,12 @@ class DataTable(QTableWidget):
     MAX_AUTO_COLUMN = 280
 
     def __init__(self, headers: Sequence[str], *, selectable_rows: bool = False,
-                 key: str = "", parent: QWidget | None = None) -> None:
+                 key: str = "", keep_columns: Iterable[int] = (),
+                 parent: QWidget | None = None) -> None:
         super().__init__(0, len(headers), parent)
         self._key = key
+        #: v2.6.1: columns never squeezed below their content (dates, short codes)
+        self._keep = frozenset(int(c) for c in keep_columns)
         self._sizing = False       # True while we set widths ourselves (not a user drag)
         self._auto_sized = False
         self._user_sized = False   # the user dragged a column, or saved widths were restored
@@ -533,8 +536,12 @@ class DataTable(QTableWidget):
         finally:
             self._sizing = False
 
-    def _on_section_resized(self, _index: int, _old: int, _new: int) -> None:
+    def _on_section_resized(self, index: int, _old: int, _new: int) -> None:
         if self._sizing:
+            return
+        if index == self.columnCount() - 1 and self.horizontalHeader().stretchLastSection():
+            # v2.6.1: the stretching last column follows the window, not the user;
+            # counting it as a drag froze the default widths and cut the dates.
             return
         self._user_sized = True
         if self._key and DataTable.settings_store is not None:
@@ -582,7 +589,10 @@ class DataTable(QTableWidget):
                     hint = self.cellWidget(row, column).sizeHint().width() + 24
                     wanted = max(wanted, hint)
                     floors[column] = max(floors[column], hint)   # never squeeze a pill/button
-            widths.append(min(max(wanted, self.MIN_COLUMN), self.MAX_AUTO_COLUMN))
+            width = min(max(wanted, self.MIN_COLUMN), self.MAX_AUTO_COLUMN)
+            if column in self._keep:
+                floors[column] = max(floors[column], width)
+            widths.append(width)
         self._natural, self._floor = widths, floors
         self._fit_to_viewport()
 
