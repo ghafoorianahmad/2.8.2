@@ -679,6 +679,14 @@ class ShopApiClient:
     def delete_price_mapping(self, mapping_id: int) -> None:
         self._request("DELETE", f"/admin/price-mappings/{int(mapping_id)}")
 
+    def confirm_price_mapping(self, mapping_id: int) -> dict:
+        """v2.6.2: accept an automatic mapping (it becomes an ordinary one)."""
+        return self._request("POST", f"/admin/price-mappings/{int(mapping_id)}/confirm") or {}
+
+    def auto_match_prices(self) -> dict:
+        """v2.6.2: match the newest list against every earlier decision now."""
+        return self._request("POST", "/admin/price-mappings/auto") or {}
+
     # ---- site catalog models (Phase 6b, REQUIREMENTS §9a) -----------------------
     def _dict(self, payload) -> dict:
         if not isinstance(payload, dict):

@@ -559,13 +559,14 @@ class FakeShopApi:
     def add_price_row(self, description: str, color: str, *, section: str = "iPHONE",
                       kind: str = "شرکتی", naghd: int | None = 52000, raval: int | None = 52500,
                       action: str | None = None, kala_code: int | None = None,
-                      color_label: str = "") -> dict:
+                      color_label: str = "", auto: bool = False) -> dict:
         row = {"id": len(self.price_rows) + 1, "section": section, "description": description,
                "kind": kind, "color": color, "naghd": naghd, "raval": raval,
                "row_key": f"{description}|{kind}|{color}".lower(),
                "price_rial": raval * 10_000 if raval else (naghd * 10_000 + 5_000_000 if naghd else None),
                "action": action, "kala_code": kala_code, "color_label": color_label,
-               "mapping_id": len(self.price_rows) + 101 if action else None}
+               "mapping_id": len(self.price_rows) + 101 if action else None,
+               "auto": int(auto), "auto_reason": "same_model" if auto else ""}
         self.price_rows.append(row)
         return row
 
@@ -612,13 +613,15 @@ class FakeShopApi:
         if path == "/admin/pricelists" and method == "POST":
             self.price_uploads.append(body)
             return reply(200, {"outcome": self.upload_outcome, "list_id": 9, "list_date": "1405/07/20",
-                               "row_count": 195, "reasons": ["تغییر قیمت ۲۰٪"]})
+                               "row_count": 195, "reasons": ["تغییر قیمت ۲۰٪"],
+                               "auto_mapped": getattr(self, "upload_auto", 0)})
         if path == "/admin/pricelists/rows":
             plist = self.pricelists[-1] if self.pricelists else None
             rows = list(self.price_rows)
             counts = {"unmapped": sum(1 for r in rows if r["action"] is None),
                       "mapped": sum(1 for r in rows if r["action"] == "map"),
                       "ignored": sum(1 for r in rows if r["action"] == "ignore"),
+                      "auto": sum(1 for r in rows if r["action"] and r.get("auto")),
                       "all": len(rows)} if plist else {}
             sections = list(dict.fromkeys(r["section"] for r in rows))
             section = request.url.params.get("section")
@@ -628,6 +631,8 @@ class FakeShopApi:
             state = {"unmapped": None, "mapped": "map", "ignored": "ignore"}
             if wanted in state:
                 rows = [r for r in rows if r["action"] == state[wanted]]
+            elif wanted == "auto":
+                rows = [r for r in rows if r["action"] and r.get("auto")]
             if plist is None:
                 return reply(200, {"list": None, "sections": [], "rows": [], "counts": {}})
             return reply(200, {"list": plist, "sections": sections, "rows": rows, "counts": counts})
@@ -653,6 +658,15 @@ class FakeShopApi:
                     row.update(action="ignore", kala_code=None, mapping_id=row["id"] + 100)
                     done += 1
             return reply(200, {"ignored": done})
+        if path == "/admin/price-mappings/auto" and method == "POST":
+            self.auto_runs = getattr(self, "auto_runs", 0) + 1
+            return reply(200, {"auto_mapped": 2})
+        if path.startswith("/admin/price-mappings/") and parts[-1] == "confirm":
+            row = next((r for r in self.price_rows if r["mapping_id"] == int(parts[2])), None)
+            if row is None:
+                return detail(404, "Mapping not found")
+            row["auto"] = 0
+            return reply(200, {"id": row["mapping_id"], "auto": 0})
         if path.startswith("/admin/price-mappings/") and method == "DELETE":
             row = next((r for r in self.price_rows if r["mapping_id"] == int(parts[2])), None)
             if row is None:

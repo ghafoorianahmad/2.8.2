@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from ..db_own import OwnDB
 from ..util import now_iso
+from .matching import part_code
 
 LIST_STATUSES = ("active", "held", "rejected", "superseded", "failed")
 _LIST_COLUMNS = (
@@ -119,7 +120,8 @@ class PriceListRepo:
             return self.db._fetchall(
                 "SELECT r.row_key, r.block, r.section, r.description, r.kind, r.color, "
                 "r.naghd, r.raval, r.price_rial, m.id AS mapping_id, m.action, m.kala_code, "
-                "m.color_label FROM price_list_rows r "
+                "m.color_label, COALESCE(m.auto, 0) AS auto, COALESCE(m.auto_reason, '') "
+                "AS auto_reason FROM price_list_rows r "
                 "LEFT JOIN price_mappings m ON m.row_key = r.row_key "
                 "WHERE r.list_id=? ORDER BY r.block, r.rowid",
                 (int(list_id),),
@@ -155,21 +157,50 @@ class PriceListRepo:
     def upsert_mapping(
         self, *, row_key: str, action: str, kala_code: int | None, color_label: str,
         section: str, description: str, kind: str, color: str, actor: str,
+        auto: bool = False, auto_reason: str = "",
     ) -> dict:
+        """A staff decision (``auto=False``) also clears an earlier undo of the
+        automatic match for the row; an automatic one is flagged for review."""
         with self.db._lock:
             ts = now_iso()
             self.db._conn.execute(
                 "INSERT INTO price_mappings (row_key, action, kala_code, color_label, section, "
-                "description, kind, color, created_at, updated_at, updated_by) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(row_key) DO UPDATE SET "
-                "action=excluded.action, kala_code=excluded.kala_code, "
+                "description, kind, color, created_at, updated_at, updated_by, auto, "
+                "auto_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(row_key) DO UPDATE "
+                "SET action=excluded.action, kala_code=excluded.kala_code, "
                 "color_label=excluded.color_label, updated_at=excluded.updated_at, "
-                "updated_by=excluded.updated_by",
+                "updated_by=excluded.updated_by, auto=excluded.auto, "
+                "auto_reason=excluded.auto_reason",
                 (row_key, action, kala_code, color_label, section, description, kind, color,
-                 ts, ts, actor),
+                 ts, ts, actor, int(bool(auto)), auto_reason if auto else ""),
             )
+            if not auto:
+                self.db._conn.execute("DELETE FROM price_auto_rejects WHERE row_key=?",
+                                      (row_key,))
             self.db._commit()
             return self.mapping_for_key(row_key)
+
+    def confirm_mapping(self, mapping_id: int, actor: str) -> dict | None:
+        """Staff accept an automatic decision: it becomes an ordinary one."""
+        with self.db._lock:
+            self.db._conn.execute(
+                "UPDATE price_mappings SET auto=0, auto_reason='', updated_at=?, updated_by=? "
+                "WHERE id=?", (now_iso(), actor, int(mapping_id)))
+            self.db._commit()
+            return self.get_mapping(mapping_id)
+
+    def reject_auto(self, row_key: str, actor: str) -> None:
+        """Never match this row automatically again (it stays undecided)."""
+        with self.db._lock:
+            self.db._conn.execute(
+                "INSERT OR IGNORE INTO price_auto_rejects (row_key, created_at, created_by) "
+                "VALUES (?,?,?)", (row_key, now_iso(), actor))
+            self.db._commit()
+
+    def auto_rejected_keys(self) -> set[str]:
+        with self.db._lock:
+            return {r["row_key"] for r in self.db._fetchall(
+                "SELECT row_key FROM price_auto_rejects")}
 
     def delete_mapping(self, mapping_id: int) -> bool:
         with self.db._lock:
@@ -194,7 +225,8 @@ class PriceListRepo:
             return {}
         with self.db._lock:
             rows = self.db._fetchall(
-                "SELECT m.id, m.kala_code, m.color_label, r.color, r.price_rial "
+                "SELECT m.id, m.kala_code, m.color_label, r.color, r.price_rial, "
+                "r.description, r.kind "
                 "FROM price_mappings m JOIN price_list_rows r "
                 "ON r.row_key = m.row_key AND r.list_id = ? "
                 "WHERE m.action = 'map' ORDER BY m.kala_code, m.id",
@@ -208,6 +240,10 @@ class PriceListRepo:
             out.setdefault(code, []).append({
                 "id": int(r["id"]),
                 "color": (r["color_label"] or r["color"] or "").strip(),
+                # v2.6.2: the part / region (ZAA / CHA …) and the type (ویتنام …);
+                # the catalogue decides what the customer picks after the color.
+                "part_code": part_code(r["description"]),
+                "kind": " ".join(str(r["kind"] or "").split()),
                 "price_rial": r["price_rial"],
             })
         return out

@@ -25,8 +25,11 @@ KIND_RECEIPT = "receipt_uploaded"
 KIND_PASSWORD = "password_request"
 #: v2.6.0: a customer asked for an unavailable item in the bot.
 KIND_ITEM_REQUEST = "item_request"
+#: v2.6.2: a customer cancelled their own order in the bot (before any receipt).
+KIND_CUSTOMER_CANCEL = "order_cancelled_by_customer"
 #: Kinds that ask a person to act; the rest only refresh the screens.
-ATTENTION_KINDS = (KIND_CUSTOMER, KIND_ORDER, KIND_RECEIPT, KIND_PASSWORD, KIND_ITEM_REQUEST)
+ATTENTION_KINDS = (KIND_CUSTOMER, KIND_ORDER, KIND_RECEIPT, KIND_PASSWORD, KIND_ITEM_REQUEST,
+                   KIND_CUSTOMER_CANCEL)
 
 #: Server health (REQUIREMENTS §8): ``health_<check>_down`` / ``health_<check>_up``.
 HEALTH_PREFIX = "health_"
@@ -52,6 +55,9 @@ SERVER_WARNINGS = {
                                   "شماره را نوشت). چیزی حذف نشده؛ در «سازه حساب» بررسی کنید.",
     "order_timeout_written": "مهلت رسید یک سفارش گذشته ولی آن سفارش قبلاً در حسابداری ثبت شده؛ "
                              "لغو نشد. در «سازه حساب» تصمیم بگیرید.",
+    # v2.6.2: the customer cancelled an order that already exists in the accounting DB
+    "order_cancel_written": "مشتری سفارشی را لغو کرد که قبلاً در «سازه حساب» ثبت شده بود؛ "
+                            "در حسابداری چیزی تغییر نکرد. آنجا دستی بررسی کنید.",
 }
 
 #: Sales window changes (v2.5.0): informational, no counter.
@@ -79,6 +85,8 @@ TARGETS = {
     KIND_AUTO_CANCELLED: ("orders", "cancelled"),
     "accounting_duplicate_order": ("orders", "written"),
     "order_timeout_written": ("orders", "awaiting_payment"),
+    KIND_CUSTOMER_CANCEL: ("orders", "cancelled"),
+    "order_cancel_written": ("orders", "cancelled"),
     # the accounting program was opened (sazeh_watch)
     "sazeh_orders": ("orders", "awaiting_payment"),
     "sazeh_customers": ("customers", "pending"),
@@ -135,6 +143,9 @@ def notice_for(event: dict) -> Optional[Notice]:
         return Notice(kind, "سرور فروشگاه", f"{label} دوباره کار می‌کند.", None)
     if kind in SERVER_WARNINGS:
         return Notice(kind, "هشدار سرور فروشگاه", SERVER_WARNINGS[kind], ref, warning=True)
+    if kind == KIND_CUSTOMER_CANCEL:
+        return Notice(kind, "لغو سفارش توسط مشتری",
+                      f"مشتری سفارش شمارهٔ {ref_fa} را پیش از ارسال رسید لغو کرد.", ref)
     if kind == KIND_AUTO_CANCELLED:
         return Notice(kind, "سفارش لغو شد",
                       f"سفارش شمارهٔ {ref_fa} چون رسید پرداخت در مهلت نرسید، خودکار لغو شد.", ref)
@@ -152,7 +163,8 @@ def summarize(notices: list[Notice]) -> Notice:
         counts[n.kind] = counts.get(n.kind, 0) + 1
     parts = []
     labels = {KIND_CUSTOMER: "مشتری جدید", KIND_ORDER: "سفارش جدید", KIND_RECEIPT: "فیش جدید",
-              KIND_PASSWORD: "درخواست گذرواژه", KIND_ITEM_REQUEST: "درخواست کالا"}
+              KIND_PASSWORD: "درخواست گذرواژه", KIND_ITEM_REQUEST: "درخواست کالا",
+              KIND_CUSTOMER_CANCEL: "لغو سفارش"}
     for kind in ATTENTION_KINDS:
         if counts.get(kind):
             parts.append(f"{to_persian_digits(counts[kind])} {labels[kind]}")

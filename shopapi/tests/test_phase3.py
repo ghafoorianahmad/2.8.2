@@ -302,7 +302,7 @@ def test_upload_map_ignore_and_filters(client, db, reader):
     assert r.json()["outcome"] == "active"
     rows = client.get("/admin/pricelists/rows", params={"filter": "unmapped"},
                       headers=admin).json()
-    assert rows["counts"] == {"unmapped": 195, "mapped": 0, "ignored": 0, "all": 195}
+    assert rows["counts"] == {"unmapped": 195, "mapped": 0, "ignored": 0, "auto": 0, "all": 195}
     iphone = client.get("/admin/pricelists/rows", params={"section": "iPHONE"},
                         headers=admin).json()["rows"]
     assert {r["section"] for r in iphone} == {"iPHONE"} and len(iphone) == 19
@@ -321,7 +321,8 @@ def test_upload_map_ignore_and_filters(client, db, reader):
                     json={"row_keys": [t["row_key"] for t in tablets]}, headers=admin)
     assert r.json() == {"ignored": 15}
     counts = client.get("/admin/pricelists/rows", headers=admin).json()["counts"]
-    assert counts == {"unmapped": 179, "mapped": 1, "ignored": 15, "all": 195}
+    # v2.6.2: the other colors of «17 Promax 256 ZAA» followed the staff decision
+    assert counts == {"unmapped": 177, "mapped": 3, "ignored": 15, "auto": 2, "all": 195}
     ignored = client.get("/admin/pricelists/rows", params={"filter": "ignored"},
                          headers=admin).json()["rows"]
     assert len(ignored) == 15
@@ -468,7 +469,8 @@ def test_approve_payment_skips_stock_for_phones(client, db, writer, phone_shop):
                 json={"receipt_ref": "r1"}, headers=h("bot"))
     r = client.post(f"/admin/orders/{order['id']}/approve-payment", headers=h("admin"))
     assert r.status_code == 200, r.text
-    assert writer.calls[-1][2] == [(900, 1.0, 525_000_000)]
+    # v2.6.2: the chosen color goes into the line description (KalaOrderDetail.sharh)
+    assert writer.calls[-1][2] == [(900, 1.0, 525_000_000, "مشکی")]
 
 
 def test_inquiry_for_unavailable_color(client, db, phone_shop):

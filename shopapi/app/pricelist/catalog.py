@@ -27,12 +27,17 @@ class PhoneCatalog:
         return int(code) in self.codes
 
     def colors(self, code: int) -> list[dict]:
-        """[{id, color, unit_price (Rial or None), available}] for a product."""
+        """[{id, color, part, unit_price (Rial or None), available}] for a product.
+        v2.6.2: one entry per color AND part (ZAA / CHA …), each with its price."""
         out = []
-        for v in self.variants.get(int(code), []):
+        rows = self.variants.get(int(code), [])
+        # The type (شرکتی / ویتنام …) is a choice only when the product has several.
+        several_kinds = len({v.get("kind") or "" for v in rows}) > 1
+        for v in rows:
             price = v["price_rial"] if self.fresh else None
+            part = v.get("part_code") or (v.get("kind") or "" if several_kinds else "")
             out.append({
-                "id": v["id"], "color": v["color"],
+                "id": v["id"], "color": v["color"], "part": part,
                 "unit_price": float(price) if price else None,
                 "available": bool(price),
             })

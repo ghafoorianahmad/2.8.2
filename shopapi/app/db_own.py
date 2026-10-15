@@ -161,6 +161,13 @@ CREATE TABLE IF NOT EXISTS price_mappings (
 );
 CREATE INDEX IF NOT EXISTS idx_mappings_kala ON price_mappings(kala_code);
 
+-- v2.6.2: rows whose automatic mapping staff undid: never matched automatically again.
+CREATE TABLE IF NOT EXISTS price_auto_rejects (
+    row_key TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT ''
+);
+
 -- "Order/inquiry for an unavailable item" (REQUIREMENTS §4).
 CREATE TABLE IF NOT EXISTS inquiries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -323,6 +330,12 @@ MIGRATIONS = (
     ("item_requests", "admin_note", "TEXT NOT NULL DEFAULT ''"),
     ("item_requests", "note_at", "TEXT"),
     ("item_requests", "note_by", "TEXT NOT NULL DEFAULT ''"),
+    # v2.6.2: automatic price-list mapping (1 = decided by the matcher, to review)
+    ("price_mappings", "auto", "INTEGER NOT NULL DEFAULT 0"),
+    ("price_mappings", "auto_reason", "TEXT NOT NULL DEFAULT ''"),
+    # v2.6.2: the phone color and part/region code the customer chose
+    ("order_items", "color", "TEXT"),
+    ("order_items", "part", "TEXT"),
 )
 
 #: Item request kinds (v2.6.1).
@@ -476,10 +489,13 @@ class OwnDB:
                 kala_code, name, qty, unit_price = item[:4]
                 variant_id = item[4] if len(item) > 4 else None
                 variant = item[5] if len(item) > 5 else None
+                color = item[6] if len(item) > 6 else None
+                part = item[7] if len(item) > 7 else None
                 self._conn.execute(
                     "INSERT INTO order_items (order_id, kala_code, name, qty, unit_price, "
-                    "variant_id, variant) VALUES (?,?,?,?,?,?,?)",
-                    (order_id, kala_code, name, qty, unit_price, variant_id, variant),
+                    "variant_id, variant, color, part) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (order_id, kala_code, name, qty, unit_price, variant_id, variant,
+                     color, part),
                 )
             self._commit()
             return self.get_order(order_id)
@@ -515,8 +531,8 @@ class OwnDB:
                 return None
             order["customer_pending"] = order.get("user_status") != "approved"
             order["items"] = self._fetchall(
-                "SELECT kala_code, name, qty, unit_price, variant_id, variant FROM order_items "
-                "WHERE order_id=? ORDER BY id",
+                "SELECT kala_code, name, qty, unit_price, variant_id, variant, color, part "
+                "FROM order_items WHERE order_id=? ORDER BY id",
                 (order_id,),
             )
             return order
@@ -524,8 +540,8 @@ class OwnDB:
     def get_order_items(self, order_id: int) -> list[dict]:
         with self._lock:
             return self._fetchall(
-                "SELECT kala_code, name, qty, unit_price, variant_id, variant FROM order_items "
-                "WHERE order_id=? ORDER BY id",
+                "SELECT kala_code, name, qty, unit_price, variant_id, variant, color, part "
+                "FROM order_items WHERE order_id=? ORDER BY id",
                 (order_id,),
             )
 
@@ -565,6 +581,11 @@ class OwnDB:
             )
             self._commit()
             return self.get_order(order_id)
+
+    def list_payments(self, order_id: int) -> list[dict]:
+        with self._lock:
+            return self._fetchall("SELECT id, status FROM payments WHERE order_id=?",
+                                  (order_id,))
 
     def add_payment(self, order_id: int, receipt_ref: str, status_value: str = "submitted",
                     file_name: str | None = None, content_type: str | None = None) -> None:

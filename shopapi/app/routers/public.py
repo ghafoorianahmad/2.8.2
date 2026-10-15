@@ -57,6 +57,11 @@ ON_INQUIRY_DETAIL = "is price on inquiry"
 NOT_IN_PRICE_LIST_DETAIL = "is not in the current price list"
 
 
+def variant_text(color: str, part: str) -> str:
+    """«Black — ZAA» (color, then part / region); just the color without a part."""
+    return " — ".join(p for p in (str(color or "").strip(), str(part or "").strip()) if p)
+
+
 def _refuse(kala_code: int, reason: str) -> HTTPException:
     return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Product {kala_code} {reason}")
 
@@ -433,14 +438,18 @@ def create_order(
                 if not variant["available"]:
                     raise HTTPException(status.HTTP_409_CONFLICT,
                                         f"Color not available for product {kala_code}")
+                # v2.6.2: the color AND the part / region code the customer picked
+                chosen = variant_text(variant["color"], variant.get("part") or "")
                 items_out.append(
                     OrderItemOut(
                         kala_code=kala_code,
-                        name=f"{prod['name']} — {variant['color']}",
+                        name=f"{prod['name']} — {chosen}",
                         qty=qty,
                         unit_price=variant["unit_price"],
                         variant_id=variant_id,
-                        variant=variant["color"],
+                        variant=chosen,
+                        color=variant["color"],
+                        part=variant.get("part") or None,
                     )
                 )
                 continue
@@ -483,8 +492,8 @@ def create_order(
             level,
             total,
             reserve_until,
-            [(it.kala_code, it.name, it.qty, it.unit_price, it.variant_id, it.variant)
-             for it in items_out],
+            [(it.kala_code, it.name, it.qty, it.unit_price, it.variant_id, it.variant,
+              it.color, it.part) for it in items_out],
             accounting_db=settings.database_name(),
         )
         if idem is not None:
@@ -548,6 +557,52 @@ def upload_receipt(
     db.audit(role, "receipt_upload", f"order id={order_id}")
     db.add_event("receipt_uploaded", order_id, role)
     return OrderOut(**order)
+
+
+#: v2.6.2: the customer cancelled their own order (before any receipt).
+CANCEL_BY_CUSTOMER = "customer"
+EVENT_CUSTOMER_CANCELLED = "order_cancelled_by_customer"
+#: ... and it had already been written to «سازه حساب»: only staff are told (ShopAdmin).
+EVENT_CUSTOMER_CANCELLED_WRITTEN = "order_cancel_written"
+RECEIPT_SENT_DETAIL = "Receipt already sent; the order cannot be cancelled"
+
+
+@router.post("/orders/{order_id}/cancel", response_model=OrderOut)
+def cancel_order(
+    order_id: int,
+    platform: str = Query(...),
+    chat_id: str = Query(...),
+    role: str = Depends(get_api_identity),
+    db: OwnDB = Depends(deps.get_db),
+) -> OrderOut:
+    """The customer cancels their own order while no receipt was sent (v2.6.2).
+    Local only: «سازه حساب» is never touched. An order already written there is
+    cancelled here too and staff get a ShopAdmin notice to handle it by hand."""
+    if role not in ("bot", "admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not available on this channel")
+    with db.reservation_guard():
+        order = db.get_order(order_id)
+        user = db.get_user_by_platform(platform, chat_id)
+        if order is None or user is None or user["id"] != order["user_id"]:
+            if order is not None:
+                security_watch.report(db, "order_probe", f"{platform}:{chat_id}")
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+        if order["status"] == "receipt_uploaded" or order.get("has_receipt"):
+            raise HTTPException(status.HTTP_409_CONFLICT, RECEIPT_SENT_DETAIL)
+        if order["status"] != "awaiting_payment" or db.list_payments(order_id):
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                f"Order in status {order['status']}; cannot be cancelled")
+        if not db.cancel_order_locally(order_id, CANCEL_BY_CUSTOMER):
+            raise HTTPException(status.HTTP_409_CONFLICT, "Order cannot be cancelled")
+    actor = f"{role}:{platform}"
+    db.audit(actor, "order_customer_cancel", f"order id={order_id}")
+    db.add_event(EVENT_CUSTOMER_CANCELLED, order_id, actor)
+    if order.get("accounting_order_no"):
+        db.audit(actor, "order_cancel_written",
+                 f"order id={order_id} accounting_order_no={order['accounting_order_no']} "
+                 f"db={order.get('accounting_db') or '-'} (not changed in accounting)")
+        db.add_event(EVENT_CUSTOMER_CANCELLED_WRITTEN, order_id, actor)
+    return OrderOut(**db.get_order(order_id))
 
 
 @router.get("/orders/{order_id}", response_model=OrderOut)

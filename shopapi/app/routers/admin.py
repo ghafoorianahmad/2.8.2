@@ -270,7 +270,9 @@ def approve_payment(
                     status.HTTP_409_CONFLICT, f"Insufficient stock for product {kala_code}"
                 )
 
-        write_items = [(it["kala_code"], it["qty"], it["unit_price"]) for it in items]
+        # v2.6.2: a phone line carries its color and part in the line description
+        write_items = [(it["kala_code"], it["qty"], it["unit_price"])
+                       + ((it["variant"],) if it.get("variant") else ()) for it in items]
         try:
             result = writer.write_order(order_id, order["user_person_code"], write_items)
         except AccountingLockTimeout:

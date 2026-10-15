@@ -77,3 +77,6 @@ pytest-of-*/
 # shoptg server package (built by shoptg/build_package.ps1)
 shoptg/wheels/
 shoptg/vendor/
+
+# v2.6.2: fallback pytest temp of build_all.bat
+.buildtmp/

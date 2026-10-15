@@ -261,6 +261,13 @@ class ShopApiClient:
             params=params or None,
         )
 
+    async def cancel_order(self, order_id: int, platform: str, chat_id: str | int) -> dict | None:
+        """v2.6.2: the customer's own cancel (only before a receipt was sent)."""
+        return await self._request(
+            "POST", f"/orders/{int(order_id)}/cancel", key=self._settings.bot_api_key,
+            params={"platform": platform, "chat_id": str(chat_id)}, allow_404=False,
+        )
+
     async def list_user_orders(self, platform: str, chat_id: str | int) -> list[dict]:
         return (
             await self._request(

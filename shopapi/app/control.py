@@ -22,7 +22,7 @@ from typing import Callable, Optional
 
 from .util import now_utc
 
-VERSION = "2.6.1"
+VERSION = "2.6.2"
 STARTED_AT = now_utc()
 
 

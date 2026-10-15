@@ -525,7 +525,7 @@ class FakeShopApi:
                         "kala_code": line["kala_code"],
                         "name": f"{product['name']} — {color['color']}", "qty": line["qty"],
                         "unit_price": color["unit_price"], "variant_id": color["id"],
-                        "variant": color["color"],
+                        "variant": color["color"], "part": color.get("part"),
                     })
                     total += float(line["qty"]) * float(color["unit_price"])
                     continue
@@ -550,6 +550,17 @@ class FakeShopApi:
                 "_platform": platform, "_chat_id": chat_id,
             }
             self.orders[order_id] = order
+            return self._ok(self._order_public(order))
+
+        if method == "POST" and path.startswith("/orders/") and path.endswith("/cancel"):
+            order = self.orders.get(int(path.split("/")[2]))
+            if order is None or order["_platform"] != params.get("platform")                     or order["_chat_id"] != str(params.get("chat_id")):
+                return self._err(404, "Order not found")
+            if order["status"] == "receipt_uploaded":
+                return self._err(409, "Receipt already sent; the order cannot be cancelled")
+            if order["status"] != "awaiting_payment":
+                return self._err(409, f"Order in status {order['status']}; cannot be cancelled")
+            order["status"] = "cancelled"
             return self._ok(self._order_public(order))
 
         if method == "POST" and path.startswith("/orders/") and path.endswith("/receipt"):

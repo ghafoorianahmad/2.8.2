@@ -19,6 +19,7 @@ from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
 from ..pricelist.importer import ImportResult, import_pdf
+from ..pricelist.matching import auto_match
 from ..pricelist.repo import PriceListRepo
 from ..proxypool import ProxyLink, ProxyPool, masked_secret, parse_proxy_link
 from ..security import Identity, require_permission, require_worker
@@ -55,6 +56,7 @@ class ImportOut(BaseModel):
     list_date: str = ""
     row_count: int = 0
     reasons: list[str] = []
+    auto_mapped: int = 0
 
 
 class MappingIn(BaseModel):
@@ -184,14 +186,15 @@ def upload_pricelist(
 
 @router.get("/admin/pricelists/rows")
 def pricelist_rows(
-    filter: Literal["unmapped", "mapped", "ignored", "all"] = Query("all"),
+    filter: Literal["unmapped", "mapped", "ignored", "auto", "all"] = Query("all"),
     section: Optional[str] = Query(None, max_length=100),
     list_id: Optional[int] = Query(None),
     db: OwnDB = Depends(deps.get_db),
     _: Identity = CAN_VIEW,
 ) -> dict:
     """Rows of the newest list (active or held) with their mapping state.
-    Ignored rows never come back as unmapped on a new list (same row key)."""
+    Decided rows never come back as unmapped on a new list (same row key, or
+    matched automatically: ``auto`` = to review, v2.6.2)."""
     repo = PriceListRepo(db)
     plist = repo.get_list(list_id) if list_id else repo.latest_list()
     if plist is None:
@@ -202,6 +205,7 @@ def pricelist_rows(
         "unmapped": sum(1 for r in rows if r["action"] is None),
         "mapped": sum(1 for r in rows if r["action"] == "map"),
         "ignored": sum(1 for r in rows if r["action"] == "ignore"),
+        "auto": sum(1 for r in rows if r["action"] is not None and r["auto"]),
         "all": len(rows),
     }
     if section:
@@ -212,6 +216,8 @@ def pricelist_rows(
         rows = [r for r in rows if r["action"] == "map"]
     elif filter == "ignored":
         rows = [r for r in rows if r["action"] == "ignore"]
+    elif filter == "auto":
+        rows = [r for r in rows if r["action"] is not None and r["auto"]]
     return {"list": plist, "sections": sections, "rows": rows, "counts": counts}
 
 
@@ -317,7 +323,18 @@ def put_mapping(
     )
     db.audit(who.actor, f"price_mapping_{payload.action}",
              f"mapping id={mapping['id']} kala={kala_code or '-'}")
-    return mapping
+    _propagate(db, repo, who.actor)
+    return repo.mapping_for_key(payload.row_key)
+
+
+def _propagate(db: OwnDB, repo: PriceListRepo, actor: str) -> int:
+    """v2.6.2: a staff decision also decides the other colors / parts of the same
+    model in the newest list (flagged «خودکار» for review)."""
+    plist = repo.latest_list()
+    done = auto_match(repo, plist["id"]) if plist is not None else 0
+    if done:
+        db.audit(actor, "price_mapping_auto", f"list id={plist['id']} rows={done}")
+    return done
 
 
 @router.post("/admin/price-mappings/ignore")
@@ -340,6 +357,7 @@ def ignore_rows(
         )
         done += 1
     db.audit(who.actor, "price_mapping_ignore", f"rows={done}")
+    _propagate(db, repo, who.actor)
     return {"ignored": done}
 
 
@@ -349,9 +367,36 @@ def delete_mapping(
     db: OwnDB = Depends(deps.get_db),
     who: Identity = CAN_PRICELIST,
 ) -> None:
-    if not PriceListRepo(db).delete_mapping(mapping_id):
+    repo = PriceListRepo(db)
+    mapping = repo.get_mapping(mapping_id)
+    if mapping is None or not repo.delete_mapping(mapping_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Mapping not found")
+    # The row stays undecided: the matcher must not decide it again by itself.
+    repo.reject_auto(mapping["row_key"], who.actor)
     db.audit(who.actor, "price_mapping_delete", f"mapping id={mapping_id}")
+
+
+@router.post("/admin/price-mappings/{mapping_id}/confirm")
+def confirm_mapping(
+    mapping_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_PRICELIST,
+) -> dict:
+    """Accept an automatic decision (v2.6.2)."""
+    repo = PriceListRepo(db)
+    if repo.get_mapping(mapping_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mapping not found")
+    db.audit(who.actor, "price_mapping_confirm", f"mapping id={mapping_id}")
+    return repo.confirm_mapping(mapping_id, who.actor)
+
+
+@router.post("/admin/price-mappings/auto")
+def run_auto_match(
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_PRICELIST,
+) -> dict:
+    """Match the newest list against every earlier decision now (v2.6.2)."""
+    return {"auto_mapped": _propagate(db, PriceListRepo(db), who.actor)}
 
 
 # ---- inquiries (staff / bot service key) --------------------------------------------

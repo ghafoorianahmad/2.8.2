@@ -2,6 +2,17 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## v2.6.2 — price-list mapping, phone parts, customer cancel (2026-10-15, same branch) — DONE in code; SQL / Bale UNVERIFIED
+
+1. **PDF drag & drop** on «لیست قیمت» (`dragEnterEvent/dropEvent`, same `upload_pdf_file` path as the button; managers only). The row actions use a flow layout.
+2. **Permanent + smart mapping** (`shopapi/app/pricelist/matching.py`): a decided row key is never asked again; on every import (and after each staff decision) undecided rows are matched by *smart key* (brand + model words + type + color; case/spacing/word order, `256GB`=`256`, `R8`=`Ram8`) or, for a new color / part (`ZAA`, `CHA` …) / type of a model whose decided rows all point to one product, mapped to that product. Flagged `price_mappings.auto` (+ `auto_reason`), filter «خودکار (بازبینی)», confirm (`POST /admin/price-mappings/{id}/confirm`), undo (= delete → `price_auto_rejects`, never auto-matched again), run now (`POST /admin/price-mappings/auto`). `safety_reasons` also finds respelled rows by smart key. A model split over several products is never guessed.
+3. **Color, then part**: variants carry `part` (Apple part code from the description, else the type when a product has several types). The bot shows one button per color, then the parts with a price in the current list (each with its own price). `order_items.color/part`; the line name/variant = «color — part»; the Sazeh line description `KalaOrderDetail.sharh` gets it (cut to the column size read from `INFORMATION_SCHEMA`; unknown size → left empty).
+4. **Customer cancel**: «❌ لغو سفارش» in the order message and «سفارش‌های من» → confirmation → `POST /orders/{id}/cancel` (bot key, owner only, only `awaiting_payment` without a receipt; local only, `cancel_reason=customer`). Already written to Sazeh → cancelled here too, Sazeh untouched, ShopAdmin warning `order_cancel_written`. ShopAdmin notice `order_cancelled_by_customer`; orders show who cancelled.
+5. **build_all.bat**: pytest runs with `TEMP/TMP` set to a fresh `%LOCALAPPDATA%\ShopBuild\tmp_<stamp>_<rand>` (fallback `.buildtmp\`), `-p no:cacheprovider`.
+6. `CLAUDE.md`: Outputs keeps only the newest installer pair; README_FA.txt updated every release.
+
+Tests (Windows, fakes): shopapi **393**, shopbots **251**, shoptg **49**, shopsystem **49**, shopadmin **484** — all passing.
+
 ## v2.6.1 — owner follow-ups (2026-10-15, same branch `feature/order-flow-v250`) — DONE in code; Windows build only, SQL / Bale UNVERIFIED
 
 1. **Shop phone**: `shop_phone` empty (or the old placeholder «شماره تلفن فروشگاه») → every line holding `{shop_phone}` is dropped from the bot texts (`texts.drop_phone_lines`); the shipped default is now empty; invoice cards skip it.

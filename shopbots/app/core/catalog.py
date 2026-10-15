@@ -23,6 +23,8 @@ class Color:
     name: str
     price: float | None      # Rial; None = no price -> inquiry only
     available: bool
+    #: v2.6.2: part / region code (ZAA, CHA …) picked after the color; "" = none
+    part: str = ""
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,8 @@ class Product:
             cache["inquiry"] = True
         if self.colors:
             cache["colors"] = [
-                {"id": c.id, "name": c.name, "price": c.price, "available": c.available}
+                {"id": c.id, "name": c.name, "price": c.price, "available": c.available,
+                 "part": c.part}
                 for c in self.colors
             ]
         return cache
@@ -72,6 +75,7 @@ def _colors(raw) -> tuple[Color, ...]:
             id=int(v["id"]), name=str(v.get("color") or ""),
             price=float(price) if price else None,
             available=bool(v.get("available")) and bool(price),
+            part=str(v.get("part") or "").strip(),
         ))
     return tuple(out)
 

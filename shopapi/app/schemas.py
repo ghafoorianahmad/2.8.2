@@ -19,6 +19,8 @@ class VariantOut(BaseModel):
     """One color of a phone priced from the distributor list (mapped rows only)."""
     id: int
     color: str
+    #: v2.6.2: part / region code (ZAA, CHA …) or type (ویتنام …), picked after the color
+    part: str = ""
     unit_price: Optional[float] = None   # Rial; None = no price (inquiry only)
     available: bool
 
@@ -89,6 +91,9 @@ class OrderItemOut(BaseModel):
     unit_price: float
     variant_id: Optional[int] = None
     variant: Optional[str] = None
+    #: v2.6.2: the phone color and part the customer chose
+    color: Optional[str] = None
+    part: Optional[str] = None
 
 
 class OrderOut(BaseModel):

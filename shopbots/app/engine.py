@@ -108,6 +108,11 @@ CALLBACK_ARG_COUNTS: dict[str, int] = {
     "vdec": 2,
     "vdel": 2,
     "inq": 2,
+    # v2.6.2: the part / region of the picked color (product, variant)
+    "prt": 2,
+    # v2.6.2: the customer's own order cancel: ask / confirm
+    "ocx": 1,
+    "ocy": 1,
     # site models (REQUIREMENTS §9a): a product of the model / one of the options
     "kp": 1,
     "mdl": 1,
@@ -168,6 +173,12 @@ DEFAULT_RECEIPT_MINUTES = 30
 EVENT_CURSOR_KEY = "shopapi_event_cursor"
 MAX_CALLBACK_LEN = 64
 MAX_CALLBACK_ARG = 1_000_000_000
+
+
+def variant_label(color: dict) -> str:
+    """«Silver — CHA»: the color, then the part / region when there is one."""
+    return " — ".join(p for p in (str(color.get("name") or "").strip(),
+                                  str(color.get("part") or "").strip()) if p)
 
 
 def parse_callback(data: Any) -> tuple[str, list[int]] | None:
@@ -1003,12 +1014,21 @@ class BotEngine:
     # ---- phones: color first, then the price (REQUIREMENTS §4) ----------------
     @staticmethod
     def _color_rows(code: int, colors: list[dict], current: int = 0) -> list:
-        rows, row = [], []
+        """One button per color name (its parts are picked next, v2.6.2)."""
+        current_name = next((c.get("name") for c in colors if int(c["id"]) == int(current)), None)
+        by_name: dict[str, dict] = {}
         for c in colors:
-            if int(c["id"]) == int(current):
+            name = str(c.get("name") or "")
+            first = by_name.get(name)
+            if first is None or (c.get("available") and not first.get("available")):
+                by_name[name] = c
+        rows, row = [], []
+        for name, c in by_name.items():
+            if current and name == current_name:
                 continue
-            mark = "🎨" if c.get("available") else "❌"
-            row.append((f"{mark} {shorten(str(c.get('name') or ''), 20)}", f"col:{code}:{c['id']}"))
+            mark = "🎨" if any(v.get("available") for v in colors
+                              if str(v.get("name") or "") == name) else "❌"
+            row.append((f"{mark} {shorten(name, 20)}", f"col:{code}:{c['id']}"))
             if len(row) == 2:
                 rows.append(row)
                 row = []
@@ -1044,9 +1064,11 @@ class BotEngine:
     async def _show_color(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int,
         color_id: int, qty: int, *, callback_id=None, edit_message_id=None,
-        refresh: bool = True,
+        refresh: bool = True, choose_part: bool = False,
     ) -> None:
-        """The price of one color. Picking another color announces its price."""
+        """The price of one color. Picking another color announces its price.
+        v2.6.2: a color sold in several parts (ZAA / CHA …) first asks for the part
+        (``choose_part``); only parts with a price in the current list are offered."""
         _state, data = self.store.get_conversation(platform, chat_id)
         cache = dict(data.get("pcache") or {})
         product = cache.get(str(code))
@@ -1066,6 +1088,26 @@ class BotEngine:
             await self._show_colors(adapter, platform, chat_id, code, product, data,
                                     edit_message_id=edit_message_id)
             return
+
+        if choose_part:
+            parts = [c for c in colors if c.get("name") == color.get("name")
+                     and c.get("part") and c.get("available") and c.get("price")]
+            if len(parts) > 1:
+                await self._answer_callback(adapter, callback_id)
+                rows = [[(f"{shorten(str(p['part']), 20)} — {fmt_num(p['price'])}",
+                          f"prt:{code}:{p['id']}")] for p in parts]
+                rows += self._color_rows(code, colors, current=color_id)
+                rows.append([(texts.BTN_MENU, "menu")])
+                await self._send_options(
+                    adapter, platform, chat_id,
+                    texts.CHOOSE_PART.format(name=product["name"], color=color["name"]), rows,
+                    state=STATE_NONE, data={**data, "pcache": cache},
+                    edit_message_id=edit_message_id,
+                )
+                return
+            if len(parts) == 1:
+                color = parts[0]                 # the only part with a price
+                color_id = int(color["id"])
 
         selected = dict(data.get("color_sel") or {})
         previous = int(selected.get(str(code)) or 0)
@@ -1087,8 +1129,9 @@ class BotEngine:
 
         qty = clamp_qty(qty)
         price = fmt_num(color["price"])
+        chosen = variant_label(color)
         body = texts.PRODUCT_COLOR_DETAIL.format(
-            name=name, color=color["name"], price=price, qty=fmt_num(qty),
+            name=name, color=chosen, price=price, qty=fmt_num(qty),
         )
         changed = bool(previous) and previous != int(color_id)
         # The image card goes out on the first color pick of a product view only;
@@ -1099,17 +1142,17 @@ class BotEngine:
             sent_card = await self._send_card(
                 adapter, chat_id,
                 lambda: price_card(
-                    shop=texts.SHOP.get("shop_name", ""), name=name, color=color["name"],
+                    shop=texts.SHOP.get("shop_name", ""), name=name, color=chosen,
                     price=color["price"], in_stock=True,
                     contact={**self._card_contact(), "thanks": ""},
                     currency=texts.SHOP.get("currency", "ریال"),
                 ),
-                texts.CARD_CAPTION_PRICE.format(name=name, color=color["name"], price=price),
+                texts.CARD_CAPTION_PRICE.format(name=name, color=chosen, price=price),
             )
             if sent_card:
                 data = {**data, "card_code": int(code)}
         if changed:
-            notice = texts.COLOR_CHANGED.format(color=color["name"], price=price)
+            notice = texts.COLOR_CHANGED.format(color=chosen, price=price)
             body = f"{notice}\n\n{body}"
             await self._answer_callback(adapter, callback_id, notice)
         else:
@@ -1143,8 +1186,8 @@ class BotEngine:
             await self._answer_callback(adapter, callback_id, texts.OUT_OF_STOCK)
             return
         # shopapi prices the order again at checkout (the list may change).
-        self.cart.add(platform, chat_id, code, f"{product['name']} — {color['name']}", qty,
-                      color["price"], int(color_id))
+        self.cart.add(platform, chat_id, code, f"{product['name']} — {variant_label(color)}",
+                      qty, color["price"], int(color_id))
         await self._answer_callback(adapter, callback_id, texts.QTY_ADDED)
         await self._show_cart(adapter, platform, chat_id)
 
@@ -1357,7 +1400,8 @@ class BotEngine:
                     order_id=order_id, total=total, currency=texts.SHOP.get("currency", "ریال")),
             )
         await self._send_options(
-            adapter, platform, chat_id, "\n\n".join(parts), [[(texts.BTN_MENU, "menu")]],
+            adapter, platform, chat_id, "\n\n".join(parts),
+            [[(texts.BTN_CANCEL_ORDER, f"ocx:{order_id}")], [(texts.BTN_MENU, "menu")]],
         )
         if order_id is not None and not self.store.is_announced("neworder", int(order_id)):
             self.store.mark_announced("neworder", int(order_id), platform, chat_id)
@@ -1454,11 +1498,53 @@ class BotEngine:
             )
             if self.orders.awaits_payment(order):
                 rows.append(
-                    [(f"{texts.BTN_SEND_RECEIPT} ({order.get('id')})", f"rcpt:{order.get('id')}")]
+                    [(f"{texts.BTN_SEND_RECEIPT} ({order.get('id')})", f"rcpt:{order.get('id')}"),
+                     (f"{texts.BTN_CANCEL_ORDER} ({order.get('id')})", f"ocx:{order.get('id')}")]
                 )
         rows.append([(texts.BTN_MENU, "menu")])
         await self._send_options(
             adapter, platform, chat_id, "\n".join(lines), rows, state=STATE_NONE, data={},
+        )
+
+    # ---- v2.6.2: the customer cancels their own order (no receipt sent yet) ----
+    async def _ask_cancel_order(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, order_id: int,
+        callback_id=None,
+    ) -> None:
+        await self._answer_callback(adapter, callback_id)
+        await self._send_options(
+            adapter, platform, chat_id, texts.CANCEL_ORDER_CONFIRM.format(order_id=order_id),
+            [[(texts.BTN_CANCEL_ORDER_YES, f"ocy:{order_id}")],
+             [(texts.BTN_CANCEL_ORDER_NO, "orders")], [(texts.BTN_MENU, "menu")]],
+        )
+
+    async def _cancel_order(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, order_id: int,
+        callback_id=None,
+    ) -> None:
+        try:
+            await self.api.cancel_order(order_id, platform, chat_id)
+        except ShopApiRejected as exc:
+            await self._answer_callback(adapter, callback_id)
+            detail = (exc.detail or "").lower()
+            text = (texts.CANCEL_ORDER_RECEIPT_SENT if "receipt already sent" in detail
+                    else texts.CANCEL_ORDER_NOT_POSSIBLE if exc.status in (404, 409)
+                    else exc.message_fa)
+            await self._send_options(adapter, platform, chat_id, text,
+                                     [[(texts.BTN_ORDERS, "orders")], [(texts.BTN_MENU, "menu")]])
+            return
+        except ShopApiError:
+            await self._answer_callback(adapter, callback_id, texts.SERVICE_UNAVAILABLE, True)
+            return
+        state, data = self.store.get_conversation(platform, chat_id)
+        if state == STATE_AWAIT_RECEIPT and int((data or {}).get("order_id") or 0) == int(order_id):
+            self.store.set_conversation(platform, chat_id, STATE_NONE, {})
+        await self._answer_callback(adapter, callback_id, texts.CANCEL_ORDER_DONE.format(
+            order_id=order_id))
+        await self._send_options(
+            adapter, platform, chat_id, texts.CANCEL_ORDER_DONE.format(order_id=order_id),
+            [[(texts.BTN_ORDERS, "orders")], [(texts.BTN_MENU, "menu")]],
+            state=STATE_NONE, data={},
         )
 
     @staticmethod
@@ -1711,8 +1797,17 @@ class BotEngine:
         elif action == "col":
             await self._show_color(
                 adapter, platform, chat_id, args[0], args[1], 1,
+                callback_id=callback_id, edit_message_id=message_id, choose_part=True,
+            )
+        elif action == "prt":
+            await self._show_color(
+                adapter, platform, chat_id, args[0], args[1], 1,
                 callback_id=callback_id, edit_message_id=message_id,
             )
+        elif action == "ocx":
+            await self._ask_cancel_order(adapter, platform, chat_id, args[0], callback_id)
+        elif action == "ocy":
+            await self._cancel_order(adapter, platform, chat_id, args[0], callback_id)
         elif action == "vqty":
             await self._show_color(
                 adapter, platform, chat_id, args[0], args[1], args[2],

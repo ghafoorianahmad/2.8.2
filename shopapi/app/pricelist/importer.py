@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from ..config import Settings
 from ..db_own import OwnDB
 from ..util import now_utc
+from .matching import auto_match, smart_key
 from .parser import ParseError, parse_pdf
 from .pricing import change_pct, customer_price_rial
 from .repo import PriceListRepo
@@ -39,6 +40,8 @@ class ImportResult:
     list_date: str = ""
     row_count: int = 0
     reasons: list[str] = field(default_factory=list)
+    #: v2.6.2: rows decided automatically from earlier decisions
+    auto_mapped: int = 0
 
 
 def _store_pdf(settings: Settings, list_id: int, list_date: str, data: bytes) -> str | None:
@@ -77,9 +80,14 @@ def safety_reasons(repo: PriceListRepo, active: dict | None, new_rows: dict[str,
     mapped = repo.mapped_keys() & set(old_rows)
     reasons: list[str] = []
     missing = 0
+    # v2.6.2: a row whose spelling changed a little (case, spacing, word order)
+    # is the same row, not a missing one.
+    by_smart = {smart_key(r["section"], r["description"], r["kind"], r["color"]): r
+                for r in new_rows.values()}
     for key in sorted(mapped):
         old = old_rows[key]
-        new = new_rows.get(key)
+        new = new_rows.get(key) or by_smart.get(
+            smart_key(old["section"], old["description"], old["kind"], old["color"]))
         if new is None:
             missing += 1
             continue
@@ -160,6 +168,9 @@ def import_pdf(
     name = _store_pdf(settings, list_id, parsed.list_date, data)
     if name:
         repo.set_file_name(list_id, name)
+    auto = auto_match(repo, list_id)
+    if auto:
+        db.audit(actor or source, "price_mapping_auto", f"list id={list_id} rows={auto}")
     if status_value == "active":
         repo.activate(list_id)
         db.audit(actor or source, "pricelist_import", f"list id={list_id} date={parsed.list_date}")
@@ -167,7 +178,7 @@ def import_pdf(
     else:
         db.audit(actor or source, "pricelist_held", f"list id={list_id} date={parsed.list_date}")
         db.add_event("pricelist_held", list_id, actor or source)
-    return ImportResult(status_value, list_id, parsed.list_date, len(rows), reasons)
+    return ImportResult(status_value, list_id, parsed.list_date, len(rows), reasons, auto)
 
 
 def active_list_fresh(active: dict | None, settings: Settings) -> bool:

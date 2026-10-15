@@ -48,7 +48,10 @@
     "BTN_INQUIRY": "📨 استعلام قیمت",
     "BTN_ITEM_REQUEST": "📝 درخواست کالای ناموجود",
     "BTN_REQUEST_TEXT": "📝 ثبت همین متن",
-    "BTN_REQUEST_THIS": "📝 درخواست این کالا"
+    "BTN_REQUEST_THIS": "📝 درخواست این کالا",
+    "BTN_CANCEL_ORDER": "❌ لغو سفارش",
+    "BTN_CANCEL_ORDER_YES": "بله، سفارش لغو شود",
+    "BTN_CANCEL_ORDER_NO": "خیر، برگرد"
   },
 
   "messages": {
@@ -171,6 +174,11 @@
     "ITEM_REQUEST_SENT": "☑ درخواست شما ثبت شد. فروشگاه پس از تأمین کالا با شما تماس می‌گیرد.",
     "ITEM_REQUEST_TOO_MANY": "امروز درخواست‌های زیادی ثبت کرده‌اید؛ لطفاً فردا دوباره اقدام کنید.",
     "ITEM_REQUEST_SHORT": "لطفاً نام کالا را کامل‌تر بنویسید.",
+    "CHOOSE_PART": "«{name}» — رنگ {color}\n────────────\nاین رنگ در چند پارت/ریجن موجود است؛ هر کدام قیمت خودش را دارد. یکی را انتخاب کنید:",
+    "CANCEL_ORDER_CONFIRM": "سفارش {order_id} لغو شود؟\nپس از لغو، کالاهای آن برای شما نگه داشته نمی‌شود.",
+    "CANCEL_ORDER_DONE": "☑ سفارش {order_id} لغو شد.",
+    "CANCEL_ORDER_RECEIPT_SENT": "برای این سفارش رسید پرداخت فرستاده‌اید؛ لغو از ربات ممکن نیست. لطفاً با فروشگاه تماس بگیرید.",
+    "CANCEL_ORDER_NOT_POSSIBLE": "این سفارش دیگر قابل لغو نیست.",
     "PRODUCT_LINE_INQUIRY": "❖ {name}\n   💬 قیمت: با استعلام",
     "PRODUCT_DETAIL_INQUIRY": "◆ {name}\n────────────\nقیمت:     با استعلام\nبرای اطلاع از قیمت «📨 استعلام قیمت» را بزنید؛ فروشگاه پاسخ می‌دهد.\n(استعلام سفارش نیست و پرداختی لازم ندارد.)",
     "PRICE_INQUIRY_SENT": "☑ استعلام قیمت «{name}» ثبت شد؛ فروشگاه به‌زودی پاسخ می‌دهد.",
@@ -231,6 +239,8 @@
     "ITEM_REQUEST_PICK / ITEM_REQUEST_NONE": "{text}",
     "PRICE_INQUIRY_SENT / CART_ITEM_*": "{name}",
     "ITEM_REQUEST_REPLY": "{product} {text}",
+    "CHOOSE_PART": "{name} {color}",
+    "CANCEL_ORDER_CONFIRM / CANCEL_ORDER_DONE": "{order_id}",
     "ASK_RECEIPT / PAYMENT_APPROVED / PAYMENT_REJECTED": "{order_id}",
     "ORDER_LINE / ADMIN_ORDER_STATUS": "{order_id} {status} {total}",
     "NEW_USER_NOTICE": "{platform} {name} {phone}",

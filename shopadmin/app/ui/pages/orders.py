@@ -559,8 +559,15 @@ def receipt_ref_text(order: dict, receipt_ref: str) -> str:
     return "فیشی ثبت نشده است"
 
 
+CANCEL_REASON_FA = {"customer": "لغو توسط مشتری (پیش از ارسال رسید)",
+                    "receipt_timeout": "لغو خودکار (رسید در مهلت نرسید)"}
+
+
 def tracking_fa(order: dict) -> str:
-    """The furthest step after payment: shipped > invoiced > partially invoiced."""
+    """The furthest step after payment: shipped > invoiced > partially invoiced;
+    for a cancelled order, who cancelled it (v2.6.2)."""
+    if order.get("status") == "cancelled" and order.get("cancel_reason") in CANCEL_REASON_FA:
+        return CANCEL_REASON_FA[order["cancel_reason"]]
     if order.get("shipped_at"):
         return f"ارسال شده ({format_shamsi(order.get('shipped_at'))})"
     if order.get("invoice_state") == "full":

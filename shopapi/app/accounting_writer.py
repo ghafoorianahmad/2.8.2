@@ -192,7 +192,7 @@ class AccountingWriter:
                 raise AccountingConfigError(problem)
 
         sharhlp = f"API-{our_order_id}"
-        mablp = sum(qty * price for _, qty, price in items)  # §5.2: no rounding
+        mablp = sum(it[1] * it[2] for it in items)  # §5.2: no rounding
         status_code = self.settings.accounting_status_code
         usercode = self.settings.accounting_usercode
         anbarcode = self.settings.accounting_anbarcode
@@ -339,7 +339,7 @@ class AccountingWriter:
 
         written_items = [
             {"num": i, "codekala": k, "meg": q, "gey": p}
-            for i, (k, q, p) in enumerate(items, start=1)
+            for i, (k, q, p) in enumerate((it[:3] for it in items), start=1)
         ]
 
         # Serialize all our order writers BEFORE the idempotency check, so two
@@ -406,11 +406,16 @@ class AccountingWriter:
         )
         conn.execute(header_sql, *header_values)
 
-        for num, (kala_code, qty, unit_price) in enumerate(items, start=1):
+        sharh_max = self._sharh_length(conn) if any(len(it) > 3 and it[3] for it in items) else 0
+        for num, item in enumerate(items, start=1):
+            kala_code, qty, unit_price = item[:3]
+            # v2.6.2: «color — part» of a phone in the line description, cut to the
+            # column's size (unknown size = left empty, never a truncation error).
+            sharh = str(item[3] if len(item) > 3 else "")[:sharh_max] if sharh_max else ""
             detail_sql, detail_values = insert_statement(
                 f"{db}.dbo.KalaOrderDetail",
                 DETAIL_COLUMNS,
-                (num, codlp, kala_code, qty, unit_price, "", anbarcode, 0, 0,
+                (num, codlp, kala_code, qty, unit_price, sharh, anbarcode, 0, 0,
                  "", "", "", "", "", "", "", ""),
             )
             conn.execute(detail_sql, *detail_values)
@@ -444,6 +449,22 @@ class AccountingWriter:
             database=database,
             codlp_rows_after_commit=after,
         )
+
+    def _sharh_length(self, conn) -> int:
+        """Characters ``KalaOrderDetail.sharh`` holds (0 = unknown -> not used)."""
+        try:
+            row = conn.execute(
+                "SELECT CHARACTER_MAXIMUM_LENGTH AS n FROM "
+                f"{self._db()}.INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_NAME = 'KalaOrderDetail' AND COLUMN_NAME = 'sharh'"
+            ).fetchone()
+        except pyodbc.Error:
+            return 0
+        value = row[0] if row is not None else None
+        if value is None:
+            return 0
+        value = int(value)
+        return 200 if value == -1 else max(0, min(value, 200))
 
     def _codlp_rows(self, conn, codlp: int) -> int:
         row = conn.execute(

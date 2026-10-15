@@ -1,8 +1,10 @@
 """صفحهٔ لیست قیمت پخش‌کننده — ردیف‌های PDF، نگاشت به کالا، نادیده گرفتن،
 لیست‌های دریافتی (تأیید/رد لیست نگه‌داشته‌شده، بارگذاری دستی PDF) و پراکسی‌های تلگرام.
 
-فقط ردیف‌های نگاشت‌شده به مشتری می‌رسند؛ ردیف نادیده‌گرفته در لیست‌های بعدی هم
-دوباره «نگاشت‌نشده» نمی‌شود (کلید ردیف = مدل | نوع | رنگ).
+فقط ردیف‌های نگاشت‌شده به مشتری می‌رسند؛ ردیف نگاشت‌شده یا نادیده‌گرفته در لیست‌های بعدی
+هرگز دوباره پرسیده نمی‌شود. از نسخهٔ ۲٫۶٫۲ ردیف‌های تازه خودکار تطبیق داده می‌شوند (همان
+ردیف با املای کمی متفاوت، یا رنگ/پارت تازهٔ مدلی که قبلاً نگاشت شده) و با وضعیت «خودکار»
+برای بازبینی نشان داده می‌شوند. فایل PDF را می‌توان روی همین صفحه کشید و رها کرد.
 """
 from __future__ import annotations
 
@@ -39,10 +41,13 @@ PROXY_HEADERS = ("میزبان", "پورت", "نوع", "وضعیت", "پایدا
 
 FILTERS = (
     ("unmapped", "نگاشت‌نشده"),
+    ("auto", "خودکار (بازبینی)"),
     ("mapped", "نگاشت‌شده"),
     ("ignored", "نادیده"),
     ("all", "همه"),
 )
+#: Largest PDF accepted (same rule for the button and for drag & drop).
+MAX_PDF_BYTES = 10 * 1024 * 1024
 LIST_STATUS_FA = {
     "active": "فعال",
     "held": "نگه‌داشته (منتظر تأیید)",
@@ -66,11 +71,31 @@ OUTCOME_FA = {
 # ---- pure helpers (tested without a window) ----------------------------------------
 def row_state(row: dict) -> str:
     action = row.get("action")
+    if action in ("map", "ignore") and row.get("auto"):
+        return "auto_mapped" if action == "map" else "auto_ignored"
     return "mapped" if action == "map" else "ignored" if action == "ignore" else "unmapped"
 
 
+ROW_STATE_FA = {"mapped": "نگاشت‌شده", "ignored": "نادیده", "unmapped": "نگاشت‌نشده",
+                "auto_mapped": "نگاشت خودکار", "auto_ignored": "نادیدهٔ خودکار"}
+ROW_STATE_COLOR = {"mapped": theme.SUCCESS_DARK, "ignored": theme.TEXT_MUTED,
+                   "unmapped": theme.WARNING_TEXT, "auto_mapped": theme.PRIMARY,
+                   "auto_ignored": theme.PRIMARY}
+AUTO_REASON_FA = {"same_row": "همان ردیف با املای دیگر",
+                  "same_model": "رنگ یا پارت تازهٔ همین مدل"}
+
+
 def row_state_fa(row: dict) -> str:
-    return {"mapped": "نگاشت‌شده", "ignored": "نادیده", "unmapped": "نگاشت‌نشده"}[row_state(row)]
+    return ROW_STATE_FA[row_state(row)]
+
+
+def dropped_pdf(urls) -> Optional[str]:
+    """The local PDF among dropped URLs (drag & drop), or ``None``."""
+    for url in urls or ():
+        path = url.toLocalFile() if hasattr(url, "toLocalFile") else str(url)
+        if path and path.lower().endswith(".pdf"):
+            return path
+    return None
 
 
 def pdf_price(value) -> str:
@@ -104,6 +129,8 @@ class PriceListPage(BasePage):
 
     def build_body(self) -> None:
         self.can_manage = self.context.can(PRICELIST_MANAGE)
+        # v2.6.2: a PDF dropped anywhere on the page is uploaded like «بارگذاری PDF».
+        self.setAcceptDrops(self.can_manage)
         self.can_proxies = self.context.can(PROXIES_MANAGE)
         self._rows: list[dict] = []
         self._lists: list[dict] = []
@@ -157,7 +184,9 @@ class PriceListPage(BasePage):
         self.rows_summary = widgets.label("", name="Muted")
         panel.body.addWidget(self.rows_summary)
 
-        actions = QHBoxLayout()
+        # A flow layout: six buttons wrap on a narrow window instead of widening it.
+        actions_holder = QWidget()
+        actions = widgets.FlowLayout(actions_holder, spacing=10)
         self.map_button = widgets.button("نگاشت به کالا…", icon_name="link", variant="primary",
                                          on_click=self._map_selected)
         self.ignore_button = widgets.button(
@@ -165,11 +194,21 @@ class PriceListPage(BasePage):
             tooltip="این ردیف‌ها در لیست‌های بعدی هم نگاشت‌نشده حساب نمی‌شوند.")
         self.clear_button = widgets.button("حذف نگاشت / نادیده", icon_name="trash",
                                            on_click=self._clear_selected)
-        for b in (self.map_button, self.ignore_button, self.clear_button):
+        self.confirm_auto_button = widgets.button(
+            "تأیید نگاشت خودکار", icon_name="check", variant="success",
+            on_click=self._confirm_selected,
+            tooltip="ردیف‌های «خودکار» انتخاب‌شده عادی می‌شوند.")
+        self.undo_auto_button = widgets.button(
+            "لغو نگاشت خودکار", icon_name="close", on_click=self._undo_selected,
+            tooltip="ردیف دوباره «نگاشت‌نشده» می‌شود و دیگر خودکار تطبیق داده نمی‌شود.")
+        self.auto_button = widgets.button(
+            "تطبیق خودکار", icon_name="refresh", on_click=self._run_auto,
+            tooltip="ردیف‌های نگاشت‌نشده را با تصمیم‌های قبلی تطبیق بده.")
+        for b in (self.map_button, self.ignore_button, self.clear_button,
+                  self.confirm_auto_button, self.undo_auto_button, self.auto_button):
             b.setEnabled(self.can_manage)
             actions.addWidget(b)
-        actions.addStretch(1)
-        panel.body.addLayout(actions)
+        panel.body.addWidget(actions_holder)
         layout.addWidget(panel, 1)
         return tab
 
@@ -187,6 +226,7 @@ class PriceListPage(BasePage):
         actions = QHBoxLayout()
         self.upload_button = widgets.button("بارگذاری PDF…", icon_name="download",
                                             variant="primary", on_click=self._upload_pdf)
+        self.upload_button.setToolTip("یا فایل PDF را روی همین صفحه بکشید و رها کنید.")
         self.approve_button = widgets.button("تأیید لیست نگه‌داشته", icon_name="check",
                                              variant="success", on_click=self._approve_list)
         self.reject_button = widgets.button("رد لیست", icon_name="close", variant="danger",
@@ -338,9 +378,8 @@ class PriceListPage(BasePage):
                 table.set_cell(i, 6, format_money(price) if price else "ناموجود",
                                color=None if price else theme.DANGER)
                 state = row_state(row)
-                table.set_cell(i, 7, row_state_fa(row), bold=True, color={
-                    "mapped": theme.SUCCESS_DARK, "ignored": theme.TEXT_MUTED,
-                    "unmapped": theme.WARNING_TEXT}[state])
+                table.set_cell(i, 7, row_state_fa(row), bold=True, color=ROW_STATE_COLOR[state],
+                               tooltip=AUTO_REASON_FA.get(str(row.get("auto_reason") or ""), ""))
                 table.set_cell(i, 8, to_persian_digits(row["kala_code"])
                                if row.get("kala_code") else "—")
         finally:
@@ -443,17 +482,81 @@ class PriceListPage(BasePage):
         self.run(work, on_success=lambda _r: (self.notify_success("نگاشت حذف شد."),
                                               self._load_rows()))
 
+    # ---- v2.6.2: automatic mappings ------------------------------------------
+    def _auto_rows(self) -> list[dict]:
+        rows = [r for r in self._selected_rows() if r.get("mapping_id") and r.get("auto")]
+        if not rows:
+            self.notify_warning("ردیف «خودکار» انتخاب نشده است.")
+        return rows
+
+    def _confirm_selected(self) -> None:
+        ids = [int(r["mapping_id"]) for r in self._auto_rows()]
+        if not ids:
+            return
+
+        def work():
+            for mapping_id in ids:
+                self.context.api.confirm_price_mapping(mapping_id)
+
+        self.run(work, on_success=lambda _r: (self.notify_success("نگاشت خودکار تأیید شد."),
+                                              self._load_rows()))
+
+    def _undo_selected(self) -> None:
+        ids = [int(r["mapping_id"]) for r in self._auto_rows()]
+        if not ids:
+            return
+
+        def work():
+            for mapping_id in ids:
+                self.context.api.delete_price_mapping(mapping_id)
+
+        self.run(work, on_success=lambda _r: (self.notify_success(
+            "نگاشت خودکار لغو شد؛ این ردیف‌ها را دستی تصمیم بگیرید."), self._load_rows()))
+
+    def _run_auto(self) -> None:
+        def done(result: dict) -> None:
+            count = int((result or {}).get("auto_mapped") or 0)
+            self.notify_success(f"{to_persian_digits(count)} ردیف خودکار تطبیق داده شد."
+                                if count else "ردیف تازه‌ای برای تطبیق خودکار نبود.")
+            self._load_rows()
+
+        self.run(lambda: self.context.api.auto_match_prices(), on_success=done)
+
+    # ---- upload: the button and drag & drop ------------------------------------
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if self.can_manage and dropped_pdf(event.mimeData().urls()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        path = dropped_pdf(event.mimeData().urls()) if self.can_manage else None
+        if not path:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        self.upload_pdf_file(path)
+
     def _upload_pdf(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "انتخاب لیست قیمت (PDF)", "",
                                               "PDF (*.pdf)")
         if not path:
+            return
+        self.upload_pdf_file(path)
+
+    def upload_pdf_file(self, path: str) -> None:
+        """The one upload path of the button and of a dropped file."""
+        if not self.can_manage:
             return
         try:
             data = Path(path).read_bytes()
         except OSError:
             self.notify_error("فایل خوانده نشد.")
             return
-        if len(data) > 10 * 1024 * 1024 or not data.startswith(b"%PDF"):
+        if len(data) > MAX_PDF_BYTES or not data.startswith(b"%PDF"):
             self.notify_error("فایل باید PDF و کمتر از ۱۰ مگابایت باشد.")
             return
         name = Path(path).name
@@ -461,6 +564,10 @@ class PriceListPage(BasePage):
         def done(result: dict) -> None:
             outcome = str(result.get("outcome") or "")
             text = OUTCOME_FA.get(outcome, outcome)
+            auto = int(result.get("auto_mapped") or 0)
+            if auto:
+                text += (f"\n{to_persian_digits(auto)} ردیف خودکار نگاشت شد؛ "
+                         "در فیلتر «خودکار» بازبینی کنید.")
             if outcome == "active":
                 self.notify_success(text)
             else:
