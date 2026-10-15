@@ -19,9 +19,10 @@ set "SHOP_NOPAUSE=1"
 REM v2.6.2: pytest gets a fresh, writable temp root for this build only. A shared
 REM %TEMP%\pytest-of-<user> left with denied access by an earlier run used to stop
 REM the build ("PermissionError: Access is denied") although every test was fine.
-REM pytest makes numbered basetemp dirs inside it and never reuses another run's.
+REM A new folder under %TEMP% (not the shared pytest-of-<user>); pytest makes
+REM numbered basetemp dirs inside it and never reuses another run's.
 for /f %%t in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMddHHmmss"') do set "BUILD_STAMP=%%t"
-set "SHOP_TEST_ROOT=%LOCALAPPDATA%\ShopBuild"
+set "SHOP_TEST_ROOT=%TEMP%\ShopBuild"
 if exist "%SHOP_TEST_ROOT%" (
     for /d %%d in ("%SHOP_TEST_ROOT%\tmp_*") do rd /s /q "%%d" 2>nul
 )
