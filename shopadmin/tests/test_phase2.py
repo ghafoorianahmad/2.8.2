@@ -54,7 +54,7 @@ def test_receipt_image_ship_and_shop_state(fake_api, api):
 # ---- permissions ------------------------------------------------------------
 def test_ship_and_shop_state_permissions():
     assert has_permission(ROLE_OPERATOR, ORDERS_SHIP)
-    assert not has_permission(ROLE_VIEWER, ORDERS_SHIP)
+    assert has_permission(ROLE_VIEWER, ORDERS_SHIP)          # v2.7.0: viewer = «کاربر فروش»
     assert has_permission(ROLE_ADMIN, SHOP_STATE)
     assert not has_permission(ROLE_OPERATOR, SHOP_STATE)
 
@@ -122,9 +122,9 @@ def test_order_dialog_ship_and_receipt_buttons(ui_context, admin_qapp):
     unpaid = OrderDetailDialog(operator, _order(status="awaiting_payment"), None)
     assert not unpaid.ship_button.isEnabled() and not unpaid.receipt_button.isEnabled()
     unpaid.close()
-    viewer = make_context_with_role(ui_context, ROLE_VIEWER)
-    shipped = OrderDetailDialog(viewer, _order(status="written"), None)
-    assert not shipped.ship_button.isEnabled()
+    shipped = OrderDetailDialog(operator, {**_order(status="written"),
+                                           "shipped_at": "2026-10-18T10:00:00+00:00"}, None)
+    assert not shipped.ship_button.isEnabled()                # already sent
     shipped.close()
 
 

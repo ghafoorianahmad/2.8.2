@@ -336,6 +336,12 @@ MIGRATIONS = (
     # v2.6.2: the phone color and part/region code the customer chose
     ("order_items", "color", "TEXT"),
     ("order_items", "part", "TEXT"),
+    # v2.7.0: per-user permission ticks on top of the role (comma lists)
+    ("staff_users", "perm_grant", "TEXT NOT NULL DEFAULT ''"),
+    ("staff_users", "perm_revoke", "TEXT NOT NULL DEFAULT ''"),
+    # v2.7.0: optional courier given when an order is marked as sent
+    ("orders", "courier_name", "TEXT"),
+    ("orders", "courier_phone", "TEXT"),
 )
 
 #: Item request kinds (v2.6.1).
@@ -369,6 +375,11 @@ class OwnDB:
             existing = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             if column not in existing:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        # v2.7.0: two roles only («مدیر» / «کاربر فروش»); older roles are mapped.
+        from .staff import LEGACY_ROLE_MAP
+
+        for old, new in LEGACY_ROLE_MAP.items():
+            self._conn.execute("UPDATE staff_users SET role=? WHERE role=?", (new, old))
 
     # ---- low level ----
     def _fetchone(self, sql: str, params: tuple = ()) -> dict | None:
@@ -629,11 +640,13 @@ class OwnDB:
             )
             self._commit()
 
-    def set_shipped(self, order_id: int) -> dict:
+    def set_shipped(self, order_id: int, courier_name: str | None = None,
+                    courier_phone: str | None = None) -> dict:
         with self._lock:
             self._conn.execute(
-                "UPDATE orders SET shipped_at=?, updated_at=? WHERE id=?",
-                (now_iso(), now_iso(), order_id),
+                "UPDATE orders SET shipped_at=?, updated_at=?, courier_name=?, courier_phone=? "
+                "WHERE id=?",
+                (now_iso(), now_iso(), courier_name or None, courier_phone or None, order_id),
             )
             self._commit()
             return self.get_order(order_id)
@@ -695,6 +708,18 @@ class OwnDB:
                 "AND reserve_until <= ? ORDER BY id",
                 (now or now_iso(),),
             )
+
+    def cancel_order_any(self, order_id: int, reason: str, statuses: tuple[str, ...]) -> bool:
+        """v2.7.0: staff cancel (awaiting payment or with a receipt). Local only."""
+        with self._lock:
+            marks = ",".join("?" for _ in statuses)
+            cur = self._conn.execute(
+                "UPDATE orders SET status='cancelled', cancel_reason=?, updated_at=? "
+                f"WHERE id=? AND status IN ({marks})",
+                (reason, now_iso(), order_id, *statuses),
+            )
+            self._commit()
+            return cur.rowcount == 1
 
     def cancel_order_locally(self, order_id: int, reason: str) -> bool:
         """Cancel an order that still waits for its receipt. Only our SQLite row
@@ -924,7 +949,8 @@ class OwnDB:
 
     def update_staff(self, staff_id: int, **fields) -> dict | None:
         allowed = {"full_name", "role", "active", "password_hash", "must_change_password",
-                   "failed_attempts", "locked_until", "last_login_at"}
+                   "failed_attempts", "locked_until", "last_login_at", "perm_grant",
+                   "perm_revoke"}
         sets = {k: v for k, v in fields.items() if k in allowed}
         with self._lock:
             if sets:

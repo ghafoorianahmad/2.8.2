@@ -12,7 +12,7 @@ from . import deps
 from .config import Settings, get_settings
 from .db_own import OwnDB
 from .text import mask_name, mask_phone, normalize_fa  # noqa: F401 (re-export)
-from .staff import ROLE_SERVICE, has_permission, hash_token
+from .staff import ROLE_SERVICE, effective_permissions, has_permission, hash_token
 from .util import now_utc
 
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -101,8 +101,12 @@ class Identity:
     user_id: int | None = None
     token_hash: str | None = None
     must_change_password: bool = False
+    #: v2.7.0: a staff member's role permissions plus their own ticks.
+    permissions: frozenset | None = None
 
     def can(self, permission: str) -> bool:
+        if self.permissions is not None:
+            return permission in self.permissions
         return has_permission(self.role, permission)
 
     @property
@@ -140,6 +144,8 @@ def _staff_identity(db: OwnDB, token: str) -> Identity:
     return Identity(
         kind="staff", role=user["role"], username=user["username"], user_id=user["id"],
         token_hash=token_hash, must_change_password=bool(user["must_change_password"]),
+        permissions=effective_permissions(user["role"], user.get("perm_grant"),
+                                          user.get("perm_revoke")),
     )
 
 
@@ -182,9 +188,21 @@ def require_permission(permission: str):
     return _check
 
 
+def require_signed_in(identity: Identity = Depends(get_identity)) -> Identity:
+    """Any staff member (whatever their permissions) or the service key."""
+    if identity.kind not in ("staff", "service"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this key")
+    return identity
+
+
 def get_catalog_channel(identity: Identity = Depends(get_identity)) -> str:
-    """Product/group reads: any channel key, the service key, or a signed-in staff member."""
+    """Product/group reads: any channel key, the service key, or a staff member allowed
+    to see products (v2.7.0: not a sales user)."""
     if identity.kind == "staff":
+        from .staff import P_VIEW
+
+        if not identity.can(P_VIEW):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this account")
         return "staff"
     if identity.kind == "service":
         return "admin"

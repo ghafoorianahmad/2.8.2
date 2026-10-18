@@ -32,8 +32,9 @@ from ..schemas import (
 from ..security import Identity, get_identity, get_staff_identity, is_local_request
 from ..staff import (
     DUMMY_HASH,
-    PERMISSIONS,
     ROLE_SUPER_ADMIN,
+    effective_permissions,
+    parse_permission_list,
     hash_password,
     hash_token,
     new_session_token,
@@ -90,7 +91,12 @@ FORGOT_APPROVED_MINUTES = 30
 def staff_out(row: dict) -> StaffOut:
     locked_until = row.get("locked_until")
     locked = bool(locked_until) and locked_until > now_utc().isoformat(timespec="seconds")
+    grants = parse_permission_list(row.get("perm_grant"))
+    revokes = parse_permission_list(row.get("perm_revoke"))
     return StaffOut(
+        extra_permissions=sorted(grants),
+        removed_permissions=sorted(revokes),
+        permissions=sorted(effective_permissions(row["role"], grants, revokes)),
         id=row["id"],
         username=row["username"],
         full_name=row["full_name"] or "",
@@ -103,8 +109,9 @@ def staff_out(row: dict) -> StaffOut:
     )
 
 
-def _permissions(role: str) -> list[str]:
-    return sorted(PERMISSIONS.get(role, frozenset()))
+def _permissions(role: str, row: dict | None = None) -> list[str]:
+    row = row or {}
+    return sorted(effective_permissions(role, row.get("perm_grant"), row.get("perm_revoke")))
 
 
 @router.get("/status")
@@ -187,7 +194,7 @@ def login(
     user = db.update_staff(user["id"], failed_attempts=0, locked_until=None, last_login_at=now_s)
     db.audit(user["username"], "login", f"from {address} client={payload.client.strip()[:40]}")
     return LoginOut(token=token, expires_at=expires_at, user=staff_out(user),
-                    permissions=_permissions(user["role"]))
+                    permissions=_permissions(user["role"], user))
 
 
 @router.post("/console-login", response_model=LoginOut)
@@ -221,7 +228,7 @@ def console_login(
     admin = db.update_staff(admin["id"], last_login_at=now.isoformat(timespec="seconds"))
     db.audit(admin["username"], "console_login", "server edition, loopback")
     return LoginOut(token=token, expires_at=expires_at, user=staff_out(admin),
-                    permissions=_permissions(admin["role"]))
+                    permissions=_permissions(admin["role"], admin))
 
 
 @router.post("/logout")
@@ -236,7 +243,7 @@ def logout(identity: Identity = Depends(get_staff_identity),
 def me(identity: Identity = Depends(get_staff_identity),
        db: OwnDB = Depends(deps.get_db)) -> MeOut:
     user = db.get_staff(identity.user_id)
-    return MeOut(user=staff_out(user), permissions=_permissions(user["role"]))
+    return MeOut(user=staff_out(user), permissions=_permissions(user["role"], user))
 
 
 @router.post("/change-password")

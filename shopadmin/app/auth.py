@@ -25,7 +25,7 @@ from .api_client import (
     ShopApiClient,
 )
 from .logging_setup import get_logger
-from .permissions import Principal, has_permission
+from .permissions import Principal, client_permissions, has_permission
 from .persian import to_english_digits
 from .statuses import ALL_ROLES
 from .store import Store
@@ -76,11 +76,14 @@ def validate_password_strength(password: str) -> Optional[str]:
 
 
 def principal_from_staff(row: dict) -> Principal:
+    server = row.get("permissions")
     return Principal(
         user_id=int(row["id"]),
         username=str(row["username"]),
         full_name=str(row.get("full_name") or ""),
         role=str(row["role"]),
+        # v2.7.0: role + per-user ticks, as the server decided (None: older server)
+        permissions=client_permissions(server) if isinstance(server, list) else None,
     )
 
 
@@ -304,21 +307,27 @@ class AuthService:
             raise _auth_error(exc) from exc
 
     def create_user(self, username: str, full_name: str, password: str, role: str,
-                    *, must_change_password: bool = True) -> Principal:
+                    *, must_change_password: bool = True,
+                    extra_permissions: list[str] | None = None,
+                    removed_permissions: list[str] | None = None) -> Principal:
         username = to_english_digits(str(username or "")).strip()
         self._check_new_account(username, full_name, password)
         if role not in ALL_ROLES:
             raise AuthError(MSG_ROLE_INVALID, "role_invalid")
         try:
             row = self.api.create_staff(username, str(full_name).strip(), role, password,
-                                        must_change_password=must_change_password)
+                                        must_change_password=must_change_password,
+                                        extra_permissions=extra_permissions,
+                                        removed_permissions=removed_permissions)
         except ApiError as exc:
             raise _auth_error(exc) from exc
         return principal_from_staff(row)
 
     def update_user(self, user_id: int, *, full_name: str | None = None,
                     role: str | None = None, is_active: bool | None = None,
-                    actor_id: int | None = None) -> Principal:
+                    actor_id: int | None = None,
+                    extra_permissions: list[str] | None = None,
+                    removed_permissions: list[str] | None = None) -> Principal:
         if role is not None and role not in ALL_ROLES:
             raise AuthError(MSG_ROLE_INVALID, "role_invalid")
         if full_name is not None and not str(full_name).strip():
@@ -327,7 +336,8 @@ class AuthService:
             raise AuthError(MSG_CANNOT_DEACTIVATE_SELF, "self_deactivate")
         try:
             row = self.api.update_staff(int(user_id), full_name=full_name, role=role,
-                                        active=is_active)
+                                        active=is_active, extra_permissions=extra_permissions,
+                                        removed_permissions=removed_permissions)
         except ApiError as exc:
             raise _auth_error(exc) from exc
         return principal_from_staff(row)

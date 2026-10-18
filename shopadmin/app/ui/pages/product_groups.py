@@ -52,6 +52,7 @@ def _centered(check: QCheckBox) -> QWidget:
 class ProductGroupsPage(BasePage):
     title = "گروه‌های کالا"
     subtitle = "کدام گروه‌ها در ربات دیده شوند، کدام گوشی‌اند و کدام قیمت با استعلام دارند"
+    help_text = "مشخص کنید کدام گروه‌ها در ربات دیده شوند، کدام گوشی‌اند و قیمت کدام با استعلام است."
 
     def build_body(self) -> None:
         self._groups: dict[int, dict] = {}

@@ -27,6 +27,7 @@ from ..permissions import (
     CATALOG_VIEW,
     CUSTOMERS_VIEW,
     DASHBOARD_VIEW,
+    ITEM_REQUESTS,
     ORDERS_VIEW,
     PASSWORDS_DECIDE,
     PRICELIST_VIEW,
@@ -58,7 +59,7 @@ NAV_ITEMS = (
     ("dashboard", "داشبورد", "dashboard", DASHBOARD_VIEW),
     ("customers", "مشتریان", "customers", CUSTOMERS_VIEW),
     ("orders", "سفارش‌ها", "orders", ORDERS_VIEW),
-    ("item_requests", "درخواست کالا", "inbox", ORDERS_VIEW),
+    ("item_requests", "درخواست کالا", "inbox", ITEM_REQUESTS),
     ("products", "محصولات", "products", PRODUCTS_VIEW),
     ("product_groups", "گروه‌های کالا", "box", CATALOG_VIEW),
     ("pricelist", "لیست قیمت", "receipt", PRICELIST_VIEW),
@@ -82,7 +83,7 @@ log = get_logger("main_window")
 #: Which unread notification kinds belong to which sidebar entry.
 BADGE_KINDS = {
     "customers": ("customer_registered",),
-    "orders": ("order_created", "receipt_uploaded"),
+    "orders": ("order_created", "receipt_uploaded", "order_cancelled_by_customer"),
     "password_requests": ("password_request",),
     "item_requests": ("item_request",),
 }
@@ -144,7 +145,14 @@ class MainWindow(QMainWindow):
         self._refresh_header()
         self._update_banner()
 
-        self.navigate("dashboard")
+        self.navigate(self.home_key())
+
+    def home_key(self) -> str:
+        """v2.7.0: a sales user starts on the orders, a manager on the dashboard."""
+        for key in ("dashboard", "orders"):
+            if key in self._pages and (key != "dashboard" or self.context.can(SETTINGS_VIEW)):
+                return key
+        return "orders" if "orders" in self._pages else next(iter(self._pages), "")
 
     # ------------------------------------------------------------------ layout
     def _build_sidebar(self) -> QWidget:
@@ -152,8 +160,9 @@ class MainWindow(QMainWindow):
         sidebar.setObjectName("Sidebar")
         self._sidebar = sidebar
         sidebar.setFixedWidth(SIDEBAR_WIDE)
+        # v2.7.0: the Phone Bridge side bar (a deep-blue vertical gradient)
         sidebar.setStyleSheet(
-            f"QFrame#Sidebar {{ background: {theme.SIDEBAR_BG}; "
+            f"QFrame#Sidebar {{ background: {theme.sidebar_gradient()}; "
             f"border: none; }}"
         )
         layout = QVBoxLayout(sidebar)
@@ -168,19 +177,22 @@ class MainWindow(QMainWindow):
         logo.setPixmap(theme.icon_pixmap("products", 28, "#FFFFFF"))
         logo.setFixedSize(42, 42)
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setStyleSheet(f"background: {theme.SIDEBAR_ACTIVE}; border-radius: 12px;")
+        logo.setStyleSheet(
+            f"background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {theme.ACCENT}, "
+            f"stop:1 {theme.ACCENT2}); border-radius: 14px;")
         brand_layout.addWidget(logo)
         self._brand_titles = QWidget()
         titles = QVBoxLayout(self._brand_titles)
         titles.setContentsMargins(0, 0, 0, 0)
         titles.setSpacing(0)
         titles.addWidget(widgets.label("مدیریت فروشگاه", name="SidebarTitle"))
-        titles.addWidget(widgets.label("کنسول مدیر", name="SidebarMuted"))
+        titles.addWidget(widgets.label(
+            "مدیر" if self.context.can(SETTINGS_VIEW) else "فروشگاه", name="SidebarMuted"))
         brand_layout.addWidget(self._brand_titles, 1)
         layout.addWidget(brand)
         divider = QFrame()
         divider.setFixedHeight(1)
-        divider.setStyleSheet(f"background: {theme.SIDEBAR_HOVER};")
+        divider.setStyleSheet("background: rgba(255,255,255,0.14);")
         layout.addWidget(divider)
 
         group = QButtonGroup(self)
@@ -204,10 +216,12 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
 
         self.connection_box = QWidget()
+        # v2.7.0: the server address is for managers only (no technical words)
         box_layout = QVBoxLayout(self.connection_box)
         box_layout.setContentsMargins(6, 6, 6, 0)
         box_layout.setSpacing(4)
         self.connection_label = widgets.label("", name="SidebarMuted", wrap=True)
+        self.connection_label.setVisible(self.context.can(SETTINGS_VIEW))
         box_layout.addWidget(self.connection_label)
         self.version_label = widgets.label(
             f"نسخهٔ {to_persian_digits(APP_VERSION)}", name="SidebarMuted"
@@ -315,6 +329,15 @@ class MainWindow(QMainWindow):
         user_layout.addWidget(self.role_badge)
         layout.addWidget(user_box)
 
+        # v2.7.0: everyone changes their own password here (the settings page
+        # is for managers only).
+        self.password_button = widgets.button(
+            "گذرواژهٔ من", icon_name="key", on_click=self.change_own_password,
+            tooltip="تغییر گذرواژهٔ خودتان",
+        )
+        self.password_button.setVisible(not is_server_edition())
+        layout.addWidget(self.password_button)
+
         self.logout_button = widgets.button(
             "خروج", icon_name="logout", on_click=self._request_logout,
             tooltip="خروج از حساب کاربری",
@@ -416,6 +439,11 @@ class MainWindow(QMainWindow):
         if hasattr(page, "ensure_loaded"):
             page.ensure_loaded()
         self._refresh_header()
+
+    def change_own_password(self) -> None:
+        from .password_dialog import ChangeOwnPasswordDialog
+
+        ChangeOwnPasswordDialog(self.context, self).exec()
 
     def current_page(self) -> Optional[QWidget]:
         return self._pages.get(self._current_key)
@@ -524,7 +552,11 @@ class MainWindow(QMainWindow):
         }
         dot_color, text_color = colors.get(state, (theme.TEXT_FAINT, theme.TEXT_MUTED))
         self.server_dot.setPixmap(theme.dot_pixmap(dot_color, 14))
-        self.server_label.setText(state.label_fa)
+        label = state.label_fa
+        if not self.context.can(SETTINGS_VIEW):
+            # v2.7.0: no technical words for sales users
+            label = label.replace("سرور", "اتصال به فروشگاه")
+        self.server_label.setText(label)
         self.server_label.setStyleSheet(f"color: {text_color};")
         self.server_retry_button.setVisible(state == ConnectionState.OFFLINE)
         self.server_retry_button.setEnabled(True)

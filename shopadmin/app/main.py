@@ -74,6 +74,10 @@ class ShopAdminApp(QObject):
         super().__init__()
         self.app = app
         self.store = Store()
+        # v2.7.0: light / dark / follow Windows (Settings › ظاهر), before any window
+        mode = str(self.store.get_setting("theme_mode", "light") or "light")
+        if mode != "light":
+            theme.apply_theme(app, mode)
         self.api = ShopApiClient()
         self.auth = AuthService(self.store, self.api)
         self.context: Optional[AppContext] = None

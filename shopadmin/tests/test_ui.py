@@ -263,19 +263,22 @@ def test_esfand_has_the_right_number_of_days(admin_qapp):
 # --------------------------------------------------------------------------
 # role-based access control in the UI
 # --------------------------------------------------------------------------
-def test_viewer_cannot_approve_payments_in_the_order_dialog(ui_context, admin_qapp):
-    context = make_context_with_role(ui_context, ROLE_VIEWER)
-    dialog = OrderDetailDialog(context, _order(), None)
-    assert dialog.approve_button.isEnabled() is False
-    assert dialog.reject_button.isEnabled() is False
-    assert "نقش شما" in dialog.approve_button.toolTip()
-
-
-def test_operator_cannot_approve_but_the_buttons_exist_disabled(ui_context, admin_qapp):
+def test_sales_user_confirms_receipts_in_the_order_dialog(ui_context, admin_qapp):
+    # v2.7.0: «کاربر فروش» confirms receipts; buttons it may never use are hidden
     context = make_context_with_role(ui_context, ROLE_OPERATOR)
     dialog = OrderDetailDialog(context, _order(), None)
-    assert dialog.approve_button.isEnabled() is False
-    assert dialog.reject_button.isEnabled() is False
+    assert dialog.approve_button.isEnabled() and dialog.reject_button.isEnabled()
+    assert not dialog.approve_button.isHidden()
+
+
+def test_buttons_without_permission_are_hidden(ui_context, admin_qapp):
+    from dataclasses import replace
+
+    context = make_context_with_role(ui_context, ROLE_OPERATOR)
+    context.principal = replace(context.principal, permissions=frozenset({"orders.view"}))
+    dialog = OrderDetailDialog(context, _order(), None)
+    assert dialog.approve_button.isHidden() and dialog.reject_button.isHidden()
+    assert dialog.ship_button.isHidden() and dialog.cancel_button.isHidden()
 
 
 def test_admin_can_approve_a_receipt_uploaded_order(ui_context, admin_qapp):
@@ -412,7 +415,9 @@ def test_sidebar_hides_users_for_a_non_super_admin(ui_context, admin_qapp):
     context = make_context_with_role(ui_context, ROLE_OPERATOR)
     window = MainWindow(context)
     assert "users" not in window._nav_buttons
-    assert "dashboard" in window._nav_buttons
+    # v2.7.0: «کاربر فروش» sees orders, item requests and customers only
+    assert set(window._nav_buttons) == {"orders", "item_requests", "customers"}
+    assert window._current_key == "orders"                    # lands on the orders
     window.close()
 
 
@@ -445,7 +450,7 @@ def test_topbar_shows_the_user_name_and_role(ui_context, admin_qapp):
     context = make_context_with_role(ui_context, ROLE_SUPER_ADMIN)
     window = MainWindow(context)
     assert window.user_name_label.text() == "مالک فروشگاه"
-    assert window.role_badge.text() == "مدیر کل"
+    assert window.role_badge.text() == "مدیر"
     window.close()
 
 

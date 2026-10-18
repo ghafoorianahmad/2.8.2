@@ -124,7 +124,9 @@ def test_lists_have_only_in_stock_items(client, reader):
 def test_admin_product_groups(client, reader, db):
     _shop(reader)
     admin = staff(db)
-    rows = client.get("/admin/product-groups", headers=staff(db, "viewer")).json()
+    assert client.get("/admin/product-groups",
+                      headers=staff(db, "viewer")).status_code == 403   # v2.7.0: admin only
+    rows = client.get("/admin/product-groups", headers=admin).json()
     by = {r["code"]: r for r in rows}
     assert by[3]["is_phone"] and by[3]["show_in_bot"] and not by[4]["show_in_bot"]
     r = client.put("/admin/product-groups", json={"groups": [
@@ -271,14 +273,15 @@ def test_status_code_is_editable_with_the_same_validation():
 
 
 def test_version():
-    assert control.VERSION == "2.6.2"
+    assert control.VERSION == "2.7.0"
 
 
 def test_staff_see_every_group(client, reader, db):
     _shop(reader)
     reader.products[700] = {"name": "Internal part", "group": 4, "stock": 9.0, "open": 0.0,
                             "unit_price": 10.0, "image": None}
-    viewer = staff(db, "viewer")
+    viewer = staff(db)                      # v2.7.0: a sales user may not list products
+    assert client.get("/products", headers=staff(db, "operator", "s1")).status_code == 403
     assert [g["code"] for g in client.get("/groups", headers=viewer).json()] == [1, 2, 3, 4]
     codes = [p["code"] for p in client.get("/products", headers=viewer).json()["items"]]
     assert 700 in codes and PHONE in codes

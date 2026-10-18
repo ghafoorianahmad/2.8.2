@@ -20,6 +20,7 @@ HEADERS = ("نام کاربری", "نام و نام خانوادگی", "نقش",
 class PasswordRequestsPage(BasePage):
     title = "درخواست‌های گذرواژه"
     subtitle = "کارکنانی که گذرواژهٔ خود را فراموش کرده‌اند"
+    help_text = "کاربرانی که گذرواژه‌شان را فراموش کرده‌اند منتظر تأیید شما هستند."
     auto_refreshable = True
 
     def build_body(self) -> None:

@@ -82,3 +82,28 @@ class ForcedPasswordChangeDialog(QDialog):
 
         run_async(work, on_success=lambda _r: self.accept(), on_error=fail, on_done=done)
 
+
+
+class ChangeOwnPasswordDialog(ForcedPasswordChangeDialog):
+    """v2.7.0: «گذرواژهٔ من» in the top bar - any user changes their own password
+    (the settings page is for managers only)."""
+
+    def __init__(self, context, parent: QWidget | None = None) -> None:
+        super().__init__(context.auth, parent)
+        self.context = context
+        self.setWindowTitle("تغییر گذرواژهٔ من")
+        titles = [w for w in self.findChildren(type(self.error_label))
+                  if w.text() == "گذرواژهٔ خود را تغییر دهید"]
+        hints = [w for w in self.findChildren(type(self.error_label))
+                 if w.text().startswith("گذرواژهٔ فعلی شما موقت")]
+        for hint in hints:
+            hint.setText("گذرواژهٔ فعلی و گذرواژهٔ تازه را بنویسید. گذرواژهٔ تازه باید حداقل "
+                         f"{to_persian_digits(MIN_PASSWORD_LENGTH)} نویسه و هم حرف و هم عدد "
+                         "داشته باشد.")
+        for title in titles:
+            title.setText("تغییر گذرواژهٔ من")
+        self.current.setPlaceholderText("گذرواژهٔ فعلی")
+        self.save_button.setText("ذخیرهٔ گذرواژه")
+        for button in self.findChildren(type(self.save_button)):
+            if button.text() == "خروج از حساب":
+                button.setText("انصراف")

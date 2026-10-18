@@ -256,7 +256,7 @@ def test_invalid_json_on_success_is_a_decode_error(fake_api):
         ("Username already exists", "قبلاً"),
         ("Password must be at least 8 characters", "۸"),
         ("Password must contain letters and digits", "حرف و هم عدد"),
-        ("Cannot remove the last super admin", "مدیر کل"),
+        ("Cannot remove the last super admin", "«مدیر»"),
         ("Cannot delete your own account", "خودتان"),
         ("Current password is wrong", "فعلی"),
         ("API key not accepted from this address", "سرور"),
@@ -350,7 +350,7 @@ def test_approving_a_non_pending_order_is_rejected_with_persian_text(fake_api, a
     order = fake_api.add_order(status="written")
     with pytest.raises(ApiError) as exc:
         api.approve_payment(order["id"])
-    assert "نوشته‌شده در حسابداری" in exc.value.message
+    assert "ثبت‌شده در حسابداری" in exc.value.message
 
 
 def test_list_products_passes_filters(fake_api, api):

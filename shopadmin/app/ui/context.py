@@ -50,7 +50,10 @@ class AppContext(QObject):
         return self.principal.role if self.principal else ""
 
     def can(self, permission: str) -> bool:
-        """Role check used to enable/disable every privileged widget."""
+        """Permission check behind every menu item and privileged button: the
+        server's list for this account (role + per-user ticks), else the role."""
+        if self.principal is not None and self.principal.permissions is not None:
+            return permission in self.principal.permissions
         return has_permission(self.role, permission)
 
     @property

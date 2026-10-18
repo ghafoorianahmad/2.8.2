@@ -32,7 +32,7 @@ def env_file(tmp_path):
 
 def test_status_for_super_admin_only(client):
     owner = owner_token(client)
-    add_staff(client, owner, "boss", "admin")
+    add_staff(client, owner, "boss", "operator")
     boss = login(client, "boss").json()["token"]
     r = client.get("/admin/server/status", headers=bearer(owner))
     assert r.status_code == 200

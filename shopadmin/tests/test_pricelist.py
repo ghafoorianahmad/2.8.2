@@ -45,11 +45,12 @@ def test_search_matches_model_color_and_arabic_letters():
 
 
 def test_permissions_per_role():
-    for role in (ROLE_VIEWER, ROLE_OPERATOR, ROLE_ADMIN, ROLE_SUPER_ADMIN):
-        assert has_permission(role, PRICELIST_VIEW)
-    assert not has_permission(ROLE_OPERATOR, PRICELIST_MANAGE)
-    assert has_permission(ROLE_ADMIN, PRICELIST_MANAGE)
-    assert not has_permission(ROLE_ADMIN, PROXIES_MANAGE)
+    # v2.7.0: «مدیر» only; «کاربر فروش» (operator / old viewer) never sees the list
+    for role in (ROLE_ADMIN, ROLE_SUPER_ADMIN):
+        assert has_permission(role, PRICELIST_VIEW) and has_permission(role, PRICELIST_MANAGE)
+    for role in (ROLE_VIEWER, ROLE_OPERATOR):
+        assert not has_permission(role, PRICELIST_VIEW)
+    assert not has_permission(ROLE_OPERATOR, PROXIES_MANAGE)
     assert has_permission(ROLE_SUPER_ADMIN, PROXIES_MANAGE)
 
 
@@ -218,9 +219,9 @@ def test_operator_sees_rows_but_cannot_change_them(ui_context, fake_api, admin_q
     page.close()
 
 
-def test_admin_has_no_proxies_tab(ui_context, fake_api, admin_qapp):
-    page = _page(ui_context, admin_qapp, ROLE_ADMIN)
-    assert page.tabs.count() == 2 and page.map_button.isEnabled()
+def test_manager_has_every_tab(ui_context, fake_api, admin_qapp):
+    page = _page(ui_context, admin_qapp, ROLE_ADMIN)               # old "admin" = «مدیر»
+    assert page.tabs.count() == 3 and page.map_button.isEnabled()
     page.close()
 
 

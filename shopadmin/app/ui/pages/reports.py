@@ -37,6 +37,7 @@ HEADERS = ("شماره سفارش", "مشتری", "تعداد اقلام", "مب
 class ReportsPage(BasePage):
     title = "گزارش‌ها"
     subtitle = "جمع‌بندی سفارش‌ها و مشتریان در یک بازهٔ زمانی دلخواه"
+    help_text = "گزارش فروش در بازهٔ دلخواه؛ می‌توانید از آن خروجی اکسل بگیرید."
 
     def build_body(self) -> None:
         filters = widgets.Panel("صافی‌های گزارش")

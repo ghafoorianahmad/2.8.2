@@ -26,11 +26,13 @@ from ..schemas import (
     ProductGroupsIn,
 )
 from ..security import Identity, require_permission
-from ..staff import P_CATALOG, P_VIEW
+from ..staff import P_CATALOG, P_REQUESTS, P_VIEW
 
 router = APIRouter(prefix="/admin")
 
 CAN_VIEW = Depends(require_permission(P_VIEW))
+#: v2.7.0: item requests are a sales-user task (view, reply, mark handled)
+CAN_REQUESTS = Depends(require_permission(P_REQUESTS))
 CAN_MANAGE_CATALOG = Depends(require_permission(P_CATALOG))
 
 
@@ -100,7 +102,7 @@ def list_item_requests(
     status_filter: Optional[str] = Query(None, alias="status", pattern="^(new|seen|done)$"),
     kind: Optional[str] = Query(None, pattern="^(unavailable|inquiry)$"),
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_VIEW,
+    _: Identity = CAN_REQUESTS,
 ) -> list[dict]:
     return db.list_item_requests(status_filter, kind=kind)
 
@@ -116,7 +118,7 @@ def _request_or_404(db: OwnDB, request_id: int) -> dict:
 def get_item_request(
     request_id: int,
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_VIEW,
+    _: Identity = CAN_REQUESTS,
 ) -> dict:
     return _request_or_404(db, request_id)
 
@@ -126,7 +128,7 @@ def set_item_request_status(
     request_id: int,
     payload: ItemRequestStatusIn,
     db: OwnDB = Depends(deps.get_db),
-    who: Identity = CAN_VIEW,
+    who: Identity = CAN_REQUESTS,
 ) -> dict:
     _request_or_404(db, request_id)
     row = db.set_item_request_status(request_id, payload.status, who.actor)
@@ -139,7 +141,7 @@ def set_item_request_note(
     request_id: int,
     payload: ItemRequestNoteIn,
     db: OwnDB = Depends(deps.get_db),
-    who: Identity = CAN_VIEW,
+    who: Identity = CAN_REQUESTS,
 ) -> dict:
     """The staff's own note (never shown to the customer)."""
     _request_or_404(db, request_id)
@@ -152,7 +154,7 @@ def set_item_request_note(
 def list_item_request_messages(
     request_id: int,
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_VIEW,
+    _: Identity = CAN_REQUESTS,
 ) -> list[dict]:
     _request_or_404(db, request_id)
     return db.list_item_request_messages(request_id)
@@ -164,7 +166,7 @@ def send_item_request_message(
     request_id: int,
     payload: ItemRequestMessageIn,
     db: OwnDB = Depends(deps.get_db),
-    who: Identity = CAN_VIEW,
+    who: Identity = CAN_REQUESTS,
 ) -> dict:
     """A reply to the customer. Stored as ``pending``; the bot of the customer's
     platform delivers it (events feed) and reports ``sent`` / ``failed``."""
@@ -186,7 +188,7 @@ def send_item_request_message(
 def get_item_request_message(
     message_id: int,
     db: OwnDB = Depends(deps.get_db),
-    who: Identity = CAN_VIEW,
+    who: Identity = CAN_REQUESTS,
 ) -> dict:
     """For the bot (service key): the reply and where to deliver it."""
     if who.kind != "service":
@@ -203,7 +205,7 @@ def item_request_message_result(
     message_id: int,
     payload: ItemRequestMessageResultIn,
     db: OwnDB = Depends(deps.get_db),
-    who: Identity = CAN_VIEW,
+    who: Identity = CAN_REQUESTS,
 ) -> dict:
     """The bot reports delivery; only the service key may (staff cannot fake it)."""
     if who.kind != "service":

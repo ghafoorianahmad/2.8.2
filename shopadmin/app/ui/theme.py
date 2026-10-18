@@ -15,68 +15,153 @@ from PySide6.QtWidgets import QApplication, QWidget
 from ..paths import fonts_dir
 
 # --------------------------------------------------------------------------
-# palette
+# palette (v2.7.0: the Phone Bridge «ocean» look, light and dark)
 #
-# Every foreground/background pair below is verified against WCAG AA by
-# scripts/contrast_audit.py (4.5:1 for normal text, 3:1 for large text and
-# non-text UI). Do not darken/lighten a colour here without re-running it.
+# Phone Bridge (E:\Soft\phonebridge\app\theme.py) uses a soft blue-grey window
+# gradient, white "glass" cards with large radii, raised buttons, a deep-blue
+# gradient side bar and an ocean-blue accent. The same look is recreated here
+# with tokens. Solid fills that carry WHITE text are kept dark enough for WCAG
+# AA (scripts/contrast_audit.py); the bright Phone Bridge blue is used for
+# borders, gradients' light end and accents only.
 # --------------------------------------------------------------------------
-PRIMARY = "#2563EB"          # white text on this = 5.17:1
-PRIMARY_DARK = "#1D4ED8"     # white text on this = 6.70:1
-PRIMARY_PRESSED = "#1E40AF"  # white text on this = 8.72:1
-PRIMARY_LIGHT = "#DBEAFE"
-PRIMARY_SOFT = "#EFF6FF"
+PALETTES: dict[str, dict[str, str]] = {
+    "light": {
+        "PRIMARY": "#1F6AE0",          # white text on this = 5.0:1
+        "PRIMARY_DARK": "#1957BF",     # white text on this = 6.6:1
+        "PRIMARY_PRESSED": "#14479C",  # white text on this = 8.6:1
+        "PRIMARY_LIGHT": "#D6E6FD",
+        "PRIMARY_SOFT": "#EAF2FE",
+        "ACCENT": "#2F7CF6",           # Phone Bridge accent (borders, focus, gradients)
+        "ACCENT2": "#1FB5D6",
+        "SUCCESS": "#047857", "SUCCESS_DARK": "#065F46", "SUCCESS_LIGHT": "#D1FAE5",
+        "WARNING": "#D97706", "WARNING_TEXT": "#92400E", "WARNING_LIGHT": "#FEF3C7",
+        "WARNING_BG": "#FFF8E6", "WARNING_BORDER": "#FCD34D",
+        "DANGER": "#C5221F", "DANGER_DARK": "#A51B18", "DANGER_LIGHT": "#FDE4E3",
+        "INFO": "#0891B2", "INFO_DARK": "#155E75", "INFO_LIGHT": "#CFFAFE",
+        "ROLE_PURPLE": "#7B5CF0",
+        "INK": "#111827",
+        "TEXT": "#1B2230",
+        "TEXT_MUTED": "#4E5A6C",       # on white = 7.2:1
+        "TEXT_FAINT": "#5B6779",       # on white = 5.9:1
+        "BORDER": "#DCE3EE",
+        "BORDER_STRONG": "#C3CEDF",
+        "SURFACE": "#FFFFFF",
+        "BACKGROUND": "#EEF2F8",
+        "BACKGROUND2": "#E3E9F4",
+        "BUTTON2": "#E9EEF6",
+        "SIDEBAR_BG": "#16325C",
+        "SIDEBAR_BG2": "#0F5A8A",
+        "SIDEBAR_TEXT": "#E9EFFA",
+        "SIDEBAR_MUTED": "#B8C8E0",
+        "SIDEBAR_HOVER": "#24477A",
+        "SIDEBAR_ACTIVE": "#1F6AE0",
+        "SIDEBAR_ACTIVE2": "#0B7A99",
+        "SIDEBAR_OK": "#6EE7B7",
+        "SIDEBAR_BAD": "#FCA5A5",
+        "HOVER": "#F1F5FB",
+        "SELECTED_BG": "#EAF2FE",
+        "ALT_ROW": "#F7F9FD",
+        "ROW_LINE": "#EDF1F7",
+        "HEADER_BG": "#EEF2F8",
+        "ERROR_BG": "#FEF2F2",
+        "DISABLED_BG": "#EEF1F6",
+        "DISABLED_TEXT": "#5B6779",
+    },
+    "dark": {
+        "PRIMARY": "#2F6FD8", "PRIMARY_DARK": "#2A62C0", "PRIMARY_PRESSED": "#22519F",
+        "PRIMARY_LIGHT": "#24395E", "PRIMARY_SOFT": "#1E2D47",
+        "ACCENT": "#4E8EF7", "ACCENT2": "#3FC4DE",
+        "SUCCESS": "#1E7F4E", "SUCCESS_DARK": "#176A40", "SUCCESS_LIGHT": "#173A2A",
+        "WARNING": "#F0A33A", "WARNING_TEXT": "#F6C67E", "WARNING_LIGHT": "#3A2E17",
+        "WARNING_BG": "#2E2515", "WARNING_BORDER": "#7A5A20",
+        "DANGER": "#C2413A", "DANGER_DARK": "#A93630", "DANGER_LIGHT": "#3D1F1E",
+        "INFO": "#3FC4DE", "INFO_DARK": "#9BE3F1", "INFO_LIGHT": "#173540",
+        "ROLE_PURPLE": "#B6A2FF",
+        "INK": "#F1F4F9",
+        "TEXT": "#E7EBF2",
+        "TEXT_MUTED": "#A9B4C6",
+        "TEXT_FAINT": "#9AA6B8",
+        "BORDER": "#2B3341",
+        "BORDER_STRONG": "#3A4456",
+        "SURFACE": "#1B212B",
+        "BACKGROUND": "#11151C",
+        "BACKGROUND2": "#1A2030",
+        "BUTTON2": "#212833",
+        "SIDEBAR_BG": "#0E1A2E",
+        "SIDEBAR_BG2": "#0F3550",
+        "SIDEBAR_TEXT": "#D6DEEB",
+        "SIDEBAR_MUTED": "#9FB0C8",
+        "SIDEBAR_HOVER": "#1D2D47",
+        "SIDEBAR_ACTIVE": "#2F6FD8",
+        "SIDEBAR_ACTIVE2": "#147A94",
+        "SIDEBAR_OK": "#6EE7B7",
+        "SIDEBAR_BAD": "#FCA5A5",
+        "HOVER": "#232B38",
+        "SELECTED_BG": "#1E2D47",
+        "ALT_ROW": "#1F2631",
+        "ROW_LINE": "#262E3A",
+        "HEADER_BG": "#212833",
+        "ERROR_BG": "#3D1F1E",
+        "DISABLED_BG": "#232A35",
+        "DISABLED_TEXT": "#8D99AB",
+    },
+}
+THEME_MODES = ("light", "dark", "system")
+#: The palette in use ("light" / "dark"); see :func:`set_mode`.
+MODE = "light"
 
-# Solid button fills carry WHITE text, so they must be dark enough. The light
-# tints are only used as backgrounds for DARK text, never behind white text.
-SUCCESS = "#047857"          # white text on this = 5.48:1
-SUCCESS_DARK = "#065F46"     # white text on this = 7.68:1
-SUCCESS_LIGHT = "#D1FAE5"
+PRIMARY = PRIMARY_DARK = PRIMARY_PRESSED = PRIMARY_LIGHT = PRIMARY_SOFT = ""
+ACCENT = ACCENT2 = ""
+SUCCESS = SUCCESS_DARK = SUCCESS_LIGHT = ""
+WARNING = WARNING_TEXT = WARNING_LIGHT = WARNING_BG = WARNING_BORDER = ""
+DANGER = DANGER_DARK = DANGER_LIGHT = ""
+INFO = INFO_DARK = INFO_LIGHT = ""
+ROLE_PURPLE = INK = TEXT = TEXT_MUTED = TEXT_FAINT = ""
+BORDER = BORDER_STRONG = SURFACE = BACKGROUND = BACKGROUND2 = BUTTON2 = ""
+SIDEBAR_BG = SIDEBAR_BG2 = SIDEBAR_TEXT = SIDEBAR_MUTED = SIDEBAR_HOVER = ""
+SIDEBAR_ACTIVE = SIDEBAR_ACTIVE2 = SIDEBAR_OK = SIDEBAR_BAD = ""
+HOVER = SELECTED_BG = ALT_ROW = ROW_LINE = HEADER_BG = ERROR_BG = ""
+DISABLED_BG = DISABLED_TEXT = ""
 
-WARNING = "#D97706"
-WARNING_TEXT = "#92400E"     # on WARNING_BG = 6.84:1
-WARNING_LIGHT = "#FEF3C7"
-WARNING_BG = "#FFFBEB"
-WARNING_BORDER = "#FCD34D"
 
-DANGER = "#DC2626"           # white text on this = 4.83:1
-DANGER_DARK = "#B91C1C"      # white text on this = 6.47:1
-DANGER_LIGHT = "#FEE2E2"
+def set_mode(mode: str) -> str:
+    """Load the light or dark palette into this module (before widgets are made;
+    a change takes effect at the next start). Returns the palette used."""
+    global MODE
+    resolved = mode if mode in PALETTES else ("dark" if mode == "system" and system_prefers_dark()
+                                             else "light")
+    globals().update(PALETTES[resolved])
+    MODE = resolved
+    if "_ICON_CACHE" in globals():
+        _ICON_CACHE.clear()
+    return resolved
 
-INFO = "#0891B2"
-INFO_DARK = "#155E75"        # on INFO_LIGHT = 5.49:1
-INFO_LIGHT = "#CFFAFE"
 
-ROLE_PURPLE = "#7C3AED"      # white text on this = 5.70:1
+def system_prefers_dark() -> bool:
+    """Windows' «dark» app mode (Qt 6.5+); False when unknown."""
+    try:
+        from PySide6.QtGui import QGuiApplication
 
-INK = "#0F172A"
-TEXT = "#1E293B"
-TEXT_MUTED = "#475569"       # on white = 7.48:1 (was #64748B, only 4.76:1)
-TEXT_FAINT = "#5B6B7F"       # on white = 5.30:1 (was #94A3B8, only 2.56:1)
-BORDER = "#E2E8F0"
-BORDER_STRONG = "#CBD5E1"
-SURFACE = "#FFFFFF"
-BACKGROUND = "#F6F8FB"
-SIDEBAR_BG = "#0F172A"
-SIDEBAR_TEXT = "#CBD5E1"        # on SIDEBAR_BG = 12.0:1
-SIDEBAR_MUTED = "#94A3B8"       # on SIDEBAR_BG = 6.96:1
-SIDEBAR_HOVER = "#1E293B"       # SIDEBAR_TEXT on it = 9.8:1
-SIDEBAR_ACTIVE = "#1D4ED8"      # white on it = 6.70:1
-SIDEBAR_OK = "#6EE7B7"          # on SIDEBAR_BG = 11.5:1
-SIDEBAR_BAD = "#FCA5A5"         # on SIDEBAR_BG = 8.9:1
-HOVER = "#F1F5F9"
-SELECTED_BG = "#EFF6FF"
+        hints = QGuiApplication.styleHints()
+        return bool(hints) and hints.colorScheme() == Qt.ColorScheme.Dark
+    except Exception:  # noqa: BLE001 - older Qt / no application yet
+        return False
 
-# Disabled controls keep AAA-grade legibility instead of fading into the panel.
-DISABLED_BG = "#F1F5F9"
-DISABLED_TEXT = "#5B6B7F"
+
+def sidebar_gradient() -> str:
+    """The Phone Bridge side bar: a vertical deep-blue gradient."""
+    return (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {SIDEBAR_BG}, "
+            f"stop:1 {SIDEBAR_BG2})")
+
+
+globals().update(PALETTES["light"])
 
 # --------------------------------------------------------------------------
 # metrics
 # --------------------------------------------------------------------------
-RADIUS_SM = 8
+RADIUS_SM = 10
 RADIUS = 12
-RADIUS_LG = 16
+RADIUS_LG = 18
 SPACE_XS = 4
 SPACE_SM = 8
 SPACE = 16
@@ -195,7 +280,8 @@ ICONS: dict[str, str] = {
 }
 
 
-def icon_svg(name: str, color: str = TEXT, width: float = 2.0) -> str:
+def icon_svg(name: str, color: str | None = None, width: float = 2.0) -> str:
+    color = color or TEXT
     body = ICONS.get(name, ICONS["info"])
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" '
@@ -204,7 +290,8 @@ def icon_svg(name: str, color: str = TEXT, width: float = 2.0) -> str:
     )
 
 
-def icon_pixmap(name: str, size: int = 20, color: str = TEXT) -> QPixmap:
+def icon_pixmap(name: str, size: int = 20, color: str | None = None) -> QPixmap:
+    color = color or TEXT
     renderer = QSvgRenderer(QByteArray(icon_svg(name, color).encode("utf-8")))
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -215,7 +302,8 @@ def icon_pixmap(name: str, size: int = 20, color: str = TEXT) -> QPixmap:
     return pixmap
 
 
-def icon(name: str, size: int = 20, color: str = TEXT) -> QIcon:
+def icon(name: str, size: int = 20, color: str | None = None) -> QIcon:
+    color = color or TEXT
     key = (name, size, color)
     if key not in _ICON_CACHE:
         _ICON_CACHE[key] = QIcon(icon_pixmap(name, size, color))
@@ -309,16 +397,21 @@ def indicator_images() -> tuple[str, str]:
 # NOTE: the font family is resolved lazily in :func:`apply_theme`. Calling
 # QFontDatabase before a QGuiApplication exists aborts the process, so the
 # stylesheet template must never touch Qt at import time.
-_STYLESHEET_TEMPLATE = f"""
+def _stylesheet_template() -> str:
+    # v2.7.0: Phone Bridge look - soft gradient window, rounded white cards,
+    # raised buttons with a darker bottom edge, gradient side bar and accents.
+    return f"""
 QWidget {{
     font-family: "__FONT_FAMILY__";
     font-size: {BASE_FONT_SIZE}pt;
     color: {TEXT};
 }}
-QMainWindow, QDialog {{ background: {BACKGROUND}; }}
+QMainWindow, QDialog {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {BACKGROUND}, stop:1 {BACKGROUND2});
+}}
 
 QToolTip {{
-    background: {INK}; color: #FFFFFF; border: none; padding: 6px 10px;
+    background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER_STRONG}; padding: 6px 10px;
     border-radius: {RADIUS_SM}px; font-size: {BASE_FONT_SIZE}pt;
 }}
 
@@ -327,81 +420,105 @@ QFrame#Card {{
     background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS_LG}px;
 }}
 QFrame#Panel {{
-    background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS}px;
+    background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS_LG}px;
 }}
 QLabel#CardTitle {{ color: {TEXT_MUTED}; font-size: {BASE_FONT_SIZE}pt; }}
 QLabel#CardValue {{ color: {INK}; font-size: 21pt; font-weight: 700; }}
-QLabel#PageTitle {{ color: {INK}; font-size: 15pt; font-weight: 700; }}
+QLabel#PageTitle {{ color: {INK}; font-size: 17pt; font-weight: 700; }}
 QLabel#PageSubtitle {{ color: {TEXT_MUTED}; font-size: {BASE_FONT_SIZE}pt; }}
-QLabel#SectionTitle {{ color: {INK}; font-size: 11pt; font-weight: 600; }}
+QLabel#PageHelp {{
+    color: {TEXT}; background: {PRIMARY_SOFT}; border: 1px solid {BORDER};
+    border-radius: {RADIUS}px; padding: 8px 14px;
+}}
+QLabel#SectionTitle {{ color: {INK}; font-size: 12pt; font-weight: 700; }}
 QLabel#Muted {{ color: {TEXT_MUTED}; }}
 QLabel#Faint {{ color: {TEXT_FAINT}; }}
-QLabel#EmptyTitle {{ color: {TEXT}; font-size: 12pt; font-weight: 600; }}
+QLabel#EmptyTitle {{ color: {TEXT}; font-size: 13pt; font-weight: 700; }}
 QLabel#EmptyHint {{ color: {TEXT_MUTED}; }}
 
-/* ---------------- buttons ---------------- */
+/* ---------------- buttons (raised, Phone Bridge) ---------------- */
 QPushButton {{
-    background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER_STRONG};
-    border-radius: {RADIUS_SM}px; padding: 7px 14px; font-size: {BASE_FONT_SIZE}pt;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {SURFACE}, stop:1 {BUTTON2});
+    color: {TEXT}; border: 1px solid {BORDER_STRONG}; border-bottom: 2px solid {BORDER_STRONG};
+    border-radius: {RADIUS}px; padding: 8px 16px; font-size: {BASE_FONT_SIZE}pt;
     min-height: 20px;
 }}
-QPushButton:hover {{ background: {HOVER}; border-color: {PRIMARY}; color: {PRIMARY_DARK}; }}
-QPushButton:pressed {{ background: {PRIMARY_LIGHT}; }}
+QPushButton:hover {{ border-color: {ACCENT}; color: {PRIMARY_DARK}; }}
+QPushButton:pressed {{ background: {BUTTON2}; border-bottom: 1px solid {BORDER_STRONG};
+                       padding-top: 9px; padding-bottom: 7px; }}
 QPushButton:disabled {{
     background: {DISABLED_BG}; color: {DISABLED_TEXT}; border-color: {BORDER};
 }}
 
 QPushButton#Primary {{
-    background: {PRIMARY}; color: #FFFFFF; border: 1px solid {PRIMARY};
-    font-weight: 600; padding: 8px 18px;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {PRIMARY}, stop:1 {PRIMARY_DARK});
+    color: #FFFFFF; border: none; border-bottom: 3px solid {PRIMARY_PRESSED};
+    font-weight: 700; padding: 9px 20px;
 }}
-QPushButton#Primary:hover {{ background: {PRIMARY_DARK}; border-color: {PRIMARY_DARK}; color: #FFFFFF; }}
-QPushButton#Primary:pressed {{ background: {PRIMARY_PRESSED}; }}
+QPushButton#Primary:hover {{ background: {PRIMARY_DARK}; color: #FFFFFF; }}
+QPushButton#Primary:pressed {{ background: {PRIMARY_PRESSED}; border-bottom: 1px solid {PRIMARY_PRESSED};
+                               padding-top: 11px; }}
 QPushButton#Primary:disabled {{
-    background: {DISABLED_BG}; border-color: {BORDER}; color: {DISABLED_TEXT};
+    background: {DISABLED_BG}; border: 1px solid {BORDER}; color: {DISABLED_TEXT};
 }}
 
-QPushButton#Success {{ background: {SUCCESS}; color: #FFFFFF; border: 1px solid {SUCCESS}; font-weight: 600; }}
-QPushButton#Success:hover {{ background: {SUCCESS_DARK}; border-color: {SUCCESS_DARK}; color: #FFFFFF; }}
+QPushButton#Success {{ background: {SUCCESS}; color: #FFFFFF; border: none;
+                       border-bottom: 3px solid {SUCCESS_DARK}; font-weight: 700; }}
+QPushButton#Success:hover {{ background: {SUCCESS_DARK}; color: #FFFFFF; }}
 QPushButton#Success:disabled {{
-    background: {DISABLED_BG}; border-color: {BORDER}; color: {DISABLED_TEXT};
+    background: {DISABLED_BG}; border: 1px solid {BORDER}; color: {DISABLED_TEXT};
 }}
 
-QPushButton#Danger {{ background: {DANGER}; color: #FFFFFF; border: 1px solid {DANGER}; font-weight: 600; }}
-QPushButton#Danger:hover {{ background: {DANGER_DARK}; border-color: {DANGER_DARK}; color: #FFFFFF; }}
+QPushButton#Danger {{ background: {DANGER}; color: #FFFFFF; border: none;
+                      border-bottom: 3px solid {DANGER_DARK}; font-weight: 700; }}
+QPushButton#Danger:hover {{ background: {DANGER_DARK}; color: #FFFFFF; }}
 QPushButton#Danger:disabled {{
-    background: {DISABLED_BG}; border-color: {BORDER}; color: {DISABLED_TEXT};
+    background: {DISABLED_BG}; border: 1px solid {BORDER}; color: {DISABLED_TEXT};
 }}
 
 QPushButton#Ghost {{ background: transparent; border: none; color: {TEXT_MUTED}; padding: 6px 10px; }}
 QPushButton#Ghost:hover {{ background: {HOVER}; color: {PRIMARY_DARK}; }}
 
+/* big, clear actions for everyday work (orders) */
+QPushButton[big="true"] {{ font-size: 12pt; padding: 12px 22px; min-height: 26px; }}
+
+/* One weight in every state: Qt measures a push button's text with its normal
+   font, so a bolder «checked» state used to clip the end of «سفارش‌ها». */
 QPushButton#NavButton {{
     background: transparent; border: none; border-radius: {RADIUS}px;
-    padding: 10px 12px; text-align: right; font-size: 11pt; color: {SIDEBAR_TEXT};
+    padding: 10px 12px; text-align: right; font-size: 11pt; font-weight: 600;
+    color: {SIDEBAR_TEXT};
 }}
 QPushButton#NavButton:hover {{ background: {SIDEBAR_HOVER}; color: #FFFFFF; }}
 QPushButton#NavButton:checked {{
-    background: {SIDEBAR_ACTIVE}; color: #FFFFFF; font-weight: 700;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {SIDEBAR_ACTIVE}, stop:1 {SIDEBAR_ACTIVE2});
+    color: #FFFFFF;
 }}
-QPushButton#NavButton[hasBadge="true"] {{ color: #FDE68A; font-weight: 700; }}
+QPushButton#NavButton[hasBadge="true"] {{ color: #FDE68A; }}
 QPushButton#NavButton[hasBadge="true"]:checked {{ color: #FFFFFF; }}
 QFrame#Sidebar QLabel {{ background: transparent; }}
-QLabel#SidebarTitle {{ color: #FFFFFF; font-size: 12pt; font-weight: 700; }}
+QLabel#SidebarTitle {{ color: #FFFFFF; font-size: 13pt; font-weight: 700; }}
 QLabel#SidebarMuted {{ color: {SIDEBAR_MUTED}; }}
 
 QPushButton#Tab {{
-    border: none; border-radius: {RADIUS_SM}px; padding: 7px 16px;
+    border: 1px solid transparent; border-radius: {RADIUS_SM}px; padding: 8px 16px;
     background: transparent; color: {TEXT_MUTED}; font-size: {BASE_FONT_SIZE}pt;
+    font-weight: 700;
 }}
 QPushButton#Tab:hover {{ background: {HOVER}; color: {TEXT}; }}
-QPushButton#Tab:checked {{ background: {PRIMARY}; color: #FFFFFF; font-weight: 600; }}
+QPushButton#Tab:checked {{ background: {PRIMARY_SOFT}; color: {PRIMARY_DARK};
+                           border: 1px solid {ACCENT}; }}
 
 QPushButton#LinkButton {{
     border: none; background: transparent; color: {PRIMARY}; padding: 2px 4px;
     text-decoration: underline; text-align: right;
 }}
 QPushButton#LinkButton:hover {{ color: {PRIMARY_DARK}; }}
+
+QTabWidget::pane {{ border: 1px solid {BORDER}; border-radius: {RADIUS}px; background: {SURFACE}; top: -1px; }}
+QTabBar::tab {{ background: transparent; padding: 8px 18px; border-radius: {RADIUS_SM}px; margin: 2px;
+                color: {TEXT_MUTED}; font-weight: 700; }}
+QTabBar::tab:selected {{ background: {PRIMARY_SOFT}; color: {PRIMARY_DARK}; }}
 
 /* ---------------- inputs ---------------- */
 QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QComboBox, QDateEdit {{
@@ -410,13 +527,13 @@ QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QComboBox, QDateEdit {{
     selection-color: {INK}; min-height: 20px;
 }}
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QSpinBox:focus,
-QComboBox:focus, QDateEdit:focus {{ border: 1px solid {PRIMARY}; }}
+QComboBox:focus, QDateEdit:focus {{ border: 2px solid {ACCENT}; }}
 QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled, QDateEdit:disabled {{
     background: {DISABLED_BG}; color: {DISABLED_TEXT};
 }}
-QLineEdit[error="true"] {{ border: 1px solid {DANGER}; background: #FEF2F2; }}
+QLineEdit[error="true"] {{ border: 1px solid {DANGER}; background: {ERROR_BG}; }}
 
-QComboBox::drop-down {{ border: none; width: 24px; }}
+QComboBox::drop-down {{ border: none; width: 26px; }}
 QComboBox QAbstractItemView {{
     background: {SURFACE}; border: 1px solid {BORDER_STRONG}; border-radius: {RADIUS_SM}px;
     selection-background-color: {PRIMARY_LIGHT}; selection-color: {INK}; padding: 4px;
@@ -427,10 +544,10 @@ QSpinBox::up-button, QSpinBox::down-button, QDateEdit::up-button, QDateEdit::dow
 
 QCheckBox {{ spacing: 8px; padding: 4px 0; }}
 QCheckBox::indicator {{
-    width: 18px; height: 18px; border-radius: 4px;
+    width: 18px; height: 18px; border-radius: 5px;
     border: 2px solid {TEXT_MUTED}; background: {SURFACE};
 }}
-QCheckBox::indicator:hover {{ border-color: {PRIMARY}; }}
+QCheckBox::indicator:hover {{ border-color: {ACCENT}; }}
 QCheckBox::indicator:checked {{
     background: {PRIMARY_DARK}; border-color: {PRIMARY_DARK};
     __CHECK_IMAGE__
@@ -450,52 +567,60 @@ QRadioButton::indicator:checked {{
 QRadioButton:disabled {{ color: {TEXT_MUTED}; }}
 
 /* ---------------- tables ---------------- */
-QTableWidget, QTableView {{
+QTableWidget, QTableView, QTreeWidget {{
     background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS}px;
-    gridline-color: transparent; selection-background-color: {PRIMARY_SOFT};
-    selection-color: {INK}; alternate-background-color: #FBFDFF;
+    gridline-color: transparent; selection-background-color: {SELECTED_BG};
+    selection-color: {INK}; alternate-background-color: {ALT_ROW};
 }}
-QTableWidget::item {{ padding: 6px 8px; border-bottom: 1px solid #F1F5F9; }}
-QTableWidget::item:selected {{ background: {PRIMARY_SOFT}; color: {INK}; }}
+QTableWidget::item {{ padding: 6px 8px; border-bottom: 1px solid {ROW_LINE}; }}
+QTableWidget::item:selected {{ background: {SELECTED_BG}; color: {INK}; }}
 QHeaderView {{ background: transparent; }}
 QHeaderView::section {{
-    background: #F8FAFC; color: {TEXT_MUTED}; padding: 9px 8px; border: none;
-    border-left: 1px solid {BORDER}; border-bottom: 1px solid {BORDER}; font-weight: 600;
+    background: {HEADER_BG}; color: {TEXT_MUTED}; padding: 9px 10px; border: none;
+    border-left: 1px solid {BORDER}; border-bottom: 1px solid {BORDER}; font-weight: 700;
 }}
 QHeaderView::section:first {{ border-top-right-radius: {RADIUS}px; }}
 QHeaderView::section:last {{ border-top-left-radius: {RADIUS}px; }}
-QTableCornerButton::section {{ background: #F8FAFC; border: none; }}
+QTableCornerButton::section {{ background: {HEADER_BG}; border: none; }}
 
 /* ---------------- scrollbars ---------------- */
+QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
-QScrollBar::handle:vertical {{ background: {BORDER_STRONG}; border-radius: 5px; min-height: 30px; }}
-QScrollBar::handle:vertical:hover {{ background: {TEXT_FAINT}; }}
+QScrollBar::handle:vertical {{ background: {BORDER_STRONG}; border-radius: 4px; min-height: 30px; }}
+QScrollBar::handle:vertical:hover {{ background: {ACCENT}; }}
 QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
-QScrollBar::handle:horizontal {{ background: {BORDER_STRONG}; border-radius: 5px; min-width: 30px; }}
+QScrollBar::handle:horizontal {{ background: {BORDER_STRONG}; border-radius: 4px; min-width: 30px; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
 /* ---------------- misc ---------------- */
-QProgressBar {{ border: none; background: {BORDER}; border-radius: 4px; height: 6px; text-align: center; }}
-QProgressBar::chunk {{ background: {PRIMARY}; border-radius: 4px; }}
+QProgressBar {{ border: none; background: {PRIMARY_SOFT}; border-radius: 7px; min-height: 14px;
+                max-height: 14px; text-align: center; }}
+QProgressBar::chunk {{ border-radius: 7px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {ACCENT}, stop:1 {ACCENT2}); }}
 
 QMenu {{ background: {SURFACE}; border: 1px solid {BORDER_STRONG}; border-radius: {RADIUS_SM}px; padding: 6px; }}
 QMenu::item {{ padding: 8px 16px; border-radius: 6px; }}
 QMenu::item:selected {{ background: {PRIMARY_SOFT}; color: {PRIMARY_DARK}; }}
 
 QGroupBox {{
-    border: 1px solid {BORDER}; border-radius: {RADIUS}px; margin-top: 14px;
-    padding: 14px; background: {SURFACE}; font-weight: 600;
+    border: 1px solid {BORDER}; border-radius: {RADIUS_LG}px; margin-top: 16px;
+    padding: 14px; background: {SURFACE}; font-weight: 700;
 }}
-QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top right; padding: 0 8px; color: {INK}; }}
+QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top right; padding: 2px 10px;
+                    color: {PRIMARY_DARK}; }}
 
 QSplitter::handle {{ background: {BORDER}; }}
-QStackedWidget {{ background: {BACKGROUND}; }}
+QStackedWidget {{ background: transparent; }}
 """
 
 
-def apply_theme(app: QApplication) -> None:
-    """Apply fonts, RTL layout direction and the global stylesheet."""
+def apply_theme(app: QApplication, mode: str | None = None) -> None:
+    """Apply fonts, RTL layout direction, the light/dark palette (v2.7.0) and the
+    global stylesheet. ``mode``: light / dark / system; None keeps the current one."""
+    if mode is not None:
+        set_mode(mode)
+    _apply_qt_palette(app)
     loaded = load_application_fonts()
     family = resolve_font_family(loaded)
     font = QFont(family, BASE_FONT_SIZE)
@@ -506,11 +631,32 @@ def apply_theme(app: QApplication) -> None:
     app.setStyleSheet(stylesheet(family))
 
 
+def _apply_qt_palette(app: QApplication) -> None:
+    """Native parts (scroll areas, menus, dialogs) follow the same palette."""
+    from PySide6.QtGui import QPalette
+
+    palette = QPalette()
+    for role, value in ((QPalette.ColorRole.Window, BACKGROUND),
+                        (QPalette.ColorRole.WindowText, TEXT),
+                        (QPalette.ColorRole.Base, SURFACE),
+                        (QPalette.ColorRole.AlternateBase, ALT_ROW),
+                        (QPalette.ColorRole.Text, TEXT),
+                        (QPalette.ColorRole.Button, SURFACE),
+                        (QPalette.ColorRole.ButtonText, TEXT),
+                        (QPalette.ColorRole.Highlight, PRIMARY),
+                        (QPalette.ColorRole.HighlightedText, "#FFFFFF"),
+                        (QPalette.ColorRole.ToolTipBase, SURFACE),
+                        (QPalette.ColorRole.ToolTipText, TEXT),
+                        (QPalette.ColorRole.PlaceholderText, TEXT_FAINT)):
+        palette.setColor(role, QColor(value))
+    app.setPalette(palette)
+
+
 def stylesheet(family: str | None = None) -> str:
     """The global stylesheet, with the resolved Persian font family in place."""
     resolved = family or resolve_font_family()
     check, radio = indicator_images()
-    return (_STYLESHEET_TEMPLATE
+    return (_stylesheet_template()
             .replace("__FONT_FAMILY__", resolved)
             .replace("__CHECK_IMAGE__", f'image: url("{check}");' if check else "")
             .replace("__RADIO_IMAGE__", f'image: url("{radio}");' if radio else ""))

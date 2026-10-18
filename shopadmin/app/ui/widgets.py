@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable, Sequence
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPixmap
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -575,10 +575,15 @@ class DataTable(QTableWidget):
             return
         self._auto_sized = True
         metrics = self.fontMetrics()
+        # v2.7.0: headers are drawn bold, so they are measured bold (no cut header)
+        bold = QFont(self.horizontalHeader().font())
+        bold.setBold(True)
+        header_metrics = QFontMetrics(bold)
         widths = []
         floors = []
         for column in range(self.columnCount()):
-            floor = max(self.MIN_COLUMN, metrics.horizontalAdvance(self._headers[column]) + 44)
+            floor = max(self.MIN_COLUMN,
+                        header_metrics.horizontalAdvance(self._headers[column]) + 48)
             floors.append(floor)
             wanted = floor
             for row in range(min(self.rowCount(), 30)):

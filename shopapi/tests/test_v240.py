@@ -20,7 +20,7 @@ def test_server_and_installer_versions_match():
     match = re.search(r'^#define\s+MyAppVersion\s+"([^"]+)"', iss, re.MULTILINE)
     assert match, "MyAppVersion not found in ShopAdmin.iss"
     assert control.VERSION == match.group(1)
-    assert control.VERSION == "2.6.2"
+    assert control.VERSION == "2.7.0"
 
 
 # ---- forgot password ---------------------------------------------------------
@@ -100,11 +100,12 @@ def test_forgot_permissions(client):
     assert client.get("/admin/password-requests", headers=bearer(op)).status_code == 403
     # an admin sees (and may decide) staff requests, never a super admin's
     seen = client.get("/admin/password-requests", headers=bearer(adm)).json()
-    assert [p["username"] for p in seen] == ["opr"]
+    # v2.7.0: "admin" is a «مدیر» now and sees every request
+    assert sorted(p["username"] for p in seen) == ["opr", "owner"]
     all_ids = {p["username"]: p["id"] for p in
                client.get("/admin/password-requests", headers=bearer(owner)).json()}
-    assert client.post(f"/admin/password-requests/{all_ids['owner']}/approve",
-                       headers=bearer(adm)).status_code == 403
+    assert client.post(f"/admin/password-requests/{all_ids['opr']}/approve",
+                       headers=bearer(op)).status_code == 403          # a sales user never
     assert client.post(f"/admin/password-requests/{all_ids['opr']}/approve",
                        headers=bearer(adm)).status_code == 200
 
@@ -151,7 +152,7 @@ def test_reset_to_default_forces_change(client):
 def test_reset_default_super_admin_only_and_hashed(client, db):
     owner = owner_token(client)
     user = add_staff(client, owner, "sara", "operator")
-    adm = add_staff(client, owner, "adm", "admin")
+    adm = add_staff(client, owner, "adm", "operator")
     admin_tok = login(client, "adm").json()["token"]
     assert client.post(f"/admin/staff/{user['id']}/reset-default",
                        headers=bearer(admin_tok)).status_code == 403

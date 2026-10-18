@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLineEdit,
     QVBoxLayout,
@@ -20,7 +21,13 @@ from PySide6.QtWidgets import (
 )
 
 from ...auth import MIN_PASSWORD_LENGTH, validate_password_strength
-from ...permissions import USERS_MANAGE, USERS_VIEW
+from ...permissions import (
+    DEFAULT_ROLE,
+    ROLE_SERVER_PERMISSIONS,
+    SERVER_PERMISSION_FA,
+    USERS_MANAGE,
+    USERS_VIEW,
+)
 from ...persian import format_shamsi, normalize_fa, to_persian_digits
 from ...statuses import ALL_ROLES, ROLE_DESCRIPTION_FA, ROLE_SUPER_ADMIN, role_fa
 from .. import theme, widgets
@@ -33,6 +40,7 @@ HEADERS = ("نام کاربری", "نام و نام خانوادگی", "نقش",
 class UsersPage(BasePage):
     title = "کاربران سیستم"
     subtitle = "حساب کارکنان فروشگاه روی سرور — فقط مدیر کل"
+    help_text = "کاربران برنامه: «مدیر» همهٔ بخش‌ها را دارد و «کاربر فروش» فقط سفارش‌ها، درخواست‌ها و مشتریان. دسترسی هر نفر را می‌توانید جداگانه کم یا زیاد کنید."
 
     def build_body(self) -> None:
         if not self.context.can(USERS_VIEW):
@@ -384,6 +392,9 @@ class UserFormDialog(QDialog):
             self.full_name_input.setText(str(user.get("full_name") or ""))
             index = self.role_combo.findData(user.get("role"))
             self.role_combo.setCurrentIndex(max(0, index))
+        else:
+            # v2.7.0: new users are «کاربر فروش» unless the manager chooses otherwise
+            self.role_combo.setCurrentIndex(max(0, self.role_combo.findData(DEFAULT_ROLE)))
 
         form.addRow(widgets.label("نام کاربری:"), self.username_input)
         form.addRow(widgets.label("نام و نام خانوادگی:"), self.full_name_input)
@@ -414,6 +425,34 @@ class UserFormDialog(QDialog):
 
         root.addLayout(form)
 
+        # ---- v2.7.0: per-user permissions on top of the role ----------------
+        perms_panel = widgets.Panel("دسترسی‌های این کاربر")
+        perms_panel.body.addWidget(widgets.label(
+            "تیک‌ها از نقش گرفته می‌شوند؛ می‌توانید برای همین یک نفر دسترسی‌ای اضافه یا کم کنید. "
+            "بخش‌هایی که تیک ندارند در منوی او اصلاً نشان داده نمی‌شوند.",
+            name="Muted", wrap=True))
+        perms_holder = QWidget()
+        perms_grid = QGridLayout(perms_holder)
+        perms_grid.setContentsMargins(0, 0, 0, 0)
+        perms_grid.setHorizontalSpacing(18)
+        perms_grid.setVerticalSpacing(4)
+        self.permission_checks: dict[str, QCheckBox] = {}
+        for index, (name, label_text) in enumerate(SERVER_PERMISSION_FA.items()):
+            check = QCheckBox(label_text)
+            self.permission_checks[name] = check
+            perms_grid.addWidget(check, index // 2, index % 2)
+        perms_panel.body.addWidget(perms_holder)
+        reset = widgets.button("برگرداندن به دسترسی‌های نقش", variant="ghost",
+                               on_click=self.reset_permissions)
+        perms_panel.body.addWidget(reset)
+        root.addWidget(perms_panel)
+        current = (user or {}).get("permissions") if self.editing else None
+        if isinstance(current, list):
+            self._set_ticks(set(current))
+        else:
+            self.reset_permissions()
+        self.role_combo.currentIndexChanged.connect(lambda _i: self.reset_permissions())
+
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
         self.error_label.setVisible(False)
         root.addWidget(self.error_label)
@@ -431,6 +470,22 @@ class UserFormDialog(QDialog):
 
         self._update_role_hint()
 
+    def role_permissions(self) -> frozenset:
+        return ROLE_SERVER_PERMISSIONS.get(str(self.role_combo.currentData()), frozenset())
+
+    def _set_ticks(self, names: set) -> None:
+        for name, check in self.permission_checks.items():
+            check.setChecked(name in names)
+
+    def reset_permissions(self) -> None:
+        self._set_ticks(set(self.role_permissions()))
+
+    def permission_changes(self) -> tuple[list[str], list[str]]:
+        """(extra, removed) compared with the chosen role."""
+        ticked = {n for n, c in self.permission_checks.items() if c.isChecked()}
+        base = set(self.role_permissions())
+        return sorted(ticked - base), sorted(base - ticked)
+
     def _update_role_hint(self) -> None:
         role = self.role_combo.currentData()
         self.role_hint.setText(ROLE_DESCRIPTION_FA.get(str(role), ""))
@@ -447,6 +502,7 @@ class UserFormDialog(QDialog):
         full_name = self.full_name_input.text().strip()
         active = self.active_check.isChecked()
         actor_id = self.context.principal.user_id
+        extra, removed = self.permission_changes()
 
         if self.editing:
             user_id = int(self.user["id"])
@@ -454,7 +510,8 @@ class UserFormDialog(QDialog):
 
             def work():
                 return auth.update_user(user_id, full_name=full_name, role=role,
-                                        is_active=active, actor_id=actor_id)
+                                        is_active=active, actor_id=actor_id,
+                                        extra_permissions=extra, removed_permissions=removed)
         else:
             username = self.username_input.text().strip()
             password = self.password_input.text()
@@ -469,7 +526,8 @@ class UserFormDialog(QDialog):
 
             def work():
                 created = auth.create_user(username, full_name, password, role,
-                                           must_change_password=must_change)
+                                           must_change_password=must_change,
+                                           extra_permissions=extra, removed_permissions=removed)
                 if not active:
                     auth.update_user(created.user_id, is_active=False)
                 return created

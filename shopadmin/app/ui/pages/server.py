@@ -47,6 +47,7 @@ def _uptime_fa(seconds: int) -> str:
 class ServerPage(BasePage):
     title = "سرور فروشگاه"
     subtitle = "وضعیت سرور و ربات‌ها، تنظیمات، گزارش و راه‌اندازی دوباره"
+    help_text = "وضعیت و تنظیمات رایانهٔ اصلی فروشگاه (فقط مدیر)."
     reload_on_data_change = False
 
     def build_body(self) -> None:

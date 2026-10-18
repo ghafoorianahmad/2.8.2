@@ -80,8 +80,10 @@ def test_filters_labels_and_scores():
 
 
 def test_permissions_and_notification():
-    for role in (ROLE_VIEWER, ROLE_OPERATOR, ROLE_ADMIN, ROLE_SUPER_ADMIN):
+    # v2.7.0: site models are for «مدیر» only («کاربر فروش» = operator / old viewer)
+    for role in (ROLE_ADMIN, ROLE_SUPER_ADMIN):
         assert has_permission(role, CATALOG_VIEW)
+    assert not has_permission(ROLE_OPERATOR, CATALOG_VIEW)
     assert not has_permission(ROLE_OPERATOR, CATALOG_MANAGE)
     assert not has_permission(ROLE_VIEWER, CATALOG_MANAGE)
     assert has_permission(ROLE_ADMIN, CATALOG_MANAGE)
@@ -143,7 +145,7 @@ def test_page_title_is_persian(ui_context):
 def test_sidebar_has_the_page(ui_context, admin_qapp):
     from app.ui.main_window import MainWindow
 
-    window = MainWindow(make_context_with_role(ui_context, ROLE_VIEWER))
+    window = MainWindow(make_context_with_role(ui_context, ROLE_SUPER_ADMIN))
     assert "catalog" in window._nav_buttons
     window.close()
 

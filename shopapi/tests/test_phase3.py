@@ -326,9 +326,9 @@ def test_upload_map_ignore_and_filters(client, db, reader):
     ignored = client.get("/admin/pricelists/rows", params={"filter": "ignored"},
                          headers=admin).json()["rows"]
     assert len(ignored) == 15
-    # viewer may look but not change
+    # v2.7.0: a sales user (old "viewer") neither sees nor changes the price list
     viewer = staff(db, "viewer")
-    assert client.get("/admin/pricelists", headers=viewer).status_code == 200
+    assert client.get("/admin/pricelists", headers=viewer).status_code == 403
     assert client.put("/admin/price-mappings", json=good, headers=viewer).status_code == 403
 
 
@@ -672,7 +672,7 @@ def test_worker_proxy_flow(client, db, worker):
     # staff see masked secrets only; operators/admins cannot see the pool
     listed = client.get("/admin/proxies", headers=super_admin).json()
     assert "secret" not in listed[0] and listed[0]["secret_masked"].endswith("cdef")
-    assert client.get("/admin/proxies", headers=staff(db, "admin")).status_code == 403
+    assert client.get("/admin/proxies", headers=staff(db, "operator")).status_code == 403
     # manual entry straight into the main list
     r = client.post("/admin/proxies", headers=super_admin, json={
         "link": f"https://t.me/proxy?server=5.5.5.5&port=443&secret=dd{SECRET}", "main": True})

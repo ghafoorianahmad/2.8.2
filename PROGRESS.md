@@ -2,6 +2,17 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## v2.7.0 — ShopAdmin for non-technical staff (2026-10-18, same branch) — DONE in code; SQL / Bale UNVERIFIED
+
+1. **Shipping**: there was no postal tracking code anywhere in this branch (only the bank receipt's «شمارهٔ پیگیری», which is payment). «ارسال شد» now opens a small dialog with an OPTIONAL courier name + phone (`POST /admin/orders/{id}/ship` body `ShipIn`, `orders.courier_name/courier_phone`, phone digits 7–15, Persian digits accepted). The bot appends «🛵 پیک: … — تلفن: …» to ORDER_SHIPPED only when something was entered.
+2. **Look**: the Phone Bridge «ocean» theme (`E:\Soft\phonebridge\app\theme.py`, also PySide6) recreated in `shopadmin/app/ui/theme.py`: gradient window, deep-blue gradient side bar, 18px cards, raised buttons, accent focus rings, light **and dark** palettes (`theme_mode` per computer: روشن / تیره / مطابق ویندوز, from the next start). Bug fixed: `fonts_dir()` looked in `assets/fonts` while the fonts live in `app/assets/fonts`, so Vazirmatn never loaded (Tahoma fallback) — in the exe too.
+3. **Cut text**: menu and tab labels were clipped when selected because the bold «checked» state is not measured by Qt; every state now has one weight. Table headers are measured bold; the orders search placeholder is shorter; dialogs use flow layouts.
+4. **Roles**: «مدیر» (`super_admin`, everything) and «کاربر فروش» (`operator`, default for new users: orders view / confirm or reject receipt / ship / cancel, item requests, customers view). Old roles migrate on start (admin → مدیر, viewer → کاربر فروش). Server permissions split (`orders.view`, `orders.cancel`, `requests.handle`, `customers.view`, `events.view`; `view` = the rest, admin-only); per-user ticks `staff_users.perm_grant/perm_revoke` (`extra_permissions` / `removed_permissions`, `GET /admin/permissions`), sessions end when ticks change. ShopAdmin gets the effective list at sign-in and hides menu items/buttons without permission; the API enforces the same (incl. `/products`, `/groups` for staff). New `POST /admin/orders/{id}/cancel` (awaiting payment / receipt sent; local only; warning event if already in Sazeh).
+5. **Simplicity**: sales users land on «سفارش‌ها»; big action buttons (تأیید رسید / رد رسید / ارسال شد / لغو سفارش) with confirmations; a one-line help at the top of every page; friendly empty states («سفارش جدیدی نیست»); plain errors with the next step; «گذرواژهٔ من» in the top bar; no server address / «سرور» / «API» / price level / database name for sales users; «فیش» → «رسید»; menu badges also count customer cancels.
+6. Screenshots (before/after, manager and sales user, light and dark): `E:\Outputs\ShopSystem\screenshots_2.7.0\` (`shopadmin/scripts/review_screens.py <dir> <prefix> [dark]`).
+
+Tests (Windows, fakes): shopapi **403**, shopbots **256**, shoptg **49**, shopsystem **49**, shopadmin **501** — all passing.
+
 ## v2.6.2 — price-list mapping, phone parts, customer cancel (2026-10-15, same branch) — DONE in code; SQL / Bale UNVERIFIED
 
 1. **PDF drag & drop** on «لیست قیمت» (`dragEnterEvent/dropEvent`, same `upload_pdf_file` path as the button; managers only). The row actions use a flow layout.

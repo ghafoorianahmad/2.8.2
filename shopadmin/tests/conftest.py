@@ -187,9 +187,14 @@ class FakeShopApi:
 
     @staticmethod
     def staff_out(row: dict) -> dict:
-        return {k: row[k] for k in ("id", "username", "full_name", "role", "active",
-                                    "must_change_password", "locked", "created_at",
-                                    "last_login_at")}
+        out = {k: row[k] for k in ("id", "username", "full_name", "role", "active",
+                                   "must_change_password", "locked", "created_at",
+                                   "last_login_at")}
+        # v2.7.0: a row may carry the server's effective permissions and ticks
+        for key in ("permissions", "extra_permissions", "removed_permissions"):
+            if key in row:
+                out[key] = row[key]
+        return out
 
     # ---- request handler -------------------------------------------------
     def _sales_state(self) -> dict:
@@ -522,9 +527,26 @@ class FakeShopApi:
                 if order["id"] == order_id:
                     if order["status"] not in ("approved", "written"):
                         return detail(409, f"Order in status {order['status']}; cannot ship")
+                    phone = str(body.get("courier_phone") or "")
+                    if phone and not 7 <= len(phone) <= 15:
+                        return detail(422, "Invalid courier phone")
                     order["shipped_at"] = TS
+                    order["courier_name"] = body.get("courier_name") or None
+                    order["courier_phone"] = phone or None
+                    self.ship_bodies = getattr(self, "ship_bodies", []) + [body]
                     return reply(200, order)
             return detail(404, "Order not found")
+
+        if path.startswith("/admin/orders/") and path.endswith("/cancel"):
+            order_id = int(path.split("/")[3])
+            order = next((o for o in self.orders if o["id"] == order_id), None)
+            if order is None:
+                return detail(404, "Order not found")
+            if order["status"] not in ("awaiting_payment", "receipt_uploaded"):
+                return detail(409, f"Order in status {order['status']}; cannot be cancelled")
+            order["status"] = "cancelled"
+            order["cancel_reason"] = "staff"
+            return reply(200, order)
 
         if path.startswith("/admin/orders/") and path.endswith("/reject-payment"):
             order_id = int(path.split("/")[3])
@@ -838,6 +860,9 @@ class FakeShopApi:
             row = self.add_staff(body["username"], body["password"], body["role"],
                                  body.get("full_name", ""),
                                  must_change=body.get("must_change_password", True))
+            for key in ("extra_permissions", "removed_permissions"):
+                if key in body:
+                    row[key] = body[key]
             return reply(201, self.staff_out(row))
         target = self.staff.get(int(parts[2])) if len(parts) > 2 else None
         if target is None:
@@ -848,7 +873,8 @@ class FakeShopApi:
             removing = (body.get("role") not in (None, "super_admin")) or body.get("active") is False
             if removing and target["role"] == "super_admin" and not supers:
                 return detail(409, "Cannot remove the last super admin")
-            for key in ("full_name", "role", "active"):
+            for key in ("full_name", "role", "active", "extra_permissions",
+                        "removed_permissions"):
                 if key in body:
                     target[key] = body[key]
             return reply(200, self.staff_out(target))

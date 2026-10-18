@@ -135,7 +135,7 @@ class LoginWindow(QWidget):
 
         card_layout.addWidget(widgets.hline())
         footer = widgets.label(
-            f"نسخهٔ {to_persian_digits(APP_VERSION)} — ارتباط با سرور فروشگاه از طریق API",
+            f"نسخهٔ {to_persian_digits(APP_VERSION)}",
             name="Faint", wrap=True,
         )
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -175,7 +175,7 @@ class LoginWindow(QWidget):
         panel = QFrame()
         panel.setObjectName("LoginBrand")
         panel.setStyleSheet(
-            f"QFrame#LoginBrand {{ background: {theme.SIDEBAR_BG}; }}"
+            f"QFrame#LoginBrand {{ background: {theme.sidebar_gradient()}; }}"
             "QFrame#LoginBrand QLabel { background: transparent; }"
         )
         layout = QVBoxLayout(panel)

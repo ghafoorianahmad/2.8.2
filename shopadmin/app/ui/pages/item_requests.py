@@ -62,6 +62,7 @@ def product_text(item: dict) -> str:
 class ItemRequestsPage(BasePage):
     title = "درخواست کالا"
     subtitle = "کالاهای ناموجود و استعلام‌های قیمتی که مشتریان در ربات فرستاده‌اند"
+    help_text = "کالاهایی که مشتریان خواسته‌اند یا قیمتشان را پرسیده‌اند. روی هر ردیف کلیک کنید تا به مشتری پیام بدهید."
     auto_refreshable = True
 
     def build_body(self) -> None:

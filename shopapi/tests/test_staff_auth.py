@@ -178,7 +178,8 @@ def test_role_matrix(client, reader, role, can_view, can_decide):
     if not can_decide:
         assert r.status_code == 403
     staff_list = client.get("/admin/staff", headers=bearer(token)).status_code
-    assert (staff_list == 200) == (role == "super_admin")
+    # v2.7.0: "admin" is stored as «مدیر» (super_admin), "viewer" as «کاربر فروش»
+    assert (staff_list == 200) == (role in ("super_admin", "admin"))
 
 
 def test_staff_actions_are_audited_with_username(client, db, reader):
@@ -231,7 +232,7 @@ def test_last_super_admin_is_protected(client):
     owner = owner_token(client)
     me = client.get("/auth/me", headers=bearer(owner)).json()["user"]
     assert client.patch(f"/admin/staff/{me['id']}", headers=bearer(owner),
-                        json={"role": "admin"}).status_code == 409
+                        json={"role": "operator"}).status_code == 409
     assert client.patch(f"/admin/staff/{me['id']}", headers=bearer(owner),
                         json={"active": False}).status_code == 409
     assert client.delete(f"/admin/staff/{me['id']}", headers=bearer(owner)).status_code == 409
@@ -258,7 +259,7 @@ def test_reset_password_forces_change_and_signs_out(client):
 
 def test_audit_log_is_super_admin_only(client):
     owner = owner_token(client)
-    add_staff(client, owner, "boss", "admin")
+    add_staff(client, owner, "boss", "operator")
     token = login(client, "boss").json()["token"]
     assert client.get("/admin/audit", headers=bearer(owner)).status_code == 200
     assert client.get("/admin/audit", headers=bearer(token)).status_code == 403

@@ -122,6 +122,8 @@ class OrderOut(BaseModel):
     #: Accounting invoice numbers (facto.Numfact) of the order; filled for the bot (admin key) only.
     invoice_numbers: list[str] = []
     shipped_at: Optional[str] = None
+    courier_name: Optional[str] = None
+    courier_phone: Optional[str] = None
     has_receipt: bool = False
     #: The customer is not approved yet: the order is written to accounting
     #: only after approval.
@@ -208,6 +210,8 @@ class RejectIn(BaseModel):
 
 
 # ---- staff accounts / sign-in ----
+#: v2.7.0: «مدیر» = super_admin, «کاربر فروش» = operator. The old "admin" and
+#: "viewer" are still accepted and stored as their new role.
 StaffRole = Literal["super_admin", "admin", "operator", "viewer"]
 
 
@@ -228,6 +232,10 @@ class StaffOut(BaseModel):
     locked: bool = False
     created_at: str
     last_login_at: Optional[str] = None
+    #: v2.7.0: per-user ticks on top of the role, and the result
+    extra_permissions: list[str] = []
+    removed_permissions: list[str] = []
+    permissions: list[str] = []
 
 
 class LoginOut(BaseModel):
@@ -250,15 +258,19 @@ class ChangePasswordIn(BaseModel):
 class StaffCreate(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     full_name: str = Field("", max_length=100)
-    role: StaffRole
+    role: StaffRole = "operator"          # v2.7.0: new users are «کاربر فروش»
     password: str = Field(min_length=1, max_length=128)
     must_change_password: bool = True
+    extra_permissions: list[str] = Field(default_factory=list, max_length=50)
+    removed_permissions: list[str] = Field(default_factory=list, max_length=50)
 
 
 class StaffUpdate(BaseModel):
     full_name: Optional[str] = Field(None, max_length=100)
     role: Optional[StaffRole] = None
     active: Optional[bool] = None
+    extra_permissions: Optional[list[str]] = Field(None, max_length=50)
+    removed_permissions: Optional[list[str]] = Field(None, max_length=50)
 
 
 class PasswordResetIn(BaseModel):
@@ -457,3 +469,9 @@ class StatementFullOut(BaseModel):
     balance: float
     side: str
     truncated: bool = False
+
+
+class ShipIn(BaseModel):
+    """v2.7.0: «ارسال شد» with an optional courier (name and phone)."""
+    courier_name: str = Field("", max_length=60)
+    courier_phone: str = Field("", max_length=30)

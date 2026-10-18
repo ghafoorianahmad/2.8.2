@@ -28,6 +28,7 @@ PAGE_SIZE = 50
 class ProductsPage(BasePage):
     title = "محصولات"
     subtitle = "فهرست کالاها و موجودی (فقط خواندنی)"
+    help_text = "کالاهای فروشگاه با قیمت و موجودی (فقط دیدن؛ تغییرات در برنامهٔ حسابداری انجام می‌شود)."
 
     def build_body(self) -> None:
         bar_holder = QWidget()

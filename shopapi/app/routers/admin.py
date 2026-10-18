@@ -22,6 +22,7 @@ from ..accounting_writer import (
 )
 from ..config import Settings
 from ..db_own import OwnDB
+from ..schemas import ShipIn
 from ..schemas import (
     ApproveUserIn,
     OrderOut,
@@ -32,11 +33,15 @@ from ..schemas import (
     ShopStateOut,
     UserOut,
 )
-from ..security import Identity, require_permission
+from ..security import Identity, require_permission, require_signed_in
 from ..staff import (
     P_CUSTOMERS_DECIDE,
+    P_CUSTOMERS_VIEW,
+    P_EVENTS,
+    P_ORDERS_CANCEL,
     P_ORDERS_EXPIRE,
     P_ORDERS_SHIP,
+    P_ORDERS_VIEW,
     P_PAYMENTS_DECIDE,
     P_SHOP_STATE,
     P_VIEW,
@@ -51,6 +56,12 @@ CAN_DECIDE_PAYMENTS = Depends(require_permission(P_PAYMENTS_DECIDE))
 CAN_EXPIRE = Depends(require_permission(P_ORDERS_EXPIRE))
 CAN_SHIP = Depends(require_permission(P_ORDERS_SHIP))
 CAN_SET_SHOP_STATE = Depends(require_permission(P_SHOP_STATE))
+# v2.7.0: what a «کاربر فروش» needs, apart from the rest of the admin view
+CAN_VIEW_ORDERS = Depends(require_permission(P_ORDERS_VIEW))
+CAN_VIEW_CUSTOMERS = Depends(require_permission(P_CUSTOMERS_VIEW))
+CAN_VIEW_EVENTS = Depends(require_permission(P_EVENTS))
+CAN_CANCEL = Depends(require_permission(P_ORDERS_CANCEL))
+SIGNED_IN = Depends(require_signed_in)
 
 #: Event: our Codlp exists more than once in KalaOrder (alert the admin; nothing deleted).
 EVENT_DUPLICATE_ORDER_NO = "accounting_duplicate_order"
@@ -62,7 +73,7 @@ SHIPPABLE_STATUSES = ("approved", "written")
 @router.get("/system-info")
 def system_info(
     settings: Settings = Depends(deps.get_settings),
-    _: Identity = CAN_VIEW,
+    _: Identity = SIGNED_IN,
 ) -> dict:
     """Read-only operational flags for admin clients (e.g. the desktop console).
 
@@ -90,7 +101,7 @@ def system_info(
 def list_users(
     status_filter: Optional[str] = Query(None, alias="status"),
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_VIEW,
+    _: Identity = CAN_VIEW_CUSTOMERS,
 ) -> list[UserOut]:
     return [UserOut(**u) for u in db.list_users(status_filter)]
 
@@ -111,7 +122,7 @@ def match_person(
 def get_user(
     user_id: int,
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_VIEW,
+    _: Identity = CAN_VIEW_CUSTOMERS,
 ) -> UserOut:
     user = db.get_user_by_id(user_id)
     if user is None:
@@ -219,7 +230,7 @@ def list_orders(
     status_filter: str = Query("receipt_uploaded", alias="status"),
     db: OwnDB = Depends(deps.get_db),
     reader: AccountingReader = Depends(deps.get_reader),
-    _: Identity = CAN_VIEW,
+    _: Identity = CAN_VIEW_ORDERS,
 ) -> list[OrderOut]:
     orders = db.list_orders(status_filter)
     # v2.6.0: the linked person's name from the accounting DB (one query; the
@@ -356,7 +367,7 @@ def list_events(
     after: Optional[int] = Query(None, ge=0),
     limit: int = Query(100, ge=1, le=500),
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_VIEW,
+    _: Identity = CAN_VIEW_EVENTS,
 ) -> dict:
     """Notification feed for staff clients.
 
@@ -377,7 +388,7 @@ def get_receipt_image(
     order_id: int,
     db: OwnDB = Depends(deps.get_db),
     settings: Settings = Depends(deps.get_settings),
-    _: Identity = CAN_VIEW,
+    _: Identity = CAN_VIEW_ORDERS,
 ):
     """The newest receipt image of an order (JPEG/PNG)."""
     row = db.latest_receipt_file(order_id)
@@ -388,12 +399,27 @@ def get_receipt_image(
     return FileResponse(path, media_type=row["content_type"] or "application/octet-stream")
 
 
+def courier_phone(raw: str) -> str:
+    """Digits only (Persian / Arabic digits too); '' when nothing was typed."""
+    trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+    value = "".join(ch for ch in str(raw or "").translate(trans) if ch.isdigit() or ch == "+")
+    if value and not (7 <= len(value.lstrip("+")) <= 15):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid courier phone")
+    return value
+
+
 @router.post("/orders/{order_id}/ship", response_model=OrderOut)
 def ship_order(
     order_id: int,
+    payload: ShipIn | None = None,
     db: OwnDB = Depends(deps.get_db),
     who: Identity = CAN_SHIP,
 ) -> OrderOut:
+    """«ارسال شد». v2.7.0: an optional courier name and phone go into the
+    customer's message; without them the usual message only."""
+    payload = payload or ShipIn()
+    name = " ".join(payload.courier_name.split())
+    phone = courier_phone(payload.courier_phone)
     order = db.get_order(order_id)
     if order is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
@@ -403,10 +429,37 @@ def ship_order(
         )
     if order.get("shipped_at"):
         return OrderOut(**order)
-    order = db.set_shipped(order_id)
-    db.audit(who.actor, "order_ship", f"order id={order_id}")
+    order = db.set_shipped(order_id, name or None, phone or None)
+    db.audit(who.actor, "order_ship", f"order id={order_id} courier={'yes' if name or phone else 'no'}")
     db.add_event(tracking.EVENT_SHIPPED, order_id, who.actor)
     return OrderOut(**order)
+
+
+#: v2.7.0: orders staff may cancel (never one already paid and confirmed).
+STAFF_CANCELLABLE = ("awaiting_payment", "receipt_uploaded")
+
+
+@router.post("/orders/{order_id}/cancel", response_model=OrderOut)
+def cancel_order(
+    order_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_CANCEL,
+) -> OrderOut:
+    """Staff cancel an order that is not confirmed yet. Local only: «سازه حساب»
+    is never touched; an order already written there raises a ShopAdmin warning."""
+    with db.reservation_guard():
+        order = db.get_order(order_id)
+        if order is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+        if order["status"] not in STAFF_CANCELLABLE:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                f"Order in status {order['status']}; cannot be cancelled")
+        db.cancel_order_any(order_id, "staff", STAFF_CANCELLABLE)
+    db.audit(who.actor, "order_staff_cancel", f"order id={order_id}")
+    db.add_event("order_cancelled_by_staff", order_id, who.actor)
+    if order.get("accounting_order_no"):
+        db.add_event("order_cancel_written", order_id, who.actor)
+    return OrderOut(**db.get_order(order_id))
 
 
 @router.post("/orders/sync-invoices")

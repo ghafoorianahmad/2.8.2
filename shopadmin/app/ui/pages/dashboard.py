@@ -32,6 +32,7 @@ DASHBOARD_HEADERS = ("شماره سفارش", "مشتری", "تعداد اقلا
 class DashboardPage(BasePage):
     title = "داشبورد"
     subtitle = "نمای کلی فروشگاه — هر ۳۰ ثانیه به‌روزرسانی می‌شود"
+    help_text = "خلاصهٔ امروز فروشگاه. هشدارهای مهم (اگر باشد) بالای صفحه با رنگ زرد نشان داده می‌شوند."
     auto_refreshable = True
 
     def build_body(self) -> None:

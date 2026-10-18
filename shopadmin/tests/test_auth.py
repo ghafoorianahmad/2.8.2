@@ -174,8 +174,8 @@ def test_super_admin_manages_staff(auth, fake_api):
     signed_in(auth)
     created = auth.create_user("clerk", "کارمند", "Secret123", ROLE_OPERATOR)
     assert fake_api.find_staff("clerk")["must_change_password"] is True
-    auth.update_user(created.user_id, role=ROLE_ADMIN)
-    assert fake_api.find_staff("clerk")["role"] == ROLE_ADMIN
+    auth.update_user(created.user_id, role=ROLE_SUPER_ADMIN)        # v2.7.0: «مدیر»
+    assert fake_api.find_staff("clerk")["role"] == ROLE_SUPER_ADMIN
     auth.reset_password(created.user_id, "Fresh7890")
     assert fake_api.find_staff("clerk")["password"] == "Fresh7890"
     usernames = {row["username"] for row in auth.list_users()}
@@ -208,8 +208,8 @@ def test_duplicate_username_comes_back_from_the_server(auth):
 def test_last_super_admin_is_protected_by_the_server(auth, super_admin):
     signed_in(auth)
     with pytest.raises(AuthError) as exc:
-        auth.update_user(super_admin.user_id, role=ROLE_VIEWER)
-    assert "مدیر کل" in exc.value.message
+        auth.update_user(super_admin.user_id, role=ROLE_OPERATOR)
+    assert "مدیر" in exc.value.message
 
 
 def test_cannot_deactivate_or_delete_self(auth, super_admin):

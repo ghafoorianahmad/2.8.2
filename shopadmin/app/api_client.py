@@ -43,24 +43,24 @@ ORDER_STATUSES = (
 )
 CUSTOMER_STATUSES = ("pending", "approved", "rejected")
 
-MSG_CONNECTION_FAILED = "ارتباط با سرور فروشگاه برقرار نشد. آدرس سرور و اجرای سرویس را بررسی کنید."
-MSG_TIMEOUT = "پاسخی از سرور فروشگاه دریافت نشد (زمان انتظار به پایان رسید)."
+MSG_CONNECTION_FAILED = ("برنامه به رایانهٔ اصلی فروشگاه وصل نشد. اتصال شبکه را بررسی کنید و چند لحظه بعد «به‌روزرسانی» را بزنید؛ اگر درست نشد به مدیر خبر دهید.")
+MSG_TIMEOUT = "پاسخی نرسید. چند لحظه صبر کنید و دوباره امتحان کنید؛ اگر تکرار شد به مدیر خبر دهید."
 MSG_INVALID_KEY = "کلید سرویس نامعتبر است."
-MSG_FORBIDDEN = "حساب کاربری شما اجازهٔ انجام این کار را ندارد."
+MSG_FORBIDDEN = ("شما اجازهٔ این کار را ندارید. اگر لازم است، از مدیر بخواهید این دسترسی را در «کاربران سیستم» برایتان فعال کند.")
 MSG_SESSION_EXPIRED = "نشست شما به پایان رسیده است. لطفاً دوباره وارد شوید."
 MSG_BAD_CREDENTIALS = "نام کاربری یا گذرواژه نادرست است."
 MSG_LOCKED = "حساب کاربری به دلیل تلاش‌های ناموفق موقتاً قفل شده است. کمی بعد دوباره تلاش کنید."
-MSG_DISABLED = "این حساب کاربری غیرفعال شده است. با مدیر کل تماس بگیرید."
+MSG_DISABLED = "این حساب کاربری غیرفعال شده است. با مدیر فروشگاه تماس بگیرید."
 MSG_TOO_MANY = "تعداد تلاش‌های ورود از این رایانه بیش از حد مجاز است. چند دقیقه بعد دوباره تلاش کنید."
 MSG_MUST_CHANGE = "ابتدا باید گذرواژهٔ خود را تغییر دهید."
-MSG_NOT_FOUND = "موردی با این شناسه در سرور فروشگاه یافت نشد."
-MSG_SERVER_ERROR = "خطای داخلی سرور فروشگاه رخ داد. لطفاً بعداً تلاش کنید."
-MSG_UNAVAILABLE = "سرور فروشگاه در دسترس نیست یا سرویس حسابداری پاسخ نمی‌دهد."
+MSG_NOT_FOUND = "این مورد پیدا نشد؛ شاید حذف یا عوض شده است. «به‌روزرسانی» را بزنید."
+MSG_SERVER_ERROR = "کار انجام نشد. چند لحظه بعد دوباره امتحان کنید؛ اگر تکرار شد به مدیر خبر دهید."
+MSG_UNAVAILABLE = ("برنامهٔ حسابداری یا رایانهٔ اصلی فروشگاه فعلاً پاسخ نمی‌دهد. چند دقیقه بعد دوباره امتحان کنید؛ اگر درست نشد به مدیر خبر دهید.")
 MSG_BAD_RESPONSE = "پاسخ سرور فروشگاه قابل خواندن نبود."
 MSG_UNEXPECTED = "خطای پیش‌بینی‌نشده در ارتباط با سرور فروشگاه رخ داد."
 MSG_TLS_MISMATCH = (
     "گواهی امنیتی سرور با گواهی ثبت‌شده در این رایانه یکی نیست. ممکن است کسی در "
-    "شبکه خود را جای سرور جا زده باشد. تا بررسی مدیر کل، وارد نشوید."
+    "شبکه خود را جای سرور جا زده باشد. تا بررسی مدیر، وارد نشوید."
 )
 MSG_TLS_NOT_PINNED = "گواهی امنیتی سرور هنوز روی این رایانه ثبت نشده است. تنظیمات اولیه را دوباره انجام دهید."
 
@@ -153,6 +153,13 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"order status code is not configured", re.I),
      "کد وضعیت سفارش حسابداری (ACCOUNTING_STATUS_CODE) روی سرور تنظیم نشده است؛ "
      "سفارش در حسابداری ثبت نشد. پس از آزمایش G2 مقدار درست را در تنظیمات سرور وارد کنید."),
+    # ---- v2.7.0: shipping and cancel ----
+    (re.compile(r"invalid courier phone", re.I),
+     "شمارهٔ تلفن پیک درست نیست. فقط رقم بنویسید، مثلاً ۰۹۱۲۳۴۵۶۷۸۹؛ یا آن را خالی بگذارید."),
+    (re.compile(r"cannot be cancelled", re.I),
+     "این سفارش دیگر قابل لغو نیست (پرداختش تأیید یا ثبت شده است). اگر لازم است به مدیر خبر دهید."),
+    (re.compile(r"cannot ship", re.I),
+     "فقط سفارشی که پرداختش تأیید شده «ارسال شد» می‌شود. اول رسید را تأیید کنید."),
     # ---- v2.6.1: item requests ----
     (re.compile(r"customer has no messenger", re.I),
      "این مشتری پیام‌رسانی ندارد؛ پیام قابل ارسال نیست."),
@@ -185,12 +192,12 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"new password must differ", re.I),
      "گذرواژهٔ جدید باید با گذرواژهٔ فعلی متفاوت باشد."),
     (re.compile(r"cannot remove the last super admin", re.I),
-     "حداقل یک مدیر کل فعال باید باقی بماند."),
+     "حداقل یک «مدیر» فعال باید باقی بماند."),
     (re.compile(r"cannot delete your own account", re.I),
      "نمی‌توانید حساب کاربری خودتان را حذف کنید."),
     (re.compile(r"staff account not found", re.I), "کاربر مورد نظر یافت نشد."),
     (re.compile(r"staff accounts already exist", re.I),
-     "مدیر کل قبلاً روی سرور ساخته شده است. با همان حساب وارد شوید."),
+     "حساب «مدیر» قبلاً ساخته شده است. با همان حساب وارد شوید."),
     # ---- server control ----
     (re.compile(r"restart not available", re.I),
      "سرور در حالت سرویس اجرا نمی‌شود و از راه دور راه‌اندازی دوباره نمی‌شود."),
@@ -202,10 +209,10 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
 
 _STATUS_FA = {
     "awaiting_payment": "در انتظار پرداخت",
-    "receipt_uploaded": "فیش ارسال‌شده",
+    "receipt_uploaded": "رسید رسیده",
     "approved": "تأییدشده",
     "rejected": "ردشده",
-    "written": "نوشته‌شده در حسابداری",
+    "written": "ثبت‌شده در حسابداری",
     "cancelled": "لغو‌شده",
     "expired": "منقضی",
     "pending": "در انتظار تأیید",
@@ -576,8 +583,15 @@ class ShopApiClient:
     def expire_orders(self) -> dict:
         return self._request("POST", "/admin/orders/expire") or {}
 
-    def ship_order(self, order_id: int) -> dict:
-        return self._request("POST", f"/admin/orders/{int(order_id)}/ship")
+    def ship_order(self, order_id: int, courier_name: str = "", courier_phone: str = "") -> dict:
+        """«ارسال شد»; v2.7.0: with an optional courier name and phone for the customer."""
+        return self._request("POST", f"/admin/orders/{int(order_id)}/ship", json_body={
+            "courier_name": str(courier_name or "").strip()[:60],
+            "courier_phone": str(courier_phone or "").strip()[:30]})
+
+    def cancel_order(self, order_id: int) -> dict:
+        """v2.7.0: cancel an order that is not confirmed yet (local only)."""
+        return self._request("POST", f"/admin/orders/{int(order_id)}/cancel") or {}
 
     def receipt_image(self, order_id: int) -> Optional[bytes]:
         """``GET /admin/orders/{id}/receipt`` — the stored receipt image, or None."""
@@ -889,15 +903,27 @@ class ShopApiClient:
         return list(self._request("GET", "/admin/staff") or [])
 
     def create_staff(self, username: str, full_name: str, role: str, password: str,
-                     *, must_change_password: bool = True) -> dict:
-        return self._request("POST", "/admin/staff", json_body={
-            "username": username, "full_name": full_name, "role": role,
-            "password": password, "must_change_password": must_change_password})
+                     *, must_change_password: bool = True,
+                     extra_permissions: list[str] | None = None,
+                     removed_permissions: list[str] | None = None) -> dict:
+        body = {"username": username, "full_name": full_name, "role": role,
+                "password": password, "must_change_password": must_change_password}
+        if extra_permissions is not None:
+            body["extra_permissions"] = sorted(extra_permissions)
+        if removed_permissions is not None:
+            body["removed_permissions"] = sorted(removed_permissions)
+        return self._request("POST", "/admin/staff", json_body=body)
 
     def update_staff(self, staff_id: int, *, full_name: str | None = None,
-                     role: str | None = None, active: bool | None = None) -> dict:
+                     role: str | None = None, active: bool | None = None,
+                     extra_permissions: list[str] | None = None,
+                     removed_permissions: list[str] | None = None) -> dict:
         body = {k: v for k, v in {"full_name": full_name, "role": role, "active": active}.items()
                 if v is not None}
+        if extra_permissions is not None:
+            body["extra_permissions"] = sorted(extra_permissions)
+        if removed_permissions is not None:
+            body["removed_permissions"] = sorted(removed_permissions)
         return self._request("PATCH", f"/admin/staff/{int(staff_id)}", json_body=body)
 
     def reset_staff_password(self, staff_id: int, password: str,

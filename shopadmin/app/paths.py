@@ -13,7 +13,7 @@ from pathlib import Path
 
 APP_NAME = "ShopAdmin"
 APP_TITLE_FA = "مدیریت فروشگاه"
-APP_VERSION = "2.6.2"  # keep equal to installer/ShopAdmin.iss MyAppVersion (test_version.py)
+APP_VERSION = "2.7.0"  # keep equal to installer/ShopAdmin.iss MyAppVersion (test_version.py)
 
 ORG_NAME = "ShopAdmin"
 
@@ -80,7 +80,13 @@ def log_path() -> Path:
 
 
 def assets_dir() -> Path:
-    return resource_dir() / "assets"
+    """``app/assets`` (source tree and the PyInstaller bundle); ``assets`` as a
+    fallback. v2.7.0: the fonts were looked up in ``assets`` only and never found,
+    so the app silently fell back to Tahoma instead of Vazirmatn."""
+    for candidate in (resource_dir() / "app" / "assets", resource_dir() / "assets"):
+        if candidate.exists():
+            return candidate
+    return resource_dir() / "app" / "assets"
 
 
 def fonts_dir() -> Path:

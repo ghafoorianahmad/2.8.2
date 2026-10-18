@@ -2091,6 +2091,8 @@ class BotEngine:
                 or await self._find_order_chat(ref_id)
             )
             text = getattr(texts, ORDER_EVENT_TEXTS[kind]).format(order_id=ref_id)
+            if kind == "order_shipped":
+                text = await self._shipped_text(ref_id, text)
         self.store.mark_announced(
             marker, ref_id, str((target or {}).get("platform") or ""),
             (target or {}).get("chat_id") or "",
@@ -2101,6 +2103,26 @@ class BotEngine:
             return True
         await self._notify_customer(target, text)
         return True
+
+    async def _shipped_text(self, order_id: int, text: str) -> str:
+        """v2.7.0: «ارسال شد» + the courier, only when staff entered one."""
+        try:
+            order = await self.api.admin_get_order(int(order_id))
+        except ShopApiError:
+            return text
+        if not isinstance(order, dict):
+            return text
+        name = " ".join(str(order.get("courier_name") or "").split())
+        phone = str(order.get("courier_phone") or "").strip()
+        if not name and not phone:
+            return text
+        if name and phone:
+            line = texts.ORDER_SHIPPED_COURIER.format(name=name, phone=phone)
+        elif name:
+            line = texts.ORDER_SHIPPED_COURIER_NAME.format(name=name)
+        else:
+            line = texts.ORDER_SHIPPED_COURIER_PHONE.format(phone=phone)
+        return f"{text}\n{line}"
 
     async def _send_invoice_card(self, kind: str, order_id: int, target: dict, caption: str) -> bool:
         """The invoice image (caption = the usual invoiced message). The lines and

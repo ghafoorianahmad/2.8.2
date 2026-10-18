@@ -19,6 +19,8 @@ class BasePage(QWidget):
 
     title = "صفحه"
     subtitle = ""
+    #: v2.7.0: one plain sentence at the top of the page: what it is for.
+    help_text = ""
     #: pages that poll shopapi set this to True
     auto_refreshable = False
     #: pages that should reload when another page changes data
@@ -46,11 +48,15 @@ class BasePage(QWidget):
         header.addLayout(self.toolbar)
 
         self.refresh_button = widgets.button(
-            "به‌روزرسانی", icon_name="refresh", tooltip="دریافت دوبارهٔ اطلاعات از سرور فروشگاه",
+            "به‌روزرسانی", icon_name="refresh", tooltip="دریافت دوبارهٔ اطلاعات",
             on_click=self.refresh,
         )
         self.toolbar.addWidget(self.refresh_button)
         root.addLayout(header)
+        self.help_label = None
+        if self.help_text:
+            self.help_label = widgets.label("💡  " + self.help_text, name="PageHelp", wrap=True)
+            root.addWidget(self.help_label)
 
         # ---- body --------------------------------------------------------
         self.body = QVBoxLayout()

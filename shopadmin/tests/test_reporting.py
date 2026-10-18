@@ -102,7 +102,7 @@ def test_build_order_rows_sorts_newest_first_and_translates_status():
         _order(2, when="2025-03-01T10:00:00+00:00", status="receipt_uploaded"),
     ])
     assert [row["id"] for row in rows] == [2, 1]
-    assert rows[0]["status_fa"] == "فیش ارسال‌شده"
+    assert rows[0]["status_fa"] == "رسید رسیده"
     assert rows[0]["items_count"] == 1
 
 

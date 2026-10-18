@@ -29,10 +29,10 @@ ORDER_EXPIRED = "expired"
 
 ORDER_STATUS_FA = {
     ORDER_AWAITING_PAYMENT: "در انتظار پرداخت",
-    ORDER_RECEIPT_UPLOADED: "فیش ارسال‌شده",
+    ORDER_RECEIPT_UPLOADED: "رسید رسیده",
     ORDER_APPROVED: "تأییدشده",
     ORDER_REJECTED: "ردشده",
-    ORDER_WRITTEN: "نوشته‌شده در حسابداری",
+    ORDER_WRITTEN: "ثبت‌شده در حسابداری",
     ORDER_CANCELLED: "لغو‌شده",
     ORDER_EXPIRED: "منقضی",
 }
@@ -51,20 +51,21 @@ ROLE_OPERATOR = "operator"
 ROLE_VIEWER = "viewer"
 
 ROLE_FA = {
-    ROLE_SUPER_ADMIN: "مدیر کل",
-    ROLE_ADMIN: "مدیر فروش",
-    ROLE_OPERATOR: "اپراتور",
-    ROLE_VIEWER: "ناظر",
+    ROLE_SUPER_ADMIN: "مدیر",
+    ROLE_OPERATOR: "کاربر فروش",
+    # earlier roles (the server maps them: admin -> مدیر, viewer -> کاربر فروش)
+    ROLE_ADMIN: "مدیر",
+    ROLE_VIEWER: "کاربر فروش",
 }
 
-# Every internal role, most privileged first (used by combo boxes and checks).
-ALL_ROLES = (ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_OPERATOR, ROLE_VIEWER)
+# v2.7.0: the two roles a manager can give, most privileged first.
+ALL_ROLES = (ROLE_SUPER_ADMIN, ROLE_OPERATOR)
 
 ROLE_DESCRIPTION_FA = {
-    ROLE_SUPER_ADMIN: "دسترسی کامل؛ تنها نقشی که می‌تواند کاربران سیستم را مدیریت کند.",
-    ROLE_ADMIN: "تأیید مشتریان و پرداخت‌ها، مشاهدهٔ همهٔ سفارش‌ها و مشتریان.",
-    ROLE_OPERATOR: "مشاهده و پردازش سفارش‌ها و بارگذاری فیش؛ بدون تأیید پرداخت.",
-    ROLE_VIEWER: "فقط مشاهدهٔ اطلاعات؛ هیچ عملیاتی انجام نمی‌دهد.",
+    ROLE_SUPER_ADMIN: "همهٔ بخش‌ها: سفارش‌ها، مشتریان، کالاها، لیست قیمت، فروش، تنظیمات و کاربران.",
+    ROLE_OPERATOR: "سفارش‌ها (دیدن، تأیید رسید، ثبت ارسال، لغو)، درخواست‌های کالا و دیدن مشتریان.",
+    ROLE_ADMIN: "همهٔ بخش‌ها.",
+    ROLE_VIEWER: "سفارش‌ها، درخواست‌های کالا و دیدن مشتریان.",
 }
 
 # --- colours per status ----------------------------------------------------

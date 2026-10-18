@@ -113,7 +113,9 @@ def test_import_is_idempotent_and_validates_slugs(client, adm):
 
 def test_permissions(client, db, products):
     viewer, operator = staff(db, "viewer"), staff(db, "operator")
-    assert client.get("/admin/catalog-models", headers=viewer).status_code == 200
+    # v2.7.0: site models are admin-only (sales users do not even see them)
+    assert client.get("/admin/catalog-models", headers=viewer).status_code == 403
+    assert client.get("/admin/catalog-models", headers=staff(db)).status_code == 200
     for who in (viewer, operator):
         r = client.post("/admin/catalog-models/import", json={"models": SITE}, headers=who)
         assert r.status_code == 403

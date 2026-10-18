@@ -22,7 +22,7 @@ from app.api_client import (  # noqa: E402
     short_fingerprint,
 )
 from app.auth import AuthService  # noqa: E402
-from app.statuses import ROLE_ADMIN, ROLE_SUPER_ADMIN  # noqa: E402
+from app.statuses import ROLE_ADMIN, ROLE_OPERATOR, ROLE_SUPER_ADMIN  # noqa: E402
 from app.store import Store  # noqa: E402
 from app.ui.context import AppContext  # noqa: E402
 
@@ -151,7 +151,7 @@ def test_server_page_is_super_admin_only(server_context, admin_qapp):
     from app.permissions import Principal
     from app.ui.main_window import MainWindow
 
-    server_context.principal = Principal(1, "boss", "مدیر فروش", ROLE_ADMIN)
+    server_context.principal = Principal(1, "boss", "فروشنده", ROLE_OPERATOR)
     window = MainWindow(server_context)
     try:
         assert "server" not in window._nav_buttons

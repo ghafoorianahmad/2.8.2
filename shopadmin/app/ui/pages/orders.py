@@ -19,7 +19,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...permissions import ORDERS_APPROVE_PAYMENT, ORDERS_REJECT_PAYMENT, ORDERS_SHIP
+from ...permissions import (
+    ORDERS_APPROVE_PAYMENT,
+    ORDERS_CANCEL,
+    ORDERS_REJECT_PAYMENT,
+    ORDERS_SHIP,
+    SETTINGS_VIEW,
+)
 from ...persian import (
     format_datetime_shamsi,
     format_money,
@@ -48,22 +54,32 @@ HEADERS = ("شماره سفارش", "نام مشتری", "تعداد اقلام"
 
 TABS = (
     ("awaiting_payment", "در انتظار پرداخت", ORDER_AWAITING_PAYMENT),
-    ("receipt_uploaded", "فیش ارسال‌شده", ORDER_RECEIPT_UPLOADED),
+    ("receipt_uploaded", "رسید رسیده", ORDER_RECEIPT_UPLOADED),
     ("approved", "تأییدشده", ORDER_APPROVED),
     ("rejected", "ردشده", ORDER_REJECTED),
     # v2.5.0: no receipt within the deadline (30 min) -> cancelled on the shop server
     ("cancelled", "لغوشده", ORDER_CANCELLED),
     ("expired", "منقضی", ORDER_EXPIRED),
-    ("written", "نوشته‌شده در حسابداری", ORDER_WRITTEN),
+    ("written", "ثبت‌شده در حسابداری", ORDER_WRITTEN),
 )
 
+#: v2.7.0: friendly empty states («سفارش جدیدی نیست»).
+EMPTY_TITLES = {
+    "awaiting_payment": "سفارش جدیدی نیست",
+    "receipt_uploaded": "رسید تازه‌ای نرسیده است",
+    "approved": "سفارش تأییدشده‌ای نیست",
+    "rejected": "سفارش ردشده‌ای نیست",
+    "cancelled": "سفارش لغوشده‌ای نیست",
+    "expired": "سفارش منقضی‌ای نیست",
+    "written": "سفارشی در حسابداری ثبت نشده است",
+}
 EMPTY_HINTS = {
     "awaiting_payment": "سفارش‌هایی که در انتظار واریز مبلغ توسط مشتری هستند اینجا نمایش داده می‌شوند.",
-    "receipt_uploaded": "به‌محض ارسال فیش توسط مشتری، سفارش در این زبانه قرار می‌گیرد.",
+    "receipt_uploaded": "به‌محض اینکه مشتری رسید پرداخت را بفرستد، سفارش اینجا می‌آید.",
     "approved": "سفارش‌های تأییدشده در این زبانه دیده می‌شوند.",
     "rejected": "سفارش‌هایی که پرداختشان رد شده است اینجا نمایش داده می‌شوند.",
-    "cancelled": "سفارش‌هایی که رسیدشان در مهلت نرسید و خودکار لغو شدند "
-                 "(فقط در سرور فروشگاه؛ در حسابداری چیزی حذف نمی‌شود).",
+    "cancelled": "سفارش‌هایی که لغو شده‌اند (به‌دست مشتری، همکاران، یا چون رسیدشان "
+                 "به‌موقع نرسید). در حسابداری چیزی حذف نمی‌شود.",
     "expired": "سفارش‌های قدیمی که مهلت پرداختشان تمام شده است.",
     "written": "سفارش‌هایی که در نرم‌افزار حسابداری ثبت شده‌اند.",
 }
@@ -71,7 +87,8 @@ EMPTY_HINTS = {
 
 class OrdersPage(BasePage):
     title = "سفارش‌ها"
-    subtitle = "بررسی فیش‌های پرداخت و تأیید سفارش‌ها"
+    subtitle = "رسیدهای پرداخت، تأیید، ارسال و لغو سفارش‌ها"
+    help_text = "سفارش‌های مشتریان. روی هر سفارش کلیک کنید تا رسید را ببینید، تأیید کنید، «ارسال شد» بزنید یا آن را لغو کنید."
 
     def build_body(self) -> None:
         bar_holder = QWidget()
@@ -87,20 +104,17 @@ class OrdersPage(BasePage):
             self._tab_buttons[key] = tab
             bar.addWidget(tab)
 
-        self.search = widgets.SearchBox("جستجو بر اساس نام مشتری یا شمارهٔ سفارش…")
+        self.search = widgets.SearchBox("نام مشتری یا شمارهٔ سفارش")
+        self.search.setMinimumWidth(260)
         self.search.textChanged.connect(self._on_search)
         bar.addWidget(self.search)
         self.body.addWidget(bar_holder)
 
         panel = widgets.Panel()
-        hint = widgets.label(
-            "برای دیدن اقلام سفارش و تأیید یا رد پرداخت، روی ردیف مورد نظر کلیک کنید.",
-            name="Muted", wrap=True,
-        )
-        panel.body.addWidget(hint)
+
 
         self.table = widgets.DataTable(HEADERS, selectable_rows=True, key="orders")
-        self.table.set_empty_state("هیچ سفارشی در این وضعیت وجود ندارد", "", "orders")
+        self.table.set_empty_state("سفارش جدیدی نیست", "", "orders")
         self.table.setMinimumHeight(360)
         self.table.row_activated.connect(self._open_row)
         panel.body.addWidget(self.table, 1)
@@ -197,7 +211,7 @@ class OrdersPage(BasePage):
                 )
             else:
                 self.table.set_empty_state(
-                    f"هیچ سفارشی در وضعیت «{status_fa}» وجود ندارد",
+                    EMPTY_TITLES.get(self._active_tab, f"سفارشی در بخش «{status_fa}» نیست"),
                     EMPTY_HINTS.get(self._active_tab, ""),
                     "orders",
                 )
@@ -277,14 +291,18 @@ class OrderDetailDialog(QDialog):
         left.addWidget(_kv("تاریخ ثبت", format_shamsi(order.get("created_at"))))
         left.addWidget(_kv("مهلت ارسال رسید", format_datetime_shamsi(order.get("reserve_until"))
                            if order.get("reserve_until") else "—"))
-        left.addWidget(_kv("پایگاه‌دادهٔ حسابداری", str(order.get("accounting_db") or "—")))
+        if context.can(SETTINGS_VIEW):
+            left.addWidget(_kv("پایگاه‌دادهٔ حسابداری", str(order.get("accounting_db") or "—")))
         right = QVBoxLayout()
         right.setSpacing(6)
         right.addWidget(_kv("مبلغ کل", format_money(order.get("total", 0))))
-        right.addWidget(_kv("سطح قیمت", price_level_label(order.get("price_level", 0))))
+        if context.can(SETTINGS_VIEW):
+            right.addWidget(_kv("سطح قیمت", price_level_label(order.get("price_level", 0))))
         right.addWidget(_kv("شمارهٔ حسابداری", to_persian_digits(order.get("accounting_order_no"))
                             if order.get("accounting_order_no") else "—"))
         right.addWidget(_kv("پیگیری", tracking_fa(order)))
+        if order.get("courier_name") or order.get("courier_phone"):
+            right.addWidget(_kv("پیک", courier_text(order)))
         grid.addLayout(right)
         grid.addLayout(left)
         grid.addStretch(1)
@@ -329,9 +347,9 @@ class OrderDetailDialog(QDialog):
 
         # ---- receipt -----------------------------------------------------
         receipt_ref = order.get("receipt_ref") or self._payment_ref(order)
-        ref_panel = widgets.Panel("فیش پرداخت مشتری")
+        ref_panel = widgets.Panel("رسید پرداخت مشتری")
         ref_row = QHBoxLayout()
-        ref_row.addWidget(widgets.label("شمارهٔ پیگیری فیش:", name="Muted"))
+        ref_row.addWidget(widgets.label("شمارهٔ پیگیری رسید:", name="Muted"))
         self.receipt_ref_label = widgets.label(receipt_ref_text(order, receipt_ref),
                                                bold=bool(receipt_ref))
         ref_row.addWidget(self.receipt_ref_label)
@@ -353,13 +371,13 @@ class OrderDetailDialog(QDialog):
         root.addWidget(ref_panel)
 
         # ---- actions -----------------------------------------------------
-        actions = QHBoxLayout()
-        actions.setSpacing(10)
+        actions_holder = QWidget()
+        actions = widgets.FlowLayout(actions_holder, spacing=10)
         self.approve_button = widgets.button(
-            "تأیید پرداخت", variant="success", icon_name="check", on_click=self._approve
+            "تأیید رسید", variant="success", icon_name="check", on_click=self._approve
         )
         self.reject_button = widgets.button(
-            "رد پرداخت", variant="danger", icon_name="close", on_click=self._reject
+            "رد رسید", variant="danger", icon_name="close", on_click=self._reject
         )
         can_approve = context.can(ORDERS_APPROVE_PAYMENT)
         can_reject = context.can(ORDERS_REJECT_PAYMENT)
@@ -368,34 +386,49 @@ class OrderDetailDialog(QDialog):
         self.approve_button.setEnabled(actionable and can_approve)
         self.reject_button.setEnabled(actionable and can_reject)
         if not can_approve:
-            self.approve_button.setToolTip("نقش شما اجازهٔ تأیید پرداخت را ندارد")
+            self.approve_button.setToolTip("شما اجازهٔ تأیید رسید را ندارید")
         if not can_reject:
-            self.reject_button.setToolTip("نقش شما اجازهٔ رد پرداخت را ندارد")
+            self.reject_button.setToolTip("شما اجازهٔ رد رسید را ندارید")
         if not actionable and can_approve:
             tip = f"این سفارش در وضعیت «{order_status_fa(order.get('status'))}» است"
             self.approve_button.setToolTip(tip)
             self.reject_button.setToolTip(tip)
 
         self.ship_button = widgets.button(
-            "ثبت ارسال", icon_name="check", on_click=self._ship
+            "ارسال شد", variant="primary", icon_name="check", on_click=self._ship
         )
         can_ship = context.can(ORDERS_SHIP)
         shippable = order.get("status") in SHIPPABLE and not order.get("shipped_at")
         self.ship_button.setEnabled(can_ship and shippable)
         if not can_ship:
-            self.ship_button.setToolTip("نقش شما اجازهٔ ثبت ارسال را ندارد")
+            self.ship_button.setToolTip("شما اجازهٔ ثبت ارسال را ندارید")
         elif order.get("shipped_at"):
             self.ship_button.setToolTip("این سفارش قبلاً ارسال شده است")
         elif not shippable:
             self.ship_button.setToolTip("فقط سفارش پرداخت‌شده و تأییدشده قابل ارسال است")
 
-        actions.addWidget(self.approve_button)
-        actions.addWidget(self.reject_button)
-        actions.addWidget(self.ship_button)
-        actions.addStretch(1)
+        # v2.7.0: the customer's order can be cancelled until it is confirmed
+        self.cancel_button = widgets.button(
+            "لغو سفارش", icon_name="trash", on_click=self._cancel_order
+        )
+        cancellable = order.get("status") in CANCELLABLE
+        self.cancel_button.setEnabled(context.can(ORDERS_CANCEL) and cancellable)
+        if not context.can(ORDERS_CANCEL):
+            self.cancel_button.setToolTip("شما اجازهٔ لغو سفارش را ندارید")
+        elif not cancellable:
+            self.cancel_button.setToolTip("سفارشِ تأییدشده یا ثبت‌شده لغو نمی‌شود")
+
         close = widgets.button("بستن", on_click=self.reject)
-        actions.addWidget(close)
-        root.addLayout(actions)
+        for widget in (self.approve_button, self.reject_button, self.ship_button,
+                       self.cancel_button, close):
+            widget.setProperty("big", True)
+            # hidden, not disabled, when this account may never do it
+            actions.addWidget(widget)
+        self.approve_button.setVisible(can_approve)
+        self.reject_button.setVisible(can_reject)
+        self.ship_button.setVisible(can_ship)
+        self.cancel_button.setVisible(context.can(ORDERS_CANCEL))
+        root.addWidget(actions_holder)
 
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
         self.error_label.setVisible(False)
@@ -426,11 +459,18 @@ class OrderDetailDialog(QDialog):
     # ---- actions ---------------------------------------------------------
     def _approve(self) -> None:
         order_id = int(self.order["id"])
+        if not widgets.confirm(
+            self, "تأیید رسید",
+            f"رسید سفارش {to_persian_digits(order_id)} درست است و مبلغ واریز شده؟\n"
+            "با تأیید، سفارش برای فروش ثبت می‌شود و به مشتری خبر داده می‌شود.",
+            confirm_text="بله، تأیید کن",
+        ):
+            return
         self.approve_button.setEnabled(False)
         self.approve_button.setText("در حال تأیید…")
 
         def restore() -> None:
-            self.approve_button.setText("تأیید پرداخت")
+            self.approve_button.setText("تأیید رسید")
             self.approve_button.setEnabled(True)
 
         run_async(
@@ -456,9 +496,11 @@ class OrderDetailDialog(QDialog):
 
     def _failed(self, message: str, kind: str) -> None:
         self._show_error(message, self._dry_run_hint() if self._looks_like_dry_run(kind) else "")
-        widgets.error(self, "تأیید پرداخت انجام نشد", message)
+        widgets.error(self, "کار انجام نشد", message)
 
     def _dry_run_hint(self) -> str:
+        if self.context.dry_run_mode and not self.context.can(SETTINGS_VIEW):
+            return "برنامه در حالت آزمایشی است و سفارش واقعاً در حسابداری ثبت نمی‌شود."
         if self.context.dry_run_mode:
             return ("حالت آزمایشی فعال است؛ سفارش‌ها واقعاً در حسابداری ثبت نمی‌شوند. "
                     "برای ثبت واقعی، ACCOUNTING_WRITE_ENABLED را در سرور فروشگاه فعال کنید.")
@@ -478,7 +520,7 @@ class OrderDetailDialog(QDialog):
         self.reject_button.setText("در حال رد کردن…")
 
         def restore() -> None:
-            self.reject_button.setText("رد پرداخت")
+            self.reject_button.setText("رد رسید")
             self.reject_button.setEnabled(True)
 
         run_async(
@@ -495,14 +537,13 @@ class OrderDetailDialog(QDialog):
 
     def _ship(self) -> None:
         order_id = int(self.order["id"])
-        if not widgets.confirm(
-            self, "ثبت ارسال",
-            f"سفارش {to_persian_digits(order_id)} ارسال شد؟ به مشتری در بله خبر داده می‌شود.",
-        ):
+        dialog = ShipDialog(self, to_persian_digits(order_id))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        name, phone = dialog.courier_name, dialog.courier_phone
         self.ship_button.setEnabled(False)
         run_async(
-            lambda: self.context.api.ship_order(order_id),
+            lambda: self.context.api.ship_order(order_id, name, phone),
             on_success=self._shipped,
             on_error=lambda message, kind: (
                 self.ship_button.setEnabled(True), self._show_error(message)
@@ -512,6 +553,30 @@ class OrderDetailDialog(QDialog):
     def _shipped(self, _result: object) -> None:
         self.changed = True
         self.context.audit("order_ship", f"order id={self.order.get('id')}")
+        self.context.data_changed.emit()
+        self.accept()
+
+    def _cancel_order(self) -> None:
+        order_id = int(self.order["id"])
+        if not widgets.confirm(
+            self, "لغو سفارش",
+            f"سفارش {to_persian_digits(order_id)} لغو شود؟ این کار برگشت ندارد.\n"
+            "سفارش فقط در برنامهٔ فروشگاه لغو می‌شود؛ در حسابداری چیزی پاک نمی‌شود.",
+            confirm_text="بله، لغو کن", kind="warning",
+        ):
+            return
+        self.cancel_button.setEnabled(False)
+        run_async(
+            lambda: self.context.api.cancel_order(order_id),
+            on_success=self._cancelled,
+            on_error=lambda message, kind: (
+                self.cancel_button.setEnabled(True), self._failed(message, kind)
+            ),
+        )
+
+    def _cancelled(self, _result: object) -> None:
+        self.changed = True
+        self.context.audit("order_cancel", f"order id={self.order.get('id')}")
         self.context.data_changed.emit()
         self.accept()
 
@@ -535,6 +600,71 @@ class OrderDetailDialog(QDialog):
 
 #: Paid orders that may be marked as shipped (server: SHIPPABLE_STATUSES).
 SHIPPABLE = (ORDER_APPROVED, ORDER_WRITTEN)
+#: v2.7.0: orders staff may cancel (server: STAFF_CANCELLABLE).
+CANCELLABLE = (ORDER_AWAITING_PAYMENT, ORDER_RECEIPT_UPLOADED)
+
+
+def courier_text(order: dict) -> str:
+    name = str(order.get("courier_name") or "").strip()
+    phone = to_persian_digits(str(order.get("courier_phone") or "").strip())
+    return " — ".join(p for p in (name, phone) if p) or "—"
+
+
+class ShipDialog(QDialog):
+    """«ارسال شد» with an OPTIONAL courier: when filled, the customer's message
+    names them; when empty, the usual «sent» message only."""
+
+    def __init__(self, parent: QWidget | None, order_label: str) -> None:
+        super().__init__(parent)
+        self.courier_name = ""
+        self.courier_phone = ""
+        self.setWindowTitle(f"ارسال سفارش {order_label}")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumWidth(480)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(10)
+        root.addWidget(widgets.label(f"سفارش {order_label} ارسال شد", size=14, bold=True))
+        root.addWidget(widgets.label(
+            "اگر پیک یا باربری دارد، نام و تلفن او را بنویسید تا در پیام «ارسال شد» به مشتری "
+            "گفته شود. اگر خالی بماند، فقط پیام «ارسال شد» فرستاده می‌شود.",
+            name="Muted", wrap=True))
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("نام پیک (اختیاری)")
+        self.name_input.setMaxLength(60)
+        self.phone_input = QLineEdit()
+        self.phone_input.setPlaceholderText("تلفن پیک (اختیاری)، مثلاً ۰۹۱۲۳۴۵۶۷۸۹")
+        self.phone_input.setMaxLength(30)
+        for caption, field in (("نام پیک", self.name_input), ("تلفن پیک", self.phone_input)):
+            root.addWidget(widgets.label(caption))
+            field.setMinimumHeight(40)
+            root.addWidget(field)
+        self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
+        self.error_label.setVisible(False)
+        root.addWidget(self.error_label)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.ok_button = widgets.button("ثبت «ارسال شد»", variant="primary", icon_name="check",
+                                        on_click=self._accept)
+        self.ok_button.setProperty("big", True)
+        buttons.addWidget(self.ok_button)
+        cancel = widgets.button("انصراف", on_click=self.reject)
+        cancel.setProperty("big", True)
+        buttons.addWidget(cancel)
+        root.addLayout(buttons)
+
+    def _accept(self) -> None:
+        from ...persian import to_english_digits
+
+        phone = "".join(ch for ch in to_english_digits(self.phone_input.text()) if ch.isdigit())
+        if self.phone_input.text().strip() and not 7 <= len(phone) <= 15:
+            self.error_label.setText("شمارهٔ تلفن پیک درست نیست. فقط رقم بنویسید، مثلاً "
+                                     "۰۹۱۲۳۴۵۶۷۸۹؛ یا آن را خالی بگذارید.")
+            self.error_label.setVisible(True)
+            return
+        self.courier_name = " ".join(self.name_input.text().split())
+        self.courier_phone = phone
+        self.accept()
 
 
 def customer_label(order: dict) -> str:
@@ -556,7 +686,7 @@ def receipt_ref_text(order: dict, receipt_ref: str) -> str:
         return to_persian_digits(receipt_ref)
     if order.get("has_receipt"):
         return "شمارهٔ پیگیری وارد نشده"
-    return "فیشی ثبت نشده است"
+    return "رسیدی نیامده است"
 
 
 CANCEL_REASON_FA = {"customer": "لغو توسط مشتری (پیش از ارسال رسید)",
@@ -630,7 +760,7 @@ class RejectPaymentDialog(QDialog):
         ))
         root.addWidget(widgets.label("دلیل (اختیاری):", name="Muted"))
         self.reason_input = QLineEdit()
-        self.reason_input.setPlaceholderText("مثلاً: مبلغ فیش با مبلغ سفارش هم‌خوانی ندارد")
+        self.reason_input.setPlaceholderText("مثلاً: مبلغ رسید با مبلغ سفارش یکی نیست")
         self.reason_input.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         root.addWidget(self.reason_input)
 

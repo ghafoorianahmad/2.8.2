@@ -123,6 +123,7 @@ class CatalogModelsPage(BasePage):
     title = "مدل‌های سایت"
     subtitle = ("نگاشت «کد مدل» سایت به کالاهای حسابداری — ربات فقط مدل‌های تأییدشده را "
                 "به مشتری نشان می‌دهد")
+    help_text = "کد مدل‌های سایت را به کالاهای حسابداری وصل کنید تا مشتری از سایت به همان کالا برسد."
 
     def build_body(self) -> None:
         self.can_manage = self.context.can(CATALOG_MANAGE)

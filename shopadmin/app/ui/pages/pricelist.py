@@ -126,6 +126,7 @@ def filter_label(key: str, counts: dict) -> str:
 class PriceListPage(BasePage):
     title = "لیست قیمت"
     subtitle = "قیمت گوشی‌ها از لیست پخش‌کننده — فقط ردیف‌های نگاشت‌شده به مشتری نمایش داده می‌شوند"
+    help_text = "لیست قیمت پخش‌کننده. فایل PDF را روی همین صفحه بکشید و رها کنید یا «بارگذاری PDF» را بزنید."
 
     def build_body(self) -> None:
         self.can_manage = self.context.can(PRICELIST_MANAGE)
