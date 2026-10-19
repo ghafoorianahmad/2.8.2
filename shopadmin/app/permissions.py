@@ -30,6 +30,9 @@ ORDERS_SHIP = "orders.ship"
 ORDERS_CANCEL = "orders.cancel"          # v2.7.0
 ORDERS_EXPIRE = "orders.expire"          # cancel overdue orders, sync invoices
 ITEM_REQUESTS = "item_requests.handle"   # v2.7.0: view, reply, mark handled
+ORDERS_ASSIGN = "orders.assign"          # v2.8.0: hand any order / request to a colleague
+ARCHIVE_VIEW = "archive.view"            # v2.8.0: «بایگانی» (own rows; the manager: all)
+ACTIVITY_VIEW = "activity.view"          # v2.8.0: «گزارش فعالیت» (manager only)
 SHOP_STATE = "shop.state"                # open / close phone sales
 PRODUCTS_VIEW = "products.view"
 REPORTS_VIEW = "reports.view"
@@ -55,7 +58,8 @@ DEFAULT_ROLE = ROLE_OPERATOR
 
 #: shopapi permission -> what it unlocks on the screens.
 SERVER_TO_CLIENT: dict[str, frozenset[str]] = {
-    "orders.view": frozenset({ORDERS_VIEW}),
+    "orders.view": frozenset({ORDERS_VIEW, ARCHIVE_VIEW}),
+    "orders.assign": frozenset({ORDERS_ASSIGN}),
     "payments.decide": frozenset({ORDERS_APPROVE_PAYMENT, ORDERS_REJECT_PAYMENT,
                                   ORDERS_UPLOAD_RECEIPT}),
     "orders.ship": frozenset({ORDERS_SHIP}),
@@ -72,7 +76,7 @@ SERVER_TO_CLIENT: dict[str, frozenset[str]] = {
     "catalog.manage": frozenset({CATALOG_MANAGE, CATALOG_VIEW}),
     "proxies.manage": frozenset({PROXIES_MANAGE}),
     "passwords.decide": frozenset({PASSWORDS_DECIDE}),
-    "staff.manage": frozenset({USERS_VIEW, USERS_MANAGE}),
+    "staff.manage": frozenset({USERS_VIEW, USERS_MANAGE, ACTIVITY_VIEW}),
     "server.manage": frozenset({SERVER_MANAGE, SETTINGS_VIEW, SETTINGS_EDIT_CONNECTION,
                                 SETTINGS_EDIT_GENERAL, SETTINGS_VIEW_LOG}),
 }
@@ -88,6 +92,7 @@ SERVER_PERMISSION_FA: dict[str, str] = {
     "requests.handle": "درخواست‌های کالا (دیدن، پاسخ، رسیدگی)",
     "customers.view": "دیدن مشتریان",
     "events.view": "اعلان‌ها",
+    "orders.assign": "ارجاع سفارش",
     "view": "داشبورد، کالاها، گزارش‌ها و سایر صفحه‌ها (فقط دیدن)",
     "customers.decide": "تأیید یا رد مشتری",
     "orders.expire": "لغو سفارش‌های بی‌رسید و هماهنگی فاکتورها",
@@ -154,6 +159,11 @@ class Principal:
     @property
     def is_super_admin(self) -> bool:
         return self.role == ROLE_SUPER_ADMIN
+
+    @property
+    def is_manager(self) -> bool:
+        """v2.8.0: «مدیر» (also the older «admin» code): sees everyone's work."""
+        return self.role in (ROLE_SUPER_ADMIN, ROLE_ADMIN)
 
 
 class PermissionCheck:

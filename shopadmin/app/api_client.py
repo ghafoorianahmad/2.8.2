@@ -169,6 +169,31 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"request not found", re.I), "این درخواست پیدا نشد."),
     (re.compile(r"duplicate accounting order number", re.I),
      "شمارهٔ سفارش در حسابداری تکراری بود؛ چیزی ثبت نشد. چند لحظه بعد دوباره تأیید کنید."),
+    # ---- v2.8.0: ownership, archive, purchase requests ----
+    (re.compile(r"another colleague is working on this", re.I),
+     "همکار دیگری روی این مورد کار می‌کند؛ فهرست را به‌روز کنید."),
+    (re.compile(r"order is finished and read-only", re.I),
+     "این سفارش تمام شده و دیگر در این برنامه تغییر نمی‌کند (تغییرات فقط در «سازه حساب»)."),
+    (re.compile(r"request is finished and read-only", re.I),
+     "این درخواست بسته شده و دیگر تغییر نمی‌کند."),
+    (re.compile(r"not permitted to reassign", re.I),
+     "شما اجازهٔ ارجاع این مورد را ندارید. فقط مدیر، صاحب کار یا کسی با دسترسی "
+     "«ارجاع سفارش» می‌تواند ارجاع دهد."),
+    (re.compile(r"unknown colleague", re.I), "همکار انتخاب‌شده پیدا نشد یا غیرفعال است."),
+    (re.compile(r"managers only", re.I), "این بخش فقط برای «مدیر» است."),
+    (re.compile(r"choose the product", re.I),
+     "این ردیف لیست قیمت هنوز به کالایی در «سازه حساب» وصل نیست؛ کالا را انتخاب کنید."),
+    (re.compile(r"enter the price", re.I), "قیمت را وارد کنید."),
+    (re.compile(r"not a purchase request", re.I), "این درخواست، درخواست خرید نیست."),
+    (re.compile(r"answer the purchase request", re.I),
+     "درخواست خرید را با «تأیید موجودی» یا «ناموجود» ببندید تا به مشتری خبر داده شود."),
+    (re.compile(r"customer cannot order", re.I), "این مشتری ردشده است و نمی‌تواند سفارش بدهد."),
+    (re.compile(r"payment details are not configured", re.I),
+     "شمارهٔ کارت پرداخت روی سرور تنظیم نشده؛ سفارش ساخته نشد."),
+    (re.compile(r"product not found in accounting", re.I),
+     "این کالا در «سازه حساب» پیدا نشد یا غیرفعال است."),
+    (re.compile(r"row not found in the current list", re.I),
+     "این ردیف در لیست قیمت فعلی نیست."),
     # ---- sign-in and staff accounts ----
     (re.compile(r"invalid username or password", re.I), MSG_BAD_CREDENTIALS),
     (re.compile(r"account temporarily locked", re.I), MSG_LOCKED),
@@ -563,14 +588,53 @@ class ShopApiClient:
             "POST", f"/admin/users/{int(user_id)}/reject", json_body={"reason": reason or None}
         )
 
-    def list_orders(self, status: str | None = None) -> list[dict]:
+    def list_orders(self, status: str | None = None, *, mine: bool = False) -> list[dict]:
         """``GET /admin/orders``.
 
         shopapi defaults ``status`` to ``receipt_uploaded``, so an explicit
-        value is always sent when the caller asks for one.
+        value is always sent when the caller asks for one. v2.8.0: ``mine`` =
+        only the orders this user owns («کارهای من»).
         """
-        payload = self._request("GET", "/admin/orders", params={"status": status})
+        params = {"status": status}
+        if mine:
+            params["mine"] = "true"
+        payload = self._request("GET", "/admin/orders", params=params)
         return list(payload or [])
+
+    # ---- v2.8.0: ownership, handover, timeline, activity, archive -----------------
+    def get_order(self, order_id: int) -> dict:
+        return self._request("GET", f"/admin/orders/{int(order_id)}") or {}
+
+    def order_timeline(self, order_id: int) -> list[dict]:
+        return list(self._request("GET", f"/admin/orders/{int(order_id)}/timeline") or [])
+
+    def claim_order(self, order_id: int) -> dict:
+        return self._request("POST", f"/admin/orders/{int(order_id)}/claim") or {}
+
+    def assign_order(self, order_id: int, staff_id: int) -> dict:
+        return self._request("POST", f"/admin/orders/{int(order_id)}/assign",
+                             json_body={"staff_id": int(staff_id)}) or {}
+
+    def list_assignees(self) -> list[dict]:
+        return list(self._request("GET", "/admin/assignees") or [])
+
+    def activity(self, *, staff_id: int | None = None, customer_id: int | None = None,
+                 date_from: str | None = None, date_to: str | None = None,
+                 limit: int = 1000) -> list[dict]:
+        params = {"staff_id": staff_id, "customer_id": customer_id, "date_from": date_from,
+                  "date_to": date_to, "limit": limit}
+        return list(self._request("GET", "/admin/activity", params=params) or [])
+
+    def archived_orders(self, q: str = "", accounting_db: str = "") -> list[dict]:
+        params = {"q": q or None, "accounting_db": accounting_db or None}
+        return list(self._request("GET", "/admin/archive/orders", params=params) or [])
+
+    def archived_item_requests(self, q: str = "", accounting_db: str = "") -> list[dict]:
+        params = {"q": q or None, "accounting_db": accounting_db or None}
+        return list(self._request("GET", "/admin/archive/item-requests", params=params) or [])
+
+    def run_archive(self) -> dict:
+        return self._request("POST", "/admin/archive/run") or {}
 
     def approve_payment(self, order_id: int) -> dict:
         return self._request("POST", f"/admin/orders/{int(order_id)}/approve-payment")
@@ -697,6 +761,12 @@ class ShopApiClient:
         """v2.6.2: accept an automatic mapping (it becomes an ordinary one)."""
         return self._request("POST", f"/admin/price-mappings/{int(mapping_id)}/confirm") or {}
 
+    def mapping_suggestions(self, row_key: str) -> dict:
+        """v2.8.0: the 3 products whose names best match a price-list row."""
+        payload = self._request("GET", "/admin/price-mappings/suggestions",
+                                params={"row_key": row_key})
+        return payload if isinstance(payload, dict) else {"items": []}
+
     def auto_match_prices(self) -> dict:
         """v2.6.2: match the newest list against every earlier decision now."""
         return self._request("POST", "/admin/price-mappings/auto") or {}
@@ -764,9 +834,33 @@ class ShopApiClient:
         return list(self._request("PUT", "/admin/product-groups", json_body=body) or [])
 
     def list_item_requests(self, status: str | None = None,
-                           kind: str | None = None) -> list[dict]:
+                           kind: str | None = None, *, mine: bool = False) -> list[dict]:
         params = {"status": status, "kind": kind}
+        if mine:
+            params["mine"] = "true"
         return list(self._request("GET", "/admin/item-requests", params=params) or [])
+
+    def item_request_timeline(self, request_id: int) -> list[dict]:
+        return list(self._request("GET", f"/admin/item-requests/{int(request_id)}/timeline")
+                    or [])
+
+    def claim_item_request(self, request_id: int) -> dict:
+        return self._request("POST", f"/admin/item-requests/{int(request_id)}/claim") or {}
+
+    def assign_item_request(self, request_id: int, staff_id: int) -> dict:
+        return self._request("POST", f"/admin/item-requests/{int(request_id)}/assign",
+                             json_body={"staff_id": int(staff_id)}) or {}
+
+    def confirm_purchase_stock(self, request_id: int, kala_code: int | None = None,
+                               price_rial: int | None = None) -> dict:
+        """«تأیید موجودی»: a normal order awaiting the customer's payment."""
+        body = {"kala_code": int(kala_code) if kala_code else None,
+                "price_rial": int(price_rial) if price_rial else None}
+        return self._request("POST", f"/admin/item-requests/{int(request_id)}/confirm-stock",
+                             json_body=body) or {}
+
+    def mark_purchase_unavailable(self, request_id: int) -> dict:
+        return self._request("POST", f"/admin/item-requests/{int(request_id)}/unavailable") or {}
 
     def get_item_request(self, request_id: int) -> dict:
         return self._request("GET", f"/admin/item-requests/{int(request_id)}") or {}

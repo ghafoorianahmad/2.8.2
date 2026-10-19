@@ -167,7 +167,9 @@ def test_dialog_shows_everything(ui_context, admin_qapp, fake_api):
     dialog.set_status("done")
     _pump(admin_qapp)
     assert fake_api.item_requests[1]["status"] == "done"
-    assert dialog.reopen_button.isVisibleTo(dialog) and not dialog.done_button.isVisibleTo(dialog)
+    # v2.8.0: a finished request is read-only (no «باز کردن دوباره»)
+    assert not dialog.reopen_button.isVisibleTo(dialog)
+    assert not dialog.done_button.isVisibleTo(dialog)
 
 
 def test_dialog_note(ui_context, admin_qapp, fake_api):

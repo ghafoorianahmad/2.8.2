@@ -121,6 +121,15 @@ class FakeShopApi:
         # ---- v2.6.1: replies to item requests ----
         self.item_request_messages: dict[int, list[dict]] = {}
         self.message_fail: str = ""
+        # ---- v2.8.0: ownership, timeline, activity, archive, purchase requests ----
+        self.timelines: dict[tuple[str, int], list[dict]] = {}
+        self.activity_rows: list[dict] = []
+        self.activity_params: list[dict] = []
+        self.archived_orders: list[dict] = []
+        self.archived_requests: list[dict] = []
+        self.assigned: list[tuple[str, int, int]] = []
+        self.stock_confirms: list[dict] = []
+        self.suggestions: dict[str, dict] = {}
 
     # ---- helpers used by tests ------------------------------------------
     def add_staff(self, username: str, password: str = OWNER_PASSWORD, role: str = "operator",
@@ -366,6 +375,10 @@ class FakeShopApi:
             return reply(200, {"last_id": items[-1]["id"] if items else min(int(after), last),
                                "items": items})
 
+        handled = self._v280(request, path, body, user, reply, detail)
+        if handled is not None:
+            return handled
+
         if path == "/admin/system-info":
             return reply(200, {
                 "accounting_write_enabled": self.write_enabled,
@@ -416,7 +429,9 @@ class FakeShopApi:
 
         if path == "/admin/orders":
             wanted = request.url.params.get("status") or "receipt_uploaded"
-            return reply(200, [o for o in self.orders if o["status"] == wanted])
+            mine = request.url.params.get("mine") == "true"
+            return reply(200, [o for o in self.orders if o["status"] == wanted
+                               and (not mine or o.get("owned_by_me"))])
 
         if path == "/admin/orders/expire":
             return reply(200, {"expired": 0})
@@ -576,6 +591,58 @@ class FakeShopApi:
             return reply(200, self.groups)
 
         return detail(404, "Not Found")
+
+    # ---- v2.8.0 endpoints ---------------------------------------------------------
+    def _v280(self, request, path, body, user, reply, detail):
+        params = request.url.params
+        manager = user["role"] in ("super_admin", "admin")
+        if path == "/admin/assignees":
+            return reply(200, [{"id": r["id"], "name": r["full_name"]} for r in self.staff.values()
+                               if r["id"] != user["id"] and r["active"]])
+        if path == "/admin/activity":
+            if not manager:
+                return detail(403, "Managers only")
+            self.activity_params.append(dict(params))
+            return reply(200, self.activity_rows)
+        if path == "/admin/archive/orders":
+            return reply(200, self.archived_orders)
+        if path == "/admin/archive/item-requests":
+            return reply(200, self.archived_requests)
+        if path == "/admin/price-mappings/suggestions":
+            return reply(200, self.suggestions.get(params.get("row_key"), {"items": []}))
+        parts = path.split("/")
+        if len(parts) == 5 and parts[2] in ("orders", "item-requests") and parts[3].isdigit():
+            kind = "order" if parts[2] == "orders" else "request"
+            ident = int(parts[3])
+            action = parts[4]
+            rows = self.orders if kind == "order" else self.item_requests
+            row = next((r for r in rows if r["id"] == ident), None)
+            if action == "timeline":
+                return reply(200, self.timelines.get((kind, ident), []))
+            if row is None and action in ("claim", "assign", "confirm-stock", "unavailable"):
+                return detail(404, "Order not found" if kind == "order" else "Request not found")
+            if action == "claim":
+                row.update(owned=True, owned_by_me=True, owner_id=user["id"])
+                return reply(200, row)
+            if action == "assign":
+                self.assigned.append((kind, ident, int(body.get("staff_id"))))
+                row.update(owned=True, owned_by_me=body.get("staff_id") == user["id"])
+                return reply(200, row)
+            if action == "confirm-stock":
+                self.stock_confirms.append({"id": ident, **body})
+                if not body.get("kala_code") and not row.get("kala_code"):
+                    return detail(422, "Choose the product")
+                row.update(status="done", outcome="confirmed", order_id=900)
+                order = self.add_order(id=900, status="awaiting_payment", request_id=ident)
+                return reply(200, order)
+            if action == "unavailable":
+                row.update(status="done", outcome="unavailable")
+                self.item_request_messages.setdefault(ident, []).append(
+                    {"id": 1, "request_id": ident, "text": "با پوزش، موجود نیست",
+                     "status": "pending", "error": "", "created_at": TS, "created_by": "",
+                     "sent_at": None})
+                return reply(200, row)
+        return None
 
     # ---- Phase 3 helpers / endpoints ---------------------------------------
     def add_price_row(self, description: str, color: str, *, section: str = "iPHONE",

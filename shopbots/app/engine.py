@@ -1914,7 +1914,10 @@ class BotEngine:
 
     async def _watch_sales_opening(self) -> int:
         """v2.8.0: «وقتی فروش باز شد خبرم کن» - one message per opening; the
-        watcher is removed after it (asks again next time)."""
+        watcher is removed after it (asks again next time). Nobody waiting = no call."""
+        if not self.store.list_sales_watch():
+            self.store.set_value(SALES_SEEN_KEY, "")
+            return 0
         self._shop_state = None
         state = await self._sales_state()
         if not state:
@@ -2177,6 +2180,9 @@ class BotEngine:
                                          code=args[0], variant_id=args[1])
         elif action == "snot":
             self.store.add_sales_watch(platform, chat_id)
+            if not self.store.get_value(SALES_SEEN_KEY):
+                # asked because sales are closed now: the next «open» is the opening
+                self.store.set_value(SALES_SEEN_KEY, "0")
             await self._answer_callback(adapter, callback_id, texts.SALES_NOTIFY_OK)
             await self._send_options(adapter, platform, chat_id, texts.SALES_NOTIFY_OK,
                                      [[(texts.BTN_MENU, "menu")]])

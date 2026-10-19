@@ -8,6 +8,7 @@ from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -24,6 +25,8 @@ from ..logging_setup import get_logger
 from ..paths import APP_VERSION
 from ..persian import to_persian_digits
 from ..permissions import (
+    ACTIVITY_VIEW,
+    ARCHIVE_VIEW,
     CATALOG_VIEW,
     CUSTOMERS_VIEW,
     DASHBOARD_VIEW,
@@ -40,6 +43,8 @@ from ..permissions import (
 from ..statuses import ROLE_SUPER_ADMIN, role_fa
 from . import theme, widgets
 from .context import AppContext
+from .pages.activity import ActivityPage
+from .pages.archive import ArchivePage
 from .pages.customers import CustomersPage
 from .pages.dashboard import DashboardPage
 from .pages.item_requests import ItemRequestsPage
@@ -60,11 +65,13 @@ NAV_ITEMS = (
     ("customers", "مشتریان", "customers", CUSTOMERS_VIEW),
     ("orders", "سفارش‌ها", "orders", ORDERS_VIEW),
     ("item_requests", "درخواست کالا", "inbox", ITEM_REQUESTS),
+    ("archive", "بایگانی", "archive", ARCHIVE_VIEW),
     ("products", "محصولات", "products", PRODUCTS_VIEW),
     ("product_groups", "گروه‌های کالا", "box", CATALOG_VIEW),
     ("pricelist", "لیست قیمت", "receipt", PRICELIST_VIEW),
     ("catalog", "مدل‌های سایت", "link", CATALOG_VIEW),
     ("reports", "گزارش‌ها", "reports", REPORTS_VIEW),
+    ("activity", "گزارش فعالیت", "activity", ACTIVITY_VIEW),
     ("settings", "تنظیمات", "settings", SETTINGS_VIEW),
     ("password_requests", "درخواست‌های گذرواژه", "key", PASSWORDS_DECIDE),
     ("users", "کاربران سیستم", "users", USERS_VIEW),
@@ -337,6 +344,12 @@ class MainWindow(QMainWindow):
         )
         self.password_button.setVisible(not is_server_edition())
         layout.addWidget(self.password_button)
+        # v2.8.0: everyone turns their own sound / Windows notification on or off
+        self.notify_button = widgets.button(
+            "اعلان‌ها", icon_name="bell", on_click=self.edit_own_notifications,
+            tooltip="صدا و اعلان ویندوز برای سفارش، رسید و درخواست تازه",
+        )
+        layout.addWidget(self.notify_button)
 
         self.logout_button = widgets.button(
             "خروج", icon_name="logout", on_click=self._request_logout,
@@ -386,6 +399,8 @@ class MainWindow(QMainWindow):
             "customers": CustomersPage,
             "orders": OrdersPage,
             "item_requests": ItemRequestsPage,
+            "archive": ArchivePage,
+            "activity": ActivityPage,
             "products": ProductsPage,
             "product_groups": ProductGroupsPage,
             "pricelist": PriceListPage,
@@ -439,6 +454,9 @@ class MainWindow(QMainWindow):
         if hasattr(page, "ensure_loaded"):
             page.ensure_loaded()
         self._refresh_header()
+
+    def edit_own_notifications(self) -> None:
+        NotificationDialog(self.context, self).exec()
 
     def change_own_password(self) -> None:
         from .password_dialog import ChangeOwnPasswordDialog
@@ -734,6 +752,50 @@ class MainWindow(QMainWindow):
         self._inactivity.stop()
         self._clock.stop()
         super().closeEvent(event)
+
+
+class NotificationDialog(QDialog):
+    """v2.8.0: the signed-in user's own sound / Windows notification switches."""
+
+    def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QVBoxLayout
+
+        from ..notifications import user_setting
+
+        self.context = context
+        self.user = context.principal.username if context.principal else ""
+        self.setWindowTitle("اعلان‌های من")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumWidth(420)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(12)
+        root.addWidget(widgets.label("اعلان‌های من", size=14, bold=True))
+        root.addWidget(widgets.label(
+            "برای سفارش تازه، رسید پرداخت و درخواست مشتری. فقط برای حساب خودتان.",
+            name="Muted", wrap=True))
+        self.sound_check = QCheckBox("پخش صدا")
+        self.sound_check.setChecked(user_setting(context.store, "notify_sound", self.user))
+        self.desktop_check = QCheckBox("اعلان ویندوز (کنار ساعت)")
+        self.desktop_check.setChecked(user_setting(context.store, "notify_desktop", self.user))
+        for check in (self.sound_check, self.desktop_check):
+            root.addWidget(check)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(widgets.button("ذخیره", variant="primary", icon_name="check",
+                                     on_click=self.save))
+        row.addWidget(widgets.button("انصراف", on_click=self.reject))
+        root.addLayout(row)
+
+    def save(self) -> None:
+        from ..notifications import set_user_setting
+
+        set_user_setting(self.context.store, "notify_sound", self.user,
+                         self.sound_check.isChecked())
+        set_user_setting(self.context.store, "notify_desktop", self.user,
+                         self.desktop_check.isChecked())
+        self.accept()
 
 
 def theme_status_colors_for_role(role: str) -> tuple[str, str]:

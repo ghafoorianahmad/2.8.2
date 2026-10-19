@@ -38,6 +38,7 @@ from ...statuses import role_fa
 from .. import theme, widgets
 from ..async_utils import run_async
 from ..base_page import BasePage
+from ..rtl import RIGHT
 
 log = get_logger("settings")
 
@@ -84,7 +85,7 @@ class SettingsPage(BasePage):
         self.base_url_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
 
         form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setLabelAlignment(RIGHT)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
         form.addRow(widgets.label("آدرس سرور:"), self.base_url_input)
@@ -130,7 +131,7 @@ class SettingsPage(BasePage):
     def _build_general_panel(self) -> QWidget:
         panel = widgets.Panel("بازه‌های زمانی")
         form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setLabelAlignment(RIGHT)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
 
@@ -208,7 +209,7 @@ class SettingsPage(BasePage):
             panel.body.addWidget(check)
 
         form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setLabelAlignment(RIGHT)
         self.poll_spin = QSpinBox()
         self.poll_spin.setRange(5, 600)
         self.poll_spin.setSuffix(" ثانیه")
@@ -226,7 +227,7 @@ class SettingsPage(BasePage):
     def _build_password_panel(self) -> QWidget:
         panel = widgets.Panel("تغییر گذرواژهٔ من")
         form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setLabelAlignment(RIGHT)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
 

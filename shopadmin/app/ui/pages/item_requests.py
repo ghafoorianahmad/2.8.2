@@ -20,20 +20,25 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...persian import coerce_datetime, format_datetime_shamsi, gregorian_to_jalali, \
-    to_persian_digits
+from ...activity import timeline_text
+from ...permissions import ORDERS_ASSIGN
+from ...persian import coerce_datetime, format_datetime_shamsi, format_money, \
+    gregorian_to_jalali, to_english_digits, to_persian_digits
 from .. import theme, widgets
 from ..async_utils import run_async
 from ..base_page import BasePage
 
-HEADERS = ("شماره", "زمان ثبت", "نوع", "مشتری", "کد شخص", "وضعیت", "کالای درخواستی")
+HEADERS = ("شماره", "زمان ثبت", "نوع", "مشتری", "کد شخص", "وضعیت", "مسئول", "کالای درخواستی")
 COL_TIME = 1
+COL_PRODUCT = 7
 STATUS_FA = {"new": "جدید", "seen": "دیده شد", "done": "رسیدگی شد"}
-KIND_FA = {"unavailable": "ناموجود", "inquiry": "استعلام قیمت"}
+KIND_FA = {"unavailable": "ناموجود", "inquiry": "استعلام قیمت", "purchase": "درخواست خرید"}
+OUTCOME_FA = {"confirmed": "موجودی تأیید شد (سفارش ساخته شد)", "unavailable": "ناموجود اعلام شد"}
 PLATFORM_FA = {"bale": "بله", "telegram": "تلگرام"}
 MESSAGE_STATUS_FA = {"pending": "در صف ارسال (ربات)", "sent": "ارسال شد", "failed": "ارسال نشد"}
 TABS = (("open", "باز"), ("done", "رسیدگی‌شده"), ("all", "همه"))
-KIND_FILTERS = (("", "همهٔ انواع"), ("unavailable", "ناموجود"), ("inquiry", "استعلام قیمت"))
+KIND_FILTERS = (("", "همهٔ انواع"), ("purchase", "درخواست خرید"), ("unavailable", "ناموجود"),
+                ("inquiry", "استعلام قیمت"))
 #: After sending, the dialog re-reads the delivery state this often, this many times.
 POLL_MS = 3000
 POLL_TRIES = 20
@@ -51,6 +56,13 @@ def full_datetime(value: object) -> str:
 
 def product_text(item: dict) -> str:
     name = str(item.get("product_name") or "").strip()
+    if item.get("kind") == "purchase":
+        # v2.8.0: «درخواست خرید» of a price-list row: model — color — part — price
+        parts = [name, str(item.get("color") or "").strip(), str(item.get("part") or "").strip()]
+        text = " — ".join(p for p in parts if p) or "—"
+        if item.get("price_rial"):
+            text += f" ({format_money(item['price_rial'])})"
+        return text
     text = str(item.get("text") or "").strip()
     if name and item.get("kala_code"):
         name = f"{name} (کد {to_persian_digits(item['kala_code'])})"
@@ -70,7 +82,19 @@ class ItemRequestsPage(BasePage):
         self._kind = ""
         self._items: list[dict] = []
         self._visible: list[dict] = []
+        principal = self.context.principal
+        # v2.8.0: «کارهای من» is the default view of a sales user
+        self._mine = principal is not None and not principal.is_manager
         tabs = QHBoxLayout()
+        self._scope_buttons = {}
+        for key, text in (("mine", "کارهای من"), ("all", "همه")):
+            button = widgets.button(text, variant="ghost",
+                                    on_click=lambda k=key: self.set_scope(k == "mine"))
+            button.setCheckable(True)
+            button.setChecked((key == "mine") == self._mine)
+            self._scope_buttons[key] = button
+            tabs.addWidget(button)
+        tabs.addSpacing(16)
         self._tab_buttons = {}
         for key, text in TABS:
             button = widgets.button(text, variant="ghost", on_click=lambda k=key: self.set_filter(k))
@@ -116,13 +140,20 @@ class ItemRequestsPage(BasePage):
             self.kind_combo.setCurrentIndex(index)
         self._render()
 
+    def set_scope(self, mine: bool) -> None:
+        self._mine = bool(mine)
+        for key, button in self._scope_buttons.items():
+            button.setChecked((key == "mine") == self._mine)
+        self.load()
+
     def _select_tab(self) -> None:
         for key, button in self._tab_buttons.items():
             button.setChecked(key == self._tab)
 
     # ------------------------------------------------------------------ data
     def load(self) -> None:
-        self.run(self.context.api.list_item_requests, on_success=self._loaded,
+        mine = self._mine
+        self.run(lambda: self.context.api.list_item_requests(mine=mine), on_success=self._loaded,
                  on_error=lambda m, _k: self.show_table_error(m))
 
     def _loaded(self, items: list) -> None:
@@ -156,15 +187,23 @@ class ItemRequestsPage(BasePage):
                 self.table.set_cell(row, COL_TIME, format_datetime_shamsi(item.get("created_at")),
                                     tooltip=full_datetime(item.get("created_at")))
                 self.table.set_cell(row, 2, KIND_FA.get(kind, kind),
-                                    color=theme.PRIMARY if kind == "inquiry" else None)
+                                    color=theme.PRIMARY if kind in ("inquiry", "purchase")
+                                    else None, bold=kind == "purchase")
                 self.table.set_cell(row, 3, str(item.get("customer_name") or "—"), bold=True)
                 code = item.get("person_code")
                 self.table.set_cell(row, 4, to_persian_digits(code) if code is not None else "—")
                 self.table.set_cell(row, 5, STATUS_FA.get(status, status),
                                     color=theme.WARNING_TEXT if status == "new" else None,
                                     bold=status == "new")
+                from .orders import owner_label, waiting_too_long
+
+                self.table.set_cell(row, 6, owner_label(item), bold=bool(item.get("owned_by_me")))
                 product = product_text(item)
-                self.table.set_cell(row, 6, product, tooltip=product)
+                self.table.set_cell(row, COL_PRODUCT, product, tooltip=product)
+                if waiting_too_long(item, statuses=("new",)):
+                    self.table.set_cell(row, 0, to_persian_digits(item.get("id", "")),
+                                        bold=True, color=theme.WARNING_TEXT,
+                                        tooltip="بیش از ۱۰ دقیقه بی‌پاسخ مانده است")
         finally:
             self.table.setUpdatesEnabled(True)
         self.table._refresh_states()
@@ -241,7 +280,30 @@ class ItemRequestDialog(QDialog):
         meta.body.addWidget(_kv("مشتری", str(item.get("customer_name") or "—")))
         meta.body.addWidget(_kv("کد شخص", to_persian_digits(code) if code is not None
                                 else "هنوز وصل نشده"))
-        meta.body.addWidget(_kv("موبایل", to_persian_digits(phone) if phone else "—"))
+        phone_row = QHBoxLayout()
+        phone_row.addWidget(_kv("موبایل", to_persian_digits(phone) if phone else "—"), 1)
+        if phone:
+            from .orders import copy_to_clipboard
+
+            self.copy_phone_button = widgets.button(
+                "کپی", icon_name="copy", tooltip="کپی شمارهٔ موبایل مشتری",
+                on_click=lambda: (copy_to_clipboard(phone),
+                                  self._set_send_info("شمارهٔ موبایل کپی شد.", ok=True)))
+            phone_row.addWidget(self.copy_phone_button)
+        meta.body.addLayout(phone_row)
+        from .orders import owner_label
+
+        meta.body.addWidget(_kv("مسئول", owner_label(item)))
+        if kind == "purchase":
+            meta.body.addWidget(_kv("رنگ / پارت", " — ".join(
+                p for p in (str(item.get("color") or ""), str(item.get("part") or "")) if p)
+                or "—"))
+            meta.body.addWidget(_kv("قیمت لیست", format_money(item.get("price_rial") or 0)
+                                    if item.get("price_rial") else "—"))
+            if item.get("outcome"):
+                meta.body.addWidget(_kv("نتیجه", OUTCOME_FA.get(item["outcome"], item["outcome"])
+                                        + (f" — سفارش {to_persian_digits(item['order_id'])}"
+                                           if item.get("order_id") else "")))
         meta.body.addWidget(_kv("پیام‌رسان", PLATFORM_FA.get(platform, platform or "—")))
         name = str(item.get("product_name") or "").strip()
         if name:
@@ -292,13 +354,28 @@ class ItemRequestDialog(QDialog):
         msg_panel.body.addLayout(send_row)
         root.addWidget(msg_panel, 1)
 
+        # v2.8.0: what was done (names only for the manager)
+        self.timeline_label = widgets.label("…", wrap=True)
+        timeline_panel = widgets.Panel("کارهای انجام‌شده")
+        timeline_panel.body.addWidget(self.timeline_label)
+        root.addWidget(timeline_panel)
+
         buttons = QHBoxLayout()
+        self.stock_button = widgets.button("تأیید موجودی", variant="success", icon_name="check",
+                                           on_click=self.confirm_stock)
+        self.unavailable_button = widgets.button("ناموجود", variant="danger",
+                                                 on_click=self.mark_unavailable)
+        self.assign_button = widgets.button("ارجاع به همکار", icon_name="users",
+                                            on_click=self.assign)
+        for b in (self.stock_button, self.unavailable_button):
+            b.setProperty("big", True)
+            buttons.addWidget(b)
         self.seen_button = widgets.button("دیده شد", on_click=lambda: self.set_status("seen"))
         self.done_button = widgets.button("رسیدگی شد", variant="success",
                                           on_click=lambda: self.set_status("done"))
         self.reopen_button = widgets.button("باز کردن دوباره",
                                             on_click=lambda: self.set_status("new"))
-        for b in (self.done_button, self.seen_button, self.reopen_button):
+        for b in (self.done_button, self.seen_button, self.reopen_button, self.assign_button):
             buttons.addWidget(b)
         buttons.addStretch(1)
         buttons.addWidget(widgets.button("بستن", variant="ghost", on_click=self.accept))
@@ -306,6 +383,7 @@ class ItemRequestDialog(QDialog):
 
         self._render_item()
         self.load_messages()
+        self.load_timeline()
 
     # ------------------------------------------------------------------ item
     def _render_item(self) -> None:
@@ -313,9 +391,19 @@ class ItemRequestDialog(QDialog):
         self.status_pill.set_status(
             {"new": "pending", "seen": "receipt_uploaded", "done": "approved"}.get(status, status),
             STATUS_FA.get(status, status))
-        self.seen_button.setVisible(status == "new")
-        self.done_button.setVisible(status != "done")
-        self.reopen_button.setVisible(status == "done")
+        purchase = self.item.get("kind") == "purchase"
+        finished = status == "done" or bool(self.item.get("archived") or self.item.get("archived_at"))
+        self.seen_button.setVisible(status == "new" and not finished)
+        # a purchase request ends with «تأیید موجودی» / «ناموجود» (the customer is told)
+        self.done_button.setVisible(not finished and not purchase)
+        # v2.8.0: a finished request is read-only
+        self.reopen_button.setVisible(False)
+        self.stock_button.setVisible(purchase and not finished)
+        self.unavailable_button.setVisible(purchase and not finished)
+        may_assign = self.context.can(ORDERS_ASSIGN) or bool(self.item.get("owned_by_me"))
+        self.assign_button.setVisible(not finished and may_assign)
+        for widget in (self.note_button, self.send_button, self.note_edit, self.message_edit):
+            widget.setEnabled(not finished)
         handled = []
         if self.item.get("handled_at"):
             handled.append(f"آخرین تغییر وضعیت: {full_datetime(self.item.get('handled_at'))}"
@@ -325,6 +413,63 @@ class ItemRequestDialog(QDialog):
         if self.item.get("note_at"):
             self.note_info.setText(f"آخرین ویرایش: {full_datetime(self.item.get('note_at'))} — "
                                    f"{self.item.get('note_by') or '—'}")
+
+    # ---- v2.8.0: purchase requests, handover, timeline ----------------------
+    def load_timeline(self) -> None:
+        request_id = int(self.item["id"])
+        api = self.context.api
+        if not hasattr(api, "item_request_timeline"):
+            self.timeline_label.setText("—")
+            return
+        run_async(lambda: api.item_request_timeline(request_id),
+                  on_success=lambda rows: self.timeline_label.setText(
+                      timeline_text(list(rows or []))),
+                  on_error=lambda _m, _k: self.timeline_label.setText("—"))
+
+    def confirm_stock(self) -> None:
+        dialog = StockConfirmDialog(self, self.item)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        request_id = int(self.item["id"])
+        code, price = dialog.kala_code, dialog.price
+        self.stock_button.setEnabled(False)
+        run_async(lambda: self.context.api.confirm_purchase_stock(request_id, code, price),
+                  on_success=self._stock_confirmed,
+                  on_error=lambda m, _k: (self.stock_button.setEnabled(True),
+                                          widgets.error(self, "سفارش ساخته نشد", m)))
+
+    def _stock_confirmed(self, order: object) -> None:
+        order_id = (order or {}).get("id") if isinstance(order, dict) else None
+        self.item.update(status="done", outcome="confirmed", order_id=order_id)
+        self.changed = True
+        self._render_item()
+        self.load_timeline()
+        widgets.success(self, "سفارش ساخته شد",
+                        f"سفارش شمارهٔ {to_persian_digits(order_id or '—')} ساخته شد و ربات "
+                        "اطلاعات پرداخت را برای مشتری می‌فرستد (مهلت رسید مثل سفارش‌های دیگر).")
+
+    def mark_unavailable(self) -> None:
+        if not widgets.confirm(self, "ناموجود",
+                               "به مشتری پیام مؤدبانهٔ «ناموجود» فرستاده و درخواست بسته شود؟",
+                               confirm_text="بله، بفرست", kind="warning"):
+            return
+        request_id = int(self.item["id"])
+        run_async(lambda: self.context.api.mark_purchase_unavailable(request_id),
+                  on_success=lambda row: (self._item_updated(row), self.load_messages(),
+                                          self.load_timeline()),
+                  on_error=lambda m, _k: widgets.error(self, "انجام نشد", m))
+
+    def assign(self) -> None:
+        from .orders import AssignDialog
+
+        dialog = AssignDialog(self.context, self,
+                              f"درخواست {to_persian_digits(self.item.get('id', ''))}")
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.staff_id is None:
+            return
+        request_id, staff_id = int(self.item["id"]), dialog.staff_id
+        run_async(lambda: self.context.api.assign_item_request(request_id, staff_id),
+                  on_success=lambda _r: (setattr(self, "changed", True), self.accept()),
+                  on_error=lambda m, _k: widgets.error(self, "ارجاع انجام نشد", m))
 
     def set_status(self, status: str) -> None:
         request_id = int(self.item["id"])
@@ -431,6 +576,74 @@ class ItemRequestDialog(QDialog):
     def done(self, result: int) -> None:  # noqa: D401 - QDialog override
         self._poll.stop()
         super().done(result)
+
+
+class StockConfirmDialog(QDialog):
+    """«تأیید موجودی»: the «سازه حساب» product (needed when the row is not mapped
+    yet) and, optionally, another price. A normal order awaiting payment follows."""
+
+    def __init__(self, parent: QWidget | None, item: dict) -> None:
+        super().__init__(parent)
+        from PySide6.QtWidgets import QLineEdit
+
+        self.kala_code: int | None = None
+        self.price: int | None = None
+        self._item = item
+        self.setWindowTitle("تأیید موجودی")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumWidth(500)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(10)
+        root.addWidget(widgets.label("تأیید موجودی", size=14, bold=True))
+        root.addWidget(widgets.label(product_text(item), bold=True, wrap=True))
+        root.addWidget(widgets.label(
+            "با تأیید، یک سفارش عادی برای مشتری ساخته می‌شود و ربات اطلاعات پرداخت را "
+            "می‌فرستد؛ رسید باید در مهلت معمول برسد. اگر فروش گوشی بسته باشد، سفارش ساخته "
+            "نمی‌شود.", name="Muted", wrap=True))
+        mapped = bool(item.get("kala_code"))
+        root.addWidget(widgets.label("کد کالا در «سازه حساب»" +
+                                     (" (اختیاری؛ ردیف قبلاً وصل شده)" if mapped else "")))
+        self.code_input = QLineEdit(to_persian_digits(item["kala_code"]) if mapped else "")
+        self.code_input.setPlaceholderText("مثلاً ۱۲۳۴")
+        self.code_input.setMinimumHeight(40)
+        root.addWidget(self.code_input)
+        root.addWidget(widgets.label("قیمت (ریال) — خالی = قیمت لیست"))
+        self.price_input = QLineEdit(to_persian_digits(item["price_rial"])
+                                     if item.get("price_rial") else "")
+        self.price_input.setMinimumHeight(40)
+        root.addWidget(self.price_input)
+        self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
+        self.error_label.setVisible(False)
+        root.addWidget(self.error_label)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        ok = widgets.button("ساخت سفارش", variant="success", icon_name="check",
+                            on_click=self._accept)
+        ok.setProperty("big", True)
+        row.addWidget(ok)
+        row.addWidget(widgets.button("انصراف", on_click=self.reject))
+        root.addLayout(row)
+
+    @staticmethod
+    def _number(text: str) -> int | None:
+        digits = "".join(ch for ch in to_english_digits(text) if ch.isdigit())
+        return int(digits) if digits else None
+
+    def _accept(self) -> None:
+        code = self._number(self.code_input.text())
+        price = self._number(self.price_input.text())
+        if code is None and not self._item.get("kala_code"):
+            self.error_label.setText("این ردیف هنوز به کالایی وصل نیست؛ کد کالا را بنویسید.")
+            self.error_label.setVisible(True)
+            return
+        if self.price_input.text().strip() and not price:
+            self.error_label.setText("قیمت درست نیست؛ فقط رقم بنویسید یا خالی بگذارید.")
+            self.error_label.setVisible(True)
+            return
+        self.kala_code = code
+        self.price = price
+        self.accept()
 
 
 def theme_brush(value: str):

@@ -19,8 +19,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...activity import timeline_text
 from ...permissions import (
     ORDERS_APPROVE_PAYMENT,
+    ORDERS_ASSIGN,
     ORDERS_CANCEL,
     ORDERS_REJECT_PAYMENT,
     ORDERS_SHIP,
@@ -49,8 +51,47 @@ from .. import theme, widgets
 from ..async_utils import run_async
 from ..base_page import BasePage
 from ..context import AppContext
+from ..rtl import RIGHT
 
-HEADERS = ("شماره سفارش", "نام مشتری", "تعداد اقلام", "مبلغ کل", "وضعیت", "مهلت ارسال رسید", "تاریخ ثبت")
+HEADERS = ("شماره سفارش", "نام مشتری", "تعداد اقلام", "مبلغ کل", "وضعیت", "مسئول",
+           "مهلت ارسال رسید", "تاریخ ثبت")
+
+#: v2.8.0: a receipt waiting longer than this is highlighted (and counted).
+WAITING_MINUTES = 10
+WAITING_STATUSES = ("receipt_uploaded",)
+
+
+def waiting_too_long(row: dict, now=None, minutes: int = WAITING_MINUTES,
+                     statuses=WAITING_STATUSES) -> bool:
+    """A receipt (or a new request) nobody has handled for ``minutes``."""
+    from datetime import datetime, timezone
+
+    if row.get("status") not in statuses:
+        return False
+    stamp = row.get("updated_at") or row.get("created_at")
+    try:
+        when = datetime.fromisoformat(str(stamp))
+    except (TypeError, ValueError):
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    return (now - when).total_seconds() >= minutes * 60
+
+
+def owner_label(row: dict) -> str:
+    """«من» / the colleague's name (manager only) / «همکار» / «آزاد»."""
+    if row.get("owned_by_me"):
+        return "من"
+    if row.get("owner_name"):
+        return str(row["owner_name"])
+    return "همکار" if row.get("owned") else "آزاد"
+
+
+def copy_to_clipboard(text: str) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.clipboard().setText(str(text or ""))
 
 TABS = (
     ("awaiting_payment", "در انتظار پرداخت", ORDER_AWAITING_PAYMENT),
@@ -89,8 +130,29 @@ class OrdersPage(BasePage):
     title = "سفارش‌ها"
     subtitle = "رسیدهای پرداخت، تأیید، ارسال و لغو سفارش‌ها"
     help_text = "سفارش‌های مشتریان. روی هر سفارش کلیک کنید تا رسید را ببینید، تأیید کنید، «ارسال شد» بزنید یا آن را لغو کنید."
+    #: v2.8.0: lists refresh by themselves (the server's events refresh them too)
+    auto_refreshable = True
 
     def build_body(self) -> None:
+        # v2.8.0: «کارهای من» (default for sales users) / «همه»
+        scope_holder = QWidget()
+        scope_bar = widgets.FlowLayout(scope_holder, spacing=8)
+        principal = self.context.principal
+        self._mine = principal is not None and not principal.is_manager
+        self._scope_buttons = {}
+        for key, text in (("mine", "کارهای من"), ("all", "همه")):
+            btn = widgets.button(text, variant="ghost")
+            btn.setObjectName("Tab")
+            btn.setCheckable(True)
+            btn.setChecked((key == "mine") == self._mine)
+            btn.clicked.connect(lambda _checked=False, k=key: self.set_scope(k == "mine"))
+            self._scope_buttons[key] = btn
+            scope_bar.addWidget(btn)
+        self.waiting_label = widgets.label("", color=theme.WARNING_TEXT, bold=True)
+        self.waiting_label.setVisible(False)
+        scope_bar.addWidget(self.waiting_label)
+        self.body.addWidget(scope_holder)
+
         bar_holder = QWidget()
         bar = widgets.FlowLayout(bar_holder, spacing=8)
         self._tab_buttons: dict[str, object] = {}
@@ -137,6 +199,12 @@ class OrdersPage(BasePage):
         if key in self._tab_buttons:
             self._select_tab(key)
 
+    def set_scope(self, mine: bool) -> None:
+        self._mine = bool(mine)
+        for key, btn in self._scope_buttons.items():
+            btn.setChecked((key == "mine") == self._mine)
+        self.load()
+
     def _on_search(self, _text: str) -> None:
         self._render()
 
@@ -150,8 +218,9 @@ class OrdersPage(BasePage):
     def load(self) -> None:
         self.table.set_busy(True)
         status = self._status_for_tab()
+        mine = self._mine
         self.run(
-            lambda: self.context.api.list_orders(status),
+            lambda: self.context.api.list_orders(status, mine=mine),
             on_success=self._on_loaded,
             on_error=self._on_error,
         )
@@ -196,10 +265,24 @@ class OrdersPage(BasePage):
                 self.table.set_widget(row, 4, widgets.pill_cell(
                     widgets.StatusPill(order_status_fa(order.get("status")), order.get("status"))
                 ))
-                self.table.set_cell(row, 5, format_shamsi(order.get("reserve_until")) if order.get("reserve_until") else "—")
-                self.table.set_cell(row, 6, format_shamsi(order.get("created_at")))
+                self.table.set_cell(row, 5, owner_label(order),
+                                    bold=bool(order.get("owned_by_me")))
+                self.table.set_cell(row, 6, format_shamsi(order.get("reserve_until")) if order.get("reserve_until") else "—")
+                self.table.set_cell(row, 7, format_shamsi(order.get("created_at")))
+                if waiting_too_long(order):
+                    # v2.8.0: a receipt nobody checked for 10 minutes stands out
+                    late = self.table.set_cell(
+                        row, 0, to_persian_digits(order.get("id", "")), bold=True,
+                        color=theme.WARNING_TEXT,
+                        tooltip=f"بیش از {to_persian_digits(WAITING_MINUTES)} دقیقه منتظر بررسی است")
+                    late.setData(Qt.ItemDataRole.UserRole, "late")
         finally:
             self.table.setUpdatesEnabled(True)
+        late_count = sum(1 for order in rows if waiting_too_long(order))
+        self.waiting_label.setText(
+            f"⏱ {to_persian_digits(late_count)} رسید بیش از "
+            f"{to_persian_digits(WAITING_MINUTES)} دقیقه منتظر بررسی است" if late_count else "")
+        self.waiting_label.setVisible(bool(late_count))
 
         status_fa = order_status_fa(self._status_for_tab())
         if not rows:
@@ -285,6 +368,16 @@ class OrderDetailDialog(QDialog):
         left = QVBoxLayout()
         left.setSpacing(6)
         left.addWidget(_kv("مشتری", self._customer_label(order)))
+        if order.get("user_phone"):
+            phone_row = QHBoxLayout()
+            phone_row.addWidget(_kv("موبایل مشتری", to_persian_digits(order["user_phone"])), 1)
+            self.copy_phone_button = widgets.button(
+                "کپی", icon_name="copy", tooltip="کپی شمارهٔ موبایل مشتری",
+                on_click=lambda: (copy_to_clipboard(order["user_phone"]),
+                                  self._show_info("شمارهٔ موبایل کپی شد.")))
+            phone_row.addWidget(self.copy_phone_button)
+            left.addLayout(phone_row)
+        left.addWidget(_kv("مسئول", owner_label(order)))
         code = order.get("user_person_code")
         left.addWidget(_kv("کد شخص در حسابداری",
                            to_persian_digits(code) if code is not None else "هنوز وصل نشده"))
@@ -335,7 +428,7 @@ class OrderDetailDialog(QDialog):
             )
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(value)
-                cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                cell.setTextAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
                 self.items_table.setItem(index, column, cell)
         items_panel.body.addWidget(self.items_table)
         items_panel.body.addWidget(widgets.label(
@@ -344,6 +437,17 @@ class OrderDetailDialog(QDialog):
             name="Muted",
         ))
         root.addWidget(items_panel, 1)
+
+        # ---- v2.8.0: what was done so far (names only for the manager) ------
+        self.timeline_label = widgets.label("…", wrap=True)
+        timeline_panel = widgets.Panel("کارهای انجام‌شده")
+        timeline_panel.body.addWidget(self.timeline_label)
+        root.addWidget(timeline_panel)
+        if order.get("request_id"):
+            timeline_panel.body.addWidget(widgets.label(
+                f"این سفارش از «درخواست خرید» شمارهٔ {to_persian_digits(order['request_id'])} "
+                "ساخته شده است.", name="Muted", wrap=True))
+        self._load_timeline()
 
         # ---- receipt -----------------------------------------------------
         receipt_ref = order.get("receipt_ref") or self._payment_ref(order)
@@ -418,16 +522,35 @@ class OrderDetailDialog(QDialog):
         elif not cancellable:
             self.cancel_button.setToolTip("سفارشِ تأییدشده یا ثبت‌شده لغو نمی‌شود")
 
+        # v2.8.0: «برمی‌دارم» (a free order) and «ارجاع» (manager, «ارجاع سفارش»,
+        # or the owner); a finished order is read-only for everyone
+        finished = bool(order.get("finished") or order.get("archived"))
+        self.claim_button = widgets.button("برمی‌دارم", icon_name="check",
+                                           on_click=self._claim)
+        self.claim_button.setVisible(not finished and not order.get("owned")
+                                     and context.principal is not None)
+        self.assign_button = widgets.button("ارجاع به همکار", icon_name="users",
+                                            on_click=self._assign)
+        may_assign = context.can(ORDERS_ASSIGN) or bool(order.get("owned_by_me"))
+        self.assign_button.setVisible(not finished and may_assign)
         close = widgets.button("بستن", on_click=self.reject)
+        if finished:
+            for widget in (self.approve_button, self.reject_button, self.ship_button,
+                           self.cancel_button):
+                widget.setEnabled(False)
+                widget.setToolTip("سفارش تمام شده است؛ تغییرات فقط در «سازه حساب» انجام می‌شود")
+            root.addWidget(widgets.label(
+                "این سفارش تمام شده و فقط‌خواندنی است. هر تغییری فقط در «سازه حساب» انجام می‌شود.",
+                name="Muted", wrap=True))
         for widget in (self.approve_button, self.reject_button, self.ship_button,
-                       self.cancel_button, close):
+                       self.cancel_button, self.claim_button, self.assign_button, close):
             widget.setProperty("big", True)
             # hidden, not disabled, when this account may never do it
             actions.addWidget(widget)
-        self.approve_button.setVisible(can_approve)
-        self.reject_button.setVisible(can_reject)
-        self.ship_button.setVisible(can_ship)
-        self.cancel_button.setVisible(context.can(ORDERS_CANCEL))
+        self.approve_button.setVisible(can_approve and not finished)
+        self.reject_button.setVisible(can_reject and not finished)
+        self.ship_button.setVisible(can_ship and not finished)
+        self.cancel_button.setVisible(context.can(ORDERS_CANCEL) and not finished)
         root.addWidget(actions_holder)
 
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
@@ -455,6 +578,49 @@ class OrderDetailDialog(QDialog):
         self.error_label.setVisible(True)
         self._detail_label.setText(detail)
         self._detail_label.setVisible(bool(detail))
+
+    def _show_info(self, message: str) -> None:
+        self._detail_label.setText(message)
+        self._detail_label.setVisible(True)
+
+    # ---- v2.8.0: timeline, claim, handover ---------------------------------
+    def _load_timeline(self) -> None:
+        order_id = int(self.order.get("id") or 0)
+        api = self.context.api
+        if not hasattr(api, "order_timeline"):
+            self.timeline_label.setText("—")
+            return
+        run_async(
+            lambda: api.order_timeline(order_id),
+            on_success=lambda rows: self.timeline_label.setText(timeline_text(list(rows or []))),
+            on_error=lambda _m, _k: self.timeline_label.setText("—"),
+        )
+
+    def _claim(self) -> None:
+        order_id = int(self.order["id"])
+        self.claim_button.setEnabled(False)
+        run_async(
+            lambda: self.context.api.claim_order(order_id),
+            on_success=lambda _r: self._changed_and_close(),
+            on_error=lambda message, kind: (self.claim_button.setEnabled(True),
+                                            self._failed(message, kind)),
+        )
+
+    def _assign(self) -> None:
+        dialog = AssignDialog(self.context, self, f"سفارش {to_persian_digits(self.order['id'])}")
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.staff_id is None:
+            return
+        order_id, staff_id = int(self.order["id"]), dialog.staff_id
+        run_async(
+            lambda: self.context.api.assign_order(order_id, staff_id),
+            on_success=lambda _r: self._changed_and_close(),
+            on_error=lambda message, kind: self._failed(message, kind),
+        )
+
+    def _changed_and_close(self) -> None:
+        self.changed = True
+        self.context.data_changed.emit()
+        self.accept()
 
     # ---- actions ---------------------------------------------------------
     def _approve(self) -> None:
@@ -602,6 +768,59 @@ class OrderDetailDialog(QDialog):
 SHIPPABLE = (ORDER_APPROVED, ORDER_WRITTEN)
 #: v2.7.0: orders staff may cancel (server: STAFF_CANCELLABLE).
 CANCELLABLE = (ORDER_AWAITING_PAYMENT, ORDER_RECEIPT_UPLOADED)
+
+
+class AssignDialog(QDialog):
+    """«ارجاع به همکار»: pick the colleague (only their display names are shown)."""
+
+    def __init__(self, context: AppContext, parent: QWidget | None, what: str) -> None:
+        super().__init__(parent)
+        from PySide6.QtWidgets import QComboBox
+
+        self.staff_id: Optional[int] = None
+        self.setWindowTitle(f"ارجاع {what}")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumWidth(440)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(10)
+        root.addWidget(widgets.label(f"ارجاع {what}", size=14, bold=True))
+        root.addWidget(widgets.label(
+            "همکار انتخاب‌شده کار را ادامه می‌دهد و کارهای انجام‌شده را می‌بیند. "
+            "این ارجاع در گزارش فعالیت ثبت می‌شود.", name="Muted", wrap=True))
+        self.combo = QComboBox()
+        self.combo.setMinimumHeight(40)
+        self.combo.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        root.addWidget(self.combo)
+        self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
+        self.error_label.setVisible(False)
+        root.addWidget(self.error_label)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.ok_button = widgets.button("ارجاع بده", variant="primary", icon_name="check",
+                                        on_click=self._accept)
+        self.ok_button.setEnabled(False)
+        buttons.addWidget(self.ok_button)
+        buttons.addWidget(widgets.button("انصراف", on_click=self.reject))
+        root.addLayout(buttons)
+        run_async(context.api.list_assignees, on_success=self._fill,
+                  on_error=lambda message, _k: self._error(message))
+
+    def _fill(self, rows) -> None:
+        self.combo.clear()
+        for row in rows or []:
+            self.combo.addItem(str(row.get("name") or ""), int(row["id"]))
+        self.ok_button.setEnabled(self.combo.count() > 0)
+        if not self.combo.count():
+            self._error("همکار دیگری برای ارجاع نیست.")
+
+    def _error(self, message: str) -> None:
+        self.error_label.setText(message)
+        self.error_label.setVisible(True)
+
+    def _accept(self) -> None:
+        self.staff_id = self.combo.currentData()
+        self.accept()
 
 
 def courier_text(order: dict) -> str:

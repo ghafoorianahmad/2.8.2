@@ -28,6 +28,7 @@ from ..logging_setup import get_logger
 from ..persian import to_english_digits, to_persian_digits
 from . import theme, widgets
 from .async_utils import run_async
+from .rtl import RIGHT
 
 log = get_logger("server_setup_ui")
 
@@ -47,7 +48,7 @@ def _line(placeholder: str = "", *, ltr: bool = True, password: bool = False) ->
 
 def _form() -> QFormLayout:
     form = QFormLayout()
-    form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+    form.setLabelAlignment(RIGHT)
     form.setHorizontalSpacing(18)
     form.setVerticalSpacing(12)
     return form

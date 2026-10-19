@@ -26,6 +26,7 @@ from ...persian import format_shamsi, to_persian_digits
 from ...server_settings import SETTINGS_FA, local_problem, translate_field_errors
 from .. import theme, widgets
 from ..base_page import BasePage
+from ..rtl import RIGHT
 
 PLATFORM_FA = {"bale": "بله", "telegram": "تلگرام"}
 
@@ -214,7 +215,7 @@ class ServerPage(BasePage):
             "روشن کردن ثبت واقعی و کلیدهای سرویس فقط روی خود رایانهٔ سرور تغییر می‌کنند.",
             name="Muted", wrap=True))
         self.settings_form = QFormLayout()
-        self.settings_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.settings_form.setLabelAlignment(RIGHT)
         self.settings_form.setHorizontalSpacing(18)
         self.settings_form.setVerticalSpacing(10)
         panel.body.addLayout(self.settings_form)

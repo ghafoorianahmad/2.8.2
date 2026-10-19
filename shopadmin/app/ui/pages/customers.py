@@ -35,6 +35,7 @@ from .. import theme, widgets
 from ..async_utils import run_async
 from ..base_page import BasePage
 from ..context import AppContext
+from ..rtl import RIGHT
 
 HEADERS = ("نام مشتری", "پلتفرم", "شماره موبایل", "کد شخص", "وضعیت", "تاریخ ثبت", "عملیات")
 
@@ -339,8 +340,8 @@ class ApproveCustomerDialog(QDialog):
 
         info = widgets.Panel("اطلاعات مشتری")
         form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        form.setFormAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        form.setLabelAlignment(RIGHT)
+        form.setFormAlignment(RIGHT | Qt.AlignmentFlag.AlignTop)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(10)
         form.addRow(widgets.label("نام مشتری"), widgets.label(str(customer.get("name") or "—"), bold=True))
@@ -400,7 +401,7 @@ class ApproveCustomerDialog(QDialog):
         self.create_panel = widgets.Panel("نام شخص جدید در حسابداری")
         first, last = split_name(str(customer.get("name") or ""))
         name_form = QFormLayout()
-        name_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        name_form.setLabelAlignment(RIGHT)
         self.first_name_input = QLineEdit(first)
         self.first_name_input.setMaxLength(MAX_NAME_PART)
         self.last_name_input = QLineEdit(last)

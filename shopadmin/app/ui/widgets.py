@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QSizePolicy,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from ..persian import to_persian_digits
 from . import theme
+from .rtl import RIGHT, is_ltr_text
 
 # --------------------------------------------------------------------------
 # small building blocks
@@ -52,7 +54,7 @@ def label(text: str, *, name: str = "", size: int | None = None, bold: bool = Fa
             widget.setStyleSheet(f"color: {color};")
     widget.setWordWrap(wrap)
     widget.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-    widget.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    widget.setAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
     return widget
 
 
@@ -434,13 +436,23 @@ class SearchBox(QLineEdit):
         self.setClearButtonEnabled(True)
         self.setMinimumWidth(240)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.setAlignment(RIGHT)
         self.addAction(theme.icon("search", 18, theme.TEXT_FAINT), QLineEdit.ActionPosition.LeadingPosition)
 
 
 # --------------------------------------------------------------------------
 # data table with loading / empty states
 # --------------------------------------------------------------------------
+class BidiDelegate(QStyledItemDelegate):
+    """v2.8.0: a cell whose text has no Persian letter (a code, path, URL, English
+    name) is laid out left-to-right; it stays on the right edge (``RIGHT``)."""
+
+    def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt naming
+        super().initStyleOption(option, index)
+        if is_ltr_text(option.text):
+            option.direction = Qt.LayoutDirection.LeftToRight
+
+
 class DataTable(QTableWidget):
     """A read-only table that knows how to show loading and empty states."""
 
@@ -482,13 +494,14 @@ class DataTable(QTableWidget):
         )
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setItemDelegate(BidiDelegate(self))
         header = self.horizontalHeader()
         # Interactive: the user can drag any column edge; the last column fills the rest.
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
         header.setMinimumSectionSize(self.MIN_COLUMN)
         header.setCascadingSectionResizes(False)
-        header.setDefaultAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        header.setDefaultAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
         header.sectionResized.connect(self._on_section_resized)
         # Long text is cut with an ellipsis (tooltip shows it all); a horizontal
         # scroll bar appears only when the columns really do not fit.
@@ -625,7 +638,9 @@ class DataTable(QTableWidget):
 
     def set_cell(self, row: int, column: int, text: str, *, color: str | None = None,
                  bold: bool = False, tooltip: str = "",
-                 align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignRight) -> QTableWidgetItem:
+                 align: Qt.AlignmentFlag = RIGHT) -> QTableWidgetItem:
+        # v2.8.0: the real right edge; Latin-only text (codes, paths) is drawn
+        # left-to-right by the table's delegate (the text itself is unchanged)
         item = QTableWidgetItem(text)
         item.setTextAlignment(align | Qt.AlignmentFlag.AlignVCenter)
         if color:

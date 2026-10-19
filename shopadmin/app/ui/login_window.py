@@ -22,6 +22,7 @@ from ..persian import to_english_digits, to_persian_digits
 from ..store import Store
 from . import theme, widgets
 from .async_utils import run_async
+from .rtl import RIGHT
 
 log = get_logger("login")
 
@@ -188,7 +189,7 @@ class LoginWindow(QWidget):
         mark.setFixedSize(84, 84)
         mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
         mark.setStyleSheet(f"background: {theme.SIDEBAR_ACTIVE}; border-radius: 22px;")
-        layout.addWidget(mark, 0, Qt.AlignmentFlag.AlignRight)
+        layout.addWidget(mark, 0, RIGHT)
 
         name = widgets.label("عصر ارتباطات ۲", size=20, bold=True, color="#FFFFFF")
         layout.addWidget(name)

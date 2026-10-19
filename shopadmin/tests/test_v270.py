@@ -60,8 +60,9 @@ def test_sales_menu_and_landing(ui_context, admin_qapp):
     from app.ui.main_window import MainWindow
 
     window = MainWindow(make_context_with_role(ui_context, ROLE_OPERATOR))
-    assert set(window._nav_buttons) == {"orders", "item_requests", "customers"}
-    assert set(window._pages) == {"orders", "item_requests", "customers"}
+    # v2.8.0: + «بایگانی» (own finished work)
+    assert set(window._nav_buttons) == {"orders", "item_requests", "customers", "archive"}
+    assert set(window._pages) == {"orders", "item_requests", "customers", "archive"}
     assert window._current_key == "orders" and window.home_key() == "orders"
     assert window.password_button.text() == "گذرواژهٔ من"
     window.close()

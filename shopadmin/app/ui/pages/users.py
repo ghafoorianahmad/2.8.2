@@ -33,6 +33,7 @@ from ...statuses import ALL_ROLES, ROLE_DESCRIPTION_FA, ROLE_SUPER_ADMIN, role_f
 from .. import theme, widgets
 from ..async_utils import run_async
 from ..base_page import BasePage
+from ..rtl import RIGHT
 
 HEADERS = ("نام کاربری", "نام و نام خانوادگی", "نقش", "وضعیت", "آخرین ورود", "تاریخ ایجاد", "عملیات")
 
@@ -370,7 +371,7 @@ class UserFormDialog(QDialog):
         ))
 
         form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setLabelAlignment(RIGHT)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
 
@@ -566,7 +567,7 @@ class ResetPasswordDialog(QDialog):
         ))
 
         form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setLabelAlignment(RIGHT)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
         self.password_input = QLineEdit()

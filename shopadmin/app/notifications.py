@@ -27,6 +27,9 @@ KIND_PASSWORD = "password_request"
 KIND_ITEM_REQUEST = "item_request"
 #: v2.6.2: a customer cancelled their own order in the bot (before any receipt).
 KIND_CUSTOMER_CANCEL = "order_cancelled_by_customer"
+#: v2.8.0: an order / request was handed to a colleague (refreshes the lists).
+KIND_ORDER_ASSIGNED = "order_assigned"
+KIND_REQUEST_ASSIGNED = "request_assigned"
 #: Kinds that ask a person to act; the rest only refresh the screens.
 ATTENTION_KINDS = (KIND_CUSTOMER, KIND_ORDER, KIND_RECEIPT, KIND_PASSWORD, KIND_ITEM_REQUEST,
                    KIND_CUSTOMER_CANCEL)
@@ -126,8 +129,8 @@ def notice_for(event: dict) -> Optional[Notice]:
         return Notice(kind, "درخواست گذرواژه",
                       "یکی از کاربران گذرواژه‌اش را فراموش کرده و منتظر تأیید شماست.", ref)
     if kind == KIND_ITEM_REQUEST:
-        return Notice(kind, "درخواست کالای ناموجود",
-                      "یک مشتری در ربات کالای ناموجودی درخواست کرده است.", ref)
+        return Notice(kind, "درخواست تازه از مشتری",
+                      "یک مشتری در ربات کالایی خواسته (درخواست خرید یا کالای ناموجود).", ref)
     if kind.startswith(HEALTH_PREFIX):
         check, _, state = kind[len(HEALTH_PREFIX):].rpartition("_")
         label = HEALTH_LABELS.get(check)
@@ -272,6 +275,8 @@ class TrayNotifier(QObject):
         super().__init__(parent)
         self.store = store
         self.unread: dict[str, int] = {k: 0 for k in ATTENTION_KINDS}
+        #: v2.8.0: the signed-in user; sound / Windows notification are per user
+        self.user_key = ""
         self._last_notice: Optional[Notice] = None
         self.tray = None
         self._build_tray()
@@ -331,14 +336,18 @@ class TrayNotifier(QObject):
     def show_notice(self, notice: Notice) -> None:
         """One Windows balloon (and the sound), clicking it opens ``notice.target``."""
         self._last_notice = notice
-        if self.store.get_setting("notify_desktop", True) and self.tray is not None:
+        if self.enabled("notify_desktop") and self.tray is not None:
             from PySide6.QtWidgets import QSystemTrayIcon
 
             icon = (QSystemTrayIcon.MessageIcon.Warning if notice.warning
                     else QSystemTrayIcon.MessageIcon.Information)
             self.tray.showMessage(notice.title, notice.body, icon, 10000 if notice.warning else 8000)
-        if self.store.get_setting("notify_sound", True):
+        if self.enabled("notify_sound"):
             play_notification_sound()
+
+    def enabled(self, key: str) -> bool:
+        """v2.8.0: the signed-in user's own choice, else this computer's setting."""
+        return user_setting(self.store, key, self.user_key)
 
     def mark_seen(self, *kinds: str) -> None:
         changed = False
@@ -365,6 +374,18 @@ class TrayNotifier(QObject):
     def hide(self) -> None:
         if self.tray is not None:
             self.tray.hide()
+
+
+def user_setting(store, key: str, user: str) -> bool:
+    if user:
+        value = store.get_setting(f"{key}@{user.lower()}", None)
+        if value is not None:
+            return bool(value)
+    return bool(store.get_setting(key, True))
+
+
+def set_user_setting(store, key: str, user: str, value: bool) -> None:
+    store.set_setting(f"{key}@{user.lower()}" if user else key, bool(value))
 
 
 def play_notification_sound() -> None:

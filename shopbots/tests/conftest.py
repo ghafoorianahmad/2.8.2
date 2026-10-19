@@ -196,6 +196,11 @@ class FakeShopApi:
         #: site models (REQUIREMENTS §9a): slug -> {name, status, items}
         self.models: dict[str, dict] = {}
         self.resolve_texts: list[str] = []
+        #: v2.8.0: rows /phones/search returns (when ``q`` is in the model) and
+        #: the «درخواست خرید» bodies received
+        self.phone_rows: list[dict] = []
+        self.phone_sales_open = True
+        self.purchase_requests: list[dict] = []
         self._next_user = 1
         self._next_order = 1
 
@@ -318,6 +323,21 @@ class FakeShopApi:
             if user["status"] != "approved":
                 return self._err(403, "User is not approved")
             return self._ok(self.statement_full)
+
+        if method == "GET" and path == "/phones/search":
+            q = str(params.get("q") or "").lower()
+            items = [r for r in self.phone_rows if q and q in r["model"].lower()]
+            return self._ok({"list_ready": True, "sales_open": self.phone_sales_open,
+                             "items": items})
+
+        if method == "POST" and path == "/purchase-requests":
+            user = self.users.get((str(body.get("platform")), str(body.get("chat_id"))))
+            if user is None:
+                return self._err(404, "User not found")
+            self.purchase_requests.append(body)
+            return httpx.Response(201, json={"id": len(self.purchase_requests), "kind": "purchase",
+                                             "user_id": user["id"], "status": "new",
+                                             "created_at": "t"})
 
         if method == "GET" and path == "/item-requests/search":
             q = str(params.get("q") or "")

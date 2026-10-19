@@ -287,6 +287,8 @@ class ShopAdminApp(QObject):
             principal=principal,
         )
         self._start_notifications()
+        if self.notifier is not None:
+            self.notifier.user_key = principal.username
         self.context.notifier = self.notifier
         self.main_window = MainWindow(self.context)
         self.main_window.attach_server_monitor(self.server_monitor_for_window())

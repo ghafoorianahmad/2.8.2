@@ -416,7 +416,8 @@ def test_sidebar_hides_users_for_a_non_super_admin(ui_context, admin_qapp):
     window = MainWindow(context)
     assert "users" not in window._nav_buttons
     # v2.7.0: «کاربر فروش» sees orders, item requests and customers only
-    assert set(window._nav_buttons) == {"orders", "item_requests", "customers"}
+    # v2.8.0: + «بایگانی»
+    assert set(window._nav_buttons) == {"orders", "item_requests", "customers", "archive"}
     assert window._current_key == "orders"                    # lands on the orders
     window.close()
 
@@ -429,7 +430,8 @@ def test_sidebar_shows_users_for_the_super_admin(ui_context, admin_qapp):
     assert "users" in window._nav_buttons
     assert "server" in window._nav_buttons
     assert "pricelist" in window._nav_buttons
-    assert len(window._nav_buttons) == 13      # v2.6.0: + «درخواست کالا», «گروه‌های کالا»
+    # v2.6.0: + «درخواست کالا», «گروه‌های کالا»; v2.8.0: + «بایگانی», «گزارش فعالیت»
+    assert len(window._nav_buttons) == 15
     window.close()
 
 

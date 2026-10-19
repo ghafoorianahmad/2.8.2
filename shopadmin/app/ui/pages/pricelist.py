@@ -686,6 +686,11 @@ class MapRowDialog(QDialog):
         self.results = QListWidget()
         self.results.setMinimumHeight(160)
         self.results.currentItemChanged.connect(self._picked)
+        # v2.8.0: the 3 products whose names are closest (never mapped by itself
+        # when ambiguous); a search replaces them
+        self.suggest_label = widgets.label("در حال یافتن نزدیک‌ترین کالاها…", name="Muted",
+                                           wrap=True)
+        pick.body.addWidget(self.suggest_label)
         pick.body.addWidget(self.results)
         code_row = QHBoxLayout()
         code_row.addWidget(widgets.label("کد کالا:"))
@@ -717,6 +722,38 @@ class MapRowDialog(QDialog):
         buttons.addWidget(widgets.button("ذخیره", icon_name="check", variant="primary",
                                          on_click=self._accept))
         root.addLayout(buttons)
+        self._load_suggestions()
+
+    def _load_suggestions(self) -> None:
+        from ..async_utils import run_async
+
+        api = self.context.api
+        row_key = str(self.row.get("row_key") or "")
+        if not row_key or not hasattr(api, "mapping_suggestions"):
+            self.suggest_label.setVisible(False)
+            return
+        run_async(lambda: api.mapping_suggestions(row_key), on_success=self._suggested,
+                  on_error=lambda _m, _k: self.suggest_label.setText(
+                      "پیشنهادی پیدا نشد؛ نام کالا را جستجو کنید."))
+
+    def _suggested(self, payload) -> None:
+        items = list((payload or {}).get("items") or []) if isinstance(payload, dict) else []
+        if self.results.count() or not items:
+            self.suggest_label.setText("پیشنهادی پیدا نشد؛ نام کالا را جستجو کنید."
+                                       if not items else self.suggest_label.text())
+            return
+        confident = (payload or {}).get("confident")
+        self.suggest_label.setText(
+            "۳ کالای با نزدیک‌ترین نام (پیشنهاد). یکی را انتخاب کنید یا جستجو کنید.")
+        for product in items[:3]:
+            score = round(float(product.get("score") or 0) * 100)
+            item = QListWidgetItem(
+                f"{to_persian_digits(product.get('code'))} — {product.get('name') or ''}"
+                f"  (شباهت {to_persian_digits(score)}٪)")
+            item.setData(Qt.ItemDataRole.UserRole, int(product.get("code")))
+            self.results.addItem(item)
+            if confident and int(product.get("code")) == int(confident) and not self.kala_code:
+                self.results.setCurrentItem(item)
 
     def _search(self) -> None:
         query = self.search.text().strip()
