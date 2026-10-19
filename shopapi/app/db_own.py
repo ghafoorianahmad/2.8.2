@@ -304,6 +304,24 @@ CREATE TABLE IF NOT EXISTS item_request_messages (
     sent_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ireq_messages_request ON item_request_messages(request_id);
+
+-- v2.8.0: who did what (admin-only «گزارش فعالیت» and the order timeline).
+-- target_type: 'order' | 'request' | 'customer'. Never a token or a full phone.
+CREATE TABLE IF NOT EXISTS activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    staff_id INTEGER,
+    actor TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id INTEGER,
+    customer_id INTEGER,
+    to_staff_id INTEGER,
+    detail TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_activity_target ON activity_log(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_activity_staff ON activity_log(staff_id);
+CREATE INDEX IF NOT EXISTS idx_activity_customer ON activity_log(customer_id);
 """
 
 #: Columns added after the first release: (table, column, declaration).
@@ -342,10 +360,33 @@ MIGRATIONS = (
     # v2.7.0: optional courier given when an order is marked as sent
     ("orders", "courier_name", "TEXT"),
     ("orders", "courier_phone", "TEXT"),
+    # v2.8.0: ownership (the staff member who works on it), weekly archive, and
+    # the purchase request an order was created from
+    ("orders", "owner_id", "INTEGER"),
+    ("orders", "owner_at", "TEXT"),
+    ("orders", "archived_at", "TEXT"),
+    ("orders", "request_id", "INTEGER"),
+    ("item_requests", "owner_id", "INTEGER"),
+    ("item_requests", "owner_at", "TEXT"),
+    ("item_requests", "archived_at", "TEXT"),
+    ("item_requests", "accounting_db", "TEXT"),
+    # v2.8.0: «درخواست خرید» (kind 'purchase'): the price-list row and what was asked
+    ("item_requests", "row_key", "TEXT"),
+    ("item_requests", "mapping_id", "INTEGER"),
+    ("item_requests", "color", "TEXT NOT NULL DEFAULT ''"),
+    ("item_requests", "part", "TEXT NOT NULL DEFAULT ''"),
+    ("item_requests", "price_rial", "INTEGER"),
+    ("item_requests", "qty", "REAL NOT NULL DEFAULT 1"),
+    ("item_requests", "outcome", "TEXT NOT NULL DEFAULT ''"),   # '' | confirmed | unavailable
+    ("item_requests", "order_id", "INTEGER"),
 )
 
 #: Item request kinds (v2.6.1).
-ITEM_REQUEST_KINDS = ("unavailable", "inquiry")
+ITEM_REQUEST_KINDS = ("unavailable", "inquiry", "purchase")
+
+#: v2.8.0: finished orders (read-only for everyone; archived on Thursday night).
+#: An order is also finished once it was marked as sent (``shipped_at``).
+CLOSED_ORDER_STATUSES = ("rejected", "cancelled", "expired")
 
 #: cancel_reason of an order whose receipt did not arrive in time.
 CANCEL_RECEIPT_TIMEOUT = "receipt_timeout"
@@ -484,15 +525,21 @@ class OwnDB:
         reserve_until: str,
         items: list[tuple[int, str, float, float]],
         accounting_db: str | None = None,
+        *,
+        request_id: int | None = None,
+        owner_id: int | None = None,
     ) -> dict:
         """items: (kala_code, name, qty, unit_price[, variant_id, variant]).
-        ``reserve_until`` = the receipt deadline (the stock is held until then)."""
+        ``reserve_until`` = the receipt deadline (the stock is held until then).
+        v2.8.0: an order made from a purchase request keeps the request and its owner."""
         with self._lock:
             ts = now_iso()
             self._conn.execute(
                 "INSERT INTO orders (user_id, status, price_level, total, reserve_until, "
-                "accounting_db, created_at, updated_at) VALUES (?,'awaiting_payment',?,?,?,?,?,?)",
-                (user_id, price_level, total, reserve_until, accounting_db, ts, ts),
+                "accounting_db, created_at, updated_at, request_id, owner_id, owner_at) "
+                "VALUES (?,'awaiting_payment',?,?,?,?,?,?,?,?,?)",
+                (user_id, price_level, total, reserve_until, accounting_db, ts, ts,
+                 request_id, owner_id, ts if owner_id is not None else None),
             )
             row = self._conn.execute("SELECT last_insert_rowid() AS id").fetchone()
             order_id = row["id"]
@@ -532,7 +579,7 @@ class OwnDB:
         with self._lock:
             order = self._fetchone(
                 "SELECT o.*, u.person_code AS user_person_code, u.status AS user_status, "
-                "u.name AS user_name, "
+                "u.name AS user_name, u.phone AS user_phone, "
                 "EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id "
                 "AND p.file_name IS NOT NULL) AS has_receipt "
                 "FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id=?",
@@ -775,14 +822,19 @@ class OwnDB:
     )
 
     def add_item_request(self, user_id: int, kala_code: int | None, product_name: str,
-                         text: str, kind: str = "unavailable") -> dict:
+                         text: str, kind: str = "unavailable", *,
+                         accounting_db: str | None = None, row_key: str | None = None,
+                         mapping_id: int | None = None, color: str = "", part: str = "",
+                         price_rial: int | None = None, qty: float = 1) -> dict:
         if kind not in ITEM_REQUEST_KINDS:
             raise ValueError(kind)
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO item_requests (user_id, kala_code, product_name, text, kind, "
-                "created_at) VALUES (?,?,?,?,?,?)",
-                (user_id, kala_code, product_name, text, kind, now_iso()),
+                "created_at, accounting_db, row_key, mapping_id, color, part, price_rial, qty) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (user_id, kala_code, product_name, text, kind, now_iso(), accounting_db,
+                 row_key, mapping_id, color or "", part or "", price_rial, qty),
             )
             self._commit()
             return self.get_item_request(cur.lastrowid)
@@ -872,6 +924,179 @@ class OwnDB:
             )
             self._commit()
             return self.get_item_request(request_id)
+
+    def update_item_request(self, request_id: int, **fields) -> dict | None:
+        """v2.8.0: purchase-request outcome / mapping (known columns only)."""
+        allowed = {"status", "handled_at", "handled_by", "outcome", "order_id", "kala_code",
+                   "mapping_id", "price_rial"}
+        sets = {k: v for k, v in fields.items() if k in allowed}
+        with self._lock:
+            if sets:
+                cols = ", ".join(f"{k}=?" for k in sets)
+                self._conn.execute(f"UPDATE item_requests SET {cols} WHERE id=?",
+                                   (*sets.values(), request_id))
+                self._commit()
+            return self.get_item_request(request_id)
+
+    # ---- ownership (v2.8.0) ----
+    _OWNED_TABLES = {"order": "orders", "request": "item_requests"}
+
+    def claim(self, target_type: str, target_id: int, staff_id: int) -> bool:
+        """The first staff member who acts becomes the owner. True = this one owns
+        it now (it was free, or already theirs)."""
+        table = self._OWNED_TABLES[target_type]
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE {table} SET owner_id=?, owner_at=? WHERE id=? AND owner_id IS NULL",
+                (staff_id, now_iso(), target_id))
+            self._commit()
+            row = self._fetchone(f"SELECT owner_id FROM {table} WHERE id=?", (target_id,))
+            return row is not None and row["owner_id"] == staff_id
+
+    def set_owner(self, target_type: str, target_id: int, staff_id: int | None) -> None:
+        table = self._OWNED_TABLES[target_type]
+        with self._lock:
+            self._conn.execute(f"UPDATE {table} SET owner_id=?, owner_at=? WHERE id=?",
+                               (staff_id, now_iso(), target_id))
+            self._commit()
+
+    def staff_names(self, ids) -> dict[int, str]:
+        wanted = sorted({int(i) for i in ids if i is not None})
+        if not wanted:
+            return {}
+        with self._lock:
+            marks = ",".join("?" for _ in wanted)
+            rows = self._fetchall(
+                f"SELECT id, username, full_name FROM staff_users WHERE id IN ({marks})",
+                tuple(wanted))
+        return {int(r["id"]): (str(r["full_name"] or "").strip() or r["username"]) for r in rows}
+
+    def query_orders(self, *, status: str | None = None, viewer_id: int | None = None,
+                     mine_only: bool = False, archived: bool = False,
+                     accounting_db: str | None = None, q: str | None = None,
+                     limit: int = 1000) -> list[dict]:
+        """Orders for ShopAdmin (v2.8.0). ``viewer_id`` = a sales user: only free
+        orders and their own (``mine_only``: their own only). Archived orders only
+        with ``archived``."""
+        clauses = ["o.archived_at IS NOT NULL" if archived else "o.archived_at IS NULL"]
+        params: list = []
+        if status:
+            clauses.append("o.status=?")
+            params.append(status)
+        if viewer_id is not None:
+            if mine_only or archived:
+                clauses.append("o.owner_id=?")
+            else:
+                clauses.append("(o.owner_id IS NULL OR o.owner_id=?)")
+            params.append(viewer_id)
+        if accounting_db:
+            clauses.append("lower(trim(COALESCE(o.accounting_db,''))) = lower(trim(?))")
+            params.append(accounting_db)
+        if q and q.strip():
+            needle = f"%{q.strip()}%"
+            clauses.append("(CAST(o.id AS TEXT)=? OR CAST(o.accounting_order_no AS TEXT)=? "
+                           "OR u.name LIKE ? OR u.phone LIKE ?)")
+            params += [q.strip(), q.strip(), needle, needle]
+        with self._lock:
+            ids = [r["id"] for r in self._fetchall(
+                "SELECT o.id FROM orders o JOIN users u ON u.id = o.user_id WHERE "
+                + " AND ".join(clauses) + " ORDER BY o.id DESC LIMIT ?",
+                tuple(params) + (limit,))]
+            return [self.get_order(i) for i in ids]
+
+    def query_item_requests(self, *, status: str | None = None, kind: str | None = None,
+                            viewer_id: int | None = None, mine_only: bool = False,
+                            archived: bool = False, accounting_db: str | None = None,
+                            q: str | None = None, limit: int = 500) -> list[dict]:
+        clauses = ["r.archived_at IS NOT NULL" if archived else "r.archived_at IS NULL"]
+        params: list = []
+        if status:
+            clauses.append("r.status=?")
+            params.append(status)
+        if kind:
+            clauses.append("r.kind=?")
+            params.append(kind)
+        if viewer_id is not None:
+            if mine_only or archived:
+                clauses.append("r.owner_id=?")
+            else:
+                clauses.append("(r.owner_id IS NULL OR r.owner_id=?)")
+            params.append(viewer_id)
+        if accounting_db:
+            clauses.append("lower(trim(COALESCE(r.accounting_db,''))) = lower(trim(?))")
+            params.append(accounting_db)
+        if q and q.strip():
+            needle = f"%{q.strip()}%"
+            clauses.append("(CAST(r.id AS TEXT)=? OR r.product_name LIKE ? OR r.text LIKE ? "
+                           "OR u.name LIKE ?)")
+            params += [q.strip(), needle, needle, needle]
+        with self._lock:
+            return self._fetchall(
+                self._ITEM_REQUEST_SELECT + "WHERE " + " AND ".join(clauses)
+                + " ORDER BY r.id DESC LIMIT ?", tuple(params) + (limit,))
+
+    # ---- weekly archive (v2.8.0) ----
+    def archive_closed(self, cutoff: str) -> dict[str, int]:
+        """Move finished orders / requests (last change before ``cutoff``) to the
+        archive. Nothing is deleted; archived rows are read-only."""
+        ts = now_iso()
+        marks = ",".join("?" for _ in CLOSED_ORDER_STATUSES)
+        with self._lock:
+            orders = self._conn.execute(
+                "UPDATE orders SET archived_at=? WHERE archived_at IS NULL AND updated_at<=? "
+                f"AND (status IN ({marks}) OR shipped_at IS NOT NULL)",
+                (ts, cutoff, *CLOSED_ORDER_STATUSES)).rowcount
+            requests = self._conn.execute(
+                "UPDATE item_requests SET archived_at=? WHERE archived_at IS NULL "
+                "AND status='done' AND COALESCE(handled_at, created_at)<=?",
+                (ts, cutoff)).rowcount
+            self._commit()
+        return {"orders": int(orders), "requests": int(requests)}
+
+    # ---- activity log (v2.8.0) ----
+    def log_activity(self, *, staff_id: int | None, actor: str, action: str, target_type: str,
+                     target_id: int | None, customer_id: int | None = None,
+                     to_staff_id: int | None = None, detail: str = "") -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO activity_log (ts, staff_id, actor, action, target_type, target_id, "
+                "customer_id, to_staff_id, detail) VALUES (?,?,?,?,?,?,?,?,?)",
+                (now_iso(), staff_id, actor, action, target_type, target_id, customer_id,
+                 to_staff_id, detail[:300]))
+            self._commit()
+            return cur.lastrowid
+
+    def list_activity(self, *, staff_id: int | None = None, customer_id: int | None = None,
+                      date_from: str | None = None, date_to: str | None = None,
+                      targets: list[tuple[str, int]] | None = None,
+                      limit: int = 500) -> list[dict]:
+        clauses, params = [], []
+        if staff_id is not None:
+            clauses.append("(a.staff_id=? OR a.to_staff_id=?)")
+            params += [staff_id, staff_id]
+        if customer_id is not None:
+            clauses.append("a.customer_id=?")
+            params.append(customer_id)
+        if date_from:
+            clauses.append("a.ts>=?")
+            params.append(date_from)
+        if date_to:
+            clauses.append("a.ts<?")
+            params.append(date_to)
+        if targets is not None:
+            if not targets:
+                return []
+            clauses.append("(" + " OR ".join("(a.target_type=? AND a.target_id=?)"
+                                             for _ in targets) + ")")
+            for kind, ident in targets:
+                params += [kind, ident]
+        where = ("WHERE " + " AND ".join(clauses) + " ") if clauses else ""
+        order = "ASC" if targets is not None else "DESC"
+        with self._lock:
+            return self._fetchall(
+                "SELECT a.*, u.name AS customer_name FROM activity_log a "
+                "LEFT JOIN users u ON u.id = a.customer_id " + where
+                + f"ORDER BY a.id {order} LIMIT ?", tuple(params) + (limit,))
 
     # ---- audit ----
     def audit(self, actor: str, action: str, detail: str) -> None:

@@ -347,6 +347,30 @@ class ShopApiClient:
             "POST", "/item-requests", key=self._settings.bot_api_key, json_body=body
         )
 
+    async def phone_search(self, q: str) -> dict:
+        """v2.8.0: the best rows of the current price list for a typed phone name."""
+        result = await self._request(
+            "GET", "/phones/search", key=self._settings.bot_api_key,
+            params={"q": str(q)[:100]},
+        )
+        return result if isinstance(result, dict) else {}
+
+    async def create_purchase_request(
+        self, platform: str, chat_id: str | int, *, row_key: str | None = None,
+        kala_code: int | None = None, variant_id: int | None = None, qty: int = 1,
+    ) -> dict | None:
+        """v2.8.0 «درخواست خرید» (no order, no payment: staff confirm the stock)."""
+        body: dict[str, Any] = {"platform": platform, "chat_id": str(chat_id), "qty": int(qty)}
+        if row_key:
+            body["row_key"] = str(row_key)
+        if kala_code:
+            body["kala_code"] = int(kala_code)
+        if variant_id:
+            body["variant_id"] = int(variant_id)
+        return await self._request(
+            "POST", "/purchase-requests", key=self._settings.bot_api_key, json_body=body
+        )
+
     async def admin_get_item_request(self, request_id: int) -> dict | None:
         return await self._request(
             "GET", f"/admin/item-requests/{int(request_id)}", key=self._settings.admin_api_key

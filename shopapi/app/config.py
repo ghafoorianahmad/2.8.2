@@ -119,6 +119,9 @@ class Settings:
     receipt_deadline_minutes: int = 30
     #: Seconds between checks for orders past the receipt deadline (0 = off).
     order_timeout_check_seconds: int = 30
+    #: v2.8.0: a phone is ordered only while its product has stock in «سازه حساب»;
+    #: otherwise the bot offers «درخواست خرید». false = the list alone decides.
+    phone_stock_required: bool = True
 
     # --- Sales windows (Asia/Tehran; decision 2026-10-14) ---
     #: false = sales follow only the manual buttons in ShopAdmin.
@@ -230,6 +233,7 @@ class Settings:
             price_level_site=_env_int("PRICE_LEVEL_SITE", 3),
             receipt_deadline_minutes=max(1, _env_int("RECEIPT_DEADLINE_MINUTES", 30)),
             order_timeout_check_seconds=_env_int("ORDER_TIMEOUT_CHECK_SECONDS", 30),
+            phone_stock_required=_env_bool("PHONE_STOCK_REQUIRED", True),
             sales_windows_enabled=_env_bool("SALES_WINDOWS_ENABLED", True),
             sales_morning_close=_env("SALES_MORNING_CLOSE", "13:30"),
             sales_evening_close=_env("SALES_EVENING_CLOSE", "20:30"),

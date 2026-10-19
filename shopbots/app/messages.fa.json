@@ -51,7 +51,10 @@
     "BTN_REQUEST_THIS": "📝 درخواست این کالا",
     "BTN_CANCEL_ORDER": "❌ لغو سفارش",
     "BTN_CANCEL_ORDER_YES": "بله، سفارش لغو شود",
-    "BTN_CANCEL_ORDER_NO": "خیر، برگرد"
+    "BTN_CANCEL_ORDER_NO": "خیر، برگرد",
+    "BTN_PURCHASE_REQUEST": "🛍 درخواست خرید",
+    "BTN_NOTIFY_SALES": "🔔 وقتی فروش باز شد خبرم کن",
+    "BTN_OTHER_MODELS": "‹ مدل‌های دیگر"
   },
 
   "messages": {
@@ -211,7 +214,20 @@
     "PRICELIST_FAILED_NOTICE": "⚠️ لیست قیمت جدید خوانده نشد (شمارهٔ {list_id})؛ احتمالاً قالب PDF عوض شده است.\nقیمت‌های قبلی فعال ماند.",
     "PROXIES_DEAD_NOTICE": "⚠️ هیچ پراکسی تلگرام کار نمی‌کند؛ لیست قیمت به‌روز نمی‌شود.\nدر برنامهٔ مدیریت › لیست قیمت › پراکسی‌ها یک پراکسی سالم وارد کنید.",
     "TG_LOGIN_NOTICE": "⚠️ ورود حساب تلگرام فروشگاه باطل شده است؛ اسکریپت ورود (shoptg) را دوباره روی سرور اجرا کنید.",
-    "TG_UNREACHABLE_NOTICE": "⚠️ اتصال به تلگرام برقرار نیست؛ لیست قیمت به‌روز نمی‌شود."
+    "TG_UNREACHABLE_NOTICE": "⚠️ اتصال به تلگرام برقرار نیست؛ لیست قیمت به‌روز نمی‌شود.",
+    "PHONE_SEARCH_MODELS": "🔍 نتیجهٔ جستجوی «{text}» در لیست قیمت امروز\n────────────\nمدل مورد نظر را انتخاب کنید:",
+    "PHONE_SEARCH_COLORS": "📱 {model}\n────────────\nرنگ را انتخاب کنید:",
+    "PHONE_SEARCH_PARTS": "📱 {model} — {color}\n────────────\nنوع / پارت را انتخاب کنید:",
+    "PHONE_SEARCH_ROW": "📱 {model}\n────────────\nرنگ: {color}{part}\nقیمت امروز: {price}",
+    "PHONE_SEARCH_PART_LINE": "\nنوع / پارت: {part}",
+    "PHONE_SEARCH_NONE": "«{text}» در لیست قیمت و کالاهای فروشگاه پیدا نشد.\nمی‌توانید آن را با «📝 درخواست کالای ناموجود» درخواست بدهید.",
+    "PURCHASE_REQUEST_NOTE": "این گوشی الان آمادهٔ سفارش مستقیم نیست (در انبار فروشگاه موجود نیست).\nبا «🛍 درخواست خرید» فروشگاه موجودی را بررسی می‌کند و نتیجه را همین‌جا به شما خبر می‌دهد. این درخواست پرداختی لازم ندارد.",
+    "PURCHASE_REQUEST_SENT": "☑ درخواست خرید «{name}» ثبت شد.\nفروشگاه موجودی را بررسی می‌کند؛ اگر موجود باشد سفارش شما ثبت می‌شود و برای پرداخت پیام می‌گیرید.",
+    "PURCHASE_ORDER_READY": "✅ موجودی «{name}» تأیید شد و سفارش شمارهٔ {order_id} برای شما ثبت شد.\nمبلغ: {total}",
+    "SALES_CLOSED_SEARCH": "🔒 فروش گوشی الان بسته است؛ قیمت‌ها آخرین قیمت‌های لیست هستند.",
+    "SALES_NOTIFY_OK": "🔔 باشه! وقتی فروش گوشی باز شد یک پیام برایتان می‌فرستیم.",
+    "SALES_OPENED_NOTICE": "🔔 فروش گوشی باز شد!\nلیست قیمت امروز آماده است؛ نام گوشی را بنویسید یا از «🔍 جستجو» استفاده کنید.",
+    "CART_ITEM_NO_STOCK": "⚠️ «{name}» الان در انبار فروشگاه موجود نیست؛ سفارش ثبت نشد.\nآن را از سبد حذف کنید و از «🛍 درخواست خرید» در صفحهٔ همان گوشی استفاده کنید."
   },
 
   "order_status": {
@@ -243,6 +259,10 @@
     "PRICE_INQUIRY_SENT / CART_ITEM_*": "{name}",
     "ITEM_REQUEST_REPLY": "{product} {text}",
     "CHOOSE_PART": "{name} {color}",
+    "PHONE_SEARCH_MODELS / PHONE_SEARCH_NONE": "{text}",
+    "PHONE_SEARCH_COLORS / PHONE_SEARCH_PARTS / PHONE_SEARCH_ROW": "{model} {color} {part} {price}",
+    "PURCHASE_REQUEST_SENT": "{name}",
+    "PURCHASE_ORDER_READY": "{name} {order_id} {total}",
     "ORDER_SHIPPED_COURIER*": "{name} {phone}",
     "CANCEL_ORDER_CONFIRM / CANCEL_ORDER_DONE": "{order_id}",
     "ASK_RECEIPT / PAYMENT_APPROVED / PAYMENT_REJECTED": "{order_id}",

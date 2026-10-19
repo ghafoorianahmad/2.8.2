@@ -7,7 +7,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 
-from .. import deps, groups as group_config, order_timeout, receipts, sales, security_watch
+from .. import deps, groups as group_config, order_timeout, phone_search, purchase, receipts
+from .. import sales, security_watch
 from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
@@ -24,6 +25,7 @@ from ..schemas import (
     OrderOut,
     ProductOut,
     ProductPage,
+    PurchaseRequestIn,
     ReceiptIn,
     RequestSearchItem,
     SecurityReportIn,
@@ -55,6 +57,8 @@ ITEM_REQUESTS_PER_DAY = 10
 NOT_FOR_SALE_DETAIL = "is not available for sale"
 ON_INQUIRY_DETAIL = "is price on inquiry"
 NOT_IN_PRICE_LIST_DETAIL = "is not in the current price list"
+#: v2.8.0: a phone whose product has no stock in «سازه حساب» -> «درخواست خرید».
+PHONE_NO_STOCK_DETAIL = "has no stock; purchase request"
 
 
 def variant_text(color: str, part: str) -> str:
@@ -80,7 +84,8 @@ def shop_state(db: OwnDB, settings: Settings) -> ShopStateOut:
 
 
 def customer_view(product: dict, cfg: group_config.GroupConfig,
-                  phones: phone_catalog.PhoneCatalog, *, in_stock: bool) -> dict | None:
+                  phones: phone_catalog.PhoneCatalog, *, in_stock: bool,
+                  stock_required: bool = False) -> dict | None:
     """A reader product as a customer may see it, or None (hidden). v2.6.0:
 
     * only groups chosen «show in bot»;
@@ -100,7 +105,9 @@ def customer_view(product: dict, cfg: group_config.GroupConfig,
     if cfg.is_phone(group):
         if not phones.sellable(product["code"]):
             return None
-        return phones.overlay(product)
+        # v2.8.0: the «سازه حساب» stock; none -> the bot offers «درخواست خرید»
+        stock = float(product.get("available_qty") or 0) if stock_required else None
+        return {**phones.overlay(product), "stock_qty": stock}
     if product.get("unit_price") is None or float(product["unit_price"]) <= 0:
         return None
     if in_stock and float(product.get("available_qty") or 0) <= 0:
@@ -186,7 +193,9 @@ def products(
     )
     items = [view for it in everything["items"]
              if (group is None or int(group) in cfg.chain(it.get("group")))
-             and (view := customer_view(it, cfg, phones, in_stock=in_stock)) is not None]
+             and (view := customer_view(it, cfg, phones, in_stock=in_stock,
+                                        stock_required=settings.phone_stock_required))
+             is not None]
     start = (page - 1) * page_size
     return {"total": len(items), "page": page, "page_size": page_size,
             "items": items[start:start + page_size]}
@@ -223,7 +232,8 @@ def product(
     found = reader.get_products_for_order([code], level, db.pending_reservations()).get(code)
     if found is not None:
         found = customer_view({**found, "code": code}, group_config.load(db, reader),
-                              phone_catalog.load(db, settings), in_stock=False)
+                              phone_catalog.load(db, settings), in_stock=False,
+                              stock_required=settings.phone_stock_required)
     if found is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Product not found")
     return ProductOut(
@@ -438,6 +448,9 @@ def create_order(
                 if not variant["available"]:
                     raise HTTPException(status.HTTP_409_CONFLICT,
                                         f"Color not available for product {kala_code}")
+                if settings.phone_stock_required and float(prod.get("available_qty") or 0) < qty:
+                    # v2.8.0: no stock in «سازه حساب» -> the bot offers «درخواست خرید»
+                    raise _refuse(kala_code, PHONE_NO_STOCK_DETAIL)
                 # v2.6.2: the color AND the part / region code the customer picked
                 chosen = variant_text(variant["color"], variant.get("part") or "")
                 items_out.append(
@@ -639,7 +652,14 @@ def get_order(
     if role == "admin" and order.get("user_person_code") is not None:
         person_name = reader.person_names([order["user_person_code"]]).get(
             int(order["user_person_code"]))
-    return OrderOut(**order, invoice_numbers=numbers, person_name=person_name)
+    payment = {}
+    if order.get("status") == "awaiting_payment":
+        # v2.8.0: an order made by staff from a purchase request is paid from the bot
+        payment = dict(payment_instructions=settings.bank_account_text or None,
+                       payment_card_number=settings.payment_card_number or None,
+                       payment_sheba=settings.payment_sheba or None,
+                       payment_owner=settings.payment_owner or None)
+    return OrderOut(**order, invoice_numbers=numbers, person_name=person_name, **payment)
 
 
 @router.get("/users/{platform}/{chat_id}/orders", response_model=list[OrderOut])
@@ -763,10 +783,78 @@ def create_item_request(
     since = (now_utc() - timedelta(days=1)).isoformat(timespec="seconds")
     if db.count_item_requests_since(user["id"], since) >= ITEM_REQUESTS_PER_DAY:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many requests today")
-    row = db.add_item_request(user["id"], payload.kala_code, name, text, payload.kind)
+    row = db.add_item_request(user["id"], payload.kala_code, name, text, payload.kind,
+                              accounting_db=settings.database_name())
     db.audit(role, "item_request_create", f"request id={row['id']} kind={payload.kind}")
     db.add_event("item_request", row["id"], role)
     return {**row, "customer_name": None, "person_code": None, "customer_phone": None}
+
+
+# ---- v2.8.0: smart phone search + «درخواست خرید» -------------------------------------------
+@router.get("/phones/search")
+def phones_search(
+    q: str = Query(min_length=2, max_length=100),
+    role: str = Depends(get_api_identity),
+    reader: AccountingReader = Depends(deps.get_reader),
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+) -> dict:
+    """The best rows of the current price list for what the customer typed
+    (any spelling, Persian or English; see ``phone_search``). Each row says
+    whether it can be ordered now (``order``: mapped, stock in «سازه حساب») or
+    only requested (``purchase``: not mapped, or no stock)."""
+    active, rows = purchase.active_rows(db, settings)
+    state = sales.compute(db, settings)
+    found = phone_search.search(rows, q)
+    level = settings.price_level_for(role)
+    codes = [int(r["kala_code"]) for r in found if r.get("action") == "map" and r.get("kala_code")]
+    stock = purchase.orderable_codes(db, reader, settings, level, codes)
+    items = []
+    for r in found:
+        code = int(r["kala_code"]) if r.get("action") == "map" and r.get("kala_code") else None
+        can_order = code is not None and (code in stock or not settings.phone_stock_required)
+        items.append({
+            "row_key": r["row_key"], "model_index": r["model_index"], "model": r["model"],
+            "section": r["section"], "description": r["description"],
+            "color": (r.get("color_label") or r.get("color") or "").strip(),
+            "part": r["part"], "price": int(r["price_rial"]), "kala_code": code,
+            "variant_id": r.get("mapping_id") if code else None,
+            "action": "order" if can_order else "purchase", "score": r["score"],
+        })
+    return {"list_ready": bool(rows), "list_date": (active or {}).get("list_date") or "",
+            "sales_open": state.open, "items": items}
+
+
+@router.post("/purchase-requests", response_model=ItemRequestOut,
+             status_code=status.HTTP_201_CREATED)
+def create_purchase_request(
+    payload: PurchaseRequestIn,
+    role: str = Depends(get_api_identity),
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+) -> dict:
+    """«درخواست خرید» of a phone of the current list (by row, or by the product +
+    color variant shown in the bot). No order, no payment: staff confirm the
+    stock in ShopAdmin, which creates the order (or answer «ناموجود»)."""
+    if role not in ("bot", "admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not available on this channel")
+    user = _requesting_user(db, payload.platform, payload.chat_id)
+    row_key = payload.row_key
+    if row_key is None and payload.variant_id is not None:
+        mapping = PriceListRepo(db).get_mapping(payload.variant_id)
+        if mapping is None or (payload.kala_code and mapping.get("kala_code") != payload.kala_code):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Row not found in the current list")
+        row_key = mapping["row_key"]
+    if row_key is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Choose the phone")
+    row = purchase.row_by_key(db, settings, row_key)
+    if row is None or not row.get("price_rial") or row.get("action") == "ignore":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Row not found in the current list")
+    since = (now_utc() - timedelta(days=1)).isoformat(timespec="seconds")
+    if db.count_item_requests_since(user["id"], since) >= ITEM_REQUESTS_PER_DAY:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many requests today")
+    created = purchase.request_from_row(db, settings, row, user, payload.qty, role)
+    return {**created, "customer_name": None, "person_code": None, "customer_phone": None}
 
 
 @router.post("/security/report", status_code=status.HTTP_204_NO_CONTENT)

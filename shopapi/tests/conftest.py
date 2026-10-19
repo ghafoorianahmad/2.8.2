@@ -180,6 +180,8 @@ def settings():
         # Sales windows (price list / Friday) have their own tests (test_v250.py).
         sales_windows_enabled=False,
         accounting_status_code=0,
+        # v2.8.0: phones need stock in «سازه حساب» (own tests in test_v280.py).
+        phone_stock_required=False,
     )
 
 

@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 
-from .. import deps, receipts, sales, tracking
+from .. import archive, deps, ownership, receipts, sales, tracking
 from ..accounting_reader import AccountingReader
 from ..accounting_writer import (
     AccountingConfigError,
@@ -25,6 +25,7 @@ from ..db_own import OwnDB
 from ..schemas import ShipIn
 from ..schemas import (
     ApproveUserIn,
+    AssignIn,
     OrderOut,
     PersonMatch,
     RejectIn,
@@ -40,6 +41,7 @@ from ..staff import (
     P_EVENTS,
     P_ORDERS_CANCEL,
     P_ORDERS_EXPIRE,
+    P_ORDERS_ASSIGN,
     P_ORDERS_SHIP,
     P_ORDERS_VIEW,
     P_PAYMENTS_DECIDE,
@@ -205,6 +207,9 @@ def approve_user(
         f"user id={user_id} person_code={person_code} created={created}",
     )
     db.add_event("customer_approved", user_id, who.actor)
+    db.log_activity(staff_id=ownership.staff_id(who), actor=who.actor,
+                    action=ownership.A_CUSTOMER_APPROVE, target_type="customer",
+                    target_id=user_id, customer_id=user_id)
     return UserOut(**user)
 
 
@@ -222,21 +227,173 @@ def reject_user(
     reason = (payload.reason if payload and payload.reason else "")[:200]
     db.audit(who.actor, "user_reject", f"user id={user_id} reason={reason}")
     db.add_event("customer_rejected", user_id, who.actor)
+    db.log_activity(staff_id=ownership.staff_id(who), actor=who.actor,
+                    action=ownership.A_CUSTOMER_REJECT, target_type="customer",
+                    target_id=user_id, customer_id=user_id)
     return UserOut(**user)
+
+
+def order_out(db: OwnDB, who: Identity, order: dict, **extra) -> OrderOut:
+    """An order for ShopAdmin with the ownership fields for this viewer (v2.8.0)."""
+    fields = {**order, **ownership.owner_fields(db, who, order), **extra}
+    return OrderOut(**fields)
+
+
+def _person_names(reader: AccountingReader, orders: list[dict]) -> dict:
+    try:
+        return reader.person_names(o.get("user_person_code") for o in orders)
+    except Exception:  # noqa: BLE001 - the list works without names (ShopAdmin shows the code)
+        return {}
 
 
 @router.get("/orders", response_model=list[OrderOut])
 def list_orders(
     status_filter: str = Query("receipt_uploaded", alias="status"),
+    mine: bool = Query(False),
     db: OwnDB = Depends(deps.get_db),
     reader: AccountingReader = Depends(deps.get_reader),
-    _: Identity = CAN_VIEW_ORDERS,
+    who: Identity = CAN_VIEW_ORDERS,
 ) -> list[OrderOut]:
-    orders = db.list_orders(status_filter)
-    # v2.6.0: the linked person's name from the accounting DB (one query; the
-    # list still works without it - ShopAdmin then shows the code).
-    names = reader.person_names(o.get("user_person_code") for o in orders)
-    return [OrderOut(**o, person_name=names.get(o.get("user_person_code"))) for o in orders]
+    """v2.8.0: a sales user sees free orders and their own (``mine``: own only);
+    another user's order is never listed. Archived orders: /admin/archive/orders."""
+    orders = db.query_orders(status=status_filter or None, viewer_id=ownership.viewer_id(who),
+                             mine_only=mine)
+    if mine and ownership.is_manager(who) and who.user_id is not None:
+        orders = [o for o in orders if o.get("owner_id") == who.user_id]
+    # v2.6.0: the linked person's name from the accounting DB (one query).
+    names = _person_names(reader, orders)
+    return [order_out(db, who, o, person_name=names.get(o.get("user_person_code")))
+            for o in orders]
+
+
+def _visible_order(db: OwnDB, who: Identity, order_id: int) -> dict:
+    return ownership.ensure_visible(who, db.get_order(order_id), "Order")
+
+
+@router.get("/orders/{order_id}", response_model=OrderOut)
+def get_order_admin(
+    order_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    who: Identity = CAN_VIEW_ORDERS,
+) -> OrderOut:
+    order = _visible_order(db, who, order_id)
+    names = _person_names(reader, [order])
+    return order_out(db, who, order, person_name=names.get(order.get("user_person_code")))
+
+
+@router.get("/orders/{order_id}/timeline")
+def order_timeline(
+    order_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_VIEW_ORDERS,
+) -> list[dict]:
+    """What was done on the order (and on the purchase request it came from).
+    Names only for the manager; a sales user sees «شما» / nothing."""
+    order = _visible_order(db, who, order_id)
+    targets = [("order", order_id)]
+    if order.get("request_id"):
+        targets.append(("request", int(order["request_id"])))
+    return ownership.timeline(db, who, db.list_activity(targets=targets, limit=500))
+
+
+@router.post("/orders/{order_id}/claim", response_model=OrderOut)
+def claim_order(
+    order_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_VIEW_ORDERS,
+) -> OrderOut:
+    """«برمی‌دارم»: a free order becomes this user's (the others no longer see it)."""
+    order = _visible_order(db, who, order_id)
+    ownership.ensure_order_editable(order)
+    ownership.take(db, who, "order", order)
+    return order_out(db, who, db.get_order(order_id))
+
+
+@router.post("/orders/{order_id}/assign", response_model=OrderOut)
+def assign_order(
+    order_id: int,
+    payload: AssignIn,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_VIEW_ORDERS,
+) -> OrderOut:
+    """Hand the order over at any stage until it is finished (manager, «ارجاع سفارش»,
+    or the owner). The new owner sees what was already done and continues."""
+    order = _visible_order(db, who, order_id)
+    ownership.ensure_order_editable(order)
+    ownership.assign(db, who, "order", order, payload.staff_id)
+    return order_out(db, who, db.get_order(order_id))
+
+
+@router.get("/assignees")
+def list_assignees(
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_VIEW_ORDERS,
+) -> list[dict]:
+    """Colleagues an order / request can be handed to (active, may see orders).
+    Only id and display name; never a role, username or their work."""
+    from ..staff import P_ORDERS_VIEW as _view, effective_permissions
+
+    out = []
+    for row in db.list_staff():
+        if not row["active"] or row["id"] == who.user_id:
+            continue
+        perms = effective_permissions(row["role"], row.get("perm_grant"), row.get("perm_revoke"))
+        if _view in perms:
+            out.append({"id": row["id"],
+                        "name": str(row["full_name"] or "").strip() or row["username"]})
+    return out
+
+
+@router.get("/activity")
+def list_activity(
+    staff_id: Optional[int] = Query(None, gt=0),
+    customer_id: Optional[int] = Query(None, gt=0),
+    date_from: Optional[str] = Query(None, max_length=40),
+    date_to: Optional[str] = Query(None, max_length=40),
+    limit: int = Query(500, ge=1, le=5000),
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = SIGNED_IN,
+) -> list[dict]:
+    """«گزارش فعالیت» (manager only): who did what, on which order / customer /
+    request, and when. Dates are ISO (UTC) bounds: from <= ts < to."""
+    if not ownership.is_manager(who):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Managers only")
+    rows = db.list_activity(staff_id=staff_id, customer_id=customer_id, date_from=date_from,
+                            date_to=date_to, limit=limit)
+    return ownership.timeline(db, who, rows)
+
+
+@router.get("/archive/orders", response_model=list[OrderOut])
+def archived_orders(
+    q: Optional[str] = Query(None, max_length=100),
+    accounting_db: Optional[str] = Query(None, max_length=128),
+    db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    settings: Settings = Depends(deps.get_settings),
+    who: Identity = CAN_VIEW_ORDERS,
+) -> list[OrderOut]:
+    """«بایگانی» (read-only). A sales user: their own orders of the current fiscal
+    year (the connected DB_NAME) only; the manager: everything, every year, search."""
+    if ownership.is_manager(who):
+        orders = db.query_orders(archived=True, accounting_db=accounting_db or None, q=q)
+    else:
+        orders = db.query_orders(archived=True, viewer_id=who.user_id,
+                                 accounting_db=settings.database_name(), q=q)
+    names = _person_names(reader, orders)
+    return [order_out(db, who, o, person_name=names.get(o.get("user_person_code")))
+            for o in orders]
+
+
+@router.post("/archive/run")
+def run_archive(
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = SIGNED_IN,
+) -> dict:
+    """Archive finished orders / requests now (manager; the weekly job does the same)."""
+    if not ownership.is_manager(who):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Managers only")
+    return archive.archive_now(db, who.actor)
 
 
 @router.post("/orders/{order_id}/approve-payment", response_model=OrderOut)
@@ -251,13 +408,12 @@ def approve_payment(
     # Serialize the re-check + write so concurrent approvals cannot write the
     # same order twice or oversell.
     with db.reservation_guard():
-        order = db.get_order(order_id)
-        if order is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+        order = _visible_order(db, who, order_id)
         if order["status"] != "receipt_uploaded":
             raise HTTPException(
                 status.HTTP_409_CONFLICT, f"Order in status {order['status']}; cannot approve"
             )
+        ownership.take(db, who, "order", order)
         if order["user_status"] != "approved" or order["user_person_code"] is None:
             # Orders of customers awaiting approval are written only after approval.
             raise HTTPException(status.HTTP_409_CONFLICT, "Customer is not approved yet")
@@ -316,6 +472,7 @@ def approve_payment(
                 f"committed={result.committed} idempotent={result.idempotent}",
             )
             db.add_event("payment_approved", order_id, who.actor)
+            ownership.log(db, who, ownership.A_RECEIPT_APPROVE, "order", order)
             if result.duplicate_after_commit:
                 # Another program wrote the same Codlp next to ours. Never delete
                 # anything in the accounting DB: only alert the admin.
@@ -330,7 +487,7 @@ def approve_payment(
                 f"order id={order_id} would_be_codlp={result.accounting_order_no}",
             )
             order = db.get_order(order_id)
-        return OrderOut(**order)
+        return order_out(db, who, order)
 
 
 @router.post("/orders/{order_id}/reject-payment", response_model=OrderOut)
@@ -340,19 +497,19 @@ def reject_payment(
     db: OwnDB = Depends(deps.get_db),
     who: Identity = CAN_DECIDE_PAYMENTS,
 ) -> OrderOut:
-    order = db.get_order(order_id)
-    if order is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+    order = _visible_order(db, who, order_id)
     if order["status"] != "receipt_uploaded":
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"Order in status {order['status']}; cannot reject"
         )
+    ownership.take(db, who, "order", order)
     db.set_payment_decided(order_id, "rejected")
     order = db.set_order_status(order_id, "rejected")
     reason = (payload.reason if payload and payload.reason else "")[:200]
     db.audit(who.actor, "reject_payment", f"order id={order_id} reason={reason}")
     db.add_event("payment_rejected", order_id, who.actor)
-    return OrderOut(**order)
+    ownership.log(db, who, ownership.A_RECEIPT_REJECT, "order", order, detail=reason)
+    return order_out(db, who, order)
 
 
 @router.post("/orders/expire")
@@ -388,9 +545,10 @@ def get_receipt_image(
     order_id: int,
     db: OwnDB = Depends(deps.get_db),
     settings: Settings = Depends(deps.get_settings),
-    _: Identity = CAN_VIEW_ORDERS,
+    who: Identity = CAN_VIEW_ORDERS,
 ):
     """The newest receipt image of an order (JPEG/PNG)."""
+    _visible_order(db, who, order_id)
     row = db.latest_receipt_file(order_id)
     folder = settings.receipts_path()
     path = receipts.resolve(folder, row["file_name"]) if row and folder else None
@@ -420,19 +578,21 @@ def ship_order(
     payload = payload or ShipIn()
     name = " ".join(payload.courier_name.split())
     phone = courier_phone(payload.courier_phone)
-    order = db.get_order(order_id)
-    if order is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+    order = _visible_order(db, who, order_id)
     if order["status"] not in SHIPPABLE_STATUSES:
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"Order in status {order['status']}; cannot ship"
         )
     if order.get("shipped_at"):
-        return OrderOut(**order)
+        return order_out(db, who, order)
+    ownership.ensure_order_editable(order)
+    ownership.take(db, who, "order", order)
     order = db.set_shipped(order_id, name or None, phone or None)
     db.audit(who.actor, "order_ship", f"order id={order_id} courier={'yes' if name or phone else 'no'}")
     db.add_event(tracking.EVENT_SHIPPED, order_id, who.actor)
-    return OrderOut(**order)
+    ownership.log(db, who, ownership.A_SHIP, "order", order,
+                  detail="courier" if name or phone else "")
+    return order_out(db, who, order)
 
 
 #: v2.7.0: orders staff may cancel (never one already paid and confirmed).
@@ -448,18 +608,18 @@ def cancel_order(
     """Staff cancel an order that is not confirmed yet. Local only: «سازه حساب»
     is never touched; an order already written there raises a ShopAdmin warning."""
     with db.reservation_guard():
-        order = db.get_order(order_id)
-        if order is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+        order = _visible_order(db, who, order_id)
         if order["status"] not in STAFF_CANCELLABLE:
             raise HTTPException(status.HTTP_409_CONFLICT,
                                 f"Order in status {order['status']}; cannot be cancelled")
+        ownership.take(db, who, "order", order)
         db.cancel_order_any(order_id, "staff", STAFF_CANCELLABLE)
     db.audit(who.actor, "order_staff_cancel", f"order id={order_id}")
     db.add_event("order_cancelled_by_staff", order_id, who.actor)
+    ownership.log(db, who, ownership.A_CANCEL, "order", order)
     if order.get("accounting_order_no"):
         db.add_event("order_cancel_written", order_id, who.actor)
-    return OrderOut(**db.get_order(order_id))
+    return order_out(db, who, db.get_order(order_id))
 
 
 @router.post("/orders/sync-invoices")

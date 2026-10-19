@@ -19,7 +19,8 @@ from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
 from ..pricelist.importer import ImportResult, import_pdf
-from ..pricelist.matching import auto_match
+from .. import groups as group_config
+from ..pricelist.matching import SUGGESTIONS, auto_match, confident, name_candidates, name_match
 from ..pricelist.repo import PriceListRepo
 from ..proxypool import ProxyLink, ProxyPool, masked_secret, parse_proxy_link
 from ..security import Identity, require_permission, require_worker
@@ -122,6 +123,35 @@ def _decode_pdf(data_b64: str, settings: Settings) -> bytes:
     return data
 
 
+def phone_product_names(db: OwnDB, reader: AccountingReader, settings: Settings) -> dict[int, str]:
+    """v2.8.0: {code: name} of the «سازه حساب» products rows may be mapped to: the
+    phone groups' products (every active product while no phone group is chosen)."""
+    cfg = group_config.load(db, reader)
+    if not cfg.phone_configured:
+        return reader.product_names()
+    known = {int(g["code"]) for g in reader.list_groups() if g.get("code") is not None}
+    phone_groups = {c for c in known | cfg.phone if cfg.is_phone(c)}
+    found = reader.list_products(q=None, in_stock=False, page=1, page_size=1_000_000,
+                                 level=settings.price_level_bot, include_groups=phone_groups)
+    return {int(p["code"]): str(p["name"] or "") for p in found["items"]
+            if cfg.is_phone(p.get("group"))}
+
+
+def _name_match(db: OwnDB, repo: PriceListRepo, reader: AccountingReader | None,
+                settings: Settings | None, list_id: int, actor: str) -> int:
+    """Name-similarity mapping of a list; the accounting DB being down = skipped."""
+    if reader is None or settings is None:
+        return 0
+    try:
+        names = phone_product_names(db, reader, settings)
+    except Exception:  # noqa: BLE001 - pyodbc / timeouts: the rows stay for staff
+        return 0
+    done = name_match(repo, list_id, names, actor="system:auto")
+    if done:
+        db.audit(actor, "price_mapping_auto_name", f"list id={list_id} rows={done}")
+    return done
+
+
 def _import_out(result: ImportResult) -> ImportOut:
     return ImportOut(**result.__dict__)
 
@@ -174,6 +204,7 @@ def list_pricelists(
 def upload_pricelist(
     payload: PdfIn,
     db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
     settings: Settings = Depends(deps.get_settings),
     who: Identity = CAN_PRICELIST,
 ) -> ImportOut:
@@ -181,7 +212,11 @@ def upload_pricelist(
     data = _decode_pdf(payload.data_b64, settings)
     result = import_pdf(db, settings, data, source="manual",
                         source_ref=payload.source_ref, actor=who.actor)
-    return _import_out(result)
+    out = _import_out(result)
+    if result.list_id:
+        out.auto_mapped += _name_match(db, PriceListRepo(db), reader, settings, result.list_id,
+                                       who.actor)
+    return out
 
 
 @router.get("/admin/pricelists/rows")
@@ -327,14 +362,38 @@ def put_mapping(
     return repo.mapping_for_key(payload.row_key)
 
 
-def _propagate(db: OwnDB, repo: PriceListRepo, actor: str) -> int:
+def _propagate(db: OwnDB, repo: PriceListRepo, actor: str,
+               reader: AccountingReader | None = None, settings: Settings | None = None) -> int:
     """v2.6.2: a staff decision also decides the other colors / parts of the same
-    model in the newest list (flagged «خودکار» for review)."""
+    model in the newest list (flagged «خودکار» for review). v2.8.0: with the
+    reader, still-unmapped rows are then matched by product-name similarity."""
     plist = repo.latest_list()
     done = auto_match(repo, plist["id"]) if plist is not None else 0
     if done:
         db.audit(actor, "price_mapping_auto", f"list id={plist['id']} rows={done}")
+    if plist is not None:
+        done += _name_match(db, repo, reader, settings, plist["id"], actor)
     return done
+
+
+@router.get("/admin/price-mappings/suggestions")
+def mapping_suggestions(
+    row_key: str = Query(min_length=1, max_length=400),
+    db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    settings: Settings = Depends(deps.get_settings),
+    _: Identity = CAN_VIEW,
+) -> dict:
+    """v2.8.0: the 3 «سازه حساب» products whose names best match a row (the
+    mapping dialog). ``confident`` = the one the matcher would map by itself."""
+    repo = PriceListRepo(db)
+    row = _row_in_known_lists(repo, row_key)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Row not found in the current list")
+    candidates = name_candidates(row, phone_product_names(db, reader, settings))
+    best = confident(candidates)
+    return {"row_key": row_key, "items": candidates[:SUGGESTIONS],
+            "confident": best["code"] if best else None}
 
 
 @router.post("/admin/price-mappings/ignore")
@@ -393,10 +452,13 @@ def confirm_mapping(
 @router.post("/admin/price-mappings/auto")
 def run_auto_match(
     db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    settings: Settings = Depends(deps.get_settings),
     who: Identity = CAN_PRICELIST,
 ) -> dict:
-    """Match the newest list against every earlier decision now (v2.6.2)."""
-    return {"auto_mapped": _propagate(db, PriceListRepo(db), who.actor)}
+    """Match the newest list against every earlier decision now (v2.6.2), then
+    by product-name similarity (v2.8.0; confident matches only)."""
+    return {"auto_mapped": _propagate(db, PriceListRepo(db), who.actor, reader, settings)}
 
 
 # ---- inquiries (staff / bot service key) --------------------------------------------
@@ -475,13 +537,18 @@ def delete_proxy(
 def worker_pricelist(
     payload: PdfIn,
     db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
     settings: Settings = Depends(deps.get_settings),
     _: str = WORKER,
 ) -> ImportOut:
     data = _decode_pdf(payload.data_b64, settings)
     result = import_pdf(db, settings, data, source="telegram", source_ref=payload.source_ref,
                         posted_at=payload.posted_at, actor="worker")
-    return _import_out(result)
+    out = _import_out(result)
+    if result.list_id:
+        out.auto_mapped += _name_match(db, PriceListRepo(db), reader, settings, result.list_id,
+                                       "worker")
+    return out
 
 
 @router.get("/worker/state")

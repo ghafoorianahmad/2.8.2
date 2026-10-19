@@ -37,6 +37,8 @@ class ProductOut(BaseModel):
     priced_by: str = "accounting"
     variants: Optional[list[VariantOut]] = None
     price_on_inquiry: bool = False
+    #: v2.8.0 (phones): stock in «سازه حساب»; 0 = «درخواست خرید» only; None = not required
+    stock_qty: Optional[float] = None
 
 
 class ProductPage(BaseModel):
@@ -133,6 +135,18 @@ class OrderOut(BaseModel):
     user_name: Optional[str] = None
     user_person_code: Optional[int] = None
     person_name: Optional[str] = None
+    #: v2.8.0 (staff): the customer's mobile (one-click copy), last change,
+    #: ownership (names only for the manager), archive, the source purchase request
+    user_phone: Optional[str] = None
+    updated_at: Optional[str] = None
+    owner_id: Optional[int] = None
+    owner_name: Optional[str] = None
+    owned: bool = False
+    owned_by_me: bool = False
+    finished: bool = False
+    archived: bool = False
+    archived_at: Optional[str] = None
+    request_id: Optional[int] = None
 
 
 class ReceiptIn(BaseModel):
@@ -377,6 +391,28 @@ class ItemRequestIn(BaseModel):
     kind: Literal["unavailable", "inquiry"] = "unavailable"
 
 
+class PurchaseRequestIn(BaseModel):
+    """v2.8.0 «درخواست خرید»: a phone of the current list that cannot be ordered
+    now (not mapped, or no stock in «سازه حساب»). The row by its key, or the
+    product + the color variant (price_mappings.id) picked in the bot."""
+    platform: Platform
+    chat_id: str = Field(min_length=1)
+    row_key: Optional[str] = Field(default=None, min_length=1, max_length=400)
+    kala_code: Optional[int] = Field(default=None, gt=0)
+    variant_id: Optional[int] = Field(default=None, gt=0)
+    qty: int = Field(1, ge=1, le=20)
+
+
+class AssignIn(BaseModel):
+    staff_id: int = Field(gt=0)
+
+
+class StockConfirmIn(BaseModel):
+    """«تأیید موجودی»: map the row if it is not mapped yet, optionally a new price."""
+    kala_code: Optional[int] = Field(default=None, gt=0)
+    price_rial: Optional[int] = Field(default=None, gt=0, le=100_000_000_000)
+
+
 class ItemRequestOut(BaseModel):
     id: int
     user_id: int
@@ -397,6 +433,23 @@ class ItemRequestOut(BaseModel):
     note_by: str = ""
     customer_phone: Optional[str] = None
     messages_count: int = 0
+    #: v2.8.0: ownership / archive (names only for the manager) and «درخواست خرید»
+    owner_id: Optional[int] = None
+    owner_name: Optional[str] = None
+    owned: bool = False
+    owned_by_me: bool = False
+    finished: bool = False
+    archived: bool = False
+    archived_at: Optional[str] = None
+    accounting_db: Optional[str] = None
+    row_key: Optional[str] = None
+    mapping_id: Optional[int] = None
+    color: str = ""
+    part: str = ""
+    price_rial: Optional[int] = None
+    qty: float = 1
+    outcome: str = ""
+    order_id: Optional[int] = None
 
 
 class ItemRequestStatusIn(BaseModel):

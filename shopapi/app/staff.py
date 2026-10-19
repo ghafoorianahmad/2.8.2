@@ -38,6 +38,7 @@ P_ORDERS_CANCEL = "orders.cancel"        # cancel an order (local only)
 P_REQUESTS = "requests.handle"           # item requests: view, reply, mark handled
 P_CUSTOMERS_VIEW = "customers.view"
 P_EVENTS = "events.view"                 # notification feed (badges, desktop notices)
+P_ORDERS_ASSIGN = "orders.assign"        # v2.8.0: reassign an order / request to a colleague
 P_VIEW = "view"                          # everything else read-only: dashboard, products,
 #                                          reports, product groups, price lists, site models
 P_CUSTOMERS_DECIDE = "customers.decide"  # match person, approve / reject customer
@@ -60,6 +61,7 @@ PERMISSION_LABELS: dict[str, str] = {
     P_REQUESTS: "درخواست‌های کالا (دیدن، پاسخ، رسیدگی)",
     P_CUSTOMERS_VIEW: "دیدن مشتریان",
     P_EVENTS: "اعلان‌ها",
+    P_ORDERS_ASSIGN: "ارجاع سفارش",
     P_VIEW: "داشبورد، کالاها، گزارش‌ها و سایر صفحه‌ها (فقط دیدن)",
     P_CUSTOMERS_DECIDE: "تأیید یا رد مشتری",
     P_ORDERS_EXPIRE: "لغو سفارش‌های بی‌رسید و هماهنگی فاکتورها",

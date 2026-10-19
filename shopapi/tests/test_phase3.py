@@ -294,7 +294,9 @@ def test_upload_failed_pdf_reports_failed(client, db):
 @needs_sample
 def test_upload_map_ignore_and_filters(client, db, reader):
     seed_products(reader)
-    reader.products[900] = {"name": "iPhone 17 Pro Max 256", "group": 3, "stock": 0.0,
+    # v2.8.0: a name that matches no row (rows are mapped by name similarity now;
+    # see test_v280.py) - this test is about the manual decisions
+    reader.products[900] = {"name": "Phone sample X", "group": 3, "stock": 0.0,
                             "unit_price": 0.0, "image": None}
     admin = staff(db)
     r = client.post("/admin/pricelists", json={"data_b64": _b64(SAMPLE.read_bytes())},

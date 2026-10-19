@@ -10,11 +10,15 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from .. import deps
+from .. import deps, ownership, purchase
 from .. import groups as group_config
 from ..accounting_reader import AccountingReader
+from ..config import Settings
 from ..db_own import OwnDB
 from ..schemas import (
+    AssignIn,
+    OrderOut,
+    StockConfirmIn,
     ItemRequestMessageDelivery,
     ItemRequestMessageIn,
     ItemRequestMessageOut,
@@ -97,20 +101,60 @@ def save_product_groups(
     return _groups_out(db, reader)
 
 
+KIND_PATTERN = "^(unavailable|inquiry|purchase)$"
+
+
+def request_out(db: OwnDB, who: Identity, row: dict) -> dict:
+    """v2.8.0: ownership fields; staff names only for the manager."""
+    return {**ownership.scrub_request(who, row),
+            **ownership.owner_fields(db, who, row, "request")}
+
+
 @router.get("/item-requests", response_model=list[ItemRequestOut])
 def list_item_requests(
     status_filter: Optional[str] = Query(None, alias="status", pattern="^(new|seen|done)$"),
-    kind: Optional[str] = Query(None, pattern="^(unavailable|inquiry)$"),
+    kind: Optional[str] = Query(None, pattern=KIND_PATTERN),
+    mine: bool = Query(False),
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_REQUESTS,
+    who: Identity = CAN_REQUESTS,
 ) -> list[dict]:
-    return db.list_item_requests(status_filter, kind=kind)
+    """v2.8.0: a sales user sees free requests and their own (``mine``: own only)."""
+    rows = db.query_item_requests(status=status_filter, kind=kind,
+                                  viewer_id=ownership.viewer_id(who), mine_only=mine)
+    if mine and ownership.is_manager(who) and who.user_id is not None:
+        rows = [r for r in rows if r.get("owner_id") == who.user_id]
+    return [request_out(db, who, r) for r in rows]
 
 
-def _request_or_404(db: OwnDB, request_id: int) -> dict:
+@router.get("/archive/item-requests", response_model=list[ItemRequestOut])
+def archived_item_requests(
+    q: Optional[str] = Query(None, max_length=100),
+    accounting_db: Optional[str] = Query(None, max_length=128),
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+    who: Identity = CAN_REQUESTS,
+) -> list[dict]:
+    """«بایگانی» of requests (read-only): own + current fiscal year for a sales user."""
+    if ownership.is_manager(who):
+        rows = db.query_item_requests(archived=True, accounting_db=accounting_db or None, q=q)
+    else:
+        rows = db.query_item_requests(archived=True, viewer_id=who.user_id,
+                                      accounting_db=settings.database_name(), q=q)
+    return [request_out(db, who, r) for r in rows]
+
+
+def _request_or_404(db: OwnDB, request_id: int, who: Identity | None = None) -> dict:
     row = db.get_item_request(request_id)
-    if row is None:
+    if row is None or (who is not None and not ownership.visible(who, row)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Request not found")
+    return row
+
+
+def _editable(db: OwnDB, who: Identity, request_id: int) -> dict:
+    """A visible, unfinished request, taken by this user (first action = owner)."""
+    row = _request_or_404(db, request_id, who)
+    ownership.ensure_request_editable(row)
+    ownership.take(db, who, "request", row)
     return row
 
 
@@ -118,9 +162,45 @@ def _request_or_404(db: OwnDB, request_id: int) -> dict:
 def get_item_request(
     request_id: int,
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_REQUESTS,
+    who: Identity = CAN_REQUESTS,
 ) -> dict:
-    return _request_or_404(db, request_id)
+    return request_out(db, who, _request_or_404(db, request_id, who))
+
+
+@router.get("/item-requests/{request_id}/timeline")
+def item_request_timeline(
+    request_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_REQUESTS,
+) -> list[dict]:
+    row = _request_or_404(db, request_id, who)
+    targets = [("request", request_id)]
+    if row.get("order_id"):
+        targets.append(("order", int(row["order_id"])))
+    return ownership.timeline(db, who, db.list_activity(targets=targets, limit=500))
+
+
+@router.post("/item-requests/{request_id}/claim", response_model=ItemRequestOut)
+def claim_item_request(
+    request_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_REQUESTS,
+) -> dict:
+    _editable(db, who, request_id)
+    return request_out(db, who, db.get_item_request(request_id))
+
+
+@router.post("/item-requests/{request_id}/assign", response_model=ItemRequestOut)
+def assign_item_request(
+    request_id: int,
+    payload: AssignIn,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_REQUESTS,
+) -> dict:
+    row = _request_or_404(db, request_id, who)
+    ownership.ensure_request_editable(row)
+    ownership.assign(db, who, "request", row, payload.staff_id)
+    return request_out(db, who, db.get_item_request(request_id))
 
 
 @router.post("/item-requests/{request_id}/status", response_model=ItemRequestOut)
@@ -130,10 +210,16 @@ def set_item_request_status(
     db: OwnDB = Depends(deps.get_db),
     who: Identity = CAN_REQUESTS,
 ) -> dict:
-    _request_or_404(db, request_id)
+    current = _editable(db, who, request_id)
+    if current.get("kind") == purchase.KIND and payload.status == "done":
+        # a purchase request ends with «تأیید موجودی» or «ناموجود» (the customer is told)
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Answer the purchase request: confirm stock or unavailable")
     row = db.set_item_request_status(request_id, payload.status, who.actor)
     db.audit(who.actor, "item_request_status", f"request id={request_id} status={payload.status}")
-    return row
+    ownership.log(db, who, ownership.A_REQUEST_STATUS, "request", current,
+                  detail=payload.status)
+    return request_out(db, who, row)
 
 
 @router.put("/item-requests/{request_id}/note", response_model=ItemRequestOut)
@@ -144,20 +230,53 @@ def set_item_request_note(
     who: Identity = CAN_REQUESTS,
 ) -> dict:
     """The staff's own note (never shown to the customer)."""
-    _request_or_404(db, request_id)
+    current = _editable(db, who, request_id)
     row = db.set_item_request_note(request_id, payload.note.strip(), who.actor)
     db.audit(who.actor, "item_request_note", f"request id={request_id}")
-    return row
+    ownership.log(db, who, ownership.A_NOTE, "request", current)
+    return request_out(db, who, row)
+
+
+@router.post("/item-requests/{request_id}/confirm-stock", response_model=OrderOut)
+def confirm_purchase_stock(
+    request_id: int,
+    payload: StockConfirmIn | None = None,
+    db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    settings: Settings = Depends(deps.get_settings),
+    who: Identity = CAN_REQUESTS,
+) -> OrderOut:
+    """«تأیید موجودی» of a purchase request: a normal order awaiting the
+    customer's payment (receipt within the deadline; sales windows apply)."""
+    payload = payload or StockConfirmIn()
+    row = _request_or_404(db, request_id, who)
+    order = purchase.confirm_stock(db, reader, settings, who, row, payload.kala_code,
+                                   payload.price_rial)
+    return OrderOut(**{**order, **ownership.owner_fields(db, who, order)})
+
+
+@router.post("/item-requests/{request_id}/unavailable", response_model=ItemRequestOut)
+def purchase_unavailable(
+    request_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_REQUESTS,
+) -> dict:
+    """«ناموجود»: the request is closed and the customer gets a polite message."""
+    row = _request_or_404(db, request_id, who)
+    return request_out(db, who, purchase.mark_unavailable(db, who, row))
 
 
 @router.get("/item-requests/{request_id}/messages", response_model=list[ItemRequestMessageOut])
 def list_item_request_messages(
     request_id: int,
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_REQUESTS,
+    who: Identity = CAN_REQUESTS,
 ) -> list[dict]:
-    _request_or_404(db, request_id)
-    return db.list_item_request_messages(request_id)
+    _request_or_404(db, request_id, who)
+    rows = db.list_item_request_messages(request_id)
+    if not ownership.is_manager(who):
+        rows = [{**r, "created_by": ""} for r in rows]
+    return rows
 
 
 @router.post("/item-requests/{request_id}/messages", response_model=ItemRequestMessageOut,
@@ -170,9 +289,9 @@ def send_item_request_message(
 ) -> dict:
     """A reply to the customer. Stored as ``pending``; the bot of the customer's
     platform delivers it (events feed) and reports ``sent`` / ``failed``."""
-    row = _request_or_404(db, request_id)
     if who.kind != "staff":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only staff can message customers")
+    row = _editable(db, who, request_id)
     text = payload.text.strip()
     if not text:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Message is empty")
@@ -181,6 +300,7 @@ def send_item_request_message(
     message = db.add_item_request_message(request_id, text, who.actor)
     db.audit(who.actor, "item_request_message", f"request id={request_id} message id={message['id']}")
     db.add_event("item_request_message", message["id"], who.actor)
+    ownership.log(db, who, ownership.A_REPLY, "request", row)
     return message
 
 

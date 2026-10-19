@@ -55,6 +55,14 @@ CREATE TABLE IF NOT EXISTS kv (
     value TEXT NOT NULL
 );
 
+-- v2.8.0: «وقتی فروش باز شد خبرم کن» (one message per opening, then removed)
+CREATE TABLE IF NOT EXISTS sales_watch (
+    platform TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (platform, chat_id)
+);
+
 CREATE TABLE IF NOT EXISTS receipts (
     order_id INTEGER PRIMARY KEY,
     platform TEXT NOT NULL,
@@ -297,6 +305,26 @@ class Store:
                 "file_ref=excluded.file_ref, created_at=excluded.created_at",
                 (int(order_id), platform, str(chat_id), file_ref, _now()),
             )
+            self._conn.commit()
+
+    # ---- v2.8.0: sales-open watchers -------------------------------------
+    def add_sales_watch(self, platform: str, chat_id: str | int) -> bool:
+        """True = newly added (False: already waiting)."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO sales_watch (platform, chat_id, created_at) VALUES (?,?,?)",
+                (platform, str(chat_id), _now()))
+            self._conn.commit()
+            return cur.rowcount == 1
+
+    def list_sales_watch(self) -> list[dict]:
+        with self._lock:
+            return self._fetchall("SELECT platform, chat_id FROM sales_watch ORDER BY created_at")
+
+    def remove_sales_watch(self, platform: str, chat_id: str | int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM sales_watch WHERE platform=? AND chat_id=?",
+                               (platform, str(chat_id)))
             self._conn.commit()
 
     def get_receipt(self, order_id: int) -> dict | None:

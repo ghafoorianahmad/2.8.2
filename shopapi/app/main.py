@@ -14,7 +14,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from . import catalog_models, control, deps, monitor, order_timeout, sql_errors, tracking
+from . import archive, catalog_models, control, deps, monitor, order_timeout, sql_errors, tracking
 from .db_own import OwnDB
 from .routers import (
     admin, auth, catalog, pricelist, public, server_admin, shop_catalog, staff_admin,
@@ -61,6 +61,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(catalog_models.nightly_loop(settings, db_factory, reader_factory)),
         # Receipt deadline (30 min) -> local cancel; sales window transitions -> events.
         asyncio.create_task(order_timeout.order_timeout_loop(settings, db_factory)),
+        # v2.8.0: Thursday 23:30 (Tehran) -> finished orders / requests to «بایگانی».
+        asyncio.create_task(archive.archive_loop(db_factory)),
     ]
     try:
         yield

@@ -109,3 +109,93 @@ def auto_match(repo, list_id: int, actor: str = "system:auto") -> int:
             (action, code))
         done += 1
     return done
+
+
+# ---- v2.8.0: mapping by product-name similarity ------------------------------------------------
+#: A row is mapped by name only when the best product is this close ...
+NAME_AUTO_MIN = 0.86
+#: ... and clearly ahead of the next one (otherwise it is ambiguous: suggestions only).
+NAME_AUTO_GAP = 0.08
+SUGGESTIONS = 3
+
+
+_PRO_MAX = re.compile(r"pro\s*max|پرو\s*مکس|پرو\s*ماکس", re.IGNORECASE)
+
+
+#: The RAM size (``Ram8``, ``R4``, «رم ۸») and family words a name may or may not carry.
+_RAM_SPEC = re.compile(r"(?<![^\W\d_])(?:ram|r|رم)\s*[\d۰-۹]{1,2}(?![\d۰-۹])", re.IGNORECASE)
+_FILLER = re.compile(r"(?<!\w)(?:galaxy|گلکسی|گالاکسی|گوشی|موبایل)(?!\w)", re.IGNORECASE)
+
+
+def expand(text: str) -> str:
+    """Price-list / hand-typed spellings: ``Promax`` = ``Pro Max``; the RAM size
+    and «Galaxy» are dropped (often missing on one side)."""
+    value = _PRO_MAX.sub(" pro max ", str(text or ""))
+    value = _RAM_SPEC.sub(" ", value)
+    return _FILLER.sub(" ", value)
+
+
+def row_text(row: dict) -> str:
+    """«iPHONE 17 Pro 256» - section + model, without the part / region code."""
+    code = part_code(row.get("description") or "")
+    words = [w for w in str(row.get("description") or "").split() if not code or w != code]
+    return expand(" ".join([str(row.get("section") or "")] + words))
+
+
+def _digits(text: str) -> set[str]:
+    """Model numbers and storage; the RAM size (``Ram8``) is often not in a name."""
+    from ..fuzzy import tokens
+
+    toks = tokens(text)
+    return {t for n, t in enumerate(toks) if t.isdigit() and not (n and toks[n - 1] == "ram")}
+
+
+def name_candidates(row: dict, names: dict[int, str], *, limit: int = 10) -> list[dict]:
+    """Products whose «سازه حساب» name best describes the row: [{code, name, score}].
+    Every number of the row (model, storage) must be in the name."""
+    from ..fuzzy import similarity
+
+    text = row_text(row)
+    with_color = f"{text} {row.get('color') or ''}".strip()
+    need = _digits(text)
+    scored = []
+    for code, raw in names.items():
+        name = expand(raw)
+        if need and not need <= _digits(name):
+            continue
+        value = max(similarity(text, name), similarity(with_color, name))
+        if value >= 0.5:
+            scored.append({"code": int(code), "name": str(raw), "score": round(value, 4)})
+    scored.sort(key=lambda c: (-c["score"], c["code"]))
+    return scored[:limit]
+
+
+def confident(candidates: list[dict]) -> dict | None:
+    """The one candidate safe to map automatically, or None (never on a tie)."""
+    if not candidates or candidates[0]["score"] < NAME_AUTO_MIN:
+        return None
+    if len(candidates) > 1 and candidates[0]["score"] - candidates[1]["score"] < NAME_AUTO_GAP:
+        return None
+    return candidates[0]
+
+
+def name_match(repo, list_id: int, names: dict[int, str], actor: str = "system:auto") -> int:
+    """Map still-undecided rows of ``list_id`` to the product with a clearly
+    matching name (flagged «خودکار», reason ``name``). Ambiguous rows stay
+    unmapped; rows whose automatic match staff undid are never touched."""
+    if not names:
+        return 0
+    rejected = repo.auto_rejected_keys()
+    done = 0
+    for row in repo.rows(list_id):
+        if row["action"] is not None or row["row_key"] in rejected:
+            continue
+        best = confident(name_candidates(row, names))
+        if best is None:
+            continue
+        repo.upsert_mapping(
+            row_key=row["row_key"], action="map", kala_code=best["code"], color_label="",
+            section=row["section"], description=row["description"], kind=row["kind"],
+            color=row["color"], actor=actor, auto=True, auto_reason="name")
+        done += 1
+    return done
