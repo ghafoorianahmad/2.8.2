@@ -23,15 +23,18 @@ from .. import groups as group_config
 from ..pricelist.matching import SUGGESTIONS, auto_match, confident, name_candidates, name_match
 from ..pricelist.repo import PriceListRepo
 from ..proxypool import ProxyLink, ProxyPool, masked_secret, parse_proxy_link
-from ..security import Identity, require_permission, require_worker
-from ..staff import P_PRICELIST, P_PROXIES, P_VIEW
+from ..security import Identity, require_any, require_permission, require_worker
+from ..staff import P_PRICELIST, P_PRICELIST_VIEW, P_PROXIES, P_REQUESTS_VIEW
 from ..util import now_utc
 
 router = APIRouter()
 
-CAN_VIEW = Depends(require_permission(P_VIEW))
+CAN_VIEW = Depends(require_permission(P_PRICELIST_VIEW))
 CAN_PRICELIST = Depends(require_permission(P_PRICELIST))
 CAN_PROXIES = Depends(require_permission(P_PROXIES))
+CAN_SEE_PROXIES = Depends(require_permission(P_PRICELIST_VIEW))
+#: price inquiries are shown with the list and with the item requests
+CAN_SEE_INQUIRIES = Depends(require_any(P_PRICELIST_VIEW, P_REQUESTS_VIEW))
 WORKER = Depends(require_worker)
 
 #: Worker-side state kept on the server (cursor of the channel, last collection).
@@ -466,7 +469,7 @@ def run_auto_match(
 def list_inquiries(
     limit: int = Query(100, ge=1, le=500),
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_VIEW,
+    _: Identity = CAN_SEE_INQUIRIES,
 ) -> list[dict]:
     return PriceListRepo(db).list_inquiries(limit)
 
@@ -475,7 +478,7 @@ def list_inquiries(
 def get_inquiry(
     inquiry_id: int,
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_VIEW,
+    _: Identity = CAN_SEE_INQUIRIES,
 ) -> dict:
     inquiry = PriceListRepo(db).get_inquiry(inquiry_id)
     if inquiry is None:
@@ -485,7 +488,7 @@ def get_inquiry(
 
 # ---- proxies (staff) ----------------------------------------------------------------
 @router.get("/admin/proxies")
-def list_proxies(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_PROXIES) -> list[dict]:
+def list_proxies(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_SEE_PROXIES) -> list[dict]:
     return [_proxy_out(p, with_secret=False) for p in ProxyPool(db).list_all()]
 
 

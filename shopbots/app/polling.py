@@ -104,6 +104,24 @@ def _log_poll_error(platform: str, exc: Exception, error: str, failures: int,
         logger.warning("platform=%s poll_error=%s [attempt %s]", platform, error, failures)
 
 
+async def events_loop(
+    *,
+    engine: BotEngine,
+    settings: Settings,
+    stop_event: asyncio.Event,
+    sleep: SleepFn = asyncio.sleep,
+) -> None:
+    """v2.8.2: ShopAdmin -> customer within seconds. The feed is read every
+    ``EVENTS_POLL_SECONDS`` (cheap: only events after the saved cursor); before,
+    it was read only with the 30-second admin sweep."""
+    while not stop_event.is_set():
+        try:
+            await engine.notify_customers_from_events()
+        except Exception as exc:
+            logger.warning("events_error=%s", _safe_error(exc))
+        await sleep(settings.events_poll_seconds)
+
+
 async def admin_sweep_loop(
     *,
     engine: BotEngine,

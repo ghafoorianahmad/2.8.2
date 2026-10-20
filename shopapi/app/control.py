@@ -22,7 +22,7 @@ from typing import Callable, Optional
 
 from .util import now_utc
 
-VERSION = "2.8.1"
+VERSION = "2.8.2"
 STARTED_AT = now_utc()
 
 
@@ -162,10 +162,8 @@ def _api_hash(value: str) -> Optional[str]:
 #: connection, ACCOUNTING_WRITE_ENABLED, the API keys, the bind address — can
 #: only be changed on the server itself.
 EDITABLE: dict[str, tuple[Callable[[str], Optional[str]], bool]] = {
-    "BANK_ACCOUNT_TEXT": (_text(500), False),
-    "PAYMENT_CARD_NUMBER": (_card_number, False),
-    "PAYMENT_SHEBA": (_sheba, False),
-    "PAYMENT_OWNER": (_text(80), False),
+    # v2.8.2: no fixed card / account / Sheba / owner here any more: staff type the
+    # payment details for each order («ارسال اطلاعات پرداخت» in ShopAdmin).
     "RECEIPT_DEADLINE_MINUTES": (_int_range(5, 1440), False),
     # v2.6.0: KalaOrder.Status of written orders (see SAZEH_DB_REFERENCE §10 / G1-G4).
     "ACCOUNTING_STATUS_CODE": (_status_code, False),

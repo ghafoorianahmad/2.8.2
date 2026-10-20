@@ -14,7 +14,7 @@ from .config import Settings
 from .engine import BotEngine
 from .logging_setup import configure_logging, silence_noisy_loggers
 from .platforms import BaleAdapter, PlatformAdapter
-from .polling import admin_sweep_loop, poll_platform
+from .polling import admin_sweep_loop, events_loop, poll_platform
 from .shopapi import ShopApiClient
 from .store import Store
 
@@ -107,6 +107,9 @@ async def run(
                 )
             )
         )
+        if settings.events_poll_seconds:
+            tasks.append(asyncio.create_task(events_loop(
+                engine=engine, settings=settings, stop_event=stop, sleep=sleep)))
     try:
         await asyncio.gather(*tasks)
     finally:

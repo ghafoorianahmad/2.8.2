@@ -171,7 +171,16 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
      "شمارهٔ سفارش در حسابداری تکراری بود؛ چیزی ثبت نشد. چند لحظه بعد دوباره تأیید کنید."),
     # ---- v2.8.0: ownership, archive, purchase requests ----
     (re.compile(r"another colleague is working on this", re.I),
-     "همکار دیگری روی این مورد کار می‌کند؛ فهرست را به‌روز کنید."),
+     "همکار دیگری زودتر روی این مورد کار کرد و آن را برداشت؛ کار شما انجام نشد. "
+     "این مورد از فهرست شما برداشته می‌شود."),
+    # ---- v2.8.2: payment details per order ----
+    (re.compile(r"card_number must be a 16-digit", re.I), "شمارهٔ کارت باید ۱۶ رقم باشد."),
+    (re.compile(r"sheba must be a sheba", re.I), "شبا باید IR و ۲۴ رقم باشد."),
+    (re.compile(r"account_number must be digits", re.I), "شمارهٔ حساب فقط رقم است."),
+    (re.compile(r"enter a card, account or sheba number", re.I),
+     "دست‌کم یکی از شمارهٔ کارت، شمارهٔ حساب یا شبا را وارد کنید."),
+    (re.compile(r"payment details not needed", re.I),
+     "این سفارش دیگر منتظر پرداخت نیست؛ اطلاعات پرداخت فرستاده نشد."),
     (re.compile(r"order is finished and read-only", re.I),
      "این سفارش تمام شده و دیگر در این برنامه تغییر نمی‌کند (تغییرات فقط در «سازه حساب»)."),
     (re.compile(r"request is finished and read-only", re.I),
@@ -608,8 +617,13 @@ class ShopApiClient:
     def order_timeline(self, order_id: int) -> list[dict]:
         return list(self._request("GET", f"/admin/orders/{int(order_id)}/timeline") or [])
 
-    def claim_order(self, order_id: int) -> dict:
-        return self._request("POST", f"/admin/orders/{int(order_id)}/claim") or {}
+    def send_payment_info(self, order_id: int, info: dict) -> dict:
+        """v2.8.2: «ارسال اطلاعات پرداخت»: card / account / Sheba / holder / bank /
+        note (empty ones left out) go to the customer through the bot."""
+        fields = ("card_number", "account_number", "sheba", "holder", "bank", "note")
+        body = {key: str(info.get(key) or "").strip() for key in fields}
+        return self._request("POST", f"/admin/orders/{int(order_id)}/payment-info",
+                             json_body=body) or {}
 
     def assign_order(self, order_id: int, staff_id: int) -> dict:
         return self._request("POST", f"/admin/orders/{int(order_id)}/assign",
@@ -843,9 +857,6 @@ class ShopApiClient:
     def item_request_timeline(self, request_id: int) -> list[dict]:
         return list(self._request("GET", f"/admin/item-requests/{int(request_id)}/timeline")
                     or [])
-
-    def claim_item_request(self, request_id: int) -> dict:
-        return self._request("POST", f"/admin/item-requests/{int(request_id)}/claim") or {}
 
     def assign_item_request(self, request_id: int, staff_id: int) -> dict:
         return self._request("POST", f"/admin/item-requests/{int(request_id)}/assign",

@@ -95,8 +95,6 @@ def confirm_stock(db: OwnDB, reader: AccountingReader, settings: Settings, who: 
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Not a purchase request")
     ownership.ensure_request_editable(request)
     ownership.take(db, who, "request", request)
-    if not settings.payment_ready():
-        raise HTTPException(status.HTTP_409_CONFLICT, "Payment details are not configured")
     state = sales.compute(db, settings)
     if not state.open:
         # the same sales windows as an order from the bot (phones only)
@@ -134,8 +132,8 @@ def confirm_stock(db: OwnDB, reader: AccountingReader, settings: Settings, who: 
     qty = float(request.get("qty") or 1)
     variant = variant_text(request.get("color") or "", request.get("part") or "")
     name = f"{product['name']} — {variant}" if variant else str(product["name"])
-    reserve_until = (now_utc() + timedelta(minutes=settings.receipt_deadline_minutes)
-                     ).isoformat(timespec="seconds")
+    # v2.8.2: the receipt deadline starts with «ارسال اطلاعات پرداخت»
+    reserve_until = None
     with db.reservation_guard():
         order = db.create_order(
             int(user["id"]), settings.price_level_bot, round_half_up(qty * price), reserve_until,

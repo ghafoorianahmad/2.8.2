@@ -53,6 +53,7 @@
     "BTN_CANCEL_ORDER_YES": "بله، سفارش لغو شود",
     "BTN_CANCEL_ORDER_NO": "خیر، برگرد",
     "BTN_PURCHASE_REQUEST": "🛍 درخواست خرید",
+    "BTN_PURCHASE_REQUEST_NOW": "🛍 ثبت درخواست خرید",
     "BTN_NOTIFY_SALES": "🔔 وقتی فروش باز شد خبرم کن",
     "BTN_OTHER_MODELS": "‹ مدل‌های دیگر"
   },
@@ -227,7 +228,16 @@
     "SALES_CLOSED_SEARCH": "🔒 فروش گوشی الان بسته است؛ قیمت‌ها آخرین قیمت‌های لیست هستند.",
     "SALES_NOTIFY_OK": "🔔 باشه! وقتی فروش گوشی باز شد یک پیام برایتان می‌فرستیم.",
     "SALES_OPENED_NOTICE": "🔔 فروش گوشی باز شد!\nلیست قیمت امروز آماده است؛ نام گوشی را بنویسید یا از «🔍 جستجو» استفاده کنید.",
-    "CART_ITEM_NO_STOCK": "⚠️ «{name}» الان در انبار فروشگاه موجود نیست؛ سفارش ثبت نشد.\nآن را از سبد حذف کنید و از «🛍 درخواست خرید» در صفحهٔ همان گوشی استفاده کنید."
+    "CART_ITEM_NO_STOCK": "⚠️ «{name}» الان در انبار فروشگاه موجود نیست؛ سفارش ثبت نشد.\nبا «🛍 ثبت درخواست خرید» فروشگاه موجودی را بررسی می‌کند و نتیجه را همین‌جا خبر می‌دهد (این کالا از سبد برداشته می‌شود).",
+    "WAIT_PAYMENT_INFO": "💳 اطلاعات پرداخت (شمارهٔ کارت یا حساب) به‌زودی از طرف فروشگاه در همین گفتگو برایتان فرستاده می‌شود؛ پس از آن رسید را بفرستید.",
+    "PAYMENT_INFO_TITLE": "💳 اطلاعات پرداخت سفارش {order_id}\nمبلغ قابل پرداخت: {total} {currency}",
+    "PAYMENT_INFO_CARD": "شمارهٔ کارت: {value}",
+    "PAYMENT_INFO_ACCOUNT": "شمارهٔ حساب: {value}",
+    "PAYMENT_INFO_SHEBA": "شبا: {value}",
+    "PAYMENT_INFO_HOLDER": "به نام: {value}",
+    "PAYMENT_INFO_BANK": "بانک: {value}",
+    "PAYMENT_INFO_NOTE": "توضیح: {value}",
+    "PHONE_LOW_STOCK": "⚠️ از «{name}» الان فقط {stock} عدد برای سفارش مستقیم موجود است؛ تعداد را کمتر کنید یا «🛍 درخواست خرید» بزنید."
   },
 
   "order_status": {
@@ -285,6 +295,9 @@
     "PRICELIST_HELD_NOTICE / PRICELIST_FAILED_NOTICE": "{list_id}",
     "ORDER_AUTO_CANCELLED": "{order_id}",
     "RECEIPT_DEADLINE_NOTE": "{minutes}",
+    "PAYMENT_INFO_TITLE": "{order_id} {total}",
+    "PAYMENT_INFO_CARD / ACCOUNT / SHEBA / HOLDER / BANK / NOTE": "{value}",
+    "PHONE_LOW_STOCK": "{name} {stock}",
     "DUPLICATE_ORDER_NOTICE / TIMEOUT_WRITTEN_NOTICE": "{list_id}"
   }
 }

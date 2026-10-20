@@ -15,11 +15,14 @@ from ..staff import (
     LEGACY_ROLE_MAP,
     PERMISSION_LABELS,
     P_PASSWORD_REQUESTS,
-    P_SERVER_MANAGE,
+    P_PASSWORDS_VIEW,
+    P_SERVER_VIEW,
     P_STAFF_MANAGE,
+    P_STAFF_VIEW,
     ROLE_SUPER_ADMIN,
     hash_password,
     validate_password,
+    sections_out,
     validate_username,
 )
 from ..util import now_utc
@@ -28,6 +31,7 @@ from .auth import FORGOT_APPROVED_MINUTES, staff_out
 router = APIRouter(prefix="/admin")
 
 CAN_MANAGE = Depends(require_permission(P_STAFF_MANAGE))
+CAN_SEE_STAFF = Depends(require_permission(P_STAFF_VIEW))
 
 
 def _get_or_404(db: OwnDB, staff_id: int) -> dict:
@@ -55,13 +59,19 @@ def _ticks(values) -> str:
 
 
 @router.get("/permissions")
-def list_permissions(_: Identity = CAN_MANAGE) -> list[dict]:
+def list_permissions(_: Identity = CAN_SEE_STAFF) -> list[dict]:
     """Every permission with its Persian name (the per-user ticks in ShopAdmin)."""
     return [{"name": name, "label": label} for name, label in PERMISSION_LABELS.items()]
 
 
+@router.get("/permission-sections")
+def list_permission_sections(_: Identity = CAN_SEE_STAFF) -> list[dict]:
+    """v2.8.2: the permission table: one row per section, «دیدن» / «تغییر»."""
+    return sections_out()
+
+
 @router.get("/staff", response_model=list[StaffOut])
-def list_staff(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_MANAGE) -> list[StaffOut]:
+def list_staff(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_SEE_STAFF) -> list[StaffOut]:
     return [staff_out(r) for r in db.list_staff()]
 
 
@@ -164,13 +174,14 @@ def delete_staff(staff_id: int, db: OwnDB = Depends(deps.get_db),
 
 @router.get("/audit")
 def list_audit(limit: int = Query(200, ge=1, le=1000), db: OwnDB = Depends(deps.get_db),
-               _: Identity = Depends(require_permission(P_SERVER_MANAGE))) -> list[dict]:
+               _: Identity = Depends(require_permission(P_SERVER_VIEW))) -> list[dict]:
     return db.list_audit(limit)
 
 
 
 # ---- forgot-password requests (admins) ---------------------------------------
 CAN_DECIDE_PASSWORDS = Depends(require_permission(P_PASSWORD_REQUESTS))
+CAN_SEE_PASSWORDS = Depends(require_permission(P_PASSWORDS_VIEW))
 
 
 def _decidable(db: OwnDB, request_id: int, who: Identity) -> dict:
@@ -185,7 +196,7 @@ def _decidable(db: OwnDB, request_id: int, who: Identity) -> dict:
 
 @router.get("/password-requests", response_model=list[PasswordRequestOut])
 def list_password_requests(db: OwnDB = Depends(deps.get_db),
-                           who: Identity = CAN_DECIDE_PASSWORDS) -> list[PasswordRequestOut]:
+                           who: Identity = CAN_SEE_PASSWORDS) -> list[PasswordRequestOut]:
     rows = db.list_pending_password_requests()
     if who.role != ROLE_SUPER_ADMIN:
         rows = [r for r in rows if r["role"] != ROLE_SUPER_ADMIN]

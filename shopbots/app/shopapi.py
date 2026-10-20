@@ -231,6 +231,18 @@ class ShopApiClient:
             extra_headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
         )
 
+    async def check_order(self, platform: str, chat_id: str | int,
+                          items: list[dict]) -> dict | None:
+        """v2.8.2: shopapi runs every checkout check (stock, color, sales windows,
+        limits) and answers without creating an order (``?check=true``)."""
+        return await self._request(
+            "POST",
+            "/orders",
+            key=self._settings.bot_api_key,
+            params={"check": "true"},
+            json_body={"platform": platform, "chat_id": str(chat_id), "items": items},
+        )
+
     async def upload_receipt(
         self, order_id: int, receipt_ref: str, platform: str, chat_id: str | int,
         data_b64: str | None = None,

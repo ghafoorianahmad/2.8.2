@@ -29,7 +29,7 @@ def test_two_roles_with_persian_names():
                     perms.ORDERS_CANCEL, perms.ITEM_REQUESTS, perms.CUSTOMERS_VIEW):
         assert allowed in sales
     for admin_only in (perms.DASHBOARD_VIEW, perms.PRICELIST_VIEW, perms.CATALOG_VIEW,
-                       perms.SHOP_STATE, perms.SETTINGS_VIEW, perms.USERS_VIEW,
+                       perms.SHOP_STATE, perms.SERVER_VIEW, perms.USERS_VIEW,
                        perms.SERVER_MANAGE, perms.REPORTS_VIEW, perms.PROXIES_MANAGE,
                        perms.CUSTOMERS_APPROVE, perms.PRODUCTS_VIEW):
         assert admin_only not in sales
@@ -61,8 +61,10 @@ def test_sales_menu_and_landing(ui_context, admin_qapp):
 
     window = MainWindow(make_context_with_role(ui_context, ROLE_OPERATOR))
     # v2.8.0: + «بایگانی» (own finished work)
-    assert set(window._nav_buttons) == {"orders", "item_requests", "customers", "archive"}
-    assert set(window._pages) == {"orders", "item_requests", "customers", "archive"}
+    assert set(window._nav_buttons) == {"orders", "item_requests", "customers", "archive",
+                                        "settings"}
+    assert set(window._pages) == {"orders", "item_requests", "customers", "archive",
+                                  "settings"}
     assert window._current_key == "orders" and window.home_key() == "orders"
     assert window.password_button.text() == "گذرواژهٔ من"
     window.close()
@@ -73,7 +75,7 @@ def test_a_tick_shows_one_more_page(ui_context, admin_qapp):
 
     context = make_context_with_role(ui_context, ROLE_OPERATOR)
     context.principal = replace(context.principal, permissions=perms.client_permissions(
-        list(perms.SALES_SERVER_PERMISSIONS - {"customers.view"}) + ["pricelist.manage"]))
+        list(perms.SALES_SERVER_PERMISSIONS - {"customers.view"}) + ["pricelist.view"]))
     window = MainWindow(context)
     assert "pricelist" in window._nav_buttons and "customers" not in window._nav_buttons
     window.close()
@@ -256,10 +258,17 @@ def test_users_form_ticks_follow_the_role(ui_context, admin_qapp, fake_api):
     form = UserFormDialog(context, None)
     assert form.role_combo.currentData() == ROLE_OPERATOR                # default role
     assert form.permission_checks["orders.view"].isChecked()
-    assert not form.permission_checks["pricelist.manage"].isChecked()
-    form.permission_checks["shop.state"].setChecked(True)
-    form.permission_checks["orders.cancel"].setChecked(False)
-    assert form.permission_changes() == (["shop.state"], ["orders.cancel"])
+    assert not form.permission_checks["pricelist.edit"].isChecked()
+    # v2.8.2: «تغییر» ticks «دیدن» of the same section
+    form.permission_checks["sales.edit"].setChecked(True)
+    assert form.permission_checks["sales.view"].isChecked()
+    form.permission_checks["orders.edit"].setChecked(False)
+    assert form.permission_changes() == (["sales.edit", "sales.view"], ["orders.edit"])
+    # clearing «دیدن» clears «تغییر»
+    form.permission_checks["requests.view"].setChecked(False)
+    assert not form.permission_checks["requests.edit"].isChecked()
+    form.permission_checks["requests.view"].setChecked(True)
+    form.permission_checks["requests.edit"].setChecked(True)
     form.username_input.setText("mina")
     form.full_name_input.setText("مینا")
     form.password_input.setText("Secret1234")
@@ -267,7 +276,7 @@ def test_users_form_ticks_follow_the_role(ui_context, admin_qapp, fake_api):
     form._submit()
     _pump(admin_qapp)
     row = fake_api.find_staff("mina")
-    assert row["extra_permissions"] == ["shop.state"]
-    assert row["removed_permissions"] == ["orders.cancel"]
+    assert row["extra_permissions"] == ["sales.edit", "sales.view"]
+    assert row["removed_permissions"] == ["orders.edit"]
     form.role_combo.setCurrentIndex(form.role_combo.findData(ROLE_SUPER_ADMIN))
     assert all(c.isChecked() for c in form.permission_checks.values())

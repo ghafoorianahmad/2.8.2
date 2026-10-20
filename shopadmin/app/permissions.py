@@ -29,7 +29,14 @@ ORDERS_UPLOAD_RECEIPT = "orders.upload_receipt"
 ORDERS_SHIP = "orders.ship"
 ORDERS_CANCEL = "orders.cancel"          # v2.7.0
 ORDERS_EXPIRE = "orders.expire"          # cancel overdue orders, sync invoices
-ITEM_REQUESTS = "item_requests.handle"   # v2.7.0: view, reply, mark handled
+ITEM_REQUESTS = "item_requests.handle"   # v2.7.0: reply, note, status, stock
+ITEM_REQUESTS_VIEW = "item_requests.view"  # v2.8.2: «درخواست کالا — دیدن»
+ORDERS_PAYMENT_INFO = "orders.payment_info"  # v2.8.2: «ارسال اطلاعات پرداخت»
+GROUPS_VIEW = "groups.view"              # v2.8.2: «گروه‌های کالا» (own section)
+GROUPS_MANAGE = "groups.manage"
+SALES_VIEW = "sales.view"                # v2.8.2: phone-sales state
+PASSWORDS_VIEW = "passwords.view"
+SERVER_VIEW = "server.view"              # v2.8.2: «تنظیمات سرور فروشگاه — دیدن»
 ORDERS_ASSIGN = "orders.assign"          # v2.8.0: hand any order / request to a colleague
 ARCHIVE_VIEW = "archive.view"            # v2.8.0: «بایگانی» (own rows; the manager: all)
 ACTIVITY_VIEW = "activity.view"          # v2.8.0: «گزارش فعالیت» (manager only)
@@ -56,64 +63,112 @@ PASSWORDS_DECIDE = "passwords.decide"
 ALL_ROLES = (ROLE_SUPER_ADMIN, ROLE_OPERATOR)
 DEFAULT_ROLE = ROLE_OPERATOR
 
+#: v2.8.2: the permission table of «کاربران سیستم» (same rows as shopapi
+#: ``staff.SECTIONS``): (section, Persian name, has «دیدن», has «تغییر»).
+SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
+    ("dashboard", "داشبورد", True, False),
+    ("orders", "سفارش‌ها و رسیدها (تأیید/رد رسید، اطلاعات پرداخت، ارسال، لغو)", True, True),
+    ("requests", "درخواست کالا (پیام، یادداشت، تأیید موجودی)", True, True),
+    ("customers", "مشتریان (تأیید و رد مشتری)", True, True),
+    ("assign", "ارجاع کار به همکار", False, True),
+    ("archive", "بایگانی", True, False),
+    ("products", "محصولات و موجودی", True, False),
+    ("groups", "گروه‌های کالا", True, True),
+    ("pricelist", "لیست قیمت، نگاشت و پراکسی", True, True),
+    ("models", "مدل‌های سایت", True, True),
+    ("sales", "فروش گوشی (باز و بسته کردن)", True, True),
+    ("reports", "گزارش‌ها", True, False),
+    ("activity", "گزارش فعالیت", True, False),
+    ("passwords", "درخواست‌های گذرواژه", True, True),
+    ("staff", "کاربران سیستم و دسترسی‌ها", True, True),
+    ("server", "تنظیمات سرور فروشگاه", True, True),
+)
+SECTION_PERMISSIONS = frozenset(
+    [f"{k}.view" for k, _l, v, _e in SECTIONS if v] + [f"{k}.edit" for k, _l, _v, e in SECTIONS if e])
+
+_ORDERS_EDIT = frozenset({ORDERS_APPROVE_PAYMENT, ORDERS_REJECT_PAYMENT, ORDERS_UPLOAD_RECEIPT,
+                          ORDERS_SHIP, ORDERS_CANCEL, ORDERS_EXPIRE, ORDERS_PAYMENT_INFO})
+
 #: shopapi permission -> what it unlocks on the screens.
 SERVER_TO_CLIENT: dict[str, frozenset[str]] = {
-    "orders.view": frozenset({ORDERS_VIEW, ARCHIVE_VIEW}),
+    # ---- v2.8.2 sections («دیدن» / «تغییر») ----
+    "dashboard.view": frozenset({DASHBOARD_VIEW}),
+    "orders.view": frozenset({ORDERS_VIEW}),
+    "orders.edit": _ORDERS_EDIT,
+    "requests.view": frozenset({ITEM_REQUESTS_VIEW}),
+    "requests.edit": frozenset({ITEM_REQUESTS}),
+    "customers.view": frozenset({CUSTOMERS_VIEW}),
+    "customers.edit": frozenset({CUSTOMERS_APPROVE, CUSTOMERS_REJECT}),
+    "assign.edit": frozenset({ORDERS_ASSIGN}),
+    "archive.view": frozenset({ARCHIVE_VIEW}),
+    "products.view": frozenset({PRODUCTS_VIEW}),
+    "groups.view": frozenset({GROUPS_VIEW}),
+    "groups.edit": frozenset({GROUPS_MANAGE}),
+    "pricelist.view": frozenset({PRICELIST_VIEW}),
+    "pricelist.edit": frozenset({PRICELIST_MANAGE, PROXIES_MANAGE}),
+    "models.view": frozenset({CATALOG_VIEW}),
+    "models.edit": frozenset({CATALOG_MANAGE}),
+    "sales.view": frozenset({SALES_VIEW}),
+    "sales.edit": frozenset({SHOP_STATE}),
+    "reports.view": frozenset({REPORTS_VIEW, REPORTS_EXPORT}),
+    "activity.view": frozenset({ACTIVITY_VIEW}),
+    "passwords.view": frozenset({PASSWORDS_VIEW}),
+    "passwords.edit": frozenset({PASSWORDS_DECIDE}),
+    "staff.view": frozenset({USERS_VIEW}),
+    "staff.edit": frozenset({USERS_MANAGE}),
+    "server.view": frozenset({SERVER_VIEW}),
+    "server.edit": frozenset({SERVER_MANAGE, SETTINGS_EDIT_CONNECTION}),
+    "events.view": frozenset(),
+    # ---- names of a v2.7.0 – v2.8.1 server (until it is updated) ----
     "orders.assign": frozenset({ORDERS_ASSIGN}),
     "payments.decide": frozenset({ORDERS_APPROVE_PAYMENT, ORDERS_REJECT_PAYMENT,
                                   ORDERS_UPLOAD_RECEIPT}),
     "orders.ship": frozenset({ORDERS_SHIP}),
     "orders.cancel": frozenset({ORDERS_CANCEL}),
-    "requests.handle": frozenset({ITEM_REQUESTS}),
-    "customers.view": frozenset({CUSTOMERS_VIEW}),
-    "events.view": frozenset(),
+    "requests.handle": frozenset({ITEM_REQUESTS, ITEM_REQUESTS_VIEW}),
     "view": frozenset({DASHBOARD_VIEW, PRODUCTS_VIEW, REPORTS_VIEW, REPORTS_EXPORT,
-                       PRICELIST_VIEW, CATALOG_VIEW}),
+                       PRICELIST_VIEW, CATALOG_VIEW, GROUPS_VIEW, SALES_VIEW}),
     "customers.decide": frozenset({CUSTOMERS_APPROVE, CUSTOMERS_REJECT}),
     "orders.expire": frozenset({ORDERS_EXPIRE}),
-    "shop.state": frozenset({SHOP_STATE}),
+    "shop.state": frozenset({SHOP_STATE, SALES_VIEW}),
     "pricelist.manage": frozenset({PRICELIST_MANAGE, PRICELIST_VIEW}),
-    "catalog.manage": frozenset({CATALOG_MANAGE, CATALOG_VIEW}),
+    "catalog.manage": frozenset({CATALOG_MANAGE, CATALOG_VIEW, GROUPS_MANAGE, GROUPS_VIEW}),
     "proxies.manage": frozenset({PROXIES_MANAGE}),
-    "passwords.decide": frozenset({PASSWORDS_DECIDE}),
+    "passwords.decide": frozenset({PASSWORDS_DECIDE, PASSWORDS_VIEW}),
     "staff.manage": frozenset({USERS_VIEW, USERS_MANAGE, ACTIVITY_VIEW}),
-    "server.manage": frozenset({SERVER_MANAGE, SETTINGS_VIEW, SETTINGS_EDIT_CONNECTION,
-                                SETTINGS_EDIT_GENERAL, SETTINGS_VIEW_LOG}),
+    "server.manage": frozenset({SERVER_MANAGE, SERVER_VIEW, SETTINGS_EDIT_CONNECTION}),
 }
-#: Everyone may change their own password (top bar «گذرواژهٔ من»).
-ALWAYS = frozenset({SETTINGS_CHANGE_OWN_PASSWORD})
+#: v2.8.2: «تنظیمات برنامه» (this computer: intervals, notifications, look, log)
+#: is for everyone; only pointing the computer at another server needs
+#: «تنظیمات سرور فروشگاه — تغییر». Everyone changes their own password.
+ALWAYS = frozenset({SETTINGS_CHANGE_OWN_PASSWORD, SETTINGS_VIEW, SETTINGS_EDIT_GENERAL,
+                    SETTINGS_VIEW_LOG})
 
-#: Persian names of the server permissions (per-user ticks), in display order.
-SERVER_PERMISSION_FA: dict[str, str] = {
-    "orders.view": "دیدن سفارش‌ها",
-    "payments.decide": "تأیید یا رد رسید پرداخت",
-    "orders.ship": "ثبت «ارسال شد»",
-    "orders.cancel": "لغو سفارش",
-    "requests.handle": "درخواست‌های کالا (دیدن، پاسخ، رسیدگی)",
-    "customers.view": "دیدن مشتریان",
-    "events.view": "اعلان‌ها",
-    "orders.assign": "ارجاع سفارش",
-    "view": "داشبورد، کالاها، گزارش‌ها و سایر صفحه‌ها (فقط دیدن)",
-    "customers.decide": "تأیید یا رد مشتری",
-    "orders.expire": "لغو سفارش‌های بی‌رسید و هماهنگی فاکتورها",
-    "shop.state": "باز و بسته کردن فروش",
-    "pricelist.manage": "لیست قیمت",
-    "catalog.manage": "گروه‌های کالا و مدل‌های سایت",
-    "proxies.manage": "پراکسی‌های تلگرام",
-    "passwords.decide": "درخواست‌های گذرواژه",
-    "staff.manage": "کاربران سیستم",
-    "server.manage": "تنظیمات و سرور فروشگاه",
-}
-SALES_SERVER_PERMISSIONS = frozenset({"orders.view", "payments.decide", "orders.ship",
-                                      "orders.cancel", "requests.handle", "customers.view",
-                                      "events.view"})
+#: Persian names of the server permissions, in display order (v2.8.2: per section).
+SERVER_PERMISSION_FA: dict[str, str] = {}
+for _key, _label, _view, _edit in SECTIONS:
+    if _view:
+        SERVER_PERMISSION_FA[f"{_key}.view"] = f"{_label} — دیدن"
+    if _edit:
+        SERVER_PERMISSION_FA[f"{_key}.edit"] = f"{_label} — تغییر"
+SALES_SERVER_PERMISSIONS = frozenset({"orders.view", "orders.edit", "requests.view",
+                                      "requests.edit", "customers.view", "archive.view"})
 ROLE_SERVER_PERMISSIONS: dict[str, frozenset[str]] = {
-    ROLE_SUPER_ADMIN: frozenset(SERVER_PERMISSION_FA),
+    ROLE_SUPER_ADMIN: SECTION_PERMISSIONS,
     ROLE_OPERATOR: SALES_SERVER_PERMISSIONS,
     # earlier roles (the server maps them on start: admin -> manager, viewer -> sales)
-    ROLE_ADMIN: frozenset(SERVER_PERMISSION_FA),
+    ROLE_ADMIN: SECTION_PERMISSIONS,
     ROLE_VIEWER: SALES_SERVER_PERMISSIONS,
 }
+
+
+def with_implied(names) -> set[str]:
+    """«تغییر» includes «دیدن» of the same section."""
+    out = set(names)
+    for name in list(out):
+        if name.endswith(".edit") and f"{name[:-5]}.view" in SECTION_PERMISSIONS:
+            out.add(f"{name[:-5]}.view")
+    return out
 
 
 def client_permissions(server_permissions: Iterable[str]) -> frozenset[str]:

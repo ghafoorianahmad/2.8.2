@@ -30,13 +30,14 @@ from ..permissions import (
     CATALOG_VIEW,
     CUSTOMERS_VIEW,
     DASHBOARD_VIEW,
-    ITEM_REQUESTS,
+    GROUPS_VIEW,
+    ITEM_REQUESTS_VIEW,
     ORDERS_VIEW,
-    PASSWORDS_DECIDE,
+    PASSWORDS_VIEW,
     PRICELIST_VIEW,
     PRODUCTS_VIEW,
     REPORTS_VIEW,
-    SERVER_MANAGE,
+    SERVER_VIEW,
     SETTINGS_VIEW,
     USERS_VIEW,
 )
@@ -64,18 +65,19 @@ NAV_ITEMS = (
     ("dashboard", "داشبورد", "dashboard", DASHBOARD_VIEW),
     ("customers", "مشتریان", "customers", CUSTOMERS_VIEW),
     ("orders", "سفارش‌ها", "orders", ORDERS_VIEW),
-    ("item_requests", "درخواست کالا", "inbox", ITEM_REQUESTS),
+    ("item_requests", "درخواست کالا", "inbox", ITEM_REQUESTS_VIEW),
     ("archive", "بایگانی", "archive", ARCHIVE_VIEW),
     ("products", "محصولات", "products", PRODUCTS_VIEW),
-    ("product_groups", "گروه‌های کالا", "box", CATALOG_VIEW),
+    ("product_groups", "گروه‌های کالا", "box", GROUPS_VIEW),
     ("pricelist", "لیست قیمت", "receipt", PRICELIST_VIEW),
     ("catalog", "مدل‌های سایت", "link", CATALOG_VIEW),
     ("reports", "گزارش‌ها", "reports", REPORTS_VIEW),
     ("activity", "گزارش فعالیت", "activity", ACTIVITY_VIEW),
-    ("settings", "تنظیمات", "settings", SETTINGS_VIEW),
-    ("password_requests", "درخواست‌های گذرواژه", "key", PASSWORDS_DECIDE),
+    # v2.8.2: this computer's settings (everyone) apart from the shop server's
+    ("settings", "تنظیمات برنامه", "settings", SETTINGS_VIEW),
+    ("password_requests", "درخواست‌های گذرواژه", "key", PASSWORDS_VIEW),
     ("users", "کاربران سیستم", "users", USERS_VIEW),
-    ("server", "سرور فروشگاه", "server", SERVER_MANAGE),
+    ("server", "تنظیمات سرور فروشگاه", "server", SERVER_VIEW),
 )
 
 SIDEBAR_WIDE = 232
@@ -157,7 +159,7 @@ class MainWindow(QMainWindow):
     def home_key(self) -> str:
         """v2.7.0: a sales user starts on the orders, a manager on the dashboard."""
         for key in ("dashboard", "orders"):
-            if key in self._pages and (key != "dashboard" or self.context.can(SETTINGS_VIEW)):
+            if key in self._pages and (key != "dashboard" or self.context.can(DASHBOARD_VIEW)):
                 return key
         return "orders" if "orders" in self._pages else next(iter(self._pages), "")
 
@@ -194,7 +196,8 @@ class MainWindow(QMainWindow):
         titles.setSpacing(0)
         titles.addWidget(widgets.label("مدیریت فروشگاه", name="SidebarTitle"))
         titles.addWidget(widgets.label(
-            "مدیر" if self.context.can(SETTINGS_VIEW) else "فروشگاه", name="SidebarMuted"))
+            "مدیر" if getattr(self.context.principal, "is_manager", False) else "فروشگاه",
+            name="SidebarMuted"))
         brand_layout.addWidget(self._brand_titles, 1)
         layout.addWidget(brand)
         divider = QFrame()
@@ -228,7 +231,7 @@ class MainWindow(QMainWindow):
         box_layout.setContentsMargins(6, 6, 6, 0)
         box_layout.setSpacing(4)
         self.connection_label = widgets.label("", name="SidebarMuted", wrap=True)
-        self.connection_label.setVisible(self.context.can(SETTINGS_VIEW))
+        self.connection_label.setVisible(self.context.can(SERVER_VIEW))
         box_layout.addWidget(self.connection_label)
         self.version_label = widgets.label(
             f"نسخهٔ {to_persian_digits(APP_VERSION)}", name="SidebarMuted"
@@ -571,7 +574,7 @@ class MainWindow(QMainWindow):
         dot_color, text_color = colors.get(state, (theme.TEXT_FAINT, theme.TEXT_MUTED))
         self.server_dot.setPixmap(theme.dot_pixmap(dot_color, 14))
         label = state.label_fa
-        if not self.context.can(SETTINGS_VIEW):
+        if not self.context.can(SERVER_VIEW):
             # v2.7.0: no technical words for sales users
             label = label.replace("سرور", "اتصال به فروشگاه")
         self.server_label.setText(label)
@@ -637,8 +640,12 @@ class MainWindow(QMainWindow):
         key = self._current_key
         if key in BADGE_KINDS and self.isVisible() and self.isActiveWindow():
             self.context.mark_seen(*BADGE_KINDS[key])
-        if page is not None and hasattr(page, "refresh") and self.isVisible():
-            page.refresh()
+        if page is not None and self.isVisible()                 and getattr(page, "refresh_on_server_events", True):
+            # v2.8.2: postponed while something is being edited (never wipes a form)
+            if hasattr(page, "soft_refresh"):
+                page.soft_refresh()
+            elif hasattr(page, "refresh"):
+                page.refresh()
         from ..notifications import ATTENTION_KINDS, notice_for
 
         # In-app notification (every install, also the server edition): new

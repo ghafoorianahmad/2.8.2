@@ -114,10 +114,14 @@ class OrderOut(BaseModel):
     created_at: str
     items: list[OrderItemOut]
     payment_instructions: Optional[str] = None
-    #: Structured payment details for the pre-invoice card (None = not configured).
+    #: Structured payment details for the pre-invoice card (None = not sent yet).
     payment_card_number: Optional[str] = None
     payment_sheba: Optional[str] = None
     payment_owner: Optional[str] = None
+    #: v2.8.2: what staff typed for this order («ارسال اطلاعات پرداخت»): card_number,
+    #: account_number, sheba, holder, bank, note (only the filled ones).
+    payment_info: Optional[dict] = None
+    payment_info_at: Optional[str] = None
     #: None | "partial" | "full" (recipe R5, synced from Facto.ordercode)
     invoice_state: Optional[str] = None
     invoiced_at: Optional[str] = None
@@ -522,6 +526,16 @@ class StatementFullOut(BaseModel):
     balance: float
     side: str
     truncated: bool = False
+
+
+class PaymentInfoIn(BaseModel):
+    """v2.8.2: payment details typed by staff for one order; empty = left out."""
+    card_number: str = Field("", max_length=40)
+    account_number: str = Field("", max_length=40)
+    sheba: str = Field("", max_length=40)
+    holder: str = Field("", max_length=80)
+    bank: str = Field("", max_length=60)
+    note: str = Field("", max_length=300)
 
 
 class ShipIn(BaseModel):

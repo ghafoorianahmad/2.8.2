@@ -112,7 +112,7 @@ def test_confirmed_purchase_request_asks_for_payment(env, bot_apis, shopapi):
         "id": 7, "status": "awaiting_payment", "total": 520_000_000.0, "items": [
             {"kala_code": 900, "name": "گوشی آزمایشی — Silver — CHA", "qty": 1,
              "unit_price": 520_000_000.0}],
-        "payment_card_number": "6037000011112222", "user_id": user["id"],
+        "payment_info": None, "user_id": user["id"],
         "_platform": "bale", "_chat_id": str(CUSTOMER_CHAT)}
 
     async def scenario(engine, adapters, api):
@@ -121,7 +121,17 @@ def test_confirmed_purchase_request_asks_for_payment(env, bot_apis, shopapi):
         await engine.admin_sweep()
         body = bot_apis["bale"].last_text(CUSTOMER_CHAT)
         assert "سفارش شمارهٔ 7" in body or "سفارش شمارهٔ ۷" in body
-        assert "6037-0000-1111-2222" in body
+        # v2.8.2: the payment details follow from staff, in their own message
+        assert texts.WAIT_PAYMENT_INFO in body and "6037" not in body
+        state, _data = engine.store.get_conversation("bale", str(CUSTOMER_CHAT))
+        assert state != "await_receipt"
+        shopapi.orders[7]["payment_info"] = {"card_number": "6037-0000-1111-2222",
+                                             "bank": "ملت"}
+        shopapi.add_event("order_payment_info", 7)
+        await engine.notify_customers_from_events()
+        body = bot_apis["bale"].last_text(CUSTOMER_CHAT)
+        assert "6037-0000-1111-2222" in body and "بانک: ملت" in body
+        assert "شبا" not in body                          # empty fields are left out
         assert "ocx:7" in _callbacks(bot_apis["bale"], CUSTOMER_CHAT)
         state, data = engine.store.get_conversation("bale", str(CUSTOMER_CHAT))
         assert state == "await_receipt" and data["order_id"] == 7
@@ -159,14 +169,17 @@ def test_notify_when_sales_open_once(env, bot_apis, shopapi):
 
 
 def test_cart_item_without_stock_has_a_clear_message(env, bot_apis, shopapi):
+    """v2.8.2: in stock when added, gone at checkout: one tap «ثبت درخواست خرید»."""
     _shop(shopapi)
-    shopapi.refuse_items[900] = "has no stock; purchase request"
 
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="900")
         await push_callback(engine, "bale", 2, CUSTOMER_CHAT, "col:900:11")
         await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "vadd:900:11:1")
+        assert engine.cart.items("bale", str(CUSTOMER_CHAT))
+        shopapi.refuse_items[900] = "has no stock; purchase request"
         await push_callback(engine, "bale", 4, CUSTOMER_CHAT, "checkout")
         assert "انبار فروشگاه موجود نیست" in bot_apis["bale"].last_text(CUSTOMER_CHAT)
+        assert "pbv:900:11" in _callbacks(bot_apis["bale"], CUSTOMER_CHAT)
 
     env(scenario)

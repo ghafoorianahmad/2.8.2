@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from ...api_client import short_fingerprint
 from ...edition import is_server_edition
 from ...logging_setup import get_logger
-from ...permissions import SERVER_MANAGE
+from ...permissions import SERVER_MANAGE, SERVER_VIEW
 from ...persian import format_shamsi, to_english_digits, to_persian_digits
 from ...server_settings import SETTINGS_FA, local_problem, translate_field_errors
 from .. import theme, widgets
@@ -100,17 +100,22 @@ def _uptime_fa(seconds: int) -> str:
 
 
 class ServerPage(BasePage):
-    title = "سرور فروشگاه"
-    subtitle = "وضعیت سرور و ربات‌ها، تنظیمات، گزارش و راه‌اندازی دوباره"
-    help_text = "وضعیت و تنظیمات رایانهٔ اصلی فروشگاه (فقط مدیر)."
+    title = "تنظیمات سرور فروشگاه"
+    subtitle = "وضعیت سرور و ربات‌ها، تنظیمات مشترک فروشگاه، گزارش و راه‌اندازی دوباره"
+    help_text = ("تنظیمات رایانهٔ اصلی فروشگاه که برای همهٔ کارکنان یکی است (مدیر، یا "
+                 "دسترسی «تنظیمات سرور فروشگاه»). تنظیمات همین رایانه در «تنظیمات برنامه» است.")
     reload_on_data_change = False
+    #: v2.8.2: a form page: never reloaded by itself (it wiped what was being typed)
+    auto_refreshable = False
+    refresh_on_server_events = False
 
     def build_body(self) -> None:
-        if not self.context.can(SERVER_MANAGE):
+        if not self.context.can(SERVER_VIEW):
             panel = widgets.Panel()
             panel.body.addWidget(widgets.label("دسترسی غیرمجاز", size=14, bold=True))
             panel.body.addWidget(widgets.label(
-                "مدیریت سرور فقط برای نقش «مدیر کل» در دسترس است.", name="Muted", wrap=True))
+                "برای این صفحه دسترسی «تنظیمات سرور فروشگاه — دیدن» لازم است.",
+                name="Muted", wrap=True))
             self.body.addWidget(panel)
             return
 
@@ -176,7 +181,8 @@ class ServerPage(BasePage):
             "تنظیمات سرور (پایگاه‌داده، شبکه، ربات‌ها)", icon_name="settings",
             variant="primary", on_click=self._open_server_settings,
             tooltip="باز کردن دوبارهٔ راه‌اندازی سرور با مقدارهای فعلی؛ نیاز به دسترسی مدیر ویندوز")
-        self.server_settings_button.setVisible(server_settings_available())
+        self.server_settings_button.setVisible(server_settings_available()
+                                               and self.context.can(SERVER_MANAGE))
         buttons.addWidget(self.server_settings_button)
         self.restart_button = widgets.button(
             "راه‌اندازی دوبارهٔ سرور", icon_name="refresh", variant="danger",
@@ -201,7 +207,7 @@ class ServerPage(BasePage):
                           "دوباره بزنید و در پنجرهٔ ویندوز «Yes / بله» را انتخاب کنید.")
 
     def load(self) -> None:
-        if not self.context.can(SERVER_MANAGE):
+        if not self.context.can(SERVER_VIEW):
             return
         self.run(self.context.api.server_status, on_success=self._show_status)
         self.run(self.context.api.server_settings, on_success=self._show_settings,
@@ -252,7 +258,8 @@ class ServerPage(BasePage):
         else:
             self.fingerprint_short.setText("—")
             self.fingerprint_full.setText("سرور بدون https اجرا می‌شود؛ ارتباط در شبکه رمزنگاری نشده است.")
-        self.restart_button.setEnabled(bool(status.get("restart_available")))
+        self.restart_button.setEnabled(bool(status.get("restart_available"))
+                                       and self.context.can(SERVER_MANAGE))
         self.restart_button.setToolTip("" if status.get("restart_available") else
                                        "سرور در حالت سرویس اجرا نمی‌شود")
 
@@ -292,6 +299,9 @@ class ServerPage(BasePage):
         self.save_settings_button = widgets.button(
             "ذخیرهٔ تنظیمات سرور", icon_name="save", variant="primary", on_click=self._save_settings)
         buttons.addWidget(self.save_settings_button)
+        # v2.8.2: «تنظیمات سرور فروشگاه — دیدن» only: read, never save
+        self.save_settings_button.setEnabled(self.context.can(SERVER_MANAGE))
+        self.save_settings_button.setVisible(self.context.can(SERVER_MANAGE))
         panel.body.addLayout(buttons)
         return panel
 
@@ -322,8 +332,12 @@ class ServerPage(BasePage):
             if hint:
                 field.setToolTip(hint)
             self._inputs[key] = field
+            field.setEnabled(self.context.can(SERVER_MANAGE))   # v2.8.2: «دیدن» only = read
             self.settings_form.addRow(widgets.label(caption + ":"), field)
-        self.save_settings_button.setEnabled(True)
+        self.save_settings_button.setEnabled(self.context.can(SERVER_MANAGE))
+
+    def has_unsaved_changes(self) -> bool:
+        return bool(getattr(self, "_inputs", None)) and bool(self._collect_changes())
 
     def _collect_changes(self) -> dict[str, str]:
         changes: dict[str, str] = {}

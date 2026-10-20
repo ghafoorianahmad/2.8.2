@@ -12,11 +12,9 @@ import re
 from .persian import to_persian_digits
 
 #: key -> (label, help text, kind) ; kind: text | int | bool | secret
+#: v2.8.2: no card / account / Sheba here: staff type the payment details for each
+#: order («ارسال اطلاعات پرداخت»).
 SETTINGS_FA: dict[str, tuple[str, str, str]] = {
-    "BANK_ACCOUNT_TEXT": ("متن حساب بانکی", "پس از ثبت سفارش برای مشتری فرستاده می‌شود.", "text"),
-    "PAYMENT_CARD_NUMBER": ("شمارهٔ کارت پرداخت", "۱۶ رقم؛ پس از ثبت سفارش برای مشتری فرستاده می‌شود. الزامی: بدون کارت معتبر ربات سفارش نهایی را نمی‌پذیرد.", "text"),
-    "PAYMENT_SHEBA": ("شمارهٔ شبا", "به شکل IR و ۲۴ رقم؛ خالی = نمایش داده نمی‌شود.", "text"),
-    "PAYMENT_OWNER": ("نام صاحب حساب", "روی پیش‌فاکتور تصویری نمایش داده می‌شود.", "text"),
     "ACCOUNTING_STATUS_CODE": ("کد وضعیت سفارش در حسابداری (Status)", "کد وضعیتی که سفارش ثبت‌شده در «سازه حساب» می‌گیرد (KalaOrder.Status)؛ الزامی، عدد صحیح؛ ۶۸۰۸ معتبر نیست. پس از آزمایش در «سازه حساب» تعیین کنید.", "int"),
     "RECEIPT_DEADLINE_MINUTES": ("مهلت ارسال رسید (دقیقه)", "پس از این مدت سفارش بدون رسید خودکار لغو می‌شود (فقط در سرور فروشگاه، نه در حسابداری).", "int"),
     "SALES_WINDOWS_ENABLED": ("فروش گوشی طبق لیست قیمت", "بله = فروش گوشی فقط پس از لیست صبح (تا ۱۳:۳۰) یا عصر (تا ۲۰:۳۰)؛ جمعه بسته. لوازم جانبی همیشه قابل سفارش است.", "bool"),

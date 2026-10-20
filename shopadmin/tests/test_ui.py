@@ -416,8 +416,9 @@ def test_sidebar_hides_users_for_a_non_super_admin(ui_context, admin_qapp):
     window = MainWindow(context)
     assert "users" not in window._nav_buttons
     # v2.7.0: «کاربر فروش» sees orders, item requests and customers only
-    # v2.8.0: + «بایگانی»
-    assert set(window._nav_buttons) == {"orders", "item_requests", "customers", "archive"}
+    # v2.8.0: + «بایگانی»; v2.8.2: + «تنظیمات برنامه» (this computer, for everyone)
+    assert set(window._nav_buttons) == {"orders", "item_requests", "customers", "archive",
+                                        "settings"}
     assert window._current_key == "orders"                    # lands on the orders
     window.close()
 

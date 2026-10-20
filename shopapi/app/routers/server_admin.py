@@ -14,12 +14,14 @@ from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
 from ..security import Identity, require_permission
-from ..staff import P_SERVER_MANAGE
+from ..staff import P_SERVER_MANAGE, P_SERVER_VIEW
 from ..util import now_utc
 
 router = APIRouter(prefix="/admin/server")
 
 CAN_MANAGE = Depends(require_permission(P_SERVER_MANAGE))
+#: v2.8.2: «تنظیمات سرور فروشگاه — دیدن»: status, settings and log, read only
+CAN_SEE = Depends(require_permission(P_SERVER_VIEW))
 
 
 class SettingsUpdate(BaseModel):
@@ -31,7 +33,7 @@ def server_status(
     settings: Settings = Depends(deps.get_settings),
     reader: AccountingReader = Depends(deps.get_reader),
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_MANAGE,
+    _: Identity = CAN_SEE,
 ) -> dict:
     started = time.perf_counter()
     try:
@@ -109,7 +111,7 @@ def _tg_status(db: OwnDB) -> dict | None:
 
 
 @router.get("/settings")
-def get_settings(_: Identity = CAN_MANAGE) -> dict:
+def get_settings(_: Identity = CAN_SEE) -> dict:
     if control.STATE.env_file is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Settings file not available")
     return {"settings": control.current_settings()}
@@ -133,7 +135,7 @@ def put_settings(payload: SettingsUpdate, db: OwnDB = Depends(deps.get_db),
 
 
 @router.get("/logs")
-def get_logs(lines: int = Query(200, ge=10, le=2000), _: Identity = CAN_MANAGE) -> dict:
+def get_logs(lines: int = Query(200, ge=10, le=2000), _: Identity = CAN_SEE) -> dict:
     if control.STATE.log_file is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Log file not available")
     return {"lines": control.tail_log(lines)}

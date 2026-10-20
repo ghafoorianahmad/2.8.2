@@ -379,6 +379,9 @@ MIGRATIONS = (
     ("item_requests", "qty", "REAL NOT NULL DEFAULT 1"),
     ("item_requests", "outcome", "TEXT NOT NULL DEFAULT ''"),   # '' | confirmed | unavailable
     ("item_requests", "order_id", "INTEGER"),
+    # v2.8.2: payment details typed by staff for each order (JSON) and when sent
+    ("orders", "payment_info", "TEXT"),
+    ("orders", "payment_info_at", "TEXT"),
 )
 
 #: Item request kinds (v2.6.1).
@@ -421,6 +424,16 @@ class OwnDB:
 
         for old, new in LEGACY_ROLE_MAP.items():
             self._conn.execute("UPDATE staff_users SET role=? WHERE role=?", (new, old))
+        # v2.8.2: per-user ticks of the old permission names -> the same rights as
+        # section ticks («دیدن» / «تغییر»); idempotent (new names are left alone).
+        from .staff import migrate_ticks
+
+        for row in self._conn.execute(
+                "SELECT id, role, perm_grant, perm_revoke FROM staff_users").fetchall():
+            moved = migrate_ticks(row["role"], row["perm_grant"] or "", row["perm_revoke"] or "")
+            if moved is not None:
+                self._conn.execute("UPDATE staff_users SET perm_grant=?, perm_revoke=? WHERE id=?",
+                                   (moved[0], moved[1], row["id"]))
 
     # ---- low level ----
     def _fetchone(self, sql: str, params: tuple = ()) -> dict | None:
@@ -522,7 +535,7 @@ class OwnDB:
         user_id: int,
         price_level: int,
         total: float,
-        reserve_until: str,
+        reserve_until: str | None,
         items: list[tuple[int, str, float, float]],
         accounting_db: str | None = None,
         *,
@@ -587,6 +600,13 @@ class OwnDB:
             )
             if order is None:
                 return None
+            if order.get("payment_info"):
+                import json
+
+                try:
+                    order["payment_info"] = json.loads(order["payment_info"])
+                except ValueError:
+                    order["payment_info"] = None
             order["customer_pending"] = order.get("user_status") != "approved"
             order["items"] = self._fetchall(
                 "SELECT kala_code, name, qty, unit_price, variant_id, variant, color, part "
@@ -755,6 +775,20 @@ class OwnDB:
                 "AND reserve_until <= ? ORDER BY id",
                 (now or now_iso(),),
             )
+
+    def set_payment_info(self, order_id: int, info: dict, reserve_until: str) -> dict | None:
+        """v2.8.2: the payment details staff sent for this order; the receipt
+        deadline starts now (an order without them never times out)."""
+        import json
+
+        with self._lock:
+            self._conn.execute(
+                "UPDATE orders SET payment_info=?, payment_info_at=?, reserve_until=?, "
+                "updated_at=? WHERE id=? AND status='awaiting_payment'",
+                (json.dumps(info, ensure_ascii=False), now_iso(), reserve_until, now_iso(),
+                 order_id))
+            self._commit()
+        return self.get_order(order_id)
 
     def cancel_order_any(self, order_id: int, reason: str, statuses: tuple[str, ...]) -> bool:
         """v2.7.0: staff cancel (awaiting payment or with a receipt). Local only."""
@@ -953,6 +987,18 @@ class OwnDB:
             row = self._fetchone(f"SELECT owner_id FROM {table} WHERE id=?", (target_id,))
             return row is not None and row["owner_id"] == staff_id
 
+    def customer_ids_for_staff(self, staff_id: int) -> set[int]:
+        """v2.8.2: customers a sales user may see: those of their own orders /
+        requests and of new ones nobody has taken yet."""
+        with self._lock:
+            rows = self._fetchall(
+                "SELECT user_id FROM orders WHERE owner_id=? OR (owner_id IS NULL AND "
+                "(status IN ('awaiting_payment','receipt_uploaded') OR (status IN "
+                "('approved','written') AND shipped_at IS NULL))) "
+                "UNION SELECT user_id FROM item_requests WHERE owner_id=? OR "
+                "(owner_id IS NULL AND status <> 'done')", (staff_id, staff_id))
+        return {int(r["user_id"]) for r in rows if r["user_id"] is not None}
+
     def set_owner(self, target_type: str, target_id: int, staff_id: int | None) -> None:
         table = self._OWNED_TABLES[target_type]
         with self._lock:
@@ -987,7 +1033,10 @@ class OwnDB:
             if mine_only or archived:
                 clauses.append("o.owner_id=?")
             else:
-                clauses.append("(o.owner_id IS NULL OR o.owner_id=?)")
+                # v2.8.2: their own + new orders nobody has taken yet
+                clauses.append("(o.owner_id=? OR (o.owner_id IS NULL AND (o.status IN "
+                               "('awaiting_payment','receipt_uploaded') OR (o.status IN "
+                               "('approved','written') AND o.shipped_at IS NULL))))")
             params.append(viewer_id)
         if accounting_db:
             clauses.append("lower(trim(COALESCE(o.accounting_db,''))) = lower(trim(?))")
@@ -1020,7 +1069,8 @@ class OwnDB:
             if mine_only or archived:
                 clauses.append("r.owner_id=?")
             else:
-                clauses.append("(r.owner_id IS NULL OR r.owner_id=?)")
+                # v2.8.2: their own + open requests nobody has taken yet
+                clauses.append("(r.owner_id=? OR (r.owner_id IS NULL AND r.status <> 'done'))")
             params.append(viewer_id)
         if accounting_db:
             clauses.append("lower(trim(COALESCE(r.accounting_db,''))) = lower(trim(?))")

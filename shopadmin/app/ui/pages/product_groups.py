@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...permissions import CATALOG_MANAGE
+from ...permissions import GROUPS_MANAGE
 from ...persian import to_persian_digits
 from .. import theme, widgets
 from ..base_page import BasePage
@@ -101,7 +101,7 @@ class ProductGroupsPage(BasePage):
         self.save_button = widgets.button("ذخیرهٔ تغییرات", variant="primary", icon_name="check",
                                           on_click=self.save)
         self.save_button.setEnabled(False)
-        self.save_button.setVisible(self.context.can(CATALOG_MANAGE))
+        self.save_button.setVisible(self.context.can(GROUPS_MANAGE))
         bottom.addWidget(self.save_button)
         panel.body.addLayout(bottom)
         self.body.addWidget(panel, 1)
@@ -136,7 +136,7 @@ class ProductGroupsPage(BasePage):
         return [c for c, p in self._parents.items() if p == parent]
 
     def _build_tree(self) -> None:
-        editable = self.context.can(CATALOG_MANAGE)
+        editable = self.context.can(GROUPS_MANAGE)
         self._loading = True
         self.tree.setUpdatesEnabled(False)
         try:
@@ -198,7 +198,7 @@ class ProductGroupsPage(BasePage):
 
     def _apply_inheritance(self) -> None:
         """A ticked parent shows its ticks on every subgroup (greyed, not editable)."""
-        editable = self.context.can(CATALOG_MANAGE)
+        editable = self.context.can(GROUPS_MANAGE)
         self._loading = True
         try:
             for code, checks in self._checks.items():
@@ -215,7 +215,7 @@ class ProductGroupsPage(BasePage):
             return
         self._own[code][key] = bool(checked)
         self._dirty = True
-        self.save_button.setEnabled(self.context.can(CATALOG_MANAGE))
+        self.save_button.setEnabled(self.context.can(GROUPS_MANAGE))
         self._apply_inheritance()
         self._update_summary()
 
@@ -249,7 +249,7 @@ class ProductGroupsPage(BasePage):
             self.warning.setVisible(False)
 
     def save(self) -> None:
-        if not self.context.can(CATALOG_MANAGE):
+        if not self.context.can(GROUPS_MANAGE):
             return
         values = self.values()
         self.run(lambda: self.context.api.save_product_groups(values),

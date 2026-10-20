@@ -34,6 +34,7 @@ A_REQUEST_STATUS = "request_status"
 A_STOCK_CONFIRM = "stock_confirm"
 A_STOCK_UNAVAILABLE = "stock_unavailable"
 A_ARCHIVE = "archive"
+A_PAYMENT_INFO = "payment_info"       # v2.8.2: «ارسال اطلاعات پرداخت»
 
 FINISHED_DETAIL = "Order is finished and read-only"
 REQUEST_FINISHED_DETAIL = "Request is finished and read-only"
@@ -61,10 +62,86 @@ def can_assign(who: Identity, row: dict) -> bool:
 
 
 # ---- visibility ----------------------------------------------------------------------------------
+#: v2.8.2: an order nobody has taken is shown to every sales user only while it
+#: still needs work (new, or paid and not sent yet).
+FREE_ORDER_STATUSES = ("awaiting_payment", "receipt_uploaded")
+
+
 def visible(who: Identity, row: dict) -> bool:
+    """A sales user sees their own rows and new rows nobody has taken yet; the
+    manager everything."""
     if is_manager(who):
         return True
-    return row.get("owner_id") in (None, who.user_id)
+    owner = row.get("owner_id")
+    if owner is not None:
+        return owner == who.user_id
+    if "kind" in row and "status" in row and row.get("status") in ("new", "seen", "done"):
+        return row.get("status") != "done" and not row.get("archived_at")      # request
+    if row.get("archived_at"):
+        return False
+    # new orders, and paid ones still to be sent (e.g. approved in the Bale admin chat)
+    return row.get("status") in FREE_ORDER_STATUSES or (
+        row.get("status") in ("approved", "written") and not row.get("shipped_at"))
+
+
+def customer_visible(db: OwnDB, who: Identity, user: dict | None) -> bool:
+    """v2.8.2: a sales user sees new (pending) customers and the customers of the
+    orders / requests they may see."""
+    if user is None:
+        return False
+    if is_manager(who):
+        return True
+    if user.get("status") == "pending":
+        return True
+    return who.user_id is not None and int(user["id"]) in db.customer_ids_for_staff(who.user_id)
+
+
+def filter_customers(db: OwnDB, who: Identity, users: list[dict]) -> list[dict]:
+    if is_manager(who):
+        return users
+    mine = db.customer_ids_for_staff(who.user_id) if who.user_id is not None else set()
+    return [u for u in users if u.get("status") == "pending" or int(u["id"]) in mine]
+
+
+#: Event kinds about one order / request / customer / message (``ref_id``).
+_ORDER_EVENTS_EXTRA = {"payment_approved", "payment_rejected", "receipt_uploaded",
+                       "order_assigned"}
+_REQUEST_EVENTS = {"item_request", "request_assigned"}
+_MESSAGE_EVENTS = {"item_request_message", "item_request_message_result"}
+#: Kinds only for those who may see that part of the app.
+_SECTION_EVENTS = {"password_request": "passwords.view", "pricelist_imported": "pricelist.view",
+                   "pricelist_held": "pricelist.view", "pricelist_failed": "pricelist.view",
+                   "proxies_all_dead": "pricelist.view", "model_review": "models.view",
+                   "price_inquiry": "pricelist.view", "security_alert": "server.view",
+                   "accounting_duplicate_order": "server.view", "archive_done": "archive.view",
+                   "product_groups_changed": "groups.view"}
+
+
+def event_visible(db: OwnDB, who: Identity, event: dict) -> bool:
+    """v2.8.2: the notification feed of a sales user only tells about what they
+    may see (their own work, new work, new customers)."""
+    if is_manager(who):
+        return True
+    kind = str(event.get("kind") or "")
+    ref = event.get("ref_id")
+    if kind in _SECTION_EVENTS:
+        return who.can(_SECTION_EVENTS[kind])
+    if ref is None:
+        return True
+    ref = int(ref)
+    if kind in _MESSAGE_EVENTS:
+        message = db.get_item_request_message(ref)
+        row = db.get_item_request(int(message["request_id"])) if message else None
+        return row is not None and visible(who, row)
+    if kind in _REQUEST_EVENTS:
+        row = db.get_item_request(ref)
+        return row is not None and visible(who, row)
+    if kind.startswith("customer_"):
+        return customer_visible(db, who, db.get_user_by_id(ref))
+    if kind in _ORDER_EVENTS_EXTRA or "order" in kind:
+        row = db.get_order(ref)
+        return row is not None and visible(who, row)
+    return True
 
 
 def ensure_visible(who: Identity, row: dict | None, what: str = "Order") -> dict:

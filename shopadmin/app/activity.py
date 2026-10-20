@@ -25,6 +25,7 @@ ACTION_FA = {
     "stock_confirm": "موجودی را تأیید کرد و سفارش ساخت",
     "stock_unavailable": "«ناموجود» اعلام کرد",
     "archive": "کارهای تمام‌شده را بایگانی کرد",
+    "payment_info": "اطلاعات پرداخت را برای مشتری فرستاد",
 }
 
 TARGET_FA = {"order": "سفارش", "request": "درخواست", "customer": "مشتری", "archive": "بایگانی"}

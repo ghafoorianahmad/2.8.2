@@ -434,7 +434,7 @@ def test_catalog_search_cart_checkout_and_receipt_upload(tg, shopapi):
         await c.press("checkout")
         order = next(iter(shopapi.orders.values()))
         assert order["status"] == "awaiting_payment" and order["_chat_id"] == CUSTOMER_CHAT
-        assert "2,000" in c.last() and "واریز به کارت 1234" in c.last()
+        assert "2,000" in c.last() and "6037-0000-1111-2222" in c.last()
 
         blob = b"\xff\xd8\xff\xe0" + b"7" * 300
         await c.say(photo=True, data=blob)

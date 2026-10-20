@@ -117,20 +117,18 @@ def test_order_dialog_timeline_copy_and_handover(ui_context, fake_api, admin_qap
     dialog.copy_phone_button.click()
     assert QApplication.clipboard().text() == "09121234567"
     # the owner may hand it over; the colleague list holds names only
-    assert dialog.assign_button.isVisibleTo(dialog) and not dialog.claim_button.isVisibleTo(dialog)
+    assert dialog.assign_button.isVisibleTo(dialog) and not hasattr(dialog, "claim_button")
     dialog.close()
 
 
-def test_free_order_can_be_claimed(ui_context, fake_api, admin_qapp):
+def test_free_order_has_no_take_button(ui_context, fake_api, admin_qapp):
+    """v2.8.2: no «برمی‌دارم»; the first real action takes the order."""
     from app.ui.pages.orders import OrderDetailDialog
 
     order = fake_api.add_order(id=6, owned=False)
     dialog = OrderDetailDialog(make_context_with_role(ui_context, ROLE_OPERATOR), order)
-    assert dialog.claim_button.isVisibleTo(dialog)
+    assert not hasattr(dialog, "claim_button")
     assert not dialog.assign_button.isVisibleTo(dialog)      # not theirs, no tick
-    dialog._claim()
-    _pump(admin_qapp)
-    assert fake_api.orders[-1]["owned_by_me"] and dialog.changed
 
 
 def test_finished_order_is_read_only(ui_context, fake_api, admin_qapp):
@@ -140,7 +138,7 @@ def test_finished_order_is_read_only(ui_context, fake_api, admin_qapp):
                                finished=True)
     dialog = OrderDetailDialog(make_context_with_role(ui_context, ROLE_SUPER_ADMIN), order)
     for button in (dialog.approve_button, dialog.reject_button, dialog.ship_button,
-                   dialog.cancel_button, dialog.claim_button, dialog.assign_button):
+                   dialog.cancel_button, dialog.payment_button, dialog.assign_button):
         assert not button.isVisibleTo(dialog)
 
 
@@ -190,10 +188,18 @@ def test_purchase_request_row_and_stock_confirm(ui_context, fake_api, admin_qapp
 
     monkeypatch.setattr(page_mod, "StockConfirmDialog", Confirm)
     monkeypatch.setattr(page_mod.widgets, "success", lambda *a, **k: None)
+    monkeypatch.setattr(page_mod.widgets, "info", lambda *a, **k: None)
+    from app.ui.pages import orders as orders_mod
+
+    opened = []
+    # v2.8.2: the payment-details form opens for the new order
+    monkeypatch.setattr(orders_mod, "send_payment_info",
+                        lambda _p, _c, order: opened.append(order) or True)
     dialog.confirm_stock()
     _pump(admin_qapp)
     assert fake_api.stock_confirms == [{"id": 31, "kala_code": 600, "price_rial": 1_100_000_000}]
     assert dialog.item["outcome"] == "confirmed" and not dialog.stock_button.isVisibleTo(dialog)
+    assert opened and opened[0].get("id")
 
 
 def test_stock_confirm_dialog_needs_a_product_when_unmapped(admin_qapp):
@@ -289,7 +295,8 @@ def test_assign_tick_and_new_pages_in_permissions():
     assert perms.ARCHIVE_VIEW in perms.role_permissions(ROLE_OPERATOR)
     assert perms.ACTIVITY_VIEW not in perms.role_permissions(ROLE_OPERATOR)
     assert perms.ACTIVITY_VIEW in perms.role_permissions(ROLE_SUPER_ADMIN)
-    assert perms.SERVER_PERMISSION_FA["orders.assign"] == "ارجاع سفارش"
+    assert perms.ORDERS_ASSIGN in perms.client_permissions(["assign.edit"])
+    assert perms.SERVER_PERMISSION_FA["assign.edit"] == "ارجاع کار به همکار — تغییر"
 
 
 def test_mapping_dialog_shows_three_suggestions(ui_context, fake_api, admin_qapp):

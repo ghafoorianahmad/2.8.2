@@ -17,12 +17,12 @@ from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
 from ..security import Identity, get_catalog_channel, require_permission
-from ..staff import P_CATALOG, P_VIEW
+from ..staff import P_MODELS_EDIT, P_MODELS_VIEW
 
 router = APIRouter()
 
-CAN_VIEW = Depends(require_permission(P_VIEW))
-CAN_CATALOG = Depends(require_permission(P_CATALOG))
+CAN_VIEW = Depends(require_permission(P_MODELS_VIEW))
+CAN_CATALOG = Depends(require_permission(P_MODELS_EDIT))
 
 
 # ---- models -----------------------------------------------------------------

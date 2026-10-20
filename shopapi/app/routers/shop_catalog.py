@@ -29,15 +29,19 @@ from ..schemas import (
     ProductGroupOut,
     ProductGroupsIn,
 )
-from ..security import Identity, require_permission
-from ..staff import P_CATALOG, P_REQUESTS, P_VIEW
+from ..security import Identity, require_any, require_permission
+from ..staff import (P_ARCHIVE, P_DASHBOARD, P_GROUPS_EDIT, P_GROUPS_VIEW, P_REQUESTS_EDIT,
+                     P_REQUESTS_VIEW)
 
 router = APIRouter(prefix="/admin")
 
-CAN_VIEW = Depends(require_permission(P_VIEW))
-#: v2.7.0: item requests are a sales-user task (view, reply, mark handled)
-CAN_REQUESTS = Depends(require_permission(P_REQUESTS))
-CAN_MANAGE_CATALOG = Depends(require_permission(P_CATALOG))
+# v2.8.2: the dashboard warns when no «گروه گوشی» is chosen
+CAN_VIEW = Depends(require_any(P_GROUPS_VIEW, P_DASHBOARD))
+#: «درخواست کالا»: «دیدن» for the lists, «تغییر» for every action
+CAN_SEE_REQUESTS = Depends(require_permission(P_REQUESTS_VIEW))
+CAN_REQUESTS = Depends(require_permission(P_REQUESTS_EDIT))
+CAN_ARCHIVE = Depends(require_permission(P_ARCHIVE))
+CAN_MANAGE_CATALOG = Depends(require_permission(P_GROUPS_EDIT))
 
 
 def _groups_out(db: OwnDB, reader: AccountingReader) -> list[ProductGroupOut]:
@@ -116,7 +120,7 @@ def list_item_requests(
     kind: Optional[str] = Query(None, pattern=KIND_PATTERN),
     mine: bool = Query(False),
     db: OwnDB = Depends(deps.get_db),
-    who: Identity = CAN_REQUESTS,
+    who: Identity = CAN_SEE_REQUESTS,
 ) -> list[dict]:
     """v2.8.0: a sales user sees free requests and their own (``mine``: own only)."""
     rows = db.query_item_requests(status=status_filter, kind=kind,
@@ -132,7 +136,7 @@ def archived_item_requests(
     accounting_db: Optional[str] = Query(None, max_length=128),
     db: OwnDB = Depends(deps.get_db),
     settings: Settings = Depends(deps.get_settings),
-    who: Identity = CAN_REQUESTS,
+    who: Identity = CAN_ARCHIVE,
 ) -> list[dict]:
     """«بایگانی» of requests (read-only): own + current fiscal year for a sales user."""
     if ownership.is_manager(who):
@@ -162,7 +166,7 @@ def _editable(db: OwnDB, who: Identity, request_id: int) -> dict:
 def get_item_request(
     request_id: int,
     db: OwnDB = Depends(deps.get_db),
-    who: Identity = CAN_REQUESTS,
+    who: Identity = CAN_SEE_REQUESTS,
 ) -> dict:
     return request_out(db, who, _request_or_404(db, request_id, who))
 
@@ -171,23 +175,13 @@ def get_item_request(
 def item_request_timeline(
     request_id: int,
     db: OwnDB = Depends(deps.get_db),
-    who: Identity = CAN_REQUESTS,
+    who: Identity = CAN_SEE_REQUESTS,
 ) -> list[dict]:
     row = _request_or_404(db, request_id, who)
     targets = [("request", request_id)]
     if row.get("order_id"):
         targets.append(("order", int(row["order_id"])))
     return ownership.timeline(db, who, db.list_activity(targets=targets, limit=500))
-
-
-@router.post("/item-requests/{request_id}/claim", response_model=ItemRequestOut)
-def claim_item_request(
-    request_id: int,
-    db: OwnDB = Depends(deps.get_db),
-    who: Identity = CAN_REQUESTS,
-) -> dict:
-    _editable(db, who, request_id)
-    return request_out(db, who, db.get_item_request(request_id))
 
 
 @router.post("/item-requests/{request_id}/assign", response_model=ItemRequestOut)
@@ -270,7 +264,7 @@ def purchase_unavailable(
 def list_item_request_messages(
     request_id: int,
     db: OwnDB = Depends(deps.get_db),
-    who: Identity = CAN_REQUESTS,
+    who: Identity = CAN_SEE_REQUESTS,
 ) -> list[dict]:
     _request_or_404(db, request_id, who)
     rows = db.list_item_request_messages(request_id)
@@ -308,7 +302,7 @@ def send_item_request_message(
 def get_item_request_message(
     message_id: int,
     db: OwnDB = Depends(deps.get_db),
-    who: Identity = CAN_REQUESTS,
+    who: Identity = CAN_SEE_REQUESTS,
 ) -> dict:
     """For the bot (service key): the reply and where to deliver it."""
     if who.kind != "service":

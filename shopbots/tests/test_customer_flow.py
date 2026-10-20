@@ -236,7 +236,7 @@ def test_checkout_and_receipt_upload(env, bot_apis, shopapi):
         body = bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
         assert "شمارهٔ سفارش" in body
         assert "2,000" in body
-        assert "واریز به کارت 1234" in body      # payment text comes from the API
+        assert "6037-0000-1111-2222" in body      # v2.8.2: the details staff sent
         assert body.endswith(texts.PAYMENT_SEND_RECEIPT)
         assert "6037-0000-1111-2222" in body               # the card configured in shopapi
         assert engine.store.cart_list("bale", CUSTOMER_CHAT) == []

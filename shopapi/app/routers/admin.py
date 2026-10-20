@@ -6,6 +6,7 @@ acting account's username.
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -22,11 +23,13 @@ from ..accounting_writer import (
 )
 from ..config import Settings
 from ..db_own import OwnDB
+from ..util import now_utc
 from ..schemas import ShipIn
 from ..schemas import (
     ApproveUserIn,
     AssignIn,
     OrderOut,
+    PaymentInfoIn,
     PersonMatch,
     RejectIn,
     SalesActionIn,
@@ -34,25 +37,32 @@ from ..schemas import (
     ShopStateOut,
     UserOut,
 )
-from ..security import Identity, require_permission, require_signed_in
+from ..security import Identity, require_any, require_permission, require_signed_in
 from ..staff import (
+    P_ACTIVITY,
+    P_ARCHIVE,
     P_CUSTOMERS_DECIDE,
     P_CUSTOMERS_VIEW,
-    P_EVENTS,
+    P_DASHBOARD,
     P_ORDERS_CANCEL,
+    P_ORDERS_EDIT,
     P_ORDERS_EXPIRE,
     P_ORDERS_ASSIGN,
     P_ORDERS_SHIP,
     P_ORDERS_VIEW,
     P_PAYMENTS_DECIDE,
+    P_SALES_VIEW,
     P_SHOP_STATE,
-    P_VIEW,
 )
 from .public import shop_state
 
 router = APIRouter(prefix="/admin")
 
-CAN_VIEW = Depends(require_permission(P_VIEW))
+# v2.8.2: the phone-sales state is shown on the dashboard and the «فروش گوشی» buttons
+CAN_VIEW = Depends(require_any(P_DASHBOARD, P_SALES_VIEW))
+CAN_EDIT_ORDERS = Depends(require_permission(P_ORDERS_EDIT))
+CAN_ARCHIVE = Depends(require_permission(P_ARCHIVE))
+CAN_ACTIVITY = Depends(require_permission(P_ACTIVITY))
 CAN_DECIDE_CUSTOMERS = Depends(require_permission(P_CUSTOMERS_DECIDE))
 CAN_DECIDE_PAYMENTS = Depends(require_permission(P_PAYMENTS_DECIDE))
 CAN_EXPIRE = Depends(require_permission(P_ORDERS_EXPIRE))
@@ -61,7 +71,8 @@ CAN_SET_SHOP_STATE = Depends(require_permission(P_SHOP_STATE))
 # v2.7.0: what a «کاربر فروش» needs, apart from the rest of the admin view
 CAN_VIEW_ORDERS = Depends(require_permission(P_ORDERS_VIEW))
 CAN_VIEW_CUSTOMERS = Depends(require_permission(P_CUSTOMERS_VIEW))
-CAN_VIEW_EVENTS = Depends(require_permission(P_EVENTS))
+# v2.8.2: every staff member gets the feed, filtered to what they may see
+CAN_VIEW_EVENTS = Depends(require_signed_in)
 CAN_CANCEL = Depends(require_permission(P_ORDERS_CANCEL))
 SIGNED_IN = Depends(require_signed_in)
 
@@ -103,9 +114,10 @@ def system_info(
 def list_users(
     status_filter: Optional[str] = Query(None, alias="status"),
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_VIEW_CUSTOMERS,
+    who: Identity = CAN_VIEW_CUSTOMERS,
 ) -> list[UserOut]:
-    return [UserOut(**u) for u in db.list_users(status_filter)]
+    """v2.8.2: a sales user sees new customers and those of their own work."""
+    return [UserOut(**u) for u in ownership.filter_customers(db, who, db.list_users(status_filter))]
 
 
 @router.get("/persons/match", response_model=PersonMatch)
@@ -124,10 +136,10 @@ def match_person(
 def get_user(
     user_id: int,
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_VIEW_CUSTOMERS,
+    who: Identity = CAN_VIEW_CUSTOMERS,
 ) -> UserOut:
     user = db.get_user_by_id(user_id)
-    if user is None:
+    if not ownership.customer_visible(db, who, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     return UserOut(**user)
 
@@ -177,7 +189,7 @@ def approve_user(
     who: Identity = CAN_DECIDE_CUSTOMERS,
 ) -> UserOut:
     user = db.get_user_by_id(user_id)
-    if user is None:
+    if not ownership.customer_visible(db, who, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     created = False
     if payload.person_code is None:
@@ -221,7 +233,7 @@ def reject_user(
     who: Identity = CAN_DECIDE_CUSTOMERS,
 ) -> UserOut:
     user = db.get_user_by_id(user_id)
-    if user is None:
+    if not ownership.customer_visible(db, who, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     user = db.set_user_status(user_id, "rejected")
     reason = (payload.reason if payload and payload.reason else "")[:200]
@@ -297,19 +309,6 @@ def order_timeline(
     return ownership.timeline(db, who, db.list_activity(targets=targets, limit=500))
 
 
-@router.post("/orders/{order_id}/claim", response_model=OrderOut)
-def claim_order(
-    order_id: int,
-    db: OwnDB = Depends(deps.get_db),
-    who: Identity = CAN_VIEW_ORDERS,
-) -> OrderOut:
-    """«برمی‌دارم»: a free order becomes this user's (the others no longer see it)."""
-    order = _visible_order(db, who, order_id)
-    ownership.ensure_order_editable(order)
-    ownership.take(db, who, "order", order)
-    return order_out(db, who, db.get_order(order_id))
-
-
 @router.post("/orders/{order_id}/assign", response_model=OrderOut)
 def assign_order(
     order_id: int,
@@ -353,12 +352,10 @@ def list_activity(
     date_to: Optional[str] = Query(None, max_length=40),
     limit: int = Query(500, ge=1, le=5000),
     db: OwnDB = Depends(deps.get_db),
-    who: Identity = SIGNED_IN,
+    who: Identity = CAN_ACTIVITY,
 ) -> list[dict]:
-    """«گزارش فعالیت» (manager only): who did what, on which order / customer /
-    request, and when. Dates are ISO (UTC) bounds: from <= ts < to."""
-    if not ownership.is_manager(who):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Managers only")
+    """«گزارش فعالیت» («گزارش فعالیت — دیدن»): who did what, on which order /
+    customer / request, and when. Dates are ISO (UTC) bounds: from <= ts < to."""
     rows = db.list_activity(staff_id=staff_id, customer_id=customer_id, date_from=date_from,
                             date_to=date_to, limit=limit)
     return ownership.timeline(db, who, rows)
@@ -371,7 +368,7 @@ def archived_orders(
     db: OwnDB = Depends(deps.get_db),
     reader: AccountingReader = Depends(deps.get_reader),
     settings: Settings = Depends(deps.get_settings),
-    who: Identity = CAN_VIEW_ORDERS,
+    who: Identity = CAN_ARCHIVE,
 ) -> list[OrderOut]:
     """«بایگانی» (read-only). A sales user: their own orders of the current fiscal
     year (the connected DB_NAME) only; the manager: everything, every year, search."""
@@ -524,7 +521,7 @@ def list_events(
     after: Optional[int] = Query(None, ge=0),
     limit: int = Query(100, ge=1, le=500),
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_VIEW_EVENTS,
+    who: Identity = CAN_VIEW_EVENTS,
 ) -> dict:
     """Notification feed for staff clients.
 
@@ -537,6 +534,8 @@ def list_events(
     # A position beyond the newest event (e.g. the server database was
     # replaced) resyncs the client instead of silencing it forever.
     last_id = items[-1]["id"] if items else min(after, db.last_event_id())
+    # v2.8.2: a sales user hears only about what they may see
+    items = [e for e in items if ownership.event_visible(db, who, e)]
     return {"last_id": last_id, "items": items}
 
 
@@ -592,6 +591,74 @@ def ship_order(
     db.add_event(tracking.EVENT_SHIPPED, order_id, who.actor)
     ownership.log(db, who, ownership.A_SHIP, "order", order,
                   detail="courier" if name or phone else "")
+    return order_out(db, who, order)
+
+
+#: v2.8.2: the customer is told where to pay; the event lets the bot send it.
+EVENT_PAYMENT_INFO = "order_payment_info"
+_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+
+
+def clean_payment_info(payload: PaymentInfoIn) -> dict:
+    """Only the filled fields, normalised; a card is 16 digits, a Sheba IR + 24."""
+    def text(value: str) -> str:
+        return " ".join(str(value or "").split())
+
+    info: dict = {}
+    card = "".join(ch for ch in text(payload.card_number).translate(_DIGITS) if ch.isdigit())
+    if text(payload.card_number):
+        if len(card) != 16:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "card_number must be a 16-digit card number")
+        info["card_number"] = "-".join(card[i:i + 4] for i in range(0, 16, 4))
+    account = text(payload.account_number).translate(_DIGITS)
+    if account:
+        if not all(ch.isdigit() or ch in "-./ " for ch in account):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "account_number must be digits")
+        info["account_number"] = account
+    sheba = text(payload.sheba).translate(_DIGITS).replace(" ", "").replace("-", "").upper()
+    if sheba:
+        if not sheba.startswith("IR"):
+            sheba = "IR" + sheba
+        if len(sheba) != 26 or not sheba[2:].isdigit():
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "sheba must be a sheba number (IR and 24 digits)")
+        info["sheba"] = sheba
+    for key in ("holder", "bank", "note"):
+        value = text(getattr(payload, key))
+        if value:
+            info[key] = value
+    if not any(k in info for k in ("card_number", "account_number", "sheba")):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Enter a card, account or sheba number")
+    return info
+
+
+@router.post("/orders/{order_id}/payment-info", response_model=OrderOut)
+def send_payment_info(
+    order_id: int,
+    payload: PaymentInfoIn,
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+    who: Identity = CAN_EDIT_ORDERS,
+) -> OrderOut:
+    """v2.8.2: «ارسال اطلاعات پرداخت»: what staff typed for this order goes to the
+    customer through the bot (only the filled fields). The receipt deadline starts
+    now. Sending again replaces the details (and restarts the deadline)."""
+    info = clean_payment_info(payload)
+    order = _visible_order(db, who, order_id)
+    ownership.ensure_order_editable(order)
+    if order["status"] != "awaiting_payment":
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Order in status {order['status']}; payment details not needed")
+    ownership.take(db, who, "order", order)
+    reserve_until = (now_utc() + timedelta(minutes=settings.receipt_deadline_minutes)
+                     ).isoformat(timespec="seconds")
+    order = db.set_payment_info(order_id, info, reserve_until)
+    db.audit(who.actor, "order_payment_info", f"order id={order_id} fields={sorted(info)}")
+    db.add_event(EVENT_PAYMENT_INFO, order_id, who.actor)
+    ownership.log(db, who, ownership.A_PAYMENT_INFO, "order", order)
     return order_out(db, who, order)
 
 

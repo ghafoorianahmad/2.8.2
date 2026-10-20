@@ -25,6 +25,8 @@ class BasePage(QWidget):
     auto_refreshable = False
     #: pages that should reload when another page changes data
     reload_on_data_change = True
+    #: v2.8.2: reload when the server announces something (false for form pages)
+    refresh_on_server_events = True
 
     def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -80,8 +82,13 @@ class BasePage(QWidget):
 
     # ---- helpers ---------------------------------------------------------
     def configure_auto_refresh(self) -> None:
-        seconds = self.context.auto_refresh_seconds
+        # v2.8.2: only list pages poll; a form page (settings, server) never reloads
+        # by itself - it wiped what was being typed
+        seconds = self.context.auto_refresh_seconds if self.auto_refreshable else 0
         self._auto.configure(seconds)
+        if not self.auto_refreshable:
+            self.refresh_button.setToolTip("دریافت دوبارهٔ اطلاعات")
+            return
         self.refresh_button.setToolTip(
             f"به‌روزرسانی خودکار هر {_fa(seconds)} ثانیه"
             if seconds > 0
@@ -107,7 +114,41 @@ class BasePage(QWidget):
 
     def _on_auto_refresh(self) -> None:
         if self.isVisible() and self.context.connection_ok:
-            self.load()
+            self.soft_refresh()
+
+    # ---- v2.8.2: never reload under the user's hands ------------------------------
+    def has_unsaved_changes(self) -> bool:
+        """Overridden by pages with a form: True while something typed is not saved."""
+        return False
+
+    def is_editing(self) -> bool:
+        """A dialog is open, the cursor is in a field of this page, or the page
+        has unsaved changes: an automatic reload waits."""
+        from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineEdit,
+                                       QPlainTextEdit, QTextEdit)
+
+        if QApplication.activeModalWidget() is not None:
+            return True
+        focus = QApplication.focusWidget()
+        if focus is not None and self.isAncestorOf(focus):
+            if isinstance(focus, (QLineEdit, QPlainTextEdit, QTextEdit, QAbstractSpinBox)):
+                return True
+            if isinstance(focus, QComboBox) and focus.isEditable():
+                return True
+        try:
+            return bool(self.has_unsaved_changes())
+        except Exception:  # noqa: BLE001 - a half-built page: just do not wait
+            return False
+
+    def soft_refresh(self) -> bool:
+        """An automatic reload (timer / server event). Postponed while the user
+        is editing (the next tick tries again). True = reloaded now."""
+        if self.is_editing():
+            self._refresh_pending = True
+            return False
+        self._refresh_pending = False
+        self.load()
+        return True
 
     def _on_connection_changed(self, ok: bool) -> None:
         if ok and self.isVisible() and not self._busy:

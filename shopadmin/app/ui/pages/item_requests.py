@@ -461,9 +461,15 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         self.changed = True
         self._render_item()
         self.load_timeline()
-        widgets.success(self, "سفارش ساخته شد",
-                        f"سفارش شمارهٔ {to_persian_digits(order_id or '—')} ساخته شد و ربات "
-                        "اطلاعات پرداخت را برای مشتری می‌فرستد (مهلت رسید مثل سفارش‌های دیگر).")
+        # v2.8.2: the payment details are typed for this order right away (the
+        # form opens; nothing is sent before «ارسال» and its confirmation)
+        if isinstance(order, dict) and order_id:
+            from .orders import send_payment_info
+
+            widgets.info(self, "سفارش ساخته شد",
+                         f"سفارش شمارهٔ {to_persian_digits(order_id)} ساخته شد. اکنون اطلاعات "
+                         "پرداخت را برای مشتری بنویسید و بفرستید.", kind="success")
+            send_payment_info(self, self.context, order)
 
     def mark_unavailable(self) -> None:
         if not widgets.confirm(self, "ناموجود",

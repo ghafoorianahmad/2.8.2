@@ -8,6 +8,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QScrollArea,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -24,9 +25,10 @@ from ...permissions import (
     ORDERS_APPROVE_PAYMENT,
     ORDERS_ASSIGN,
     ORDERS_CANCEL,
+    ORDERS_PAYMENT_INFO,
     ORDERS_REJECT_PAYMENT,
     ORDERS_SHIP,
-    SETTINGS_VIEW,
+    SERVER_VIEW,
 )
 from ...persian import (
     format_datetime_shamsi,
@@ -386,14 +388,19 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         left.addWidget(_kv("کد شخص در حسابداری",
                            to_persian_digits(code) if code is not None else "هنوز وصل نشده"))
         left.addWidget(_kv("تاریخ ثبت", format_shamsi(order.get("created_at"))))
+        # v2.8.2: payment details are sent per order; the deadline starts then
+        if order.get("status") == "awaiting_payment":
+            left.addWidget(_kv("اطلاعات پرداخت", "فرستاده شد — " + format_datetime_shamsi(
+                order["payment_info_at"]) if order.get("payment_info_at")
+                else "هنوز فرستاده نشده (دکمهٔ «ارسال اطلاعات پرداخت»)"))
         left.addWidget(_kv("مهلت ارسال رسید", format_datetime_shamsi(order.get("reserve_until"))
                            if order.get("reserve_until") else "—"))
-        if context.can(SETTINGS_VIEW):
+        if context.can(SERVER_VIEW):
             left.addWidget(_kv("پایگاه‌دادهٔ حسابداری", str(order.get("accounting_db") or "—")))
         right = QVBoxLayout()
         right.setSpacing(6)
         right.addWidget(_kv("مبلغ کل", format_money(order.get("total", 0))))
-        if context.can(SETTINGS_VIEW):
+        if context.can(SERVER_VIEW):
             right.addWidget(_kv("سطح قیمت", price_level_label(order.get("price_level", 0))))
         right.addWidget(_kv("شمارهٔ حسابداری", to_persian_digits(order.get("accounting_order_no"))
                             if order.get("accounting_order_no") else "—"))
@@ -527,13 +534,17 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         elif not cancellable:
             self.cancel_button.setToolTip("سفارشِ تأییدشده یا ثبت‌شده لغو نمی‌شود")
 
-        # v2.8.0: «برمی‌دارم» (a free order) and «ارجاع» (manager, «ارجاع سفارش»,
-        # or the owner); a finished order is read-only for everyone
+        # v2.8.2: no «برمی‌دارم»: the first action (payment details, receipt decision,
+        # ship, cancel) takes the order. «ارجاع» (manager, «ارجاع کار به همکار» or the
+        # owner); a finished order is read-only for everyone
         finished = bool(order.get("finished") or order.get("archived"))
-        self.claim_button = widgets.button("برمی‌دارم", icon_name="check",
-                                           on_click=self._claim)
-        self.claim_button.setVisible(not finished and not order.get("owned")
-                                     and context.principal is not None)
+        self.payment_button = widgets.button(
+            "ارسال اطلاعات پرداخت", variant="success", icon_name="check",
+            on_click=self._send_payment_info,
+            tooltip="شمارهٔ کارت یا حساب برای همین سفارش به مشتری فرستاده می‌شود")
+        self.payment_button.setVisible(
+            not finished and order.get("status") == "awaiting_payment"
+            and context.can(ORDERS_PAYMENT_INFO))
         self.assign_button = widgets.button("ارجاع به همکار", icon_name="users",
                                             on_click=self._assign)
         may_assign = context.can(ORDERS_ASSIGN) or bool(order.get("owned_by_me"))
@@ -547,8 +558,8 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
             root.addWidget(widgets.label(
                 "این سفارش تمام شده و فقط‌خواندنی است. هر تغییری فقط در «سازه حساب» انجام می‌شود.",
                 name="Muted", wrap=True))
-        for widget in (self.approve_button, self.reject_button, self.ship_button,
-                       self.cancel_button, self.claim_button, self.assign_button, close):
+        for widget in (self.payment_button, self.approve_button, self.reject_button,
+                       self.ship_button, self.cancel_button, self.assign_button, close):
             widget.setProperty("big", True)
             # hidden, not disabled, when this account may never do it
             actions.addWidget(widget)
@@ -601,15 +612,9 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
             on_error=lambda _m, _k: self.timeline_label.setText("—"),
         )
 
-    def _claim(self) -> None:
-        order_id = int(self.order["id"])
-        self.claim_button.setEnabled(False)
-        run_async(
-            lambda: self.context.api.claim_order(order_id),
-            on_success=lambda _r: self._changed_and_close(),
-            on_error=lambda message, kind: (self.claim_button.setEnabled(True),
-                                            self._failed(message, kind)),
-        )
+    def _send_payment_info(self) -> None:
+        if send_payment_info(self, self.context, self.order):
+            self._changed_and_close()
 
     def _assign(self) -> None:
         dialog = AssignDialog(self.context, self, f"سفارش {to_persian_digits(self.order['id'])}")
@@ -670,7 +675,7 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         widgets.error(self, "کار انجام نشد", message)
 
     def _dry_run_hint(self) -> str:
-        if self.context.dry_run_mode and not self.context.can(SETTINGS_VIEW):
+        if self.context.dry_run_mode and not self.context.can(SERVER_VIEW):
             return "برنامه در حالت آزمایشی است و سفارش واقعاً در حسابداری ثبت نمی‌شود."
         if self.context.dry_run_mode:
             return ("حالت آزمایشی فعال است؛ سفارش‌ها واقعاً در حسابداری ثبت نمی‌شوند. "
@@ -832,6 +837,161 @@ def courier_text(order: dict) -> str:
     name = str(order.get("courier_name") or "").strip()
     phone = to_persian_digits(str(order.get("courier_phone") or "").strip())
     return " — ".join(p for p in (name, phone) if p) or "—"
+
+
+# number fields are left-to-right: their examples are Latin only (no mixed bidi)
+PAYMENT_FIELDS = (("card_number", "شمارهٔ کارت (۱۶ رقم)", "6037-9911-2233-4455"),
+                  ("account_number", "شمارهٔ حساب", "0123456789"),
+                  ("sheba", "شمارهٔ شبا", "IR000000000000000000000000"),
+                  ("holder", "به نام (صاحب حساب)", "اختیاری"),
+                  ("bank", "نام بانک", "اختیاری"),
+                  ("note", "توضیح برای مشتری", "اختیاری، مثلاً «مبلغ را دقیق واریز کنید»"))
+#: per user, on this computer: the last details typed (button «مثل دفعهٔ قبل»)
+LAST_PAYMENT_KEY = "last_payment_info"
+
+
+def payment_info_problem(info: dict) -> str:
+    """Persian reason the details cannot be sent, or "" (the server checks again)."""
+    from ...persian import to_english_digits
+
+    card = "".join(ch for ch in to_english_digits(info.get("card_number", "")) if ch.isdigit())
+    sheba = to_english_digits(info.get("sheba", "")).replace(" ", "").replace("-", "").upper()
+    if not any(str(info.get(k) or "").strip() for k in ("card_number", "account_number", "sheba")):
+        return "دست‌کم یکی از شمارهٔ کارت، شمارهٔ حساب یا شبا را وارد کنید."
+    if info.get("card_number", "").strip() and len(card) != 16:
+        return "شمارهٔ کارت باید ۱۶ رقم باشد."
+    if sheba:
+        digits = sheba[2:] if sheba.startswith("IR") else sheba
+        if len(digits) != 24 or not digits.isdigit():
+            return "شبا باید IR و ۲۴ رقم باشد."
+    return ""
+
+
+def payment_info_preview(info: dict) -> str:
+    """What the customer will read (only the filled fields)."""
+    lines = []
+    for key, caption, _hint in PAYMENT_FIELDS:
+        value = str(info.get(key) or "").strip()
+        if value:
+            lines.append(f"{caption.split(' (')[0]}: {value}")
+    return "\n".join(lines)
+
+
+class PaymentInfoDialog(widgets.ResponsiveDialog):
+    """v2.8.2: «ارسال اطلاعات پرداخت» - like the courier form: card number, account
+    number, Sheba, holder, bank and a note, typed for THIS order. Empty fields
+    are left out of the customer's message; nothing is sent before «ارسال»
+    and a confirmation."""
+
+    def __init__(self, parent: QWidget | None, context, order: dict) -> None:
+        super().__init__(parent)
+        self.context = context
+        self.info: dict = {}
+        order_id = to_persian_digits(order.get("id", ""))
+        self.setWindowTitle(f"اطلاعات پرداخت سفارش {order_id}")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumWidth(520)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(10)
+        root.addWidget(widgets.label(f"اطلاعات پرداخت سفارش {order_id}", size=14, bold=True))
+        root.addWidget(widgets.label(
+            f"مبلغ: {format_money(order.get('total', 0))} — مشتری: {customer_label(order)}\n"
+            "هر خانه‌ای که خالی بماند در پیام مشتری نمی‌آید. پس از «ارسال»، مهلت ارسال رسید "
+            "شروع می‌شود.", name="Muted", wrap=True))
+        form = QFormLayout()
+        form.setLabelAlignment(RIGHT)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(8)
+        self.inputs: dict[str, QLineEdit] = {}
+        for key, caption, hint in PAYMENT_FIELDS:
+            field = QLineEdit()
+            field.setPlaceholderText(hint)
+            field.setMinimumHeight(38)
+            field.setMaxLength(300 if key == "note" else 80)
+            if key in ("card_number", "account_number", "sheba"):
+                field.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+            self.inputs[key] = field
+            form.addRow(widgets.label(caption + ":"), field)
+        root.addLayout(form)
+        last_row = QHBoxLayout()
+        self.last_button = widgets.button("مثل دفعهٔ قبل", icon_name="refresh", variant="ghost",
+                                          on_click=self.fill_last,
+                                          tooltip="همان اطلاعاتی که دفعهٔ قبل فرستادید")
+        self.last_button.setEnabled(bool(self._last()))
+        last_row.addWidget(self.last_button)
+        last_row.addStretch(1)
+        root.addLayout(last_row)
+        self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
+        self.error_label.setVisible(False)
+        root.addWidget(self.error_label)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.ok_button = widgets.button("ارسال به مشتری", variant="primary", icon_name="check",
+                                        on_click=self._accept)
+        self.ok_button.setProperty("big", True)
+        buttons.addWidget(self.ok_button)
+        cancel = widgets.button("انصراف", on_click=self.reject)
+        cancel.setProperty("big", True)
+        buttons.addWidget(cancel)
+        root.addLayout(buttons)
+
+    def _store_key(self) -> str:
+        user = getattr(self.context.principal, "username", "") or ""
+        return f"{LAST_PAYMENT_KEY}.{user}"
+
+    def _last(self) -> dict:
+        try:
+            value = self.context.store.get_setting(self._store_key(), None)
+        except Exception:  # noqa: BLE001 - a convenience only
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def fill_last(self) -> None:
+        last = self._last()
+        for key, field in self.inputs.items():
+            field.setText(str(last.get(key) or ""))
+
+    def values(self) -> dict:
+        return {key: " ".join(field.text().split()) for key, field in self.inputs.items()}
+
+    def _accept(self) -> None:
+        info = self.values()
+        problem = payment_info_problem(info)
+        if problem:
+            self.error_label.setText(problem)
+            self.error_label.setVisible(True)
+            return
+        if not widgets.confirm(
+            self, "ارسال اطلاعات پرداخت",
+            "این پیام برای مشتری فرستاده می‌شود:\n\n" + payment_info_preview(info),
+            confirm_text="بله، بفرست", cancel_text="بازگشت",
+        ):
+            return
+        self.info = {k: v for k, v in info.items() if v}
+        try:
+            self.context.store.set_setting(self._store_key(), self.info)
+        except Exception:  # noqa: BLE001
+            pass
+        self.accept()
+
+
+def send_payment_info(parent: QWidget, context, order: dict) -> bool:
+    """Open the form for ``order`` and send it (blocking until the server answers,
+    with a clear message). True = sent."""
+    dialog = PaymentInfoDialog(parent, context, order)
+    if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.info:
+        return False
+    try:
+        context.api.send_payment_info(int(order["id"]), dialog.info)
+    except Exception as exc:  # noqa: BLE001 - ApiError carries the Persian text
+        widgets.error(parent, "اطلاعات پرداخت فرستاده نشد",
+                      getattr(exc, "message", "") or "ارتباط با سرور فروشگاه برقرار نشد.")
+        return False
+    context.data_changed.emit()
+    widgets.success(parent, "اطلاعات پرداخت",
+                    "اطلاعات پرداخت برای مشتری فرستاده شد؛ منتظر رسید او بمانید.")
+    return True
 
 
 class ShipDialog(widgets.ResponsiveDialog):

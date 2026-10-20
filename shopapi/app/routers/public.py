@@ -76,7 +76,8 @@ def shop_state(db: OwnDB, settings: Settings) -> ShopStateOut:
     return ShopStateOut(
         closed=not state.open, sales_open=state.open,
         receipt_deadline_minutes=settings.receipt_deadline_minutes,
-        payment_ready=settings.payment_ready(),
+        # v2.8.2: always true - payment details are sent per order by staff
+        payment_ready=True,
         catalog_ready=cfg.configured,
         phone_groups_ready=cfg.phone_configured,
         **{k: v for k, v in state.as_dict().items() if k != "open"},
@@ -346,11 +347,17 @@ def create_order(
     payload: OrderCreate,
     response: Response,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    check_only: bool = Query(False, alias="check"),
     role: str = Depends(get_api_identity),
     reader: AccountingReader = Depends(deps.get_reader),
     db: OwnDB = Depends(deps.get_db),
     settings: Settings = Depends(deps.get_settings),
 ) -> OrderOut:
+    """Place an order. v2.8.2: ``?check=true`` runs exactly the same checks (stock,
+    color, sales windows, limits) and answers with the priced items without
+    creating anything - the bot asks before a phone goes into the cart."""
+    if check_only:
+        idempotency_key = None
     user = db.get_user_by_platform(payload.platform, payload.chat_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
@@ -363,13 +370,8 @@ def create_order(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid Idempotency-Key")
 
     def _out(o: dict) -> OrderOut:
-        return OrderOut(
-            **o,
-            payment_instructions=settings.bank_account_text or None,
-            payment_card_number=settings.payment_card_number or None,
-            payment_sheba=settings.payment_sheba or None,
-            payment_owner=settings.payment_owner or None,
-        )
+        # v2.8.2: no fixed payment details: staff send them for each order
+        return OrderOut(**o)
 
     merged = _merge_items(payload.items)
     level = settings.price_level_for(role)
@@ -390,9 +392,6 @@ def create_order(
                                         "Idempotency-Key belongs to another customer")
                 response.status_code = status.HTTP_200_OK
                 return _out(db.get_order(seen["order_id"]))
-        if not settings.payment_ready():
-            # v2.6.0: the customer could not be told where to pay.
-            raise HTTPException(status.HTTP_409_CONFLICT, PAYMENT_NOT_CONFIGURED_DETAIL)
         # Orders past their receipt deadline must not keep holding stock.
         order_timeout.cancel_overdue(db)
         our_res = db.pending_reservations()
@@ -495,10 +494,14 @@ def create_order(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Order exceeds the limit for customers awaiting approval",
                 )
-        # The receipt deadline: no receipt by then = cancelled locally.
-        reserve_until = (
-            now_utc() + timedelta(minutes=settings.receipt_deadline_minutes)
-        ).isoformat(timespec="seconds")
+        if check_only:
+            response.status_code = status.HTTP_200_OK
+            return OrderOut(id=0, user_id=user["id"], status="check", price_level=level,
+                            total=total, created_at=now_utc().isoformat(timespec="seconds"),
+                            items=items_out)
+        # v2.8.2: the receipt deadline starts when staff send the payment details
+        # («ارسال اطلاعات پرداخت»); until then the order does not time out.
+        reserve_until = None
 
         order = db.create_order(
             user["id"],
@@ -652,14 +655,8 @@ def get_order(
     if role == "admin" and order.get("user_person_code") is not None:
         person_name = reader.person_names([order["user_person_code"]]).get(
             int(order["user_person_code"]))
-    payment = {}
-    if order.get("status") == "awaiting_payment":
-        # v2.8.0: an order made by staff from a purchase request is paid from the bot
-        payment = dict(payment_instructions=settings.bank_account_text or None,
-                       payment_card_number=settings.payment_card_number or None,
-                       payment_sheba=settings.payment_sheba or None,
-                       payment_owner=settings.payment_owner or None)
-    return OrderOut(**order, invoice_numbers=numbers, person_name=person_name, **payment)
+    # v2.8.2: the payment details are those staff sent for this order (payment_info)
+    return OrderOut(**order, invoice_numbers=numbers, person_name=person_name)
 
 
 @router.get("/users/{platform}/{chat_id}/orders", response_model=list[OrderOut])

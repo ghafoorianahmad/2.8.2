@@ -63,7 +63,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "remember_me": False,
     "notify_desktop": True,
     "notify_sound": True,
-    "event_poll_seconds": 15,
+    # v2.8.2: 3 s (was 15): a customer's order / receipt shows up within seconds
+    "event_poll_seconds": 3,
     "close_to_tray": True,
     "sazeh_watch": True,
     "sazeh_process_names": "Sazeh Hesab, SazehHesab",
@@ -143,6 +144,13 @@ class Store:
                     "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?,?,?)",
                     (key, json.dumps(value, ensure_ascii=False), now_utc_iso()),
                 )
+            # v2.8.2: the old default (15 s, never changed by anyone) becomes 3 s, once
+            done = cur.execute("SELECT 1 FROM settings WHERE key='event_poll_v282'").fetchone()
+            if done is None:
+                cur.execute("UPDATE settings SET value='3' WHERE key='event_poll_seconds' "
+                            "AND value='15'")
+                cur.execute("INSERT OR IGNORE INTO settings (key, value, updated_at) "
+                            "VALUES ('event_poll_v282', 'true', ?)", (now_utc_iso(),))
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         row = self._one("SELECT value FROM settings WHERE key=?", (key,))

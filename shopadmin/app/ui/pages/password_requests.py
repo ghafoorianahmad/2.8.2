@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QHBoxLayout, QWidget
 
-from ...permissions import PASSWORDS_DECIDE
+from ...permissions import PASSWORDS_DECIDE, PASSWORDS_VIEW
 from ...persian import format_shamsi, to_persian_digits
 from ...statuses import role_fa
 from .. import widgets
@@ -38,7 +38,7 @@ class PasswordRequestsPage(BasePage):
         self.body.addWidget(panel, 1)
 
     def load(self) -> None:
-        if not self.context.can(PASSWORDS_DECIDE):
+        if not self.context.can(PASSWORDS_VIEW):
             return
         self.run(self.context.auth.list_password_requests, on_success=self._loaded,
                  on_error=lambda m, _k: self.show_table_error(m))
@@ -66,10 +66,12 @@ class PasswordRequestsPage(BasePage):
         layout = QHBoxLayout(holder)
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(6)
-        layout.addWidget(widgets.button(
-            "تأیید", variant="primary", on_click=lambda i=item: self._decide(i, True)))
-        layout.addWidget(widgets.button(
-            "رد", variant="danger", on_click=lambda i=item: self._decide(i, False)))
+        can_decide = self.context.can(PASSWORDS_DECIDE)   # v2.8.2: «تغییر»
+        for text, variant, approve in (("تأیید", "primary", True), ("رد", "danger", False)):
+            button = widgets.button(text, variant=variant,
+                                    on_click=lambda i=item, a=approve: self._decide(i, a))
+            button.setEnabled(can_decide)
+            layout.addWidget(button)
         layout.addStretch(1)
         return holder
 

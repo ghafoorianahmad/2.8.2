@@ -240,6 +240,7 @@ def test_card_comes_from_shopapi_never_from_the_messages_file(env, bot_apis, sho
     texts.load(custom)
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
     shopapi.payment_card = "6037991122334455"
+    shopapi.auto_payment_info = {"card_number": "6037-9911-2233-4455"}
 
     async def scenario(engine, adapters, api):
         await _order_one(engine)

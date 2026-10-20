@@ -44,9 +44,14 @@ log = get_logger("settings")
 
 
 class SettingsPage(BasePage):
-    title = "تنظیمات"
-    subtitle = "آدرس سرور، اعلان‌ها، بازه‌های به‌روزرسانی و حساب کاربری"
-    help_text = "تنظیمات همین رایانه: اتصال، اعلان‌ها، ظاهر برنامه (روشن یا تیره) و پرونده‌ها."
+    title = "تنظیمات برنامه"
+    subtitle = "همین رایانه: اتصال، اعلان‌ها، بازه‌های به‌روزرسانی، ظاهر و پرونده‌ها"
+    help_text = ("تنظیمات همین رایانه برای همهٔ کاربران. تنظیمات مشترک فروشگاه در "
+                 "«تنظیمات سرور فروشگاه» است.")
+    #: v2.8.2: a form page: never reloaded by itself
+    auto_refreshable = False
+    refresh_on_server_events = False
+    reload_on_data_change = False
 
     def build_body(self) -> None:
         from PySide6.QtWidgets import QScrollArea
@@ -98,7 +103,7 @@ class SettingsPage(BasePage):
             # Only the Super Admin may point this computer at another server.
             self.base_url_input.setEnabled(False)
             self.connection_hint.setText(
-                "تغییر آدرس سرور فقط توسط «مدیر کل» امکان‌پذیر است."
+                "تغییر آدرس سرور فقط توسط مدیر یا دسترسی «تنظیمات سرور فروشگاه — تغییر» امکان‌پذیر است."
             )
         else:
             self.connection_hint.setText(
@@ -211,7 +216,7 @@ class SettingsPage(BasePage):
         form = QFormLayout()
         form.setLabelAlignment(RIGHT)
         self.poll_spin = QSpinBox()
-        self.poll_spin.setRange(5, 600)
+        self.poll_spin.setRange(2, 600)
         self.poll_spin.setSuffix(" ثانیه")
         self.poll_spin.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         form.addRow(widgets.label("بررسی موارد جدید هر:"), self.poll_spin)
@@ -291,7 +296,7 @@ class SettingsPage(BasePage):
             self.autostart_check.setChecked(autostart.is_enabled())
         except Exception:  # noqa: BLE001 - no registry (not Windows)
             self.autostart_check.setEnabled(False)
-        self.poll_spin.setValue(store.get_int_setting("event_poll_seconds", 15, minimum=5,
+        self.poll_spin.setValue(store.get_int_setting("event_poll_seconds", 3, minimum=2,
                                                       maximum=600))
         self.refresh_spin.setValue(self.context.auto_refresh_seconds)
         self.timeout_spin.setValue(self.context.session_timeout_minutes)
@@ -428,14 +433,12 @@ class SettingsPage(BasePage):
             f"حداکثر تعداد هر قلم: {to_persian_digits(info.max_order_qty)}",
             "اجازهٔ کد شخص مشترک: " + ("بله" if info.allow_shared_person_code else "خیر"),
         ]
-        if info.bank_account_text:
-            lines.append(f"متن حساب بانکی: {info.bank_account_text}")
         widgets.info(self, "اطلاعات سرور فروشگاه", "\n".join(lines))
 
     def _save_connection(self) -> None:
         if not self.context.can(SETTINGS_EDIT_CONNECTION):
             widgets.error(self, "دسترسی غیرمجاز",
-                          "تغییر تنظیمات اتصال فقط توسط «مدیر کل» امکان‌پذیر است.")
+                          "تغییر تنظیمات اتصال فقط توسط مدیر یا دسترسی «تنظیمات سرور فروشگاه — تغییر» امکان‌پذیر است.")
             return
         base_url = self.base_url_input.text().strip()
         if not base_url.startswith(("http://", "https://")):

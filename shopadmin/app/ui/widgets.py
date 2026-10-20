@@ -409,14 +409,66 @@ class StatusPill(QLabel):
             f"padding: 4px 12px; font-weight: 600;"
         )
         self.setMinimumHeight(26)
-        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        self.updateGeometry()
         self.adjustSize()
+
+    # v2.8.2: the bold text + the 12px padding on both sides, measured with the font
+    # the pill really draws with (its parent's): Qt's own hint left the padding out,
+    # so «کاربر فروش» / «ثبت‌شده در حسابداری» were cut.
+    PADDING = 12
+
+    def _text_width(self) -> int:
+        bold = QFont(self.font())
+        bold.setBold(True)
+        return QFontMetrics(bold).horizontalAdvance(self.text()) + 2 * self.PADDING + 6
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt naming
+        hint = super().sizeHint()
+        return QSize(max(hint.width(), self._text_width()), max(hint.height(), 26))
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt naming
+        return self.sizeHint()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange,
+                            QEvent.Type.ParentChange):
+            self.updateGeometry()
 
 
 def theme_status_colors(status: str) -> tuple[str, str]:
     from ..statuses import status_colors
 
     return status_colors(status)
+
+
+def actions_menu_button(actions, *, text: str = "بیشتر", tooltip: str = "کارهای دیگر") -> QPushButton:
+    """v2.8.2: «بیشتر» (a "⋯" menu) for row actions that do not fit as buttons (the
+    "⋯" glyph itself is not in the Persian font).
+    ``actions``: (text, callback, enabled, tooltip) tuples; ``None`` = separator."""
+    from PySide6.QtWidgets import QMenu
+
+    button = QPushButton(text)
+    button.setObjectName("RowMenu")
+    button.setToolTip(tooltip)
+    button.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+    menu = QMenu(button)
+    menu.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    for entry in actions:
+        if entry is None:
+            menu.addSeparator()
+            continue
+        label_text, callback, enabled, tip = (tuple(entry) + ("",))[:4]
+        action = menu.addAction(label_text)
+        action.setEnabled(bool(enabled))
+        if tip:
+            action.setToolTip(tip)
+        action.triggered.connect(lambda _c=False, cb=callback: cb())
+    menu.setToolTipsVisible(True)
+    button.setMenu(menu)
+    button.menu_actions = menu.actions()      # tests / callers
+    return button
 
 
 def pill_cell(widget: QWidget) -> QWidget:
@@ -1082,6 +1134,14 @@ class _FitOnShow(QObject):
 _FIT_ON_SHOW = _FitOnShow()
 
 
+#: v2.8.2: an explicit title-bar set. Adding the maximise hint to a dialog's default
+#: flags (2.8.1) made Windows grey out the ✕ (SC_CLOSE disabled); with
+#: CustomizeWindowHint every listed button is shown and enabled.
+DIALOG_FLAGS = (Qt.WindowType.Dialog | Qt.WindowType.CustomizeWindowHint
+                | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowSystemMenuHint
+                | Qt.WindowType.WindowMaximizeButtonHint | Qt.WindowType.WindowCloseButtonHint)
+
+
 def make_responsive(dialog: QDialog) -> QDialog:
     """v2.8.1: a dialog that scrolls, can be resized and maximised, and opens no
     larger than the screen (any screen size, any Windows scaling).
@@ -1093,10 +1153,7 @@ def make_responsive(dialog: QDialog) -> QDialog:
     if dialog.property("responsive"):
         return dialog
     dialog.setProperty("responsive", True)
-    flags = (dialog.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint
-             | Qt.WindowType.WindowCloseButtonHint | Qt.WindowType.WindowSystemMenuHint
-             | Qt.WindowType.WindowTitleHint)
-    dialog.setWindowFlags(flags & ~Qt.WindowType.WindowContextHelpButtonHint)
+    dialog.setWindowFlags(DIALOG_FLAGS)
     dialog.setSizeGripEnabled(True)
     dialog.installEventFilter(_FIT_ON_SHOW)
     layout = dialog.layout()

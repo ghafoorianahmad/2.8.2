@@ -24,7 +24,8 @@ from ...auth import MIN_PASSWORD_LENGTH, validate_password_strength
 from ...permissions import (
     DEFAULT_ROLE,
     ROLE_SERVER_PERMISSIONS,
-    SERVER_PERMISSION_FA,
+    SECTIONS,
+    with_implied,
     USERS_MANAGE,
     USERS_VIEW,
 )
@@ -40,7 +41,7 @@ HEADERS = ("نام کاربری", "نام و نام خانوادگی", "نقش",
 
 class UsersPage(BasePage):
     title = "کاربران سیستم"
-    subtitle = "حساب کارکنان فروشگاه روی سرور — فقط مدیر کل"
+    subtitle = "حساب کارکنان فروشگاه و دسترسی هر بخش (دیدن / تغییر)"
     help_text = "کاربران برنامه: «مدیر» همهٔ بخش‌ها را دارد و «کاربر فروش» فقط سفارش‌ها، درخواست‌ها و مشتریان. دسترسی هر نفر را می‌توانید جداگانه کم یا زیاد کنید."
 
     def build_body(self) -> None:
@@ -148,40 +149,26 @@ class UsersPage(BasePage):
         edit.setEnabled(can_manage)
         layout.addWidget(edit)
 
-        reset = widgets.button("تغییر گذرواژه", icon_name="key",
-                               on_click=lambda u=user: self._reset_password(u))
-        reset.setEnabled(can_manage)
-        layout.addWidget(reset)
-
-        default = widgets.button("بازنشانی به ۱۲۳۴۵", icon_name="key",
-                                 on_click=lambda u=user: self._reset_default(u),
-                                 tooltip="گذرواژه ۱۲۳۴۵ می‌شود و کاربر در ورود بعدی باید عوضش کند")
-        default.setEnabled(can_manage)
-        layout.addWidget(default)
-
-        if user.get("locked"):
-            unlock = widgets.button("رفع قفل", icon_name="key",
-                                    on_click=lambda u=user: self._unlock(u))
-            unlock.setEnabled(can_manage)
-            layout.addWidget(unlock)
-
+        # v2.8.2: the other actions in a «بیشتر» menu (as buttons they were cut in the row)
         active = bool(user.get("active"))
-        toggle = widgets.button(
-            "غیرفعال" if active else "فعال‌سازی",
-            variant="ghost",
-            on_click=lambda u=user: self._toggle_active(u),
-        )
-        toggle.setEnabled(can_manage and not is_self)
-        if is_self:
-            toggle.setToolTip("نمی‌توانید حساب خودتان را غیرفعال کنید")
-        layout.addWidget(toggle)
-
-        delete = widgets.button("حذف", variant="danger",
-                                on_click=lambda u=user: self._delete_user(u))
-        delete.setEnabled(can_manage and not is_self)
-        if is_self:
-            delete.setToolTip("نمی‌توانید حساب خودتان را حذف کنید")
-        layout.addWidget(delete)
+        actions = [
+            ("تغییر گذرواژه", lambda u=user: self._reset_password(u), can_manage, ""),
+            ("بازنشانی گذرواژه به ۱۲۳۴۵", lambda u=user: self._reset_default(u), can_manage,
+             "گذرواژه ۱۲۳۴۵ می‌شود و کاربر در ورود بعدی باید عوضش کند"),
+        ]
+        if user.get("locked"):
+            actions.append(("رفع قفل", lambda u=user: self._unlock(u), can_manage, ""))
+        actions += [
+            None,
+            ("غیرفعال کردن" if active else "فعال‌سازی", lambda u=user: self._toggle_active(u),
+             can_manage and not is_self,
+             "نمی‌توانید حساب خودتان را غیرفعال کنید" if is_self else ""),
+            ("حذف کاربر", lambda u=user: self._delete_user(u), can_manage and not is_self,
+             "نمی‌توانید حساب خودتان را حذف کنید" if is_self else ""),
+        ]
+        more = widgets.actions_menu_button(actions, tooltip="تغییر گذرواژه، قفل، غیرفعال یا حذف")
+        more.setEnabled(can_manage)
+        layout.addWidget(more)
 
         layout.addStretch(1)
         return holder
@@ -356,7 +343,7 @@ class UserFormDialog(widgets.ResponsiveDialog):
 
         self.setWindowTitle("ویرایش کاربر" if self.editing else "کاربر جدید")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(680)          # v2.8.2: room for the permission table
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 20)
@@ -426,22 +413,35 @@ class UserFormDialog(widgets.ResponsiveDialog):
 
         root.addLayout(form)
 
-        # ---- v2.7.0: per-user permissions on top of the role ----------------
+        # ---- v2.8.2: one row per section, «دیدن» and «تغییر» ----------------
         perms_panel = widgets.Panel("دسترسی‌های این کاربر")
         perms_panel.body.addWidget(widgets.label(
-            "تیک‌ها از نقش گرفته می‌شوند؛ می‌توانید برای همین یک نفر دسترسی‌ای اضافه یا کم کنید. "
-            "بخش‌هایی که تیک ندارند در منوی او اصلاً نشان داده نمی‌شوند.",
+            "تیک‌ها از نقش گرفته می‌شوند؛ می‌توانید برای همین یک نفر کم یا زیاد کنید. «تغییر» "
+            "بدون «دیدن» نمی‌شود. بخشی که «دیدن» ندارد در منوی او اصلاً نشان داده نمی‌شود.",
             name="Muted", wrap=True))
         perms_holder = QWidget()
         perms_grid = QGridLayout(perms_holder)
         perms_grid.setContentsMargins(0, 0, 0, 0)
         perms_grid.setHorizontalSpacing(18)
         perms_grid.setVerticalSpacing(4)
+        perms_grid.addWidget(widgets.label("بخش", bold=True), 0, 0)
+        perms_grid.addWidget(widgets.label("دیدن", bold=True), 0, 1)
+        perms_grid.addWidget(widgets.label("تغییر", bold=True), 0, 2)
         self.permission_checks: dict[str, QCheckBox] = {}
-        for index, (name, label_text) in enumerate(SERVER_PERMISSION_FA.items()):
-            check = QCheckBox(label_text)
-            self.permission_checks[name] = check
-            perms_grid.addWidget(check, index // 2, index % 2)
+        for row, (key, label_text, has_view, has_edit) in enumerate(SECTIONS, start=1):
+            perms_grid.addWidget(widgets.label(label_text, wrap=True), row, 0)
+            for column, (kind, present) in enumerate((("view", has_view), ("edit", has_edit)),
+                                                     start=1):
+                if not present:
+                    perms_grid.addWidget(widgets.label("—", name="Faint"), row, column)
+                    continue
+                check = QCheckBox()
+                check.setToolTip(f"{label_text} — {'دیدن' if kind == 'view' else 'تغییر'}")
+                name = f"{key}.{kind}"
+                self.permission_checks[name] = check
+                check.toggled.connect(lambda on, n=name: self._tick_changed(n, on))
+                perms_grid.addWidget(check, row, column, Qt.AlignmentFlag.AlignCenter)
+        perms_grid.setColumnStretch(0, 1)
         perms_panel.body.addWidget(perms_holder)
         reset = widgets.button("برگرداندن به دسترسی‌های نقش", variant="ghost",
                                on_click=self.reset_permissions)
@@ -475,8 +475,23 @@ class UserFormDialog(widgets.ResponsiveDialog):
         return ROLE_SERVER_PERMISSIONS.get(str(self.role_combo.currentData()), frozenset())
 
     def _set_ticks(self, names: set) -> None:
+        names = with_implied(names)
         for name, check in self.permission_checks.items():
+            check.blockSignals(True)
             check.setChecked(name in names)
+            check.blockSignals(False)
+
+    def _tick_changed(self, name: str, on: bool) -> None:
+        """«تغییر» needs «دیدن»: ticking «تغییر» ticks «دیدن»; clearing «دیدن» clears
+        «تغییر» of the same section."""
+        section, kind = name.rsplit(".", 1)
+        other = self.permission_checks.get(f"{section}.{'view' if kind == 'edit' else 'edit'}")
+        if other is None:
+            return
+        if kind == "edit" and on and not other.isChecked():
+            other.setChecked(True)
+        elif kind == "view" and not on and other.isChecked():
+            other.setChecked(False)
 
     def reset_permissions(self) -> None:
         self._set_ticks(set(self.role_permissions()))
@@ -484,7 +499,7 @@ class UserFormDialog(widgets.ResponsiveDialog):
     def permission_changes(self) -> tuple[list[str], list[str]]:
         """(extra, removed) compared with the chosen role."""
         ticked = {n for n, c in self.permission_checks.items() if c.isChecked()}
-        base = set(self.role_permissions())
+        base = with_implied(self.role_permissions())
         return sorted(ticked - base), sorted(base - ticked)
 
     def _update_role_hint(self) -> None:

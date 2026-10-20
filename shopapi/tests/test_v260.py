@@ -144,16 +144,11 @@ def test_admin_product_groups(client, reader, db):
                           headers=other).status_code in (401, 403)
 
 
-# ---- 8: payment card required ----------------------------------------------------------------
-def test_no_card_means_no_checkout(client, reader, settings):
+# ---- 8: v2.8.2 - no fixed card: staff send the payment details per order ----------------------
+def test_no_card_is_needed_to_order(client, reader, settings):
     _shop(reader)
     register_and_approve(client)
-    for card in ("", "XXXX-XXXX-XXXX-XXXX", "0000-0000-0000-0000", "1234"):
-        settings.payment_card_number = card
-        assert client.get("/shop/state", headers=h("bot")).json()["payment_ready"] is False
-        r = _order(client, [{"kala_code": 101, "qty": 1}])
-        assert r.status_code == 409 and r.json()["detail"] == "Payment details are not configured"
-    settings.payment_card_number = "6037 0000 1111 2222"
+    settings.payment_card_number = ""
     assert client.get("/shop/state", headers=h("bot")).json()["payment_ready"] is True
     assert _order(client, [{"kala_code": 101, "qty": 1}]).status_code == 201
 
@@ -273,7 +268,7 @@ def test_status_code_is_editable_with_the_same_validation():
 
 
 def test_version():
-    assert control.VERSION == "2.8.1"
+    assert control.VERSION == "2.8.2"
 
 
 def test_staff_see_every_group(client, reader, db):

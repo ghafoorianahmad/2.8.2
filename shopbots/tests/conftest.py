@@ -181,6 +181,14 @@ class FakeShopApi:
         self.payment_card = "6037-0000-1111-2222"
         #: the card was removed between the state check and the order
         self.card_removed_meanwhile = False
+        #: v2.8.2: payment details staff typed for the order. Set = they come with the
+        #: order at once (the old flow most tests use); None = sent later by staff
+        #: (``send_payment_info`` + the ``order_payment_info`` event).
+        self.auto_payment_info: dict | None = {"card_number": "6037-0000-1111-2222",
+                                               "holder": "فروشگاه نمونه"}
+        #: v2.8.2: POST /orders?check=true bodies, and products without stock in Sazeh
+        self.check_bodies: list[dict] = []
+        self.no_stock: set[int] = set()
         #: v2.6.0: «درخواست کالای ناموجود»
         self.item_requests: list[dict] = []
         self.item_request_limit = 10
@@ -528,8 +536,12 @@ class FakeShopApi:
                 return self._err(409, f"Sales are closed: {self.closed_reason}")
             items = []
             total = 0.0
-            self.order_bodies.append(body)
+            checking = str(params.get("check", "")).lower() == "true"
+            (self.check_bodies if checking else self.order_bodies).append(body)
             for line in body.get("items", []):
+                if line["kala_code"] in self.no_stock:
+                    return self._err(422, f"Product {line['kala_code']} has no stock; "
+                                          f"purchase request")
                 if line["kala_code"] in self.refuse_items:
                     return self._err(422, f"Product {line['kala_code']} "
                                           f"{self.refuse_items[line['kala_code']]}")
@@ -558,6 +570,9 @@ class FakeShopApi:
                     "qty": line["qty"], "unit_price": product["unit_price"],
                 })
                 total += float(line["qty"]) * float(product["unit_price"])
+            if checking:
+                return self._ok({"id": 0, "status": "check", "price_level": 3, "total": total,
+                                 "created_at": "t", "items": items})
             order_id = self._next_order
             self._next_order += 1
             order = {
@@ -566,6 +581,7 @@ class FakeShopApi:
                 "items": items, "payment_instructions": "واریز به کارت 1234",
                 "payment_card_number": self.payment_card or None, "payment_sheba": None,
                 "payment_owner": "فروشگاه نمونه",
+                "payment_info": dict(self.auto_payment_info) if self.auto_payment_info else None,
                 "user_id": user["id"], "customer_pending": user["status"] != "approved",
                 "_platform": platform, "_chat_id": chat_id,
             }

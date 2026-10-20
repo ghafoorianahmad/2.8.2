@@ -193,8 +193,10 @@ def test_users_page_offers_reset_default_and_requests_page_decides(ui_context, a
     users = UsersPage(context)
     users.load()
     _pump(admin_qapp)
-    labels = {b.text() for b in users.findChildren(type(users.add_button))}
-    assert "بازنشانی به ۱۲۳۴۵" in labels and "تغییر گذرواژه" in labels
+    # v2.8.2: in the row's «بیشتر» menu
+    labels = {a.text() for b in users.findChildren(type(users.add_button))
+              for a in getattr(b, "menu_actions", [])}
+    assert "بازنشانی گذرواژه به ۱۲۳۴۵" in labels and "تغییر گذرواژه" in labels
 
     page = PasswordRequestsPage(context)
     page.load()

@@ -230,8 +230,12 @@ def test_order_gets_a_30_minute_receipt_deadline_and_the_db_name(client, reader,
     seed_products(reader)
     register_and_approve(client)
     body = order_req(client).json()
-    created = datetime.fromisoformat(body["created_at"])
-    deadline = datetime.fromisoformat(body["reserve_until"])
+    # v2.8.2: no deadline until staff send the payment details; then 30 minutes
+    assert body["reserve_until"] is None
+    sent = client.post(f"/admin/orders/{body['id']}/payment-info", headers=h("admin"),
+                       json={"card_number": "6037 0000 1111 2222"}).json()
+    created = datetime.fromisoformat(sent["payment_info_at"])
+    deadline = datetime.fromisoformat(sent["reserve_until"])
     assert timedelta(minutes=29) <= deadline - created <= timedelta(minutes=31)
     assert body["accounting_db"] == "hesab5"
     assert client.get("/admin/system-info", headers=h("admin")).json()[

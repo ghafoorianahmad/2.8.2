@@ -78,7 +78,7 @@ def test_login_success_and_token_stored_hashed(client, db):
     r = login(client)
     assert r.status_code == 200
     body = r.json()
-    assert body["user"]["role"] == "super_admin" and "staff.manage" in body["permissions"]
+    assert body["user"]["role"] == "super_admin" and "staff.edit" in body["permissions"]
     token = body["token"]
     assert db.get_session(hash_token(token)) is not None
     rows = db._fetchall("SELECT token_hash FROM staff_sessions")

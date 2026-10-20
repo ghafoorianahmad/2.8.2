@@ -179,7 +179,8 @@ def test_purchase_request_then_stock_confirmed_creates_an_order(shop, db):
                       headers=mina).json()
     assert order["status"] == "awaiting_payment" and order["total"] == 1_100_000_000
     assert order["items"][0]["variant"] == "Silver — CHA" and order["request_id"] == req["id"]
-    assert order["reserve_until"] and order["owned_by_me"]
+    # v2.8.2: the deadline starts with «ارسال اطلاعات پرداخت»
+    assert order["reserve_until"] is None and order["owned_by_me"]
     assert "purchase_order_created" in events(db)
     # the row is mapped now (also for later lists) and the request is finished
     assert PriceListRepo(db).mapping_for_key("i17p-cha-silver")["kala_code"] == PRO
@@ -187,10 +188,13 @@ def test_purchase_request_then_stock_confirmed_creates_an_order(shop, db):
     assert done["status"] == "done" and done["outcome"] == "confirmed"
     assert done["order_id"] == order["id"] and done["finished"]
     assert shop.post(url, json={"kala_code": PRO}, headers=mina).status_code == 409
-    # the bot can show the payment details of that order
+    # v2.8.2: staff send the payment details; then the bot can show them
+    sent = shop.post(f"/admin/orders/{order['id']}/payment-info", headers=mina,
+                     json={"card_number": "6037-0000-1111-2222", "holder": "فروشگاه"})
+    assert sent.status_code == 200 and sent.json()["reserve_until"]
     got = shop.get(f"/orders/{order['id']}", params={"platform": "bale", "chat_id": "111"},
                    headers=h("bot")).json()
-    assert got["payment_card_number"]
+    assert got["payment_info"] == {"card_number": "6037-0000-1111-2222", "holder": "فروشگاه"}
 
 
 def test_purchase_request_by_variant_and_unavailable(shop, db):
@@ -231,19 +235,30 @@ def _receipt_order(client, reader) -> int:
     return order["id"]
 
 
+def _take(db, target_id: int, username: str, target: str = "order") -> None:
+    """v2.8.2 (no «برمی‌دارم»): the first action of ``username`` takes the row."""
+    from app.security import Identity
+
+    row = db.get_staff_by_username(username)
+    who = Identity(kind="staff", role=row["role"], username=username, user_id=row["id"],
+                   permissions=frozenset({"orders.view", "orders.edit"}))
+    ownership.take(db, who, target, db.get_order(target_id) if target == "order"
+                   else db.get_item_request(target_id))
+
+
 def test_first_action_takes_the_order_and_hides_it_from_others(client, db, reader):
     order_id = _receipt_order(client, reader)
     mina, sara = staff(db, "operator", "mina"), staff(db, "operator", "sara")
     boss = staff(db, "super_admin", "boss")
     for who in (mina, sara):     # a new order: every sales user sees it
         assert [o["id"] for o in client.get("/admin/orders", headers=who).json()] == [order_id]
-    r = client.post(f"/admin/orders/{order_id}/claim", headers=mina).json()
+    _take(db, order_id, "mina")
+    r = client.get(f"/admin/orders/{order_id}", headers=mina).json()
     assert r["owned_by_me"] and r["owner_name"] is None          # no names for sales users
     assert client.get("/admin/orders", headers=sara).json() == []
     assert client.get(f"/admin/orders/{order_id}", headers=sara).status_code == 404
     assert client.get(f"/admin/orders/{order_id}/receipt", headers=sara).status_code == 404
     assert client.post(f"/admin/orders/{order_id}/reject-payment", headers=sara).status_code == 404
-    assert client.post(f"/admin/orders/{order_id}/claim", headers=sara).status_code == 404
     # the manager sees everything, with the name
     seen = client.get("/admin/orders", headers=boss).json()
     assert seen[0]["owner_name"] == "Test" and not seen[0]["owned_by_me"]
@@ -257,7 +272,7 @@ def test_action_by_a_second_user_on_a_taken_row_is_refused(client, db, reader):
     order_id = _receipt_order(client, reader)
     mina = staff(db, "operator", "mina")
     sara = db.create_staff("sara", "Sara", "operator", "x")
-    client.post(f"/admin/orders/{order_id}/claim", headers=mina)
+    _take(db, order_id, "mina")
     row = db.get_order(order_id)
     from app.security import Identity
 
@@ -275,7 +290,7 @@ def test_handover_by_owner_and_assign_permission(client, db, reader):
     sara = db.get_staff_by_username("sara")
     reza_headers = staff(db, "operator", "reza")
     reza = db.get_staff_by_username("reza")
-    client.post(f"/admin/orders/{order_id}/claim", headers=mina)
+    _take(db, order_id, "mina")
     # a third user neither sees nor reassigns it
     assert client.post(f"/admin/orders/{order_id}/assign", json={"staff_id": reza["id"]},
                        headers=reza_headers).status_code == 404
@@ -291,7 +306,7 @@ def test_handover_by_owner_and_assign_permission(client, db, reader):
     assert [s["action"] for s in steps] == ["claim", "handover"]
     assert all(s["actor_name"] is None for s in steps) and steps[1]["to_me"]
     # «ارجاع سفارش» tick: reassign an order that is not yours
-    db.update_staff(reza["id"], perm_grant="orders.assign")
+    db.update_staff(reza["id"], perm_grant="assign.edit")
     assert client.post(f"/admin/orders/{order_id}/assign", json={"staff_id": reza["id"]},
                        headers=reza_headers).status_code == 404     # still hidden from reza
     boss = staff(db, "super_admin", "boss")
@@ -307,7 +322,7 @@ def test_handover_by_owner_and_assign_permission(client, db, reader):
 def test_assign_tick_reassigns_a_free_order(client, db, reader):
     order_id = _receipt_order(client, reader)
     lead = staff(db, "operator", "lead")
-    db.update_staff(db.get_staff_by_username("lead")["id"], perm_grant="orders.assign")
+    db.update_staff(db.get_staff_by_username("lead")["id"], perm_grant="assign.edit")
     staff(db, "operator", "sara")
     sara = db.get_staff_by_username("sara")
     r = client.post(f"/admin/orders/{order_id}/assign", json={"staff_id": sara["id"]},
@@ -403,8 +418,7 @@ def test_weekly_archive_moves_closed_rows_once(client, db, reader, settings):
     assert client.get("/admin/archive/orders", params={"q": "Ali"}, headers=boss).json()
     assert client.get("/admin/archive/orders", params={"q": "nobody"}, headers=boss).json() == []
     # read-only for everyone
-    for path, body in ((f"/admin/orders/{order_id}/claim", None),
-                       (f"/admin/orders/{order_id}/assign", {"staff_id": 1}),
+    for path, body in ((f"/admin/orders/{order_id}/assign", {"staff_id": 1}),
                        (f"/admin/orders/{order_id}/cancel", None)):
         r = client.post(path, json=body, headers=boss)
         assert r.status_code == 409, path
@@ -450,6 +464,6 @@ def test_purchase_status_done_needs_an_answer(shop, db):
 def test_new_permission_has_a_label():
     from app import staff as st
 
-    assert st.PERMISSION_LABELS[st.P_ORDERS_ASSIGN] == "ارجاع سفارش"
+    assert st.PERMISSION_LABELS[st.P_ORDERS_ASSIGN] == "ارجاع کار به همکار — تغییر"
     assert st.P_ORDERS_ASSIGN not in st.PERMISSIONS["operator"]
     assert st.P_ORDERS_ASSIGN in st.PERMISSIONS["super_admin"]

@@ -188,6 +188,19 @@ def require_permission(permission: str):
     return _check
 
 
+def require_any(*permissions: str):
+    """v2.8.2: the caller holds at least one of ``permissions``."""
+
+    def _check(identity: Identity = Depends(get_identity)) -> Identity:
+        if identity.must_change_password:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Password change required")
+        if not any(identity.can(p) for p in permissions):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this account")
+        return identity
+
+    return _check
+
+
 def require_signed_in(identity: Identity = Depends(get_identity)) -> Identity:
     """Any staff member (whatever their permissions) or the service key."""
     if identity.kind not in ("staff", "service"):
@@ -199,9 +212,9 @@ def get_catalog_channel(identity: Identity = Depends(get_identity)) -> str:
     """Product/group reads: any channel key, the service key, or a staff member allowed
     to see products (v2.7.0: not a sales user)."""
     if identity.kind == "staff":
-        from .staff import P_VIEW
+        from .staff import CATALOG_READERS
 
-        if not identity.can(P_VIEW):
+        if not any(identity.can(p) for p in CATALOG_READERS):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this account")
         return "staff"
     if identity.kind == "service":

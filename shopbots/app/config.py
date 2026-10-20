@@ -95,6 +95,9 @@ class Settings:
     sqlite_path: str = str(BASE_DIR / "shopbots.db")
     poll_timeout: int = 25
     admin_sweep_seconds: int = 30
+    #: v2.8.2: how often ShopAdmin's decisions (payment details, approvals, replies)
+    #: are picked up and sent to the customer; 0 = only with the 30 s sweep.
+    events_poll_seconds: float = 2.0
     rate_limit_messages: int = 20
     rate_limit_window: float = 60.0
     #: v2.6.0: button taps (+/−, colors, pages) have their own, much higher limit:
@@ -139,6 +142,7 @@ class Settings:
             sqlite_path=_env("SQLITE_PATH", str(BASE_DIR / "shopbots.db")),
             poll_timeout=_env_int("POLL_TIMEOUT", 25),
             admin_sweep_seconds=_env_int("ADMIN_SWEEP_SECONDS", 30),
+            events_poll_seconds=max(0.0, float(_env("EVENTS_POLL_SECONDS", "2") or 0)),
             rate_limit_messages=_env_int("RATE_LIMIT_MESSAGES", 20),
             rate_limit_window=_env_float("RATE_LIMIT_WINDOW", 60.0),
             rate_limit_callbacks=_env_int("RATE_LIMIT_CALLBACKS", 120),

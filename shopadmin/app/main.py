@@ -12,7 +12,7 @@ from .api_client import MSG_SESSION_EXPIRED, ShopApiClient
 from .auth import AuthService
 from .edition import is_server_edition
 from .logging_setup import get_logger, setup_logging
-from .permissions import PASSWORDS_DECIDE
+from .permissions import PASSWORDS_VIEW
 from .paths import APP_NAME, data_dir, is_frozen
 from .store import Store
 from .ui import theme, widgets
@@ -340,7 +340,7 @@ class ShopAdminApp(QObject):
 
         if self.watcher is not None:
             self.watcher.stop()
-        interval = self.store.get_int_setting("event_poll_seconds", 15, minimum=5, maximum=600)
+        interval = self.store.get_int_setting("event_poll_seconds", 3, minimum=2, maximum=600)
         self.watcher = EventWatcher(self.store.base_url, self.api.token,
                                     interval_seconds=interval, parent=self,
                                     server_cert_pem=self.store.server_cert_pem)
@@ -392,7 +392,7 @@ class ShopAdminApp(QObject):
             self.watcher = None
 
     def _on_server_events(self, events: list) -> None:
-        if self.context is not None and not self.context.can(PASSWORDS_DECIDE):
+        if self.context is not None and not self.context.can(PASSWORDS_VIEW):
             events = [e for e in events if e.get("kind") != "password_request"]
         if self.notifier is not None:
             self.notifier.handle_events(events)

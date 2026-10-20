@@ -171,6 +171,13 @@ OWNER_EVENT_TEXTS = {
 ITEM_REQUEST_MESSAGE_EVENT = "item_request_message"
 #: v2.8.0: staff confirmed the stock of a «درخواست خرید»: the customer pays now.
 PURCHASE_ORDER_EVENT = "purchase_order_created"
+#: v2.8.2: staff sent the payment details of an order («ارسال اطلاعات پرداخت»).
+PAYMENT_INFO_EVENT = "order_payment_info"
+#: v2.8.2: the payment details lines, in this order (empty ones are left out).
+PAYMENT_INFO_LINES = (("card_number", "PAYMENT_INFO_CARD"),
+                      ("account_number", "PAYMENT_INFO_ACCOUNT"),
+                      ("sheba", "PAYMENT_INFO_SHEBA"), ("holder", "PAYMENT_INFO_HOLDER"),
+                      ("bank", "PAYMENT_INFO_BANK"), ("note", "PAYMENT_INFO_NOTE"))
 #: v2.8.0: sales state the sweep saw last ("1" open / "0" closed) for the watchers.
 SALES_SEEN_KEY = "sales_last_open"
 #: shopapi detail of a refused cart item: "Product <code> <reason>".
@@ -1161,8 +1168,21 @@ class BotEngine:
         body = texts.PRODUCT_COLOR_DETAIL.format(
             name=name, color=chosen, price=price, qty=fmt_num(qty),
         )
-        if product.get("stock") is not None and float(product.get("stock") or 0) <= 0:
-            # v2.8.0: in the list but not in stock in «سازه حساب»: request, never order
+        refusal = await self._phone_refusal(platform, chat_id, code, int(color_id), qty)
+        if refusal == "color":
+            await self._answer_callback(adapter, callback_id)
+            rows = [[(texts.BTN_INQUIRY, f"inq:{code}:{color_id}")], *others,
+                    [(texts.BTN_MENU, "menu")]]
+            await self._send_options(
+                adapter, platform, chat_id,
+                texts.COLOR_UNAVAILABLE.format(name=name, color=color["name"]), rows,
+                state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+            )
+            return
+        if refusal == "stock" or (
+                product.get("stock") is not None and float(product.get("stock") or 0) <= 0):
+            # v2.8.0: in the list but not in stock in «سازه حساب»: request, never order.
+            # v2.8.2: asked from shopapi with the checkout's own rules (also the cart)
             await self._answer_callback(adapter, callback_id)
             await self._send_options(
                 adapter, platform, chat_id,
@@ -1227,11 +1247,42 @@ class BotEngine:
         if not color.get("available") or not color.get("price"):
             await self._answer_callback(adapter, callback_id, texts.OUT_OF_STOCK)
             return
+        # v2.8.2: the same checks as the checkout, for the cart's quantity + this one
+        refusal = await self._phone_refusal(platform, chat_id, code, int(color_id), qty)
+        if refusal in ("stock", "color"):
+            await self._answer_callback(adapter, callback_id)
+            await self._show_color(adapter, platform, chat_id, code, int(color_id), 1)
+            return
         # shopapi prices the order again at checkout (the list may change).
         self.cart.add(platform, chat_id, code, f"{product['name']} — {variant_label(color)}",
                       qty, color["price"], int(color_id))
         await self._answer_callback(adapter, callback_id, texts.QTY_ADDED)
         await self._show_cart(adapter, platform, chat_id)
+
+    async def _phone_refusal(self, platform: str, chat_id: str, code: int, color_id: int,
+                             qty: int) -> str | None:
+        """v2.8.2: may this phone color be ordered now (with what is already in the
+        cart)? ``"stock"`` = no stock in «سازه حساب» (offer «درخواست خرید»),
+        ``"color"`` = the color / part is gone, None = fine or unknown (shopapi
+        down: the checkout checks again anyway)."""
+        in_cart = sum(float(it.get("qty") or 0) for it in self.cart.items(platform, chat_id)
+                      if int(it.get("kala_code") or 0) == int(code)
+                      and int(it.get("variant_id") or 0) == int(color_id))
+        line = {"kala_code": int(code), "qty": float(in_cart + clamp_qty(qty)),
+                "variant_id": int(color_id)}
+        try:
+            await self.api.check_order(platform, chat_id, [line])
+        except ShopApiRejected as exc:
+            detail = str(exc.detail or "").lower()
+            if "no stock" in detail or "insufficient stock" in detail:
+                return "stock"
+            if "color" in detail or "not in the current price list" in detail \
+                    or "not available for sale" in detail:
+                return "color"
+            return None
+        except ShopApiError:
+            return None
+        return None
 
     async def _send_inquiry(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, code: int,
@@ -1400,10 +1451,13 @@ class BotEngine:
             refused = self._refused_item_text(platform, chat_id, exc.detail) \
                 if exc.status == 422 else None
             if refused:
-                await self._send_options(
-                    adapter, platform, chat_id, refused,
-                    [[(texts.BTN_CART, "cart")], [(texts.BTN_MENU, "menu")]],
-                )
+                rows = [[(texts.BTN_CART, "cart")], [(texts.BTN_MENU, "menu")]]
+                no_stock = self._no_stock_item(platform, chat_id, exc.detail)
+                if no_stock is not None:
+                    # v2.8.2: became unavailable since it was added: one tap to request it
+                    rows.insert(0, [(texts.BTN_PURCHASE_REQUEST_NOW,
+                                     f"pbv:{no_stock[0]}:{no_stock[1]}")])
+                await self._send_options(adapter, platform, chat_id, refused, rows)
                 return
             raise
         if result.empty_cart:
@@ -1418,13 +1472,19 @@ class BotEngine:
         parts = [texts.CHECKOUT_OK.format(order_id=order_id, total=total)]
         if order.get("customer_pending"):
             parts.append(texts.PENDING_ORDER_NOTE)
-        minutes = state.get("receipt_deadline_minutes") or DEFAULT_RECEIPT_MINUTES
-        parts.append(texts.RECEIPT_DEADLINE_NOTE.format(minutes=fmt_num(minutes)))
-        parts.append(self._payment_text(order, total))
-        self.store.set_conversation(
-            platform, chat_id, STATE_AWAIT_RECEIPT, {"order_id": order_id}
-        )
-        if self.settings.bot_image_cards and order.get("items"):
+        if order.get("payment_info"):
+            minutes = state.get("receipt_deadline_minutes") or DEFAULT_RECEIPT_MINUTES
+            parts.append(texts.RECEIPT_DEADLINE_NOTE.format(minutes=fmt_num(minutes)))
+            parts.append(self._payment_text(order, total))
+            self.store.set_conversation(
+                platform, chat_id, STATE_AWAIT_RECEIPT, {"order_id": order_id}
+            )
+        else:
+            # v2.8.2: staff send the payment details for this order («ارسال اطلاعات
+            # پرداخت»); the receipt deadline starts then.
+            parts.append(texts.WAIT_PAYMENT_INFO)
+            self.store.set_conversation(platform, chat_id, STATE_NONE, {})
+        if self.settings.bot_image_cards and order.get("items") and order.get("payment_info"):
             from .cards import pre_invoice_card
 
             await self._send_card(
@@ -1456,11 +1516,37 @@ class BotEngine:
         return {"address": texts.SHOP.get("shop_address", ""), "phone": texts.SHOP.get("shop_phone", ""),
                 "bot_id": texts.SHOP.get("bot_id", ""), "thanks": texts.SHOP.get("invoice_thanks", "")}
 
+    def _no_stock_item(self, platform: str, chat_id: str, detail) -> tuple[int, int] | None:
+        """(code, color) of a cart phone refused for lack of stock, or None."""
+        match = _REFUSED_ITEM.match(str(detail or "").strip())
+        if not match or "no stock" not in match.group(2):
+            return None
+        code = int(match.group(1))
+        variant = next((int(it.get("variant_id") or 0) for it in self.cart.items(platform, chat_id)
+                        if int(it.get("kala_code") or 0) == code), 0)
+        return code, variant
+
+    @staticmethod
+    def _payment_info_text(order: dict) -> str:
+        """v2.8.2: the payment details staff typed for this order; empty fields are
+        left out."""
+        info = order.get("payment_info") if isinstance(order.get("payment_info"), dict) else {}
+        lines = [texts.PAYMENT_INFO_TITLE.format(
+            order_id=order.get("id"), total=fmt_num(order.get("total")),
+            currency=texts.SHOP.get("currency", "ریال"))]
+        for key, text_key in PAYMENT_INFO_LINES:
+            value = str(info.get(key) or "").strip()
+            if value:
+                lines.append(getattr(texts, text_key).format(value=value))
+        lines.append(texts.PAYMENT_SEND_RECEIPT)
+        return "\n".join(lines)
+
     @staticmethod
     def _payment_text(order: dict, total: str) -> str:
-        """Payment details from shopapi (PAYMENT_CARD_NUMBER / OWNER / SHEBA, set in
-        ShopAdmin), never from a placeholder: shopapi refuses orders while no valid
-        card is configured (v2.6.0). BANK_ACCOUNT_TEXT is an optional extra note."""
+        """Payment details of an order. v2.8.2: what staff sent for this order
+        (``payment_info``); the older fixed fields only from an older shopapi."""
+        if isinstance(order.get("payment_info"), dict) and order["payment_info"]:
+            return BotEngine._payment_info_text(order)
         order_id = order.get("id")
         card = str(order.get("payment_card_number") or "").strip()
         if not card:      # an older shopapi: no card -> no made-up number either
@@ -1868,6 +1954,9 @@ class BotEngine:
             return
         data = {**data, "inquired": [*(data.get("inquired") or [])[-19:], marker]}
         self.store.set_conversation(platform, chat_id, STATE_NONE, data)
+        if code is not None:
+            # v2.8.2: requested instead of ordered: no longer in the cart
+            self.cart.remove(platform, chat_id, int(code), int(variant_id or 0))
         await self._answer_callback(adapter, callback_id, sent_text)
         await self._send_options(adapter, platform, chat_id, sent_text,
                                  [[(texts.BTN_MENU, "menu")]])
@@ -1901,13 +1990,69 @@ class BotEngine:
         minutes = state.get("receipt_deadline_minutes") or DEFAULT_RECEIPT_MINUTES
         parts = [texts.PURCHASE_ORDER_READY.format(
                      name=shorten(str((items[0] if items else {}).get("name") or ""), 80),
-                     order_id=order_id, total=total),
-                 texts.RECEIPT_DEADLINE_NOTE.format(minutes=fmt_num(minutes)),
-                 self._payment_text(order, total)]
-        self.store.set_conversation(platform, chat_id, STATE_AWAIT_RECEIPT,
-                                    {"order_id": int(order_id)})
+                     order_id=order_id, total=total)]
+        if order.get("payment_info"):
+            parts += [texts.RECEIPT_DEADLINE_NOTE.format(minutes=fmt_num(minutes)),
+                      self._payment_text(order, total)]
+            self.store.set_conversation(platform, chat_id, STATE_AWAIT_RECEIPT,
+                                        {"order_id": int(order_id)})
+        else:
+            # v2.8.2: staff send the payment details next (their own message)
+            parts.append(texts.WAIT_PAYMENT_INFO)
         await self._send_options(
             adapter, platform, chat_id, "\n\n".join(parts),
+            [[(texts.BTN_CANCEL_ORDER, f"ocx:{order_id}")], [(texts.BTN_MENU, "menu")]],
+        )
+        return True
+
+    async def _send_payment_info(self, order_id: int, event_id: int) -> bool:
+        """v2.8.2: staff sent the payment details of an order: the customer gets
+        them (only the filled fields) and the bot waits for the receipt. Sending
+        again (new details) sends a new message."""
+        marker = "notified:payment_info"
+        if self.store.is_announced(marker, int(event_id)):
+            return False
+        try:
+            order = await self.api.admin_get_order(int(order_id))
+        except ShopApiError:
+            return False
+        target = await self._find_order_chat(int(order_id))
+        self.store.mark_announced(marker, int(event_id), str((target or {}).get("platform") or ""),
+                                  (target or {}).get("chat_id") or "")
+        if not isinstance(order, dict) or not target or order.get("status") != "awaiting_payment" \
+                or not order.get("payment_info"):
+            return False
+        adapter = self.adapters.get(str(target.get("platform") or ""))
+        if adapter is None:
+            return False
+        platform, chat_id = str(target["platform"]), str(target["chat_id"])
+        state = await self._sales_state()
+        minutes = state.get("receipt_deadline_minutes") or DEFAULT_RECEIPT_MINUTES
+        text = "\n\n".join((self._payment_info_text(order),
+                             texts.RECEIPT_DEADLINE_NOTE.format(minutes=fmt_num(minutes))))
+        self.store.set_conversation(platform, chat_id, STATE_AWAIT_RECEIPT,
+                                    {"order_id": int(order_id)})
+        if self.settings.bot_image_cards and order.get("items"):
+            from .cards import pre_invoice_card
+
+            info = order["payment_info"]
+            await self._send_card(
+                adapter, chat_id,
+                lambda: pre_invoice_card(
+                    shop=texts.SHOP.get("shop_name", ""), order_id=order_id,
+                    items=order.get("items"), total=order.get("total"),
+                    payment={"card_number": info.get("card_number"), "sheba": info.get("sheba"),
+                             "owner": info.get("holder")},
+                    contact=self._card_contact(),
+                    currency=texts.SHOP.get("currency", "ریال"),
+                    date=order.get("created_at"),
+                ),
+                texts.CARD_CAPTION_PRE_INVOICE.format(
+                    order_id=order_id, total=fmt_num(order.get("total")),
+                    currency=texts.SHOP.get("currency", "ریال")),
+            )
+        await self._send_options(
+            adapter, platform, chat_id, text,
             [[(texts.BTN_CANCEL_ORDER, f"ocx:{order_id}")], [(texts.BTN_MENU, "menu")]],
         )
         return True
@@ -2208,6 +2353,7 @@ class BotEngine:
         tell customers about decisions (made here or in ShopAdmin)."""
         announced = {"users": 0, "orders": 0, "notified": 0}
         try:
+            # v2.8.2: the fast events loop normally got there first (same lock)
             announced["notified"] = await self.notify_customers_from_events()
         except ShopApiError:
             pass
@@ -2309,7 +2455,15 @@ class BotEngine:
 
     async def notify_customers_from_events(self) -> int:
         """Follow shopapi's /admin/events feed and message the customer once per
-        decision. The first run only records the current position (no replay)."""
+        decision. The first run only records the current position (no replay).
+        v2.8.2: one reader at a time (the fast events loop and the sweep)."""
+        lock = getattr(self, "_events_lock", None)
+        if lock is None:
+            lock = self._events_lock = asyncio.Lock()
+        async with lock:
+            return await self._read_events()
+
+    async def _read_events(self) -> int:
         raw = self.store.get_value(EVENT_CURSOR_KEY)
         if raw is None:
             feed = await self.api.admin_events(None)
@@ -2330,6 +2484,9 @@ class BotEngine:
                     sent += 1
             elif kind == PURCHASE_ORDER_EVENT and ref_id is not None:
                 if await self._notify_purchase_order(int(ref_id)):
+                    sent += 1
+            elif kind == PAYMENT_INFO_EVENT and ref_id is not None:
+                if await self._send_payment_info(int(ref_id), int(event.get("id") or 0)):
                     sent += 1
             elif kind in OWNER_EVENT_TEXTS:
                 if await self._notify_owner(kind, ref_id, int(event.get("id") or 0)):

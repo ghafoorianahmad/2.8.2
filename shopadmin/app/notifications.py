@@ -196,7 +196,7 @@ class EventWatcher(QObject):
         self._busy = False
         self._reachable = True
         self._timer = QTimer(self)
-        self._timer.setInterval(max(5, int(interval_seconds)) * 1000)
+        self._timer.setInterval(max(2, int(interval_seconds)) * 1000)
         self._timer.timeout.connect(self.poll)
 
     @property
@@ -211,7 +211,7 @@ class EventWatcher(QObject):
         self._timer.stop()
 
     def set_interval(self, seconds: int) -> None:
-        self._timer.setInterval(max(5, int(seconds)) * 1000)
+        self._timer.setInterval(max(2, int(seconds)) * 1000)
 
     def set_token(self, token: str) -> None:
         self.client.set_token(token)

@@ -25,13 +25,16 @@ def test_two_roles_and_effective_permissions():
     assert st.STAFF_ROLES == ("super_admin", "operator")
     assert st.PERMISSIONS["super_admin"] == st.ALL_PERMISSIONS
     sales = st.PERMISSIONS["operator"]
-    assert {st.P_ORDERS_VIEW, st.P_PAYMENTS_DECIDE, st.P_ORDERS_SHIP, st.P_ORDERS_CANCEL,
-            st.P_REQUESTS, st.P_CUSTOMERS_VIEW} <= sales
-    for admin_only in (st.P_VIEW, st.P_CUSTOMERS_DECIDE, st.P_SHOP_STATE, st.P_PRICELIST,
-                       st.P_CATALOG, st.P_PROXIES, st.P_STAFF_MANAGE, st.P_SERVER_MANAGE):
+    # v2.8.2: sections with «دیدن» / «تغییر»
+    assert {"orders.view", "orders.edit", "requests.view", "requests.edit",
+            "customers.view"} <= sales
+    for admin_only in ("dashboard.view", "customers.edit", "sales.edit", "pricelist.edit",
+                       "groups.edit", "models.edit", "staff.edit", "server.edit",
+                       "products.view"):
         assert admin_only not in sales
-    eff = st.effective_permissions("operator", "shop.state,bogus", ["orders.cancel"])
-    assert st.P_SHOP_STATE in eff and st.P_ORDERS_CANCEL not in eff and "bogus" not in eff
+    eff = st.effective_permissions("operator", "sales.edit,bogus", ["orders.edit"])
+    assert "sales.edit" in eff and "sales.view" in eff          # «تغییر» includes «دیدن»
+    assert "orders.edit" not in eff and "bogus" not in eff
     assert set(st.PERMISSION_LABELS) == set(st.ALL_PERMISSIONS)
 
 
@@ -49,6 +52,8 @@ def test_old_roles_are_migrated_on_start(tmp_path):
 SALES_ALLOWED = [
     ("GET", "/admin/orders"), ("GET", "/admin/users"), ("GET", "/admin/item-requests"),
     ("GET", "/admin/events"), ("GET", "/admin/system-info"),
+    # v2.8.2: price inquiries belong to «درخواست کالا» too
+    ("GET", "/admin/inquiries"),
 ]
 SALES_FORBIDDEN = [
     ("GET", "/admin/product-groups"), ("PUT", "/admin/product-groups"),
@@ -60,7 +65,8 @@ SALES_FORBIDDEN = [
     ("GET", "/admin/catalog-models"), ("GET", "/admin/proxies"),
     ("GET", "/admin/password-requests"), ("GET", "/products"), ("GET", "/groups"),
     ("POST", "/admin/users/1/approve"), ("POST", "/admin/users/1/reject"),
-    ("POST", "/admin/orders/expire"), ("GET", "/admin/inquiries"),
+    # v2.8.2: per-section rights
+    ("GET", "/admin/activity"), ("GET", "/admin/staff"), ("GET", "/admin/permission-sections"),
 ]
 
 
@@ -93,18 +99,19 @@ def test_per_user_ticks_are_enforced(client, db, reader):
     user = add_staff(client, owner, "mina", "operator")
     token = login(client, "mina").json()["token"]
     assert client.get("/admin/shop/state", headers=bearer(token)).status_code == 403
-    # grant «باز و بسته کردن فروش» and the read-only view, take «لغو سفارش» away
+    # grant «فروش گوشی — تغییر» and the dashboard, take «سفارش‌ها — تغییر» away
     r = client.patch(f"/admin/staff/{user['id']}", headers=bearer(owner), json={
-        "extra_permissions": ["shop.state", "view"], "removed_permissions": ["orders.cancel"]})
+        "extra_permissions": ["sales.edit", "dashboard.view"],
+        "removed_permissions": ["orders.edit"]})
     assert r.status_code == 200
     body = r.json()
-    assert body["extra_permissions"] == ["shop.state", "view"]
-    assert "orders.cancel" not in body["permissions"] and "shop.state" in body["permissions"]
+    assert body["extra_permissions"] == ["dashboard.view", "sales.edit"]
+    assert "orders.edit" not in body["permissions"] and "sales.edit" in body["permissions"]
     # changed rights end the old session at once
     assert client.get("/auth/me", headers=bearer(token)).status_code == 401
     token = login(client, "mina").json()["token"]
     me = client.get("/auth/me", headers=bearer(token)).json()
-    assert "shop.state" in me["permissions"] and "orders.cancel" not in me["permissions"]
+    assert "sales.edit" in me["permissions"] and "orders.edit" not in me["permissions"]
     assert client.get("/admin/shop/state", headers=bearer(token)).status_code == 200
     assert client.post("/admin/orders/1/cancel", headers=bearer(token)).status_code == 403
     assert client.patch(f"/admin/staff/{user['id']}", headers=bearer(owner),

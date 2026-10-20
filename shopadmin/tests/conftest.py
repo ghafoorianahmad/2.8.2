@@ -552,6 +552,21 @@ class FakeShopApi:
                     return reply(200, order)
             return detail(404, "Order not found")
 
+        if path.startswith("/admin/orders/") and path.endswith("/payment-info"):
+            # v2.8.2: «ارسال اطلاعات پرداخت»
+            order_id = int(path.split("/")[3])
+            for order in self.orders:
+                if order["id"] == order_id:
+                    if order["status"] != "awaiting_payment":
+                        return detail(409, f"Order in status {order['status']}; "
+                                           f"payment details not needed")
+                    order["payment_info"] = {k: v for k, v in body.items() if v}
+                    order["payment_info_at"] = TS
+                    order["owned"] = order["owned_by_me"] = True
+                    self.payment_bodies = getattr(self, "payment_bodies", []) + [body]
+                    return reply(200, order)
+            return detail(404, "Order not found")
+
         if path.startswith("/admin/orders/") and path.endswith("/cancel"):
             order_id = int(path.split("/")[3])
             order = next((o for o in self.orders if o["id"] == order_id), None)

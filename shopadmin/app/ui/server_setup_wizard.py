@@ -414,12 +414,11 @@ class ServerSetupWizard(QWidget):
         return panel
 
     def _page_bots(self) -> QWidget:
-        panel = widgets.Panel("ربات‌ها و پرداخت (اختیاری — بعداً هم از صفحهٔ «سرور فروشگاه» قابل تنظیم است)")
+        panel = widgets.Panel("ربات‌ها (اختیاری — بعداً هم از «تنظیمات سرور فروشگاه» قابل تنظیم است)")
         form = _form()
-        self.bank_text = _line("مثلاً: کارت ۶۰۳۷… به نام …", ltr=False)
+        # v2.8.2: no fixed bank text / card: staff send the payment details per order
         self.bale_token = _line("از ربات سازندهٔ بله", password=True)
         self.admin_chats = _line("bale:654321")
-        form.addRow(widgets.label("متن حساب بانکی:"), self.bank_text)
         form.addRow(widgets.label("توکن ربات بله:"), self.bale_token)
         form.addRow(widgets.label("گفت‌وگوی مدیران در ربات:"), self.admin_chats)
         # v2.8.1: the Telegram bot (token from BotFather) and the api_id / api_hash
@@ -500,7 +499,6 @@ class ServerSetupWizard(QWidget):
             self.db_password.setPlaceholderText(KEEP_SECRET)
         self.port.setValue(current.port)
         self.allowed_ips.setText(current.allowed_ips)
-        self.bank_text.setText(current.bank_text)
         self.admin_chats.setText(current.admin_chats)
         self.shoptg_dir.setText(current.shoptg_dir)
         secrets = current.secrets_set or {}
@@ -733,7 +731,6 @@ class ServerSetupWizard(QWidget):
         extra = {
             "firewall_allowed_ips": " ".join(setup.parse_allowed_ips(self.allowed_ips.text())),
             "shoptg_dir": self.shoptg_dir.text().strip(),
-            "bank_account_text": self.bank_text.text().strip(),
             "admin_chat_ids": self.admin_chats.text().strip(),
             "allowed_databases": ",".join(self.db_access.allowed()),
             "write_databases": ",".join(self.db_access.writing()),

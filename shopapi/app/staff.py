@@ -30,64 +30,158 @@ LEGACY_ROLE_MAP = {ROLE_ADMIN: ROLE_SUPER_ADMIN, ROLE_VIEWER: ROLE_SALES}
 #: server.
 ROLE_SERVICE = "service"
 
-# --- permissions -----------------------------------------------------------
-P_ORDERS_VIEW = "orders.view"            # orders list / detail / receipt image
-P_PAYMENTS_DECIDE = "payments.decide"    # confirm / reject a payment receipt
-P_ORDERS_SHIP = "orders.ship"            # mark an order as sent (courier optional)
-P_ORDERS_CANCEL = "orders.cancel"        # cancel an order (local only)
-P_REQUESTS = "requests.handle"           # item requests: view, reply, mark handled
-P_CUSTOMERS_VIEW = "customers.view"
-P_EVENTS = "events.view"                 # notification feed (badges, desktop notices)
-P_ORDERS_ASSIGN = "orders.assign"        # v2.8.0: reassign an order / request to a colleague
-P_VIEW = "view"                          # everything else read-only: dashboard, products,
-#                                          reports, product groups, price lists, site models
-P_CUSTOMERS_DECIDE = "customers.decide"  # match person, approve / reject customer
-P_ORDERS_EXPIRE = "orders.expire"
-P_SHOP_STATE = "shop.state"              # open / close phone sales
-P_PRICELIST = "pricelist.manage"        # upload / approve price lists, map rows
-P_CATALOG = "catalog.manage"            # product groups, site models (§9a)
-P_PROXIES = "proxies.manage"             # Telegram proxy pool
-P_PASSWORD_REQUESTS = "passwords.decide"  # approve / reject forgot-password requests
-P_STAFF_MANAGE = "staff.manage"
-P_SERVER_MANAGE = "server.manage"
+# --- permissions (v2.8.2: one row per section, «دیدن» and «تغییر») -----------------
+#: (section key, Persian name, has «دیدن», has «تغییر»), in the order ShopAdmin
+#: shows the table in «کاربران سیستم». A permission is ``<section>.view`` or
+#: ``<section>.edit``; «تغییر» always includes «دیدن». A section without «دیدن»
+#: is hidden from the menu, and every endpoint checks the same names here.
+SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
+    ("dashboard", "داشبورد", True, False),
+    ("orders", "سفارش‌ها و رسیدها (تأیید/رد رسید، اطلاعات پرداخت، ارسال، لغو)", True, True),
+    ("requests", "درخواست کالا (پیام، یادداشت، تأیید موجودی)", True, True),
+    ("customers", "مشتریان (تأیید و رد مشتری)", True, True),
+    ("assign", "ارجاع کار به همکار", False, True),
+    ("archive", "بایگانی", True, False),
+    ("products", "محصولات و موجودی", True, False),
+    ("groups", "گروه‌های کالا", True, True),
+    ("pricelist", "لیست قیمت، نگاشت و پراکسی", True, True),
+    ("models", "مدل‌های سایت", True, True),
+    ("sales", "فروش گوشی (باز و بسته کردن)", True, True),
+    ("reports", "گزارش‌ها", True, False),
+    ("activity", "گزارش فعالیت", True, False),
+    ("passwords", "درخواست‌های گذرواژه", True, True),
+    ("staff", "کاربران سیستم و دسترسی‌ها", True, True),
+    ("server", "تنظیمات سرور فروشگاه", True, True),
+)
 
-#: Every permission with its Persian name, in the order ShopAdmin lists them
-#: («کاربران سیستم» › per-user ticks).
-PERMISSION_LABELS: dict[str, str] = {
-    P_ORDERS_VIEW: "دیدن سفارش‌ها",
-    P_PAYMENTS_DECIDE: "تأیید یا رد رسید پرداخت",
-    P_ORDERS_SHIP: "ثبت «ارسال شد»",
-    P_ORDERS_CANCEL: "لغو سفارش",
-    P_REQUESTS: "درخواست‌های کالا (دیدن، پاسخ، رسیدگی)",
-    P_CUSTOMERS_VIEW: "دیدن مشتریان",
-    P_EVENTS: "اعلان‌ها",
-    P_ORDERS_ASSIGN: "ارجاع سفارش",
-    P_VIEW: "داشبورد، کالاها، گزارش‌ها و سایر صفحه‌ها (فقط دیدن)",
-    P_CUSTOMERS_DECIDE: "تأیید یا رد مشتری",
-    P_ORDERS_EXPIRE: "لغو سفارش‌های بی‌رسید و هماهنگی فاکتورها",
-    P_SHOP_STATE: "باز و بسته کردن فروش",
-    P_PRICELIST: "لیست قیمت و نگاشت",
-    P_CATALOG: "گروه‌های کالا و مدل‌های سایت",
-    P_PROXIES: "پراکسی‌های تلگرام",
-    P_PASSWORD_REQUESTS: "درخواست‌های گذرواژه",
-    P_STAFF_MANAGE: "کاربران سیستم",
-    P_SERVER_MANAGE: "تنظیمات و سرور فروشگاه",
-}
+
+def _names() -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, label, view, edit in SECTIONS:
+        if view:
+            out[f"{key}.view"] = f"{label} — دیدن"
+        if edit:
+            out[f"{key}.edit"] = f"{label} — تغییر"
+    return out
+
+
+#: Every permission with its Persian name (also returned by /admin/permissions).
+PERMISSION_LABELS: dict[str, str] = _names()
 ALL_PERMISSIONS = frozenset(PERMISSION_LABELS)
 
-_SALES = frozenset({P_ORDERS_VIEW, P_PAYMENTS_DECIDE, P_ORDERS_SHIP, P_ORDERS_CANCEL,
-                    P_REQUESTS, P_CUSTOMERS_VIEW, P_EVENTS})
+# The names the endpoints check (kept as constants; v2.8.2 values).
+P_DASHBOARD = "dashboard.view"
+P_ORDERS_VIEW = "orders.view"
+P_ORDERS_EDIT = "orders.edit"
+P_PAYMENTS_DECIDE = P_ORDERS_EDIT        # confirm / reject a payment receipt
+P_ORDERS_SHIP = P_ORDERS_EDIT            # mark an order as sent (courier optional)
+P_ORDERS_CANCEL = P_ORDERS_EDIT          # cancel an order (local only)
+P_ORDERS_EXPIRE = P_ORDERS_EDIT          # cancel overdue orders, sync invoices
+P_REQUESTS_VIEW = "requests.view"
+P_REQUESTS_EDIT = "requests.edit"
+P_REQUESTS = P_REQUESTS_EDIT
+P_CUSTOMERS_VIEW = "customers.view"
+P_CUSTOMERS_DECIDE = "customers.edit"
+P_ORDERS_ASSIGN = "assign.edit"          # hand an order / request to a colleague
+P_ARCHIVE = "archive.view"
+P_PRODUCTS = "products.view"
+P_GROUPS_VIEW = "groups.view"
+P_GROUPS_EDIT = "groups.edit"
+P_PRICELIST_VIEW = "pricelist.view"
+P_PRICELIST = "pricelist.edit"
+P_PROXIES = P_PRICELIST
+P_MODELS_VIEW = "models.view"
+P_MODELS_EDIT = "models.edit"
+P_SALES_VIEW = "sales.view"
+P_SHOP_STATE = "sales.edit"              # open / close phone sales
+P_REPORTS = "reports.view"
+P_ACTIVITY = "activity.view"
+P_PASSWORDS_VIEW = "passwords.view"
+P_PASSWORD_REQUESTS = "passwords.edit"
+P_STAFF_VIEW = "staff.view"
+P_STAFF_MANAGE = "staff.edit"
+P_SERVER_VIEW = "server.view"
+P_SERVER_MANAGE = "server.edit"
+#: Product / group reads for staff (low sensitivity: names, prices, stock).
+CATALOG_READERS = ("products.view", "groups.view", "pricelist.view", "models.view",
+                   "dashboard.view")
+#: Notifications: every staff member gets the feed (filtered to what they may see).
+P_EVENTS = "events.view"
+
+_SALES = frozenset({"orders.view", "orders.edit", "requests.view", "requests.edit",
+                    "customers.view", "archive.view"})
 
 PERMISSIONS: dict[str, frozenset[str]] = {
     ROLE_SUPER_ADMIN: ALL_PERMISSIONS,
     ROLE_SALES: _SALES,
-    # the bots on the server: the shop workflows only
-    ROLE_SERVICE: frozenset(_SALES | {P_VIEW, P_CUSTOMERS_DECIDE, P_ORDERS_EXPIRE,
-                                      P_SHOP_STATE}),
+    # the bots on the server: the shop workflows only (never staff / server)
+    ROLE_SERVICE: frozenset({"dashboard.view", "orders.view", "orders.edit", "requests.view",
+                             "requests.edit", "customers.view", "customers.edit",
+                             "assign.edit", "archive.view", "products.view", "groups.view",
+                             "pricelist.view", "models.view", "sales.view", "sales.edit",
+                             "reports.view", "activity.view"}),
 }
 # Legacy role codes (only seen before the start-up migration ran).
 PERMISSIONS[ROLE_ADMIN] = PERMISSIONS[ROLE_SUPER_ADMIN]
 PERMISSIONS[ROLE_VIEWER] = PERMISSIONS[ROLE_SALES]
+
+#: v2.8.2: the per-user ticks of v2.7.0 – v2.8.1 -> the sections they now mean.
+LEGACY_PERMISSION_MAP: dict[str, tuple[str, ...]] = {
+    "orders.view": ("orders.view", "archive.view"),
+    "payments.decide": ("orders.edit",),
+    "orders.ship": ("orders.edit",),
+    "orders.cancel": ("orders.edit",),
+    "orders.expire": ("orders.edit",),
+    "requests.handle": ("requests.view", "requests.edit"),
+    "customers.view": ("customers.view",),
+    "customers.decide": ("customers.edit",),
+    "orders.assign": ("assign.edit",),
+    "view": ("dashboard.view", "products.view", "reports.view", "groups.view",
+             "pricelist.view", "models.view", "sales.view"),
+    "shop.state": ("sales.edit",),
+    "pricelist.manage": ("pricelist.edit",),
+    "proxies.manage": ("pricelist.edit",),
+    "catalog.manage": ("groups.edit", "models.edit"),
+    "passwords.decide": ("passwords.edit",),
+    "staff.manage": ("staff.edit", "activity.view"),
+    "server.manage": ("server.edit",),
+    "events.view": (),
+}
+#: The v2.8.1 role tables, to rebuild a user's old effective rights exactly.
+_LEGACY_SALES = frozenset({"orders.view", "payments.decide", "orders.ship", "orders.cancel",
+                           "requests.handle", "customers.view", "events.view"})
+_LEGACY_ROLES = {ROLE_SUPER_ADMIN: frozenset(LEGACY_PERMISSION_MAP), ROLE_SALES: _LEGACY_SALES}
+
+
+def with_implied(perms) -> frozenset[str]:
+    """«تغییر» includes «دیدن» of the same section (when the section has one)."""
+    out = set(perms)
+    for name in list(out):
+        if name.endswith(".edit"):
+            view = name[:-5] + ".view"
+            if view in ALL_PERMISSIONS:
+                out.add(view)
+    return frozenset(out)
+
+
+def migrate_ticks(role: str, grants: str, revokes: str) -> tuple[str, str] | None:
+    """Old per-user ticks -> the same rights as section ticks (relative to the new
+    role table). None when nothing needs migrating."""
+    old = {p.strip() for p in f"{grants},{revokes}".split(",") if p.strip()}
+    if not old or old <= ALL_PERMISSIONS:
+        return None
+    base_old = _LEGACY_ROLES.get(role, frozenset())
+    old_effective = (base_old | {p.strip() for p in grants.split(",") if p.strip()}) \
+        - {p.strip() for p in revokes.split(",") if p.strip()}
+    new_effective: set[str] = set()
+    for name in old_effective:
+        if name in LEGACY_PERMISSION_MAP:
+            new_effective.update(LEGACY_PERMISSION_MAP[name])
+        elif name in ALL_PERMISSIONS:
+            new_effective.add(name)
+    new_effective = set(with_implied(new_effective))
+    base_new = PERMISSIONS.get(role, frozenset())
+    return (",".join(sorted(new_effective - base_new)), ",".join(sorted(base_new - new_effective)))
 
 
 def parse_permission_list(raw) -> frozenset[str]:
@@ -99,14 +193,26 @@ def parse_permission_list(raw) -> frozenset[str]:
 
 
 def effective_permissions(role: str | None, grants=None, revokes=None) -> frozenset[str]:
-    """The role's permissions plus the per-user ticks (v2.7.0): ``grants`` added,
-    ``revokes`` removed. Unknown names are ignored."""
+    """The role's permissions plus the per-user ticks: ``grants`` added,
+    ``revokes`` removed; «تغییر» implies «دیدن»; every staff member gets the
+    (filtered) notification feed."""
     base = PERMISSIONS.get(str(role or ""), frozenset())
-    return frozenset((base | parse_permission_list(grants)) - parse_permission_list(revokes))
+    perms = with_implied((base | parse_permission_list(grants)) - parse_permission_list(revokes))
+    return perms | {P_EVENTS}
 
 
 def has_permission(role: str | None, permission: str) -> bool:
+    if permission == P_EVENTS:
+        return str(role or "") in PERMISSIONS
     return permission in PERMISSIONS.get(str(role or ""), frozenset())
+
+
+def sections_out() -> list[dict]:
+    """The permission table for ShopAdmin (rows = sections)."""
+    return [{"key": key, "label": label,
+             "view": f"{key}.view" if view else None,
+             "edit": f"{key}.edit" if edit else None}
+            for key, label, view, edit in SECTIONS]
 
 
 #: Password a super admin can reset an account to. It is deliberately weak and

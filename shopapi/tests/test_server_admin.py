@@ -70,7 +70,8 @@ def test_service_key_cannot_control_the_server(client):
 def test_settings_hide_secrets(client, env_file):
     owner = owner_token(client)
     settings = client.get("/admin/server/settings", headers=bearer(owner)).json()["settings"]
-    assert settings["BANK_ACCOUNT_TEXT"] == {"secret": False, "value": "old text"}
+    # v2.8.2: payment details are typed per order, never stored as a setting
+    assert "BANK_ACCOUNT_TEXT" not in settings and "PAYMENT_CARD_NUMBER" not in settings
     assert settings["BALE_TOKEN"] == {"secret": True, "set": True}
     assert "TELEGRAM_TOKEN" not in settings
     assert "ABCDEFGH" not in str(settings)
@@ -80,7 +81,6 @@ def test_settings_hide_secrets(client, env_file):
 def test_settings_update_keeps_other_lines(client, env_file, db):
     owner = owner_token(client)
     r = client.put("/admin/server/settings", headers=bearer(owner), json={"values": {
-        "BANK_ACCOUNT_TEXT": "کارت ۶۰۳۷ به نام فروشگاه",
         "RECEIPT_DEADLINE_MINUTES": "45",
         "BALE_TOKEN": "987654:ZYXWVUTSRQPONMLKJIHGFEDCBAzyxw",
     }})
@@ -88,14 +88,11 @@ def test_settings_update_keeps_other_lines(client, env_file, db):
     text = env_file.read_text(encoding="utf-8")
     assert "# shop server" in text
     assert "ACCOUNTING_SERVER=.\\SQLEXPRESS" in text
-    assert 'BANK_ACCOUNT_TEXT="کارت ۶۰۳۷ به نام فروشگاه"' in text
+    assert "BANK_ACCOUNT_TEXT=old text" in text          # an old line is kept as it was
     assert "RECEIPT_DEADLINE_MINUTES=45" in text
     assert "BALE_TOKEN=987654:ZYXWVUTSRQPONMLKJIHGFEDCBAzyxw" in text
-    from dotenv import dotenv_values
-
-    assert dotenv_values(env_file)["BANK_ACCOUNT_TEXT"] == "کارت ۶۰۳۷ به نام فروشگاه"
     audit = " ".join(r["detail"] for r in db.list_audit())
-    assert "987654" not in audit and "کارت" not in audit
+    assert "987654" not in audit
 
 
 @pytest.mark.parametrize("key,value", [
