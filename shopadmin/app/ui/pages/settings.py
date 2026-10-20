@@ -330,9 +330,16 @@ class SettingsPage(BasePage):
                 "روی رایانهٔ سرور به‌روز کنید."
             )
             return
-        mode = "فعال کامل — پایگاه آزمایشی (خواندن و نوشتن آزاد)" if info.test_mode else \
-            "فعال (ثبت واقعی در حسابداری)" if info.accounting_write_enabled \
-            else "غیرفعال (حالت آزمایشی — بدون ثبت واقعی)"
+        from .server import write_text
+
+        # v2.8.1: the same plain reason as on «سرور فروشگاه» (not allowed / switched off)
+        mode, _color = write_text({
+            "accounting_write_enabled": info.accounting_write_enabled,
+            "test_mode": info.test_mode,
+            "accounting_database": info.accounting_database,
+            "status_code_configured": info.status_code_configured,
+            "write_block_reason": info.extra.get("write_block_reason"),
+        })
         self._set_status(
             f"ارتباط با سرور فروشگاه برقرار است. ثبت در حسابداری: {mode}",
             theme.SUCCESS_DARK if info.accounting_write_enabled else theme.WARNING_TEXT,

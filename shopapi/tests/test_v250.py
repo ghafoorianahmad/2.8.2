@@ -385,7 +385,7 @@ def test_real_writer_rechecks_the_number_after_commit():
             return super().fetchone()
 
     conn = DupAfter()
-    writer = AccountingWriter(Settings(accounting_database="hesab5 t", accounting_status_code=0),
+    writer = AccountingWriter(Settings(accounting_database="hesab5 t", accounting_allowed_databases=("hesab5 t",), accounting_write_databases=("hesab5 t",), accounting_status_code=0),
                               connection_factory=lambda: conn)
     res = writer.write_order(1, 7001, [(101, 1.0, 100.0)])
     assert res.committed and res.codlp_rows_after_commit == 2 and res.duplicate_after_commit
@@ -399,7 +399,7 @@ def test_commit_needs_a_valid_configured_status(status_code):
     from app.accounting_writer import AccountingConfigError
 
     conn = FakeConn()
-    writer = AccountingWriter(Settings(accounting_database="hesab5 t",
+    writer = AccountingWriter(Settings(accounting_database="hesab5 t", accounting_allowed_databases=("hesab5 t",), accounting_write_databases=("hesab5 t",),
                                        accounting_status_code=status_code),
                               connection_factory=lambda: conn)
     with pytest.raises(AccountingConfigError):
@@ -446,10 +446,13 @@ def test_production_writes_need_the_database_on_the_allowlist():
 
 
 def test_test_mode_only_for_allowlisted_test_databases(monkeypatch):
-    assert Settings(accounting_database="hesab5 t").is_test_db()
-    assert Settings(accounting_database="HESAB5 T ").is_test_db()
-    assert not Settings(accounting_database="hesab5").is_test_db()
-    assert not Settings(accounting_database="hesab5 t",
+    # v2.8.1: no database name is built in
+    assert not Settings(accounting_database="hesab5 t").is_test_db()
+    listed = dict(accounting_test_databases=("hesab5 t",))
+    assert Settings(accounting_database="hesab5 t", **listed).is_test_db()
+    assert Settings(accounting_database="HESAB5 T ", **listed).is_test_db()
+    assert not Settings(accounting_database="hesab5", **listed).is_test_db()
+    assert not Settings(accounting_database="hesab5 t", accounting_allowed_databases=("hesab5 t",), accounting_write_databases=("hesab5 t",),
                         accounting_test_databases=("shop_test",)).is_test_db()
     monkeypatch.setenv("ACCOUNTING_DATABASE", "shop_test")
     monkeypatch.setenv("ACCOUNTING_TEST_DATABASES", "shop_test, other")

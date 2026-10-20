@@ -168,11 +168,13 @@ def test_config_password_never_goes_on_a_command_line(captured, monkeypatch, tmp
     monkeypatch.setattr(setup, "run_server_tool", fake_tool)
     db = setup.DatabaseConfig(server=r".\SQLEXPRESS", database="hesab5", trusted=False,
                               user="shopbot", password="S3cret!pw")
-    setup.write_config(db, port=8443, extra={"bank_account_text": "حساب", "bale_token": ""})
+    setup.write_config(db, port=8443, extra={"bank_account_text": "حساب", "bale_token": None,
+                                             "admin_chat_ids": ""})
     assert "S3cret!pw" not in " ".join(seen["args"])
     assert seen["json"]["db_password"] == "S3cret!pw"
     assert seen["json"]["api_port"] == 8443 and seen["json"]["api_host"] == "0.0.0.0"
-    assert "bale_token" not in seen["json"]  # empty optional values are left alone
+    assert "bale_token" not in seen["json"]  # v2.8.1: None (untouched secret) = left alone
+    assert seen["json"]["admin_chat_ids"] == ""  # an emptied text clears the setting
     assert list((tmp_path / "ShopServer").glob("setup-*.json")) == []  # cleaned up
 
 

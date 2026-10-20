@@ -239,7 +239,7 @@ def test_writer_puts_color_and_part_in_the_line_description():
 
     for length, expected in ((50, ["Silver — CHA", ""]), (6, ["Silver", ""]), (None, ["", ""])):
         conn = _sharh_conn(length)
-        writer = AccountingWriter(Settings(accounting_database="hesab5 t",
+        writer = AccountingWriter(Settings(accounting_database="hesab5 t", accounting_allowed_databases=("hesab5 t",), accounting_write_databases=("hesab5 t",),
                                            accounting_status_code=0),
                                   connection_factory=lambda c=conn: c)
         result = writer.write_order(1, 7001, [(900, 1.0, 10.0, "Silver — CHA"), (101, 2.0, 5.0)])

@@ -27,7 +27,7 @@ POLL_MS = 5000
 PAGE_ASK, PAGE_WAIT, PAGE_NEW, PAGE_END = range(4)
 
 
-class ForgotPasswordDialog(QDialog):
+class ForgotPasswordDialog(widgets.ResponsiveDialog):
     def __init__(self, auth: AuthService, username: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.auth = auth

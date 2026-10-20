@@ -44,7 +44,7 @@ FILTERS = (
     ("auto", "خودکار (بازبینی)"),
     ("mapped", "نگاشت‌شده"),
     ("ignored", "نادیده"),
-    ("all", "همه"),
+    ("all", "همهٔ ردیف‌ها"),
 )
 #: Largest PDF accepted (same rule for the button and for drag & drop).
 MAX_PDF_BYTES = 10 * 1024 * 1024
@@ -643,7 +643,7 @@ class PriceListPage(BasePage):
                  on_success=lambda _r: self._load_proxies())
 
 
-class MapRowDialog(QDialog):
+class MapRowDialog(widgets.ResponsiveDialog):
     """نگاشت یک ردیف PDF به کالای حسابداری + نام رنگی که مشتری می‌بیند."""
 
     def __init__(self, context, row: dict, parent: QWidget | None = None) -> None:
@@ -788,7 +788,7 @@ class MapRowDialog(QDialog):
         self.accept()
 
 
-class AddProxyDialog(QDialog):
+class AddProxyDialog(widgets.ResponsiveDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.link = ""

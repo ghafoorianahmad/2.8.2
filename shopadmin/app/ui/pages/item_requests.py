@@ -27,6 +27,7 @@ from ...persian import coerce_datetime, format_datetime_shamsi, format_money, \
 from .. import theme, widgets
 from ..async_utils import run_async
 from ..base_page import BasePage
+from ..rtl import RIGHT
 
 HEADERS = ("شماره", "زمان ثبت", "نوع", "مشتری", "کد شخص", "وضعیت", "مسئول", "کالای درخواستی")
 COL_TIME = 1
@@ -36,7 +37,9 @@ KIND_FA = {"unavailable": "ناموجود", "inquiry": "استعلام قیمت"
 OUTCOME_FA = {"confirmed": "موجودی تأیید شد (سفارش ساخته شد)", "unavailable": "ناموجود اعلام شد"}
 PLATFORM_FA = {"bale": "بله", "telegram": "تلگرام"}
 MESSAGE_STATUS_FA = {"pending": "در صف ارسال (ربات)", "sent": "ارسال شد", "failed": "ارسال نشد"}
-TABS = (("open", "باز"), ("done", "رسیدگی‌شده"), ("all", "همه"))
+#: v2.8.1: each filter says what it covers (two buttons both read «همه» before)
+TABS = (("open", "باز"), ("done", "رسیدگی‌شده"), ("all", "همهٔ وضعیت‌ها"))
+SCOPES = (("mine", "کارهای من"), ("all", "همهٔ درخواست‌ها"))
 KIND_FILTERS = (("", "همهٔ انواع"), ("purchase", "درخواست خرید"), ("unavailable", "ناموجود"),
                 ("inquiry", "استعلام قیمت"))
 #: After sending, the dialog re-reads the delivery state this often, this many times.
@@ -71,6 +74,15 @@ def product_text(item: dict) -> str:
     return name or (f"«{text}»" if text else "—")
 
 
+def _filter_caption(text: str) -> QWidget:
+    """A filter group's caption, centred on the height of its buttons."""
+    caption = widgets.label(text, name="Muted", bold=True)
+    caption.setAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
+    caption.setMinimumHeight(widgets.button("x").sizeHint().height())
+    caption.setContentsMargins(10, 0, 0, 0)
+    return caption
+
+
 class ItemRequestsPage(BasePage):
     title = "درخواست کالا"
     subtitle = "کالاهای ناموجود و استعلام‌های قیمتی که مشتریان در ربات فرستاده‌اند"
@@ -85,31 +97,35 @@ class ItemRequestsPage(BasePage):
         principal = self.context.principal
         # v2.8.0: «کارهای من» is the default view of a sales user
         self._mine = principal is not None and not principal.is_manager
-        tabs = QHBoxLayout()
+        # v2.8.1: three labelled groups in a row that wraps on a narrow window
+        filters_holder = QWidget()
+        tabs = widgets.FlowLayout(filters_holder, spacing=8)
+        tabs.addWidget(_filter_caption("نمایش:"))
         self._scope_buttons = {}
-        for key, text in (("mine", "کارهای من"), ("all", "همه")):
+        for key, text in SCOPES:
             button = widgets.button(text, variant="ghost",
                                     on_click=lambda k=key: self.set_scope(k == "mine"))
+            button.setObjectName("Tab")   # the chosen filter is highlighted
             button.setCheckable(True)
             button.setChecked((key == "mine") == self._mine)
             self._scope_buttons[key] = button
             tabs.addWidget(button)
-        tabs.addSpacing(16)
+        tabs.addWidget(_filter_caption("وضعیت:"))
         self._tab_buttons = {}
         for key, text in TABS:
             button = widgets.button(text, variant="ghost", on_click=lambda k=key: self.set_filter(k))
+            button.setObjectName("Tab")
             button.setCheckable(True)
             self._tab_buttons[key] = button
             tabs.addWidget(button)
-        tabs.addStretch(1)
-        tabs.addWidget(widgets.label("نوع:", name="Muted"))
+        tabs.addWidget(_filter_caption("نوع:"))
         self.kind_combo = QComboBox()
         for key, text in KIND_FILTERS:
             self.kind_combo.addItem(text, key)
         self.kind_combo.currentIndexChanged.connect(
             lambda _i: self.set_kind(self.kind_combo.currentData() or ""))
         tabs.addWidget(self.kind_combo)
-        self.body.addLayout(tabs)
+        self.body.addWidget(filters_holder)
         panel = widgets.Panel("درخواست‌ها")
         panel.body.addWidget(widgets.label(
             "درخواست کالا سفارش نیست؛ پرداختی ندارد و در «سازه حساب» چیزی ثبت نمی‌شود. "
@@ -241,7 +257,7 @@ def _kv(key: str, value: str, *, selectable: bool = True) -> QWidget:
     return holder
 
 
-class ItemRequestDialog(QDialog):
+class ItemRequestDialog(widgets.ResponsiveDialog):
     """جزئیات یک درخواست: متن کامل، مشتری، وضعیت، یادداشت و پیام به مشتری."""
 
     def __init__(self, context, item: dict, parent: QWidget | None = None) -> None:
@@ -340,6 +356,7 @@ class ItemRequestDialog(QDialog):
         self.history.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.history.horizontalHeader().setStretchLastSection(True)
         self.history.setMaximumHeight(140)
+        widgets.show_full_headers(self.history)
         msg_panel.body.addWidget(self.history)
         self.message_edit = QPlainTextEdit()
         self.message_edit.setPlaceholderText("متن پیام به مشتری…")
@@ -578,7 +595,7 @@ class ItemRequestDialog(QDialog):
         super().done(result)
 
 
-class StockConfirmDialog(QDialog):
+class StockConfirmDialog(widgets.ResponsiveDialog):
     """«تأیید موجودی»: the «سازه حساب» product (needed when the row is not mapped
     yet) and, optionally, another price. A normal order awaiting payment follows."""
 

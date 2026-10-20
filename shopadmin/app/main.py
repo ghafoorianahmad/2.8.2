@@ -102,9 +102,13 @@ class ShopAdminApp(QObject):
         self.api.on_session_invalid = self._session_invalid.emit
 
     # ------------------------------------------------------------------ start
-    def start(self, *, server_setup: bool = False, tray: bool = False) -> None:
+    def start(self, *, server_setup: bool = False, tray: bool = False,
+              server_settings: bool = False) -> None:
         apply_env_overrides(self.store)
-        self.tray_mode = tray and not server_setup
+        self.tray_mode = tray and not server_setup and not server_settings
+        if server_settings:
+            self.show_server_setup(settings=True)
+            return
         if server_setup:
             self.show_server_setup()
             return
@@ -174,14 +178,24 @@ class ShopAdminApp(QObject):
         return True
 
     # ------------------------------------------------------------ server setup
-    def show_server_setup(self) -> None:
-        """Run on the server computer (as administrator) to install the server."""
-        from .ui.server_setup_wizard import ServerSetupWizard
+    def show_server_setup(self, *, settings: bool = False) -> None:
+        """Run on the server computer (as administrator) to install the server, or
+        (``settings``, v2.8.1 «تنظیمات سرور») to change it with the saved values."""
+        from .ui.server_setup_wizard import MODE_SETTINGS, MODE_SETUP, ServerSetupWizard
 
-        self.server_wizard = ServerSetupWizard()
-        self.server_wizard.completed.connect(self._server_setup_done)
+        self.server_wizard = ServerSetupWizard(mode=MODE_SETTINGS if settings else MODE_SETUP)
+        if self.server_wizard.settings_mode:
+            self.server_wizard.completed.connect(self._server_settings_done)
+        else:
+            self.server_wizard.completed.connect(self._server_setup_done)
         self.server_wizard.show()
         _centre(self.server_wizard)
+
+    def _server_settings_done(self, base_url: str, pem: str) -> None:
+        # The port (and so the address) may have changed: this computer's own
+        # management console follows. The wizard window closes the program.
+        self.store.configure_connection(base_url, pem)
+        self.store.audit("setup", "server_settings", "تنظیمات سرور فروشگاه تغییر کرد")
 
     def _server_setup_done(self, base_url: str, pem: str) -> None:
         # The certificate comes from the server's own file: no fingerprint
@@ -623,9 +637,13 @@ def run(argv: list[str] | None = None) -> int:
     _log_credential_backend()
     args = list(argv if argv is not None else sys.argv)
     server_setup = "--server-setup" in args
+    # v2.8.1: «تنظیمات سرور» (desktop shortcut / «سرور فروشگاه» page): the same
+    # wizard, filled with the saved values
+    server_settings = "--server-settings" in args
     tray = "--tray" in args  # Windows sign-in (autostart): start hidden in the tray
+    elevated_flag = "--server-settings" if server_settings else "--server-setup"
 
-    if server_setup:
+    if server_setup or server_settings:
         try:
             from .server_setup import is_admin, relaunch_elevated
         except ImportError:
@@ -643,7 +661,7 @@ def run(argv: list[str] | None = None) -> int:
             # Ask Windows for administrator rights (UAC) and let that copy work.
             shown = False
             try:
-                shown = relaunch_elevated(["--server-setup"])
+                shown = relaunch_elevated([elevated_flag])
             except Exception as exc:  # noqa: BLE001 - reported below
                 logger.warning("elevation request failed: %s", type(exc).__name__)
             if not shown:
@@ -664,18 +682,22 @@ def run(argv: list[str] | None = None) -> int:
     theme.apply_theme(app)
     app.setWindowIcon(theme.app_icon())
 
-    if tray and not server_setup and _instance_running():
+    setup_window = server_setup or server_settings
+    if tray and not setup_window and _instance_running():
         logger.info("--tray: ShopAdmin is already running")
         return 0
-    if not server_setup and _activate_running_instance():
+    if not setup_window and _activate_running_instance():
         logger.info("another copy is already running; asked it to show itself")
         return 0
-    mutex = _hold_instance_mutex()  # noqa: F841 - held for the life of the process
+    # The setup windows run beside a running console (the «سرور فروشگاه» page
+    # opens «تنظیمات سرور»), so they neither take the single-instance lock
+    # nor answer for it.
+    mutex = None if setup_window else _hold_instance_mutex()  # noqa: F841
 
     controller = ShopAdminApp(app)
-    instance_server = _listen_for_second_instances(controller)  # noqa: F841
+    instance_server = None if setup_window else _listen_for_second_instances(controller)  # noqa: F841
     app.aboutToQuit.connect(controller.shutdown)
-    controller.start(server_setup=server_setup, tray=tray)
+    controller.start(server_setup=server_setup, tray=tray, server_settings=server_settings)
     return app.exec()
 
 

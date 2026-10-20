@@ -21,14 +21,68 @@ from PySide6.QtWidgets import (
 )
 
 from ...api_client import short_fingerprint
+from ...edition import is_server_edition
+from ...logging_setup import get_logger
 from ...permissions import SERVER_MANAGE
-from ...persian import format_shamsi, to_persian_digits
+from ...persian import format_shamsi, to_english_digits, to_persian_digits
 from ...server_settings import SETTINGS_FA, local_problem, translate_field_errors
 from .. import theme, widgets
 from ..base_page import BasePage
 from ..rtl import RIGHT
 
 PLATFORM_FA = {"bale": "بله", "telegram": "تلگرام"}
+
+log = get_logger("server_page")
+
+
+def accounting_text(status: dict) -> tuple[str, str]:
+    """v2.8.1: the connection row with the real reason (wrong name, no permission, …)."""
+    acc = status.get("accounting") or {}
+    if acc.get("ok"):
+        return (f"متصل ({to_persian_digits(acc.get('latency_ms', 0))} میلی‌ثانیه)",
+                theme.SUCCESS_DARK)
+    name = str(status.get("accounting_database") or "").strip()
+    reason = str(acc.get("message_fa") or "").strip() or "پایگاه‌دادهٔ حسابداری پاسخ نمی‌دهد."
+    code = str(acc.get("error_code") or "")
+    if code in ("4060", "229", "230"):
+        reason += (" (کاربر SQL سرور به این پایگاه‌داده دسترسی ندارد؛ grant_shop_app.ps1 را برای "
+                   "همین پایگاه‌داده روی رایانهٔ سرور اجرا کنید.)")
+    where = f"«{name}»: " if name else ""
+    return f"قطع — {where}{reason}", theme.DANGER
+
+
+def write_text(status: dict) -> tuple[str, str]:
+    """v2.8.1: real writing on/off for the current database, and why it is off."""
+    name = str(status.get("accounting_database") or "").strip() or "—"
+    if status.get("accounting_write_enabled"):
+        if status.get("status_code_configured") is False:
+            return (f"روشن برای «{name}»، ولی «کد وضعیت سفارش» تنظیم نشده؛ تا تنظیم نشود "
+                    "هیچ سفارشی ثبت نمی‌شود (پایین همین صفحه).", theme.WARNING_TEXT)
+        if status.get("test_mode"):
+            return f"فعال کامل — پایگاه آزمایشی «{name}» (خواندن و نوشتن آزاد)", theme.SUCCESS_DARK
+        return f"فعال — ثبت واقعی در «{name}»", theme.SUCCESS_DARK
+    reason = status.get("write_block_reason")
+    where = "«تنظیمات سرور» روی رایانهٔ سرور"
+    if reason == "not_allowed":
+        return (f"خاموش — «{name}» در فهرست پایگاه‌داده‌های مجاز نیست؛ سرور فقط از آن می‌خواند. "
+                f"برای ثبت، در {where} آن را مجاز و «ثبت واقعی» را روشن کنید.", theme.WARNING_TEXT)
+    if reason == "write_off":
+        return (f"خاموش — «{name}» مجاز است ولی «ثبت واقعی» برایش روشن نشده (در {where}).",
+                theme.WARNING_TEXT)
+    if reason == "no_database":
+        return "خاموش — پایگاه‌دادهٔ حسابداری تنظیم نشده است.", theme.WARNING_TEXT
+    return f"آزمایشی — بدون ثبت واقعی (فقط در {where} قابل تغییر)", theme.WARNING_TEXT
+
+
+def server_settings_available() -> bool:
+    """«تنظیمات سرور» only in the server edition, on the server computer itself."""
+    if not is_server_edition():
+        return False
+    try:
+        from ...server_setup import server_installed_here
+    except ImportError:
+        return False
+    return server_installed_here()
 
 
 def _uptime_fa(seconds: int) -> str:
@@ -116,12 +170,35 @@ class ServerPage(BasePage):
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
+        # v2.8.1: the server setup wizard with the saved values (database, allowed
+        # databases and real writing, network, bot tokens) - on the server only
+        self.server_settings_button = widgets.button(
+            "تنظیمات سرور (پایگاه‌داده، شبکه، ربات‌ها)", icon_name="settings",
+            variant="primary", on_click=self._open_server_settings,
+            tooltip="باز کردن دوبارهٔ راه‌اندازی سرور با مقدارهای فعلی؛ نیاز به دسترسی مدیر ویندوز")
+        self.server_settings_button.setVisible(server_settings_available())
+        buttons.addWidget(self.server_settings_button)
         self.restart_button = widgets.button(
             "راه‌اندازی دوبارهٔ سرور", icon_name="refresh", variant="danger",
             on_click=self._restart)
         buttons.addWidget(self.restart_button)
         panel.body.addLayout(buttons)
         return panel
+
+    def _open_server_settings(self) -> None:
+        try:
+            from ...server_setup import relaunch_elevated
+
+            shown = relaunch_elevated(["--server-settings"])
+        except Exception as exc:  # noqa: BLE001 - reported below
+            log.warning("server settings: elevation failed: %s", type(exc).__name__)
+            shown = False
+        if shown:
+            self.notify_success("پنجرهٔ «تنظیمات سرور» باز می‌شود (پس از تأیید ویندوز).")
+        else:
+            widgets.error(self, "تنظیمات سرور",
+                          "«تنظیمات سرور» به دسترسی مدیر ویندوز نیاز دارد و درخواست آن تأیید نشد. "
+                          "دوباره بزنید و در پنجرهٔ ویندوز «Yes / بله» را انتخاب کنید.")
 
     def load(self) -> None:
         if not self.context.can(SERVER_MANAGE):
@@ -131,20 +208,8 @@ class ServerPage(BasePage):
                  on_error=self._settings_unavailable)
 
     def _show_status(self, status: dict) -> None:
-        acc = status.get("accounting") or {}
-        if acc.get("ok"):
-            self._set("accounting", f"متصل ({to_persian_digits(acc.get('latency_ms', 0))} میلی‌ثانیه)",
-                      theme.SUCCESS_DARK)
-        else:
-            self._set("accounting", "قطع — سرور به پایگاه‌دادهٔ حسابداری دسترسی ندارد", theme.DANGER)
-        if status.get("test_mode"):
-            self._set("write", "فعال کامل — پایگاه آزمایشی (خواندن و نوشتن آزاد)",
-                      theme.SUCCESS_DARK)
-        elif status.get("accounting_write_enabled"):
-            self._set("write", "فعال (ثبت واقعی)", theme.SUCCESS_DARK)
-        else:
-            self._set("write", "آزمایشی — بدون ثبت واقعی (فقط روی خود سرور قابل تغییر)",
-                      theme.WARNING_TEXT)
+        self._set("accounting", *accounting_text(status))
+        self._set("write", *write_text(status))
         self._set("uptime", _uptime_fa(status.get("uptime_seconds", 0)))
         self._set("version", to_persian_digits(status.get("version", "—")))
 
@@ -152,7 +217,7 @@ class ServerPage(BasePage):
         configured = bots.get("configured") or []
         platforms = bots.get("platforms") or {}
         if not configured:
-            self._set("bots", "هیچ رباتی تنظیم نشده است (توکن بله/تلگرام را در تنظیمات پایین وارد کنید)",
+            self._set("bots", "هیچ رباتی تنظیم نشده است (توکن بله یا تلگرام را در تنظیمات پایین وارد کنید)",
                       theme.WARNING_TEXT)
         else:
             parts = []
@@ -270,8 +335,8 @@ class ServerPage(BasePage):
                 if value != current:
                     changes[key] = value
             elif info.get("secret"):
-                if field.text().strip():
-                    changes[key] = field.text().strip()
+                if field.text().strip():   # empty = keep the saved value
+                    changes[key] = to_english_digits(field.text()).strip()
             else:
                 value = field.text().strip()
                 if value != str(info.get("value") or ""):

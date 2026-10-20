@@ -251,6 +251,26 @@ def test_shoptg_spec_passes_only_what_it_needs(tmp_path, monkeypatch, data_dir):
     assert "TG_SERVICE_ACCOUNT" not in launcher.shoptg_spec(values, run_mode="task").env
 
 
+def test_shoptg_gets_the_telegram_app_keys_from_server_settings(tmp_path, monkeypatch, data_dir):
+    """v2.8.1: api_id / api_hash set in «تنظیمات سرور» reach the Telegram worker
+    (still nothing else: no bot tokens, no database password)."""
+    launcher.configure_paths(data_dir)
+    monkeypatch.delenv("TG_API_ID", raising=False)
+    monkeypatch.delenv("TG_API_HASH", raising=False)
+    tg = tmp_path / "shoptg"
+    (tg / ".venv" / "Scripts").mkdir(parents=True)
+    (tg / ".venv" / "Scripts" / "python.exe").write_bytes(b"")
+    values = {"SHOPTG_DIR": str(tg), "TG_API_ID": " 12345 ", "TG_API_HASH": "a" * 32,
+              "TELEGRAM_BOT_TOKEN": "1:x", "DB_PASSWORD": "pw"}
+    env = launcher.shoptg_spec(values, run_mode="task").env
+    assert env["TG_API_ID"] == "12345" and env["TG_API_HASH"] == "a" * 32
+    assert "TELEGRAM_BOT_TOKEN" not in env and "DB_PASSWORD" not in env
+    assert "TG_API_ID" not in launcher.shoptg_spec({"SHOPTG_DIR": str(tg)}, run_mode="task").env
+    assert launcher.SETUP_FIELDS["write_databases"] == "ACCOUNTING_WRITE_DATABASES"
+    assert launcher.FIRST_RUN_DEFAULTS["ACCOUNTING_WRITE_ENABLED"] == "false"
+    assert "ACCOUNTING_WRITE_DATABASES" not in launcher.FIRST_RUN_DEFAULTS
+
+
 # ---- health check --------------------------------------------------------------------------
 class _Health(http.server.BaseHTTPRequestHandler):
     status = 200

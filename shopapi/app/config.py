@@ -15,8 +15,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Host names (SQL Server names) that may receive real writes.
 _DEFAULT_ALLOWED_HOSTS = ("localhost", r".\SQLEXPRESS")
-# The accounting copies used for testing (test mode only for these).
-_DEFAULT_TEST_DATABASES = ("hesab5 t",)
+# The accounting copies used for testing (test mode only for these). v2.8.1: no
+# name is built in any more - the server owner lists them (or, better, uses the
+# per-database switch ACCOUNTING_WRITE_DATABASES).
+_DEFAULT_TEST_DATABASES: tuple[str, ...] = ()
 #: Status codes known to be wrong: refused even when configured.
 INVALID_STATUS_CODES = frozenset({6808})
 
@@ -99,6 +101,9 @@ class Settings:
     #: production database must be named here explicitly (with the switch and
     #: the host) before anything is committed to it.
     accounting_allowed_databases: tuple[str, ...] = ()
+    #: v2.8.1: databases (from the allowed list) for which the server owner switched
+    #: real writing on in the server setup, one by one. Empty = no real writes.
+    accounting_write_databases: tuple[str, ...] = ()
     #: Test copies: only these switch on test mode (writes without the switch).
     accounting_test_databases: tuple[str, ...] = _DEFAULT_TEST_DATABASES
 
@@ -223,6 +228,7 @@ class Settings:
             accounting_write_enabled=_env_bool("ACCOUNTING_WRITE_ENABLED", False),
             accounting_allowed_hosts=allowed,
             accounting_allowed_databases=_env_list("ACCOUNTING_ALLOWED_DATABASES"),
+            accounting_write_databases=_env_list("ACCOUNTING_WRITE_DATABASES"),
             accounting_test_databases=_env_list(
                 "ACCOUNTING_TEST_DATABASES", _DEFAULT_TEST_DATABASES),
             accounting_status_code=_env_optional_int("ACCOUNTING_STATUS_CODE"),
@@ -314,25 +320,31 @@ class Settings:
             return None
         return Path(self.sqlite_path).resolve().parent / "pricelists"
 
-    #: The default accounting copy used for testing.
-    TEST_DATABASE = "hesab5 t"
-
     def database_name(self) -> str:
         """The configured accounting database, as stored with every order."""
         return self.accounting_database.strip()
 
+    @staticmethod
+    def _names(values) -> set[str]:
+        return {d.strip().lower() for d in values if d and d.strip()}
+
     def is_test_db(self) -> bool:
-        """Test mode: the database is on the test allowlist
-        (``ACCOUNTING_TEST_DATABASES``, default ``hesab5 t``). Connected to a test
-        copy, writes need no switch (nothing real can be damaged there)."""
+        """Test mode: the database is on the test list (``ACCOUNTING_TEST_DATABASES``,
+        empty by default since v2.8.1). Connected to a listed test copy, writes need
+        no switch (nothing real can be damaged there)."""
         name = self.database_name().lower()
-        return bool(name) and name in {d.strip().lower() for d in self.accounting_test_databases}
+        return bool(name) and name in self._names(self.accounting_test_databases)
 
     def database_allowlisted(self) -> bool:
-        """The database is a production database named in
-        ``ACCOUNTING_ALLOWED_DATABASES`` (never true while that is empty)."""
+        """The database is named in ``ACCOUNTING_ALLOWED_DATABASES`` (never true
+        while that is empty)."""
         name = self.database_name().lower()
-        return bool(name) and name in {d.strip().lower() for d in self.accounting_allowed_databases}
+        return bool(name) and name in self._names(self.accounting_allowed_databases)
+
+    def database_write_switched_on(self) -> bool:
+        """v2.8.1: the owner switched real writing on for exactly this database."""
+        name = self.database_name().lower()
+        return bool(name) and name in self._names(self.accounting_write_databases)
 
     def payment_card_digits(self) -> str:
         """The configured card number as 16 digits, or "" when missing/invalid."""
@@ -354,14 +366,46 @@ class Settings:
         return None
 
     def write_allowed(self) -> bool:
-        """Real (committed) writes. Test mode: allowlisted test copies. Otherwise
-        all three: the switch, an allowed host and an allowlisted database."""
+        """Real (committed) writes. No database name is built in (v2.8.1):
+
+        * the database is on the allowed list AND real writing was switched on
+          for it (``ACCOUNTING_WRITE_DATABASES``, set per database in the server
+          setup on the server computer), or
+        * a listed test copy (``ACCOUNTING_TEST_DATABASES``), or
+        * the older rule: switch + allowed host + allowed database.
+        """
+        if self.database_allowlisted() and self.database_write_switched_on():
+            return True
         if self.is_test_db():
             return True
         allowed = {h.lower() for h in self.accounting_allowed_hosts}
         return (self.accounting_write_enabled
                 and self.accounting_server.lower() in allowed
                 and self.database_allowlisted())
+
+    def write_block_reason(self) -> str | None:
+        """Why real writing is off for the current database (None = it is on):
+
+        ``no_database`` nothing configured · ``not_allowed`` not on the allowed
+        list · ``write_off`` allowed, but real writing not switched on for it.
+        (A missing order status code is reported separately.)
+        """
+        if self.write_allowed():
+            return None
+        if not self.database_name():
+            return "no_database"
+        if not self.database_allowlisted():
+            return "not_allowed"
+        return "write_off"
+
+    def write_info(self) -> dict:
+        """Database names and switches for the status screens (no secrets)."""
+        return {
+            "accounting_database": self.database_name(),
+            "allowed_databases": list(self.accounting_allowed_databases),
+            "write_databases": list(self.accounting_write_databases),
+            "write_block_reason": self.write_block_reason(),
+        }
 
 
 _settings: Settings | None = None

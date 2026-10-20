@@ -22,7 +22,7 @@ from typing import Callable, Optional
 
 from .util import now_utc
 
-VERSION = "2.8.0"
+VERSION = "2.8.1"
 STARTED_AT = now_utc()
 
 
@@ -149,6 +149,15 @@ def _token(value: str) -> Optional[str]:
     return None if value == "" or _TOKEN_RE.match(value) else "does not look like a bot token"
 
 
+def _api_id(value: str) -> Optional[str]:
+    return None if value == "" or re.fullmatch(r"\d{3,12}", value) else "must be a Telegram api_id"
+
+
+def _api_hash(value: str) -> Optional[str]:
+    ok = value == "" or re.fullmatch(r"[0-9a-fA-F]{32}", value)
+    return None if ok else "must be a Telegram api_hash"
+
+
 #: key -> (validator, secret). Everything NOT listed here — the accounting
 #: connection, ACCOUNTING_WRITE_ENABLED, the API keys, the bind address — can
 #: only be changed on the server itself.
@@ -181,6 +190,11 @@ EDITABLE: dict[str, tuple[Callable[[str], Optional[str]], bool]] = {
     "ADMIN_CHAT_IDS": (_chat_ids, False),
     "ADMIN_SWEEP_SECONDS": (_int_range(10, 3600), False),
     "BALE_TOKEN": (_token, True),
+    # v2.8.1: the Telegram bot (shopbots, Telethon: token + api_id/api_hash; the
+    # Telegram worker shoptg uses the same api_id/api_hash). Never shown back.
+    "TELEGRAM_BOT_TOKEN": (_token, True),
+    "TG_API_ID": (_api_id, True),
+    "TG_API_HASH": (_api_hash, True),
     # TELEGRAM_TOKEN / TELEGRAM_PROXY / PROXY_URL were removed with the old
     # Telegram Bot-API channel (2026-10-11): they are refused as unknown keys.
 }

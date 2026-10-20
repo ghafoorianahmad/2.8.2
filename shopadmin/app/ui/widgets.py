@@ -7,11 +7,14 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Sequence
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QPainter, QPixmap
+from PySide6.QtCore import (QEasingCurve, QEvent, QObject, QPropertyAnimation, QRect, QSize, Qt,
+                            QTimer, Signal)
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QBoxLayout,
     QDialog,
+    QDialogButtonBox,
     QFrame,
     QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect,
@@ -22,6 +25,7 @@ from PySide6.QtWidgets import (
     QLayout,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QStyledItemDelegate,
     QTableWidget,
@@ -510,6 +514,9 @@ class DataTable(QTableWidget):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.verticalHeader().setDefaultSectionSize(46)
         self._headers = list(headers)
+        # v2.8.1: every header is readable from the start (also while empty)
+        self._header_floor = [self.header_width(text) for text in self._headers]
+        self._apply_widths(self._header_floor)
         self._restore_widths()
 
         self._empty_title = "موردی برای نمایش وجود ندارد"
@@ -541,11 +548,26 @@ class DataTable(QTableWidget):
             self._auto_sized = True   # the user's widths win over automatic sizing
             self._user_sized = True
 
+    #: Room around a header's text: the section padding (2 x 10), its border and
+    #: a little air so the bold text is never cut with «…».
+    HEADER_PADDING = 40
+
+    def header_width(self, text: str) -> int:
+        """Width that shows the whole (bold) header ``text``."""
+        bold = QFont(self.horizontalHeader().font())
+        bold.setBold(True)
+        return max(self.MIN_COLUMN,
+                   QFontMetrics(bold).horizontalAdvance(text) + self.HEADER_PADDING)
+
     def _apply_widths(self, widths: Sequence[int]) -> None:
+        """Programmatic widths (automatic, or restored from an older version)
+        never cut a header: each column is at least as wide as its title."""
+        floors = getattr(self, "_header_floor", [])
         self._sizing = True
         try:
             for column, width in enumerate(widths):
-                self.setColumnWidth(column, max(self.MIN_COLUMN, int(width)))
+                floor = floors[column] if column < len(floors) else self.MIN_COLUMN
+                self.setColumnWidth(column, max(self.MIN_COLUMN, floor, int(width)))
         finally:
             self._sizing = False
 
@@ -588,15 +610,11 @@ class DataTable(QTableWidget):
             return
         self._auto_sized = True
         metrics = self.fontMetrics()
-        # v2.7.0: headers are drawn bold, so they are measured bold (no cut header)
-        bold = QFont(self.horizontalHeader().font())
-        bold.setBold(True)
-        header_metrics = QFontMetrics(bold)
         widths = []
         floors = []
         for column in range(self.columnCount()):
-            floor = max(self.MIN_COLUMN,
-                        header_metrics.horizontalAdvance(self._headers[column]) + 48)
+            # v2.7.0: headers are drawn bold, so they are measured bold (no cut header)
+            floor = self.header_width(self._headers[column]) + 8
             floors.append(floor)
             wanted = floor
             for row in range(min(self.rowCount(), 30)):
@@ -723,6 +741,25 @@ class DataTable(QTableWidget):
         for widget in (self._empty_widget, self._busy_widget):
             if widget is not None:
                 widget.setGeometry(self.viewport().rect())
+
+
+def show_full_headers(table, padding: int = 40) -> None:
+    """v2.8.1: a plain table / tree never cuts its column titles: every column
+    starts at least as wide as its (bold) header."""
+    header = table.header() if hasattr(table, "header") else table.horizontalHeader()
+    model = table.model()
+    bold = QFont(header.font())
+    bold.setBold(True)
+    metrics = QFontMetrics(bold)
+    widest = 0
+    for column in range(header.count()):
+        text = str(model.headerData(column, Qt.Orientation.Horizontal) or "")
+        wanted = metrics.horizontalAdvance(text) + padding
+        widest = max(widest, wanted)
+        if header.sectionSize(column) < wanted:
+            header.resizeSection(column, wanted)
+    # stretched columns are sized by Qt: the minimum keeps every title whole
+    header.setMinimumSectionSize(max(header.minimumSectionSize(), widest))
 
 
 class _CenteredOverlay(QWidget):
@@ -896,22 +933,232 @@ def position_toasts(host: ToastHost) -> None:
 # --------------------------------------------------------------------------
 # dialogs
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# windows and dialogs that fit any screen (v2.8.1)
+# --------------------------------------------------------------------------
+#: Part of the screen's work area a window may take when it opens.
+SCREEN_FRACTION = 0.92
+
+
+def available_geometry(widget: QWidget | None) -> QRect:
+    """The work area (without the taskbar) of the screen the widget is on, in
+    device-independent pixels, so Windows scaling (125%, 150%, …) is included."""
+    screen = None
+    if widget is not None:
+        parent = widget.parentWidget()
+        screen = (parent.window().screen() if parent is not None else None) or widget.screen()
+    screen = screen or QGuiApplication.primaryScreen()
+    return screen.availableGeometry() if screen is not None else QRect(0, 0, 1280, 800)
+
+
+def fit_window_to_screen(window: QWidget, *, center: bool = True) -> None:
+    """Never bigger than the screen: shrink the minimum size and the size to the
+    work area (the content scrolls instead), grow to the wanted size when there
+    is room, and keep the whole window on the screen."""
+    area = available_geometry(window)
+    max_w = max(320, int(area.width() * SCREEN_FRACTION))
+    max_h = max(240, int(area.height() * SCREEN_FRACTION))
+    minimum = window.minimumSize()
+    window.setMinimumSize(min(minimum.width(), max_w), min(minimum.height(), max_h))
+    hint = window.sizeHint()
+    width = min(max(window.width(), hint.width(), window.minimumWidth()), max_w)
+    height = min(max(window.height(), hint.height(), window.minimumHeight()), max_h)
+    window.resize(width, height)
+    if isinstance(window, QDialog):
+        fit_wrapped_height(window)
+    if not center:
+        return
+    parent = window.parentWidget()
+    if parent is not None and parent.window().isVisible():
+        anchor = parent.window().frameGeometry().center()
+    else:
+        anchor = area.center()
+    x = min(anchor.x() - window.width() // 2, area.right() - window.width())
+    y = min(anchor.y() - window.height() // 2, area.bottom() - window.height())
+    window.move(max(x, area.left()), max(y, area.top()))
+
+
 def fit_wrapped_height(dialog: QDialog) -> None:
-    """Grow a dialog so wrapped labels are not clipped.
+    """Grow a dialog so wrapped labels are not clipped (up to the screen height).
 
     Top-level windows ignore height-for-width, so a long wrapped message would
     be cut off at the bottom; ask the layout for the height it needs at the
-    current width instead.
+    current width instead. A responsive dialog asks its scrolled body.
     """
-    layout = dialog.layout()
-    if layout is None:
-        return
-    needed = layout.totalHeightForWidth(dialog.width())
+    scroll = getattr(dialog, "_fit_scroll", None)
+    if scroll is not None:
+        body_layout = scroll.widget().layout()
+        if body_layout is None or not body_layout.hasHeightForWidth():
+            return
+        width = scroll.viewport().width() or dialog.width()
+        needed = (dialog.height() - scroll.viewport().height()
+                  + body_layout.totalHeightForWidth(width))
+    else:
+        layout = dialog.layout()
+        if layout is None:
+            return
+        needed = layout.totalHeightForWidth(dialog.width())
+    limit = int(available_geometry(dialog).height() * SCREEN_FRACTION)
     if needed > dialog.height():
-        dialog.resize(dialog.width(), needed)
+        dialog.resize(dialog.width(), min(needed, max(limit, dialog.minimumHeight())))
 
 
-class MessageDialog(QDialog):
+class _FitScrollArea(QScrollArea):
+    """A scroll area that asks for the size of its content (the window is then
+    capped by the screen), instead of Qt's small default."""
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt naming
+        widget = self.widget()
+        if widget is None:
+            return super().sizeHint()
+        hint = widget.sizeHint()
+        frame = 2 * self.frameWidth()
+        return QSize(hint.width() + frame + self.verticalScrollBar().sizeHint().width(),
+                     hint.height() + frame)
+
+
+def _is_button(widget: QWidget | None) -> bool:
+    return isinstance(widget, (QPushButton, QDialogButtonBox))
+
+
+def _is_button_row(item) -> bool:
+    """The last row of a dialog made only of buttons (plus spacing / short labels)."""
+    widget = item.widget()
+    if _is_button(widget):
+        return True
+    if widget is not None:
+        return False
+    layout = item.layout()
+    if layout is None:
+        return False
+    found = False
+    for index in range(layout.count()):
+        child = layout.itemAt(index)
+        if child.spacerItem() is not None:
+            continue
+        if _is_button(child.widget()):
+            found = True
+        elif not isinstance(child.widget(), QLabel):
+            return False
+    return found
+
+
+def _readd(layout: QBoxLayout, item, stretch: int) -> None:
+    if item.widget() is not None:
+        layout.addWidget(item.widget(), stretch, item.alignment())
+    elif item.layout() is not None:
+        layout.addLayout(item.layout(), stretch)
+    elif item.spacerItem() is not None:
+        layout.addItem(item.spacerItem())
+        layout.setStretch(layout.count() - 1, stretch)
+
+
+def _button_flow(row) -> QWidget:
+    """The footer buttons in a row that wraps to a second line on a narrow window
+    (same order: in a right-to-left window the first button is on the right)."""
+    holder = QWidget()
+    flow = FlowLayout(holder, spacing=8)
+    if row.widget() is not None:
+        flow.addWidget(row.widget())
+        return holder
+    source = row.layout()
+    while source.count():
+        child = source.takeAt(0)
+        if child.widget() is not None:
+            flow.addWidget(child.widget())
+    return holder
+
+
+class _FitOnShow(QObject):
+    """Fits a responsive window to its screen the first time it is shown."""
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt naming
+        if event.type() == QEvent.Type.Show and not watched.property("fitted"):
+            watched.setProperty("fitted", True)
+            fit_window_to_screen(watched)
+        return False
+
+
+_FIT_ON_SHOW = _FitOnShow()
+
+
+def make_responsive(dialog: QDialog) -> QDialog:
+    """v2.8.1: a dialog that scrolls, can be resized and maximised, and opens no
+    larger than the screen (any screen size, any Windows scaling).
+
+    The content moves into a scroll area; a last row of buttons stays visible
+    below it and wraps on a narrow window, so «تأیید موجودی» can always be
+    pressed. Call before the dialog is shown (:class:`ResponsiveDialog` does).
+    """
+    if dialog.property("responsive"):
+        return dialog
+    dialog.setProperty("responsive", True)
+    flags = (dialog.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint
+             | Qt.WindowType.WindowCloseButtonHint | Qt.WindowType.WindowSystemMenuHint
+             | Qt.WindowType.WindowTitleHint)
+    dialog.setWindowFlags(flags & ~Qt.WindowType.WindowContextHelpButtonHint)
+    dialog.setSizeGripEnabled(True)
+    dialog.installEventFilter(_FIT_ON_SHOW)
+    layout = dialog.layout()
+    if not isinstance(layout, QBoxLayout) or layout.count() == 0 \
+            or layout.direction() != QBoxLayout.Direction.TopToBottom:
+        return dialog
+
+    items = []
+    while layout.count():
+        stretch = layout.stretch(0)
+        items.append((layout.takeAt(0), stretch))
+    footer = items.pop()[0] if len(items) > 1 and _is_button_row(items[-1][0]) else None
+    margins = layout.contentsMargins()
+
+    body = QWidget()
+    body.setObjectName("DialogBody")
+    body_layout = QVBoxLayout(body)
+    body_layout.setContentsMargins(margins.left(), margins.top(), margins.right(),
+                                   6 if footer is not None else margins.bottom())
+    body_layout.setSpacing(layout.spacing())
+    for item, stretch in items:
+        _readd(body_layout, item, stretch)
+
+    scroll = _FitScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    scroll.setWidget(body)
+    dialog._fit_scroll = scroll
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
+    layout.addWidget(scroll, 1)
+    if footer is not None:
+        bar = QWidget()
+        bar.setObjectName("DialogFooter")
+        bar_layout = QVBoxLayout(bar)
+        bar_layout.setContentsMargins(margins.left(), 8, margins.right(), margins.bottom())
+        bar_layout.addWidget(_button_flow(footer))
+        layout.addWidget(bar)
+    return dialog
+
+
+class ResponsiveDialog(QDialog):
+    """A dialog made responsive (:func:`make_responsive`) just before it opens."""
+
+    def _prepare(self) -> None:
+        make_responsive(self)
+
+    def exec(self) -> int:  # noqa: A003 - Qt naming
+        self._prepare()
+        return super().exec()
+
+    def show(self) -> None:
+        self._prepare()
+        super().show()
+
+    def open(self) -> None:  # noqa: A003 - Qt naming
+        self._prepare()
+        super().open()
+
+
+class MessageDialog(ResponsiveDialog):
     """A clear Persian message box with an icon; no English button text."""
 
     def __init__(self, parent: QWidget | None, title: str, message: str,
@@ -966,7 +1213,7 @@ class MessageDialog(QDialog):
         fit_wrapped_height(self)
 
 
-class ConfirmDialog(QDialog):
+class ConfirmDialog(ResponsiveDialog):
     """RTL confirmation with Persian Yes/No labels."""
 
     def __init__(self, parent: QWidget | None, title: str, message: str,

@@ -41,7 +41,7 @@ FILTERS = (
     ("drifted", "نام تغییرکرده"),
     ("unmapped", "نگاشت‌نشده"),
     ("ok", "فعال"),
-    ("all", "همه"),
+    ("all", "همهٔ مدل‌ها"),
 )
 STATUS_FA = {"ok": "فعال", "review": "پنهان — منتظر تأیید", "unmapped": "نگاشت‌نشده"}
 STATUS_COLOR = {"ok": "success", "review": "danger", "unmapped": "warning"}
@@ -489,7 +489,7 @@ class CatalogModelsPage(BasePage):
                  on_success=self._after_change("مدل تأیید شد و دوباره نمایش داده می‌شود."))
 
 
-class PickProductDialog(QDialog):
+class PickProductDialog(widgets.ResponsiveDialog):
     """انتخاب کالای حسابداری برای یک مدل: پیشنهادهای فازی، جستجو یا کد مستقیم."""
 
     def __init__(self, context, model: dict, *, item: Optional[dict] = None,
@@ -603,7 +603,7 @@ class PickProductDialog(QDialog):
         self.accept()
 
 
-class TextDialog(QDialog):
+class TextDialog(widgets.ResponsiveDialog):
     """یک متن کوتاه یا چندخطی (برچسب، نام‌های دیگر)."""
 
     def __init__(self, title: str, hint: str, value: str = "", *, multiline: bool = False,

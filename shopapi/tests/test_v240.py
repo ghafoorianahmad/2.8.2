@@ -20,7 +20,7 @@ def test_server_and_installer_versions_match():
     match = re.search(r'^#define\s+MyAppVersion\s+"([^"]+)"', iss, re.MULTILINE)
     assert match, "MyAppVersion not found in ShopAdmin.iss"
     assert control.VERSION == match.group(1)
-    assert control.VERSION == "2.8.0"
+    assert control.VERSION == "2.8.1"
 
 
 # ---- forgot password ---------------------------------------------------------
@@ -193,10 +193,13 @@ def test_console_login_needs_a_super_admin(client, monkeypatch):
 
 # ---- test-database mode ------------------------------------------------------------
 def test_test_db_enables_writes_without_a_switch():
+    # v2.8.1: no built-in test database; a LISTED test copy still needs no switch
+    listed = dict(accounting_test_databases=("hesab5 t",))
     test = Settings(accounting_database="hesab5 t", accounting_write_enabled=False,
-                    accounting_server="some-other-host")
+                    accounting_server="some-other-host", **listed)
     assert test.is_test_db() and test.write_allowed()
-    assert Settings(accounting_database="HESAB5 T ").write_allowed()
+    assert Settings(accounting_database="HESAB5 T ", **listed).write_allowed()
+    assert not Settings(accounting_database="hesab5 t").write_allowed()
     prod = Settings(accounting_database="hesab5", accounting_write_enabled=False)
     assert not prod.is_test_db() and not prod.write_allowed()
     # production still needs the switch AND an allowed host
@@ -208,6 +211,7 @@ def test_test_db_enables_writes_without_a_switch():
 def test_system_info_reports_test_mode(client, settings):
     owner = owner_token(client)
     settings.accounting_database = "hesab5 t"
+    settings.accounting_test_databases = ("hesab5 t",)
     info = client.get("/admin/system-info", headers=bearer(owner)).json()
     assert info["test_mode"] is True and info["accounting_write_enabled"] is True
     assert info["write_allowed_on_host"] is True

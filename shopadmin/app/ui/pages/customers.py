@@ -40,7 +40,7 @@ from ..rtl import RIGHT
 HEADERS = ("نام مشتری", "پلتفرم", "شماره موبایل", "کد شخص", "وضعیت", "تاریخ ثبت", "عملیات")
 
 TABS = (
-    ("all", "همه", None),
+    ("all", "همهٔ مشتریان", None),
     ("pending", "در انتظار", CUSTOMER_PENDING),
     ("approved", "تأیید شده", CUSTOMER_APPROVED),
     ("rejected", "رد شده", CUSTOMER_REJECTED),
@@ -312,7 +312,7 @@ def _matches(customer: dict, needle: str) -> bool:
 # --------------------------------------------------------------------------
 # dialogs
 # --------------------------------------------------------------------------
-class ApproveCustomerDialog(QDialog):
+class ApproveCustomerDialog(widgets.ResponsiveDialog):
     """تأیید مشتری: اتصال به شخص موجود (کد شخص، با پیشنهاد تطبیق موبایل) یا
     ساخت شخص جدید در حسابداری با نامی که اینجا اصلاح می‌شود."""
 
@@ -518,7 +518,7 @@ class ApproveCustomerDialog(QDialog):
         self.accept()
 
 
-class RejectCustomerDialog(QDialog):
+class RejectCustomerDialog(widgets.ResponsiveDialog):
     """رد مشتری همراه با دلیل اختیاری."""
 
     def __init__(self, parent: QWidget | None, customer_name: str) -> None:

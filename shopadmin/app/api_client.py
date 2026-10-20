@@ -330,7 +330,7 @@ class SystemInfo:
 
     accounting_write_enabled: bool = False
     write_allowed_on_host: bool = False
-    #: Connected to the test database (hesab5 t): everything is enabled.
+    #: Connected to a listed test database: everything is enabled.
     test_mode: bool = False
     price_level_bot: int = 3
     price_level_site: int = 3

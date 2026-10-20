@@ -59,6 +59,7 @@ def server_status(
         "database_allowlisted": settings.database_allowlisted() or settings.is_test_db(),
         "status_code_configured": settings.status_code_problem() is None,
         "test_mode": settings.is_test_db(),
+        **settings.write_info(),
         "write_allowed_on_host": settings.write_allowed(),
         "tls_fingerprint": control.STATE.tls_fingerprint,
         "restart_available": control.STATE.restart_hook is not None,

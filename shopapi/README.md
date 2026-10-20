@@ -194,7 +194,7 @@ for the full list. Key ones:
 - `RECEIPT_DEADLINE_MINUTES` — the receipt must arrive within this time (default 30); then the order is cancelled locally (never deleted in accounting).
 - `SALES_WINDOWS_ENABLED`, `SALES_MORNING_CLOSE` (13:30), `SALES_EVENING_CLOSE` (20:30), `SALES_CLOSED_WEEKDAYS` (4 = Friday) — sales follow the distributor list (Asia/Tehran).
 - `ACCOUNTING_STATUS_CODE` — KalaOrder.Status; **no default** (6808 is invalid; set after GUI test G2). Unset = nothing is committed.
-- `ACCOUNTING_ALLOWED_DATABASES` — production databases that may receive real writes (empty = none); `ACCOUNTING_TEST_DATABASES` (default `hesab5 t`) — the only databases with test mode. A dry run never sends an INSERT.
+- `ACCOUNTING_ALLOWED_DATABASES` — the databases the owner approved; `ACCOUNTING_WRITE_DATABASES` (v2.8.1) — those of them with real writing switched on, one by one, in the server setup («تنظیمات سرور», server computer only). Empty = no real writes. No database name is built in any more: `ACCOUNTING_TEST_DATABASES` is empty by default (listed copies write without a switch). The older rule (switch + allowed host + allowed database) still works. A dry run never sends an INSERT. `/admin/server/status` and `/admin/system-info` report `write_block_reason` (`not_allowed` / `write_off` / `no_database`).
 - `STOCK_WAREHOUSES` — comma-separated warehouse codes; empty = all warehouses.
 - `MAX_ORDER_QTY` — maximum quantity per line item (default 10000).
 - `ALLOW_SHARED_PERSON_CODE` — allow two customers to share one person code (default `false`).

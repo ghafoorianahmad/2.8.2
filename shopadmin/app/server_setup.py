@@ -20,6 +20,7 @@ Nothing here is reachable from the network; it needs a local administrator.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -208,15 +209,23 @@ class DatabaseConfig:
 
 
 def write_config(db: DatabaseConfig, *, port: int, extra: dict | None = None) -> dict:
-    """``ShopSystem --init-config`` with a short-lived JSON inside the locked folder."""
+    """``ShopSystem --init-config`` with a short-lived JSON inside the locked folder.
+
+    v2.8.1 (settings mode): an empty SQL password keeps the saved one, and an
+    ``extra`` value of ``None`` (an untouched secret) keeps the saved value; an
+    empty string clears that setting.
+    """
     folder = data_dir()
     payload = {
         "db_server": db.server, "db_name": db.database, "db_trusted": db.trusted,
         "db_user": "" if db.trusted else db.user,
-        "db_password": "" if db.trusted else db.password,
         "db_driver": db.driver, "api_port": int(port), "api_host": "0.0.0.0",
     }
-    payload.update({k: v for k, v in (extra or {}).items() if v not in (None, "")})
+    if db.trusted:
+        payload["db_password"] = ""
+    elif db.password:
+        payload["db_password"] = db.password
+    payload.update({k: v for k, v in (extra or {}).items() if v is not None})
     handle, name = tempfile.mkstemp(prefix="setup-", suffix=".json", dir=folder)
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
@@ -233,9 +242,14 @@ def write_config(db: DatabaseConfig, *, port: int, extra: dict | None = None) ->
 def check_database() -> dict:
     answer = run_server_tool(["--check-db"], timeout=90)
     if not answer.get("ok"):
-        raise SetupError(
+        # v2.8.1: the real reason in plain Persian (wrong name, no permission, …)
+        reason = answer.get("message_fa") or (
             "اتصال به پایگاه‌دادهٔ حسابداری برقرار نشد. نام سرور، نام پایگاه‌داده و "
-            "روش ورود را بررسی کنید.", answer.get("message") or answer.get("error", ""))
+            "روش ورود را بررسی کنید.")
+        if str(answer.get("error_code")) in ("4060", "229", "230"):
+            reason += (" اگر نام درست است، کاربر SQL به این پایگاه‌داده دسترسی ندارد: "
+                       "grant_shop_app.ps1 را برای همین پایگاه‌داده اجرا کنید.")
+        raise SetupError(reason, answer.get("message") or answer.get("error", ""))
     return answer
 
 
@@ -278,6 +292,15 @@ def start_service() -> None:
 
 def stop_service() -> None:
     _service_tool("--stop-service", "متوقف کردن سرویس سرور ممکن نشد.")
+
+
+def restart_service() -> None:
+    """Stop (when running) and start ``ShopServer`` so new settings take effect."""
+    try:
+        stop_service()
+    except SetupError as exc:   # not running yet: starting is enough
+        log.info("stop before restart: %s", exc.detail or exc.message)
+    start_service()
 
 
 def remove_service() -> None:
@@ -324,16 +347,27 @@ def network_is_public() -> bool:
     return "Public" in (result.stdout or "")
 
 
+def usable_lan_address(address: str) -> bool:
+    """A real IPv4 address staff computers can reach: never loopback, APIPA
+    (169.254.x.x, a network card without DHCP), unspecified, multicast or reserved."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return (ip.version == 4 and not (ip.is_loopback or ip.is_link_local or ip.is_unspecified
+                                     or ip.is_multicast or ip.is_reserved))
+
+
 def lan_addresses() -> list[str]:
     addresses: set[str] = set()
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             address = info[4][0]
-            if not address.startswith("127."):
+            if usable_lan_address(address):
                 addresses.add(address)
     except OSError:
         pass
-    return sorted(addresses)
+    return sorted(addresses, key=lambda a: tuple(int(p) for p in a.split(".")))
 
 
 def read_certificate() -> tuple[str, str]:
@@ -381,6 +415,82 @@ def service_key() -> str:
 def current_windows_user() -> str:
     domain = os.environ.get("USERDOMAIN", "") or socket.gethostname()
     return f"{domain}\\{os.environ.get('USERNAME', '')}"
+
+
+def _split_names(raw: str) -> list[str]:
+    return [p.strip() for p in (raw or "").split(",") if p.strip()]
+
+
+@dataclass
+class CurrentConfig:
+    """The saved server settings for the «تنظیمات سرور» wizard. Secrets are never
+    read back: only whether each one is set."""
+    db_server: str = ""
+    db_name: str = ""
+    db_trusted: bool = False
+    db_user: str = ""
+    db_password_set: bool = False
+    port: int = DEFAULT_PORT
+    allowed_ips: str = ""
+    bank_text: str = ""
+    admin_chats: str = ""
+    shoptg_dir: str = ""
+    allowed_databases: list[str] | None = None
+    write_databases: list[str] | None = None
+    secrets_set: dict[str, bool] | None = None
+
+
+SECRET_KEYS = ("BALE_TOKEN", "TELEGRAM_BOT_TOKEN", "TG_API_ID", "TG_API_HASH")
+
+
+def read_current_config() -> Optional[CurrentConfig]:
+    """The saved ``.env`` (needs the administrator rights the wizard runs with);
+    None when the server was never set up here."""
+    from dotenv import dotenv_values
+
+    env = data_dir() / ".env"
+    if not env.exists():
+        return None
+    try:
+        values = {k: (v or "") for k, v in dotenv_values(env).items()}
+    except (OSError, ValueError) as exc:
+        raise SetupError("تنظیمات فعلی سرور خوانده نشد.", type(exc).__name__) from exc
+
+    def get(*keys: str) -> str:
+        for key in keys:
+            if values.get(key, "").strip():
+                return values[key].strip()
+        return ""
+
+    try:
+        port = int(get("API_PORT") or DEFAULT_PORT)
+    except ValueError:
+        port = DEFAULT_PORT
+    trusted = get("DB_TRUSTED", "ACCOUNTING_TRUSTED_CONNECTION").lower() in ("1", "true", "yes", "on")
+    return CurrentConfig(
+        db_server=get("DB_SERVER", "ACCOUNTING_SERVER"),
+        db_name=get("DB_NAME", "ACCOUNTING_DATABASE"),
+        db_trusted=trusted,
+        db_user=get("DB_USER", "ACCOUNTING_USERNAME"),
+        db_password_set=bool(get("DB_PASSWORD", "ACCOUNTING_PASSWORD")),
+        port=port,
+        allowed_ips=get("FIREWALL_ALLOWED_IPS"),
+        bank_text=get("BANK_ACCOUNT_TEXT"),
+        admin_chats=get("ADMIN_CHAT_IDS"),
+        shoptg_dir=get("SHOPTG_DIR"),
+        allowed_databases=_split_names(get("ACCOUNTING_ALLOWED_DATABASES")),
+        write_databases=_split_names(get("ACCOUNTING_WRITE_DATABASES")),
+        secrets_set={key: bool(get(key)) for key in SECRET_KEYS},
+    )
+
+
+def server_installed_here() -> bool:
+    """This computer is the shop server: the server program is installed next to
+    this one and its data folder exists (the «تنظیمات سرور» button)."""
+    try:
+        return find_server_executable() is not None and data_dir().is_dir()
+    except OSError:
+        return False
 
 
 def existing_config_port() -> Optional[int]:

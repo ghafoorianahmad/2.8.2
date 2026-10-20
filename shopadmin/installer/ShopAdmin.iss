@@ -21,7 +21,7 @@
 
 #define MyAppName "ShopAdmin"
 #define MyAppNameFa "مدیریت فروشگاه"
-#define MyAppVersion "2.8.0"
+#define MyAppVersion "2.8.1"
 #define MyAppPublisher "فروشگاه"
 #define MyAppExeName "ShopAdmin.exe"
 #define MyServiceExeName "ShopSystem.exe"
@@ -149,12 +149,24 @@ Name: "{group}\راهنمای نصب"; Filename: "{app}\installer_readme.txt"
 #ifdef SERVER
 Name: "{group}\راه‌اندازی سرور فروشگاه"; Filename: "{app}\{#MyAppExeName}"; \
     Parameters: "--server-setup"; WorkingDir: "{app}"; Comment: "تنظیم پایگاه‌داده، شبکه و مدیر کل"
+Name: "{group}\تنظیمات سرور"; Filename: "{app}\{#MyAppExeName}"; \
+    Parameters: "--server-settings"; WorkingDir: "{app}"; \
+    Comment: "پایگاه‌داده، ثبت واقعی، شبکه و ربات‌ها — با مقدارهای فعلی"
 Name: "{group}\حذف سرور فروشگاه"; Filename: "{uninstallexe}"
 #else
 Name: "{group}\حذف {#MyAppNameFa}"; Filename: "{uninstallexe}"
 #endif
+#ifdef SERVER
+; v2.8.1: on the server the desktop shortcut is «تنظیمات سرور»: the setup wizard
+; again, filled with the current values (no reinstall). The console stays in
+; the Start menu.
+Name: "{autodesktop}\تنظیمات سرور"; Filename: "{app}\{#MyAppExeName}"; \
+    Parameters: "--server-settings"; WorkingDir: "{app}"; Tasks: desktopicon; \
+    Comment: "پایگاه‌داده، ثبت واقعی، شبکه و ربات‌ها — با مقدارهای فعلی"
+#else
 Name: "{autodesktop}\{#MyAppNameFa}"; Filename: "{app}\{#MyAppExeName}"; \
     WorkingDir: "{app}"; Tasks: desktopicon
+#endif
 
 [Run]
 #ifdef SERVER
@@ -191,6 +203,14 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
     Flags: runhidden; RunOnceId: "DeleteFirewallRule"
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#MyServiceExeName}"; \
     Flags: runhidden; RunOnceId: "KillServer"
+#endif
+
+#ifdef SERVER
+[InstallDelete]
+; v2.8.1: the server package's old desktop shortcut opened the console; it is
+; replaced by «تنظیمات سرور». (Only the all-users desktop of this admin install:
+; a per-user «مدیریت فروشگاه» from ShopAdminSetup is left alone.)
+Type: files; Name: "{commondesktop}\{#MyAppNameFa}.lnk"
 #endif
 
 [UninstallDelete]

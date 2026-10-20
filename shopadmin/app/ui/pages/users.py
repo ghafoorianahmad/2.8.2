@@ -344,7 +344,7 @@ def _forbidden_panel() -> QWidget:
 # --------------------------------------------------------------------------
 # dialogs
 # --------------------------------------------------------------------------
-class UserFormDialog(QDialog):
+class UserFormDialog(widgets.ResponsiveDialog):
     """ساخت یا ویرایش حساب یک کارمند روی سرور."""
 
     def __init__(self, context, user: Optional[dict], parent: QWidget | None = None) -> None:
@@ -546,7 +546,7 @@ class UserFormDialog(QDialog):
         run_async(work, on_success=ok, on_error=lambda m, _k: self._fail(m), on_done=done)
 
 
-class ResetPasswordDialog(QDialog):
+class ResetPasswordDialog(widgets.ResponsiveDialog):
     """تعیین گذرواژهٔ موقت برای یک کارمند توسط مدیر کل."""
 
     def __init__(self, parent: QWidget | None, username: str) -> None:

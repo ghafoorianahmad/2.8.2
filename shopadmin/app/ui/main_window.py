@@ -346,8 +346,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.password_button)
         # v2.8.0: everyone turns their own sound / Windows notification on or off
         self.notify_button = widgets.button(
-            "اعلان‌ها", icon_name="bell", on_click=self.edit_own_notifications,
-            tooltip="صدا و اعلان ویندوز برای سفارش، رسید و درخواست تازه",
+            "اعلان‌ها و ظاهر", icon_name="bell", on_click=self.edit_own_notifications,
+            tooltip="صدا و اعلان ویندوز برای سفارش، رسید و درخواست تازه؛ رنگ‌بندی روشن یا تیره",
         )
         layout.addWidget(self.notify_button)
 
@@ -754,18 +754,18 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
-class NotificationDialog(QDialog):
+class NotificationDialog(widgets.ResponsiveDialog):
     """v2.8.0: the signed-in user's own sound / Windows notification switches."""
 
     def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QVBoxLayout
+        from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QVBoxLayout
 
         from ..notifications import user_setting
 
         self.context = context
         self.user = context.principal.username if context.principal else ""
-        self.setWindowTitle("اعلان‌های من")
+        self.setWindowTitle("اعلان‌ها و ظاهر")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setMinimumWidth(420)
         root = QVBoxLayout(self)
@@ -781,6 +781,21 @@ class NotificationDialog(QDialog):
         self.desktop_check.setChecked(user_setting(context.store, "notify_desktop", self.user))
         for check in (self.sound_check, self.desktop_check):
             root.addWidget(check)
+        # v2.8.1: light / dark is reachable for everyone (the «تنظیمات» page is
+        # for managers only); per computer, like the setting there
+        root.addWidget(widgets.hline())
+        root.addWidget(widgets.label("ظاهر برنامه (همین رایانه)", bold=True))
+        theme_row = QHBoxLayout()
+        theme_row.addWidget(widgets.label("رنگ‌بندی:"))
+        self.theme_combo = QComboBox()
+        for key, text in THEME_CHOICES:
+            self.theme_combo.addItem(text, key)
+        self._theme_before = str(context.store.get_setting("theme_mode", "light") or "light")
+        self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(self._theme_before)))
+        theme_row.addWidget(self.theme_combo, 1)
+        root.addLayout(theme_row)
+        root.addWidget(widgets.label("رنگ‌بندی تازه از اجرای بعدی برنامه نشان داده می‌شود.",
+                                     name="Muted", wrap=True))
         row = QHBoxLayout()
         row.addStretch(1)
         row.addWidget(widgets.button("ذخیره", variant="primary", icon_name="check",
@@ -795,7 +810,16 @@ class NotificationDialog(QDialog):
                          self.sound_check.isChecked())
         set_user_setting(self.context.store, "notify_desktop", self.user,
                          self.desktop_check.isChecked())
+        mode = str(self.theme_combo.currentData() or "light")
+        if mode != self._theme_before:
+            self.context.store.set_setting("theme_mode", mode)
+            widgets.info(self, "ظاهر برنامه",
+                         "ذخیره شد؛ برنامه را یک بار ببندید و دوباره باز کنید.")
         self.accept()
+
+
+#: v2.7.0 Phone Bridge palette in light / dark (``theme.PALETTES``).
+THEME_CHOICES = (("light", "روشن"), ("dark", "تیره"), ("system", "مطابق ویندوز"))
 
 
 def theme_status_colors_for_role(role: str) -> tuple[str, str]:

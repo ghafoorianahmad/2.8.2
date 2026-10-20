@@ -140,7 +140,11 @@ class OrdersPage(BasePage):
         principal = self.context.principal
         self._mine = principal is not None and not principal.is_manager
         self._scope_buttons = {}
-        for key, text in (("mine", "کارهای من"), ("all", "همه")):
+        from .item_requests import _filter_caption
+
+        scope_bar.addWidget(_filter_caption("نمایش:"))
+        # v2.8.1: «همهٔ سفارش‌ها», not a bare «همه»
+        for key, text in (("mine", "کارهای من"), ("all", "همهٔ سفارش‌ها")):
             btn = widgets.button(text, variant="ghost")
             btn.setObjectName("Tab")
             btn.setCheckable(True)
@@ -332,7 +336,7 @@ class OrdersPage(BasePage):
         self.load()
 
 
-class OrderDetailDialog(QDialog):
+class OrderDetailDialog(widgets.ResponsiveDialog):
     """جزئیات کامل یک سفارش با امکان تأیید یا رد پرداخت."""
 
     def __init__(self, context: AppContext, order: dict, parent: QWidget | None = None) -> None:
@@ -417,6 +421,7 @@ class OrderDetailDialog(QDialog):
         self.items_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.items_table.verticalHeader().setDefaultSectionSize(38)
         self.items_table.setMinimumHeight(160)
+        widgets.show_full_headers(self.items_table)
         items = order.get("items") or []
         self.items_table.setRowCount(len(items))
         for index, item in enumerate(items):
@@ -770,7 +775,7 @@ SHIPPABLE = (ORDER_APPROVED, ORDER_WRITTEN)
 CANCELLABLE = (ORDER_AWAITING_PAYMENT, ORDER_RECEIPT_UPLOADED)
 
 
-class AssignDialog(QDialog):
+class AssignDialog(widgets.ResponsiveDialog):
     """«ارجاع به همکار»: pick the colleague (only their display names are shown)."""
 
     def __init__(self, context: AppContext, parent: QWidget | None, what: str) -> None:
@@ -829,7 +834,7 @@ def courier_text(order: dict) -> str:
     return " — ".join(p for p in (name, phone) if p) or "—"
 
 
-class ShipDialog(QDialog):
+class ShipDialog(widgets.ResponsiveDialog):
     """«ارسال شد» with an OPTIONAL courier: when filled, the customer's message
     names them; when empty, the usual «sent» message only."""
 
@@ -926,7 +931,7 @@ def tracking_fa(order: dict) -> str:
     return "—"
 
 
-class ReceiptImageDialog(QDialog):
+class ReceiptImageDialog(widgets.ResponsiveDialog):
     """تصویر رسید پرداخت که مشتری در بله فرستاده است."""
 
     def __init__(self, pixmap: QPixmap, order_label: str, parent: QWidget | None = None) -> None:
@@ -962,7 +967,7 @@ def _kv(key: str, value: str) -> QWidget:
     return holder
 
 
-class RejectPaymentDialog(QDialog):
+class RejectPaymentDialog(widgets.ResponsiveDialog):
     def __init__(self, parent: QWidget | None, order_label: str) -> None:
         super().__init__(parent)
         self.reason = ""

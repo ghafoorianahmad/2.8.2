@@ -10,7 +10,7 @@ from . import theme, widgets
 from .async_utils import run_async
 
 
-class ForcedPasswordChangeDialog(QDialog):
+class ForcedPasswordChangeDialog(widgets.ResponsiveDialog):
     """Blocks until the user picks their own password (or cancels = sign out)."""
 
     def __init__(self, auth: AuthService, parent: QWidget | None = None) -> None:

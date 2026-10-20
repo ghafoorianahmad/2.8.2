@@ -86,8 +86,8 @@ def system_info(
     return {
         "accounting_write_enabled": settings.write_allowed(),
         "test_mode": settings.is_test_db(),
+        **settings.write_info(),
         "write_allowed_on_host": settings.write_allowed(),
-        "accounting_database": settings.database_name(),
         "database_allowlisted": settings.database_allowlisted() or settings.is_test_db(),
         "status_code_configured": settings.status_code_problem() is None,
         "price_level_bot": settings.price_level_bot,

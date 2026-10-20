@@ -32,7 +32,7 @@ def test_row_state_and_labels():
     assert pl.pdf_price(52500) == "۵۲,۵۰۰" or pl.pdf_price(52500).replace("٬", ",") == "۵۲,۵۰۰"
     assert pl.pdf_price(None) == "—" and pl.pdf_price(0) == "—"
     assert pl.filter_label("unmapped", {"unmapped": 3}) == "نگاشت‌نشده (۳)"
-    assert pl.filter_label("all", {}) == "همه"
+    assert pl.filter_label("all", {}) == "همهٔ ردیف‌ها"
 
 
 def test_search_matches_model_color_and_arabic_letters():

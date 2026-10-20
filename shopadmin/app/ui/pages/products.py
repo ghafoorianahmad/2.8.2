@@ -268,7 +268,7 @@ class ProductsPage(BasePage):
             ), self).exec()
 
 
-class ProductDetailDialog(QDialog):
+class ProductDetailDialog(widgets.ResponsiveDialog):
     def __init__(self, context, product: dict, group_name: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"کالای {to_persian_digits(product.get('code', ''))}")

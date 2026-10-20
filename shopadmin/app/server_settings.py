@@ -40,6 +40,10 @@ SETTINGS_FA: dict[str, tuple[str, str, str]] = {
     "LOGIN_MAX_ATTEMPTS": ("تعداد تلاش ناموفق تا قفل", "", "int"),
     "LOGIN_LOCK_MINUTES": ("مدت قفل حساب (دقیقه)", "", "int"),
     "BALE_TOKEN": ("توکن ربات بله", "فقط برای تغییر وارد کنید؛ مقدار فعلی هرگز نمایش داده نمی‌شود.", "secret"),
+    # v2.8.1: the Telegram bot and the my.telegram.org app (also used by shoptg)
+    "TELEGRAM_BOT_TOKEN": ("توکن ربات تلگرام", "از BotFather؛ ربات تلگرام وقتی روشن می‌شود که api_id و api_hash هم وارد شده باشد. مقدار فعلی هرگز نمایش داده نمی‌شود.", "secret"),
+    "TG_API_ID": ("شناسهٔ برنامهٔ تلگرام (api_id)", "عدد، از my.telegram.org (برای ربات تلگرام و کارگر تلگرام).", "secret"),
+    "TG_API_HASH": ("کلید برنامهٔ تلگرام (api_hash)", "۳۲ نویسه، از my.telegram.org.", "secret"),
 }
 
 _PROBLEMS = (
@@ -51,6 +55,8 @@ _PROBLEMS = (
     (re.compile(r"must be a 16-digit card number"), "شمارهٔ کارت باید ۱۶ رقم باشد"),
     (re.compile(r"must be a sheba"), "شبا باید IR و ۲۴ رقم باشد"),
     (re.compile(r"does not look like a bot token"), "شبیه توکن ربات نیست"),
+    (re.compile(r"must be a Telegram api_id"), "api_id باید فقط عدد باشد"),
+    (re.compile(r"must be a Telegram api_hash"), "api_hash باید ۳۲ نویسهٔ ۰-۹ و a-f باشد"),
     (re.compile(r"use entries like"), "به شکل bale:123456 و با کاما جدا کنید"),
     (re.compile(r"use warehouse codes"), "کد انبارها را با کاما جدا کنید"),
     (re.compile(r"must be a time like"), "ساعت را به شکل 13:30 بنویسید"),

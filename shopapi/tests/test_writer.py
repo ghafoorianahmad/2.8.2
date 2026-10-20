@@ -99,7 +99,7 @@ def _committing_writer(max_codlp=5, verify_count=1, idempotent_codlp=0, status=0
     """A writer on the allowlisted test copy with a configured Status."""
     conn = FakeConn(max_codlp=max_codlp, verify_count=verify_count,
                     idempotent_codlp=idempotent_codlp)
-    settings = Settings(accounting_database="hesab5 t", accounting_status_code=status)
+    settings = Settings(accounting_database="hesab5 t", accounting_allowed_databases=("hesab5 t",), accounting_write_databases=("hesab5 t",), accounting_status_code=status)
     writer = AccountingWriter(settings, connection_factory=lambda: conn)
     return writer, conn
 

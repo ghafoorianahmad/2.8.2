@@ -256,6 +256,9 @@ def wire_control(info: dict, *, supervised: bool) -> None:
         from shopbots_app import health
 
         configured = ["bale"] if os.environ.get("BALE_TOKEN", "").strip() else []
+        if all(os.environ.get(k, "").strip()
+               for k in ("TELEGRAM_BOT_TOKEN", "TG_API_ID", "TG_API_HASH")):
+            configured.append("telegram")
         return {"configured": configured, "platforms": health.snapshot()}
 
     control.register_status_provider("bots", bots_status)
@@ -589,6 +592,10 @@ def shoptg_spec(values: dict[str, str], *, run_mode: str) -> ChildSpec | None:
     env = {k: v for k, v in os.environ.items() if not k.startswith("SHOPSERVER_")}
     env["SHOPAPI_BASE_URL"] = f"{'https' if tls else 'http'}://127.0.0.1:{port}"
     env["WORKER_API_KEY"] = values.get("WORKER_API_KEY", "")
+    # v2.8.1: api_id / api_hash may be set in «تنظیمات سرور» instead of shoptg's own .env
+    for key in ("TG_API_ID", "TG_API_HASH"):
+        if (values.get(key) or "").strip():
+            env[key] = values[key].strip()
     env["PYTHONIOENCODING"] = "utf-8"
     if tls:
         from server_tls import CERT_NAME
@@ -953,6 +960,13 @@ SETUP_FIELDS = {
     "bale_token": "BALE_TOKEN",
     "admin_chat_ids": "ADMIN_CHAT_IDS",
     "shoptg_dir": "SHOPTG_DIR",
+    # v2.8.1: the «تنظیمات سرور» wizard (reopened with the current values)
+    "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
+    "tg_api_id": "TG_API_ID",
+    "tg_api_hash": "TG_API_HASH",
+    "firewall_allowed_ips": "FIREWALL_ALLOWED_IPS",
+    "allowed_databases": "ACCOUNTING_ALLOWED_DATABASES",
+    "write_databases": "ACCOUNTING_WRITE_DATABASES",
 }
 
 #: Written once, on the first setup. Existing values are never replaced.

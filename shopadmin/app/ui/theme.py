@@ -487,10 +487,12 @@ QPushButton#Ghost:hover {{ background: {HOVER}; color: {PRIMARY_DARK}; }}
 QPushButton[big="true"] {{ font-size: 12pt; padding: 12px 22px; min-height: 26px; }}
 
 /* One weight in every state: Qt measures a push button's text with its normal
-   font, so a bolder «checked» state used to clip the end of «سفارش‌ها». */
+   font, so a bolder «checked» state used to clip the end of «سفارش‌ها».
+   v2.8.1: «text-align» is mirrored in a right-to-left button (like AlignRight,
+   see rtl.py): «left» is what puts icon + text against the RIGHT edge. */
 QPushButton#NavButton {{
     background: transparent; border: none; border-radius: {RADIUS}px;
-    padding: 10px 12px; text-align: right; font-size: 11pt; font-weight: 600;
+    padding: 10px 12px; text-align: left; font-size: 11pt; font-weight: 600;
     color: {SIDEBAR_TEXT};
 }}
 QPushButton#NavButton:hover {{ background: {SIDEBAR_HOVER}; color: #FFFFFF; }}
@@ -515,7 +517,7 @@ QPushButton#Tab:checked {{ background: {PRIMARY_SOFT}; color: {PRIMARY_DARK};
 
 QPushButton#LinkButton {{
     border: none; background: transparent; color: {PRIMARY}; padding: 2px 4px;
-    text-decoration: underline; text-align: right;
+    text-decoration: underline; text-align: left;   /* = the right edge in RTL */
 }}
 QPushButton#LinkButton:hover {{ color: {PRIMARY_DARK}; }}
 
