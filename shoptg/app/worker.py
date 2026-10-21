@@ -3,12 +3,18 @@
 * price channel every ``TG_PRICE_INTERVAL_MIN`` (10): PDFs newer than the cursor
   go to ``/worker/pricelists`` (shopapi decides duplicate / older / held); the
   cursor moves past images and text posts too. First run: newest PDF only;
-* proxy channels every ``TG_PROXY_COLLECT_DAYS`` (7): links -> candidates;
+* proxy channels (default @ProxyMTProto) every ``TG_PROXY_COLLECT_HOURS`` (24),
+  and hourly while fewer than ``TG_PROXY_POOL_SIZE`` (5) proxies work: links read
+  with the account, or from the public web preview (t.me/s/...) when not logged
+  in / no proxy works; links the server never saw are tested with an anonymous
+  client and only the working ones join the pool (v2.9.0);
 * health check every ``TG_HEALTH_INTERVAL_SEC``: a failed ping switches to the
   next best proxy at once (pool ranking from shopapi, then ``TG_PROXY``);
 * probe of the other proxies every ``TG_PROBE_INTERVAL_MIN`` with an anonymous
   client, so probation proxies collect history (the pool promotes/retires them);
-* alerts (deduplicated by shopapi): login required, Telegram unreachable.
+* alerts (deduplicated by shopapi): login required, Telegram unreachable, a
+  price-list PDF that cannot be downloaded (``telegram_pricelist_error``);
+* a FloodWait from Telegram pauses every job for the time it asks (low rate).
 
 Logs show proxy host:port and kind only, never secrets, keys or the session.
 """
@@ -26,6 +32,7 @@ from .config import Settings
 from .gateway import NotAuthorized, TelegramGateway, TgMessage
 from tgproxy import ProxyLink, extract_links, from_pool, parse_proxy_link
 from .shopapi import ApiError, WorkerApi
+from . import webpreview
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +40,27 @@ K_PRICE_LAST_ID = "tg_price_last_id"
 K_COLLECTED_AT = "tg_proxy_collected_at"
 K_PROXY_LAST_IDS = "tg_proxy_last_ids"
 K_STATUS = "tg_status"
+
+#: Extra working proxies kept beyond TG_PROXY_POOL_SIZE (a failure must not empty it).
+POOL_SPARE = 2
+#: While fewer than pool_size proxies work, collect again after this long.
+REFILL_AFTER = timedelta(hours=1)
+#: How often the collection is considered (it decides itself whether it is due).
+COLLECT_CHECK_SEC = 30 * 60
+#: Consecutive download failures of a price-list PDF before the owner is alerted.
+PRICE_FAIL_ALERT = 3
+ALERT_PRICELIST = "telegram_pricelist_error"
+
+
+def flood_seconds(exc: BaseException) -> int:
+    """Seconds Telegram asked us to wait (FloodWait and friends), else 0."""
+    if type(exc).__name__ in ("FloodWaitError", "FloodPremiumWaitError", "SlowModeWaitError",
+                              "FloodTestPhoneWaitError"):
+        try:
+            return max(1, int(getattr(exc, "seconds", 60) or 60))
+        except (TypeError, ValueError):
+            return 60
+    return 0
 
 
 def utcnow() -> datetime:
@@ -58,7 +86,12 @@ class Worker:
         self._login_missing = False
         self._probe_offset = 0
         self._next = {"health": 0.0, "price": 0.0, "collect": 0.0, "probe": 0.0}
+        self._paused_until = 0.0
+        self._price_failures = 0
         self.last_error = ""
+        #: v2.9.0: shown on «سرور فروشگاه» (no secrets: refs, counts, times)
+        self.price_info: dict = {}
+        self.collect_info: dict = {}
 
     # ---- proxies / connection -----------------------------------------------------
     async def candidates(self) -> list[ProxyLink | None]:
@@ -183,6 +216,7 @@ class Worker:
     # ---- price channel ------------------------------------------------------------
     async def price_tick(self) -> int:
         """Send new PDFs to shopapi; returns how many were sent."""
+        self.price_info["checked_at"] = self._now().isoformat(timespec="seconds")
         state = await self.api.get_state()
         cursor = int(state.get(K_PRICE_LAST_ID) or 0)
         channel = self.s.price_channel
@@ -208,10 +242,27 @@ class Worker:
         ref = f"t.me/{channel}/{msg.id}"
         if msg.file_size > self.s.pdf_max_bytes:
             log.warning("skipped %s: %d bytes is over the limit", ref, msg.file_size)
+            self._price_result(ref, "too_large")
+            await self._alert(ALERT_PRICELIST)
             return True
-        data = await self.tg.download(msg, self.s.pdf_max_bytes)
+        try:
+            data = await self.tg.download(msg, self.s.pdf_max_bytes)
+        except ValueError:
+            log.warning("skipped %s: unexpected download result", ref)
+            self._price_result(ref, "download_failed")
+            await self._alert(ALERT_PRICELIST)
+            return True
+        except Exception:
+            self._price_failures += 1
+            self._price_result(ref, "download_failed")
+            if self._price_failures >= PRICE_FAIL_ALERT:
+                await self._alert(ALERT_PRICELIST)
+            raise                       # a network problem: check the connection now
+        self._price_failures = 0
         if not data.startswith(b"%PDF"):
             log.warning("skipped %s: not a PDF file", ref)
+            self._price_result(ref, "not_pdf")
+            await self._alert(ALERT_PRICELIST)
             return True
         posted = msg.date.isoformat() if msg.date else None
         try:
@@ -221,22 +272,68 @@ class Worker:
             return False
         log.info("price list %s -> %s %s", ref, result.get("outcome"),
                  "; ".join(result.get("reasons") or []))
+        self._price_result(ref, str(result.get("outcome") or ""))
         return True
 
+    def _price_result(self, ref: str, outcome: str) -> None:
+        self.price_info.update(ref=ref, outcome=outcome,
+                               at=self._now().isoformat(timespec="seconds"))
+
     # ---- proxy channels -------------------------------------------------------------
-    def collect_due(self, collected_at: str) -> bool:
+    def collect_due(self, collected_at: str, healthy: int | None = None) -> bool:
+        """Daily (TG_PROXY_COLLECT_HOURS), or hourly while the pool is short."""
         if not self.s.proxy_channels:
             return False
         try:
             last = datetime.fromisoformat(collected_at)
         except ValueError:
             return True
-        return self._now() - last >= timedelta(days=self.s.proxy_collect_days)
+        elapsed = self._now() - last
+        if elapsed >= timedelta(hours=self.s.proxy_collect_hours):
+            return True
+        return healthy is not None and healthy < self.s.pool_size and elapsed >= REFILL_AFTER
+
+    async def healthy_count(self) -> int:
+        """Usable proxies that worked at their last check."""
+        try:
+            pool = await self.api.proxies()
+        except ApiError:
+            return 0
+        return sum(1 for p in pool if p.get("last_ok_at") and not p.get("failing_now"))
+
+    async def _channel_links(self, channel: str, last_ids: dict) -> tuple[list[str], str]:
+        """Proxy links of one channel, newest first: with the account when it is
+        connected, else (or when that fails) from the public web preview."""
+        if self.tg.connected:
+            since = int(last_ids.get(channel) or 0)
+            try:
+                messages = await self.tg.messages(channel, min_id=since,
+                                                  limit=200 if since else 100)
+            except Exception as exc:  # noqa: BLE001 - one bad channel must not stop the rest
+                if flood_seconds(exc):
+                    raise
+                log.warning("proxy channel %s unreadable (%s)", channel, type(exc).__name__)
+            else:
+                if messages:
+                    last_ids[channel] = max(m.id for m in messages)
+                newest = list(reversed(messages))
+                return extract_links([m.text for m in newest] +
+                                     [u for m in newest for u in m.urls]), "account"
+        if self.s.web_preview:
+            try:
+                return await webpreview.fetch_links(channel), "web"
+            except webpreview.PreviewError as exc:
+                log.info("web preview of %s: %s", channel, exc)
+        return [], ""
 
     async def collect_tick(self, *, force: bool = False) -> int:
-        """Proxy links from the followed channels -> shopapi candidates."""
+        """New proxy links -> tested -> the working ones into the pool. Returns how
+        many working proxies were added."""
+        if not self.s.proxy_channels:
+            return 0
         state = await self.api.get_state()
-        if not force and not self.collect_due(state.get(K_COLLECTED_AT) or ""):
+        healthy = await self.healthy_count()
+        if not force and not self.collect_due(state.get(K_COLLECTED_AT) or "", healthy):
             return 0
         try:
             last_ids = json.loads(state.get(K_PROXY_LAST_IDS) or "{}")
@@ -244,24 +341,59 @@ class Worker:
                 last_ids = {}
         except ValueError:
             last_ids = {}
-        added = 0
+        found: list[tuple[str, str]] = []
+        ways: list[str] = []
         for channel in self.s.proxy_channels:
-            since = int(last_ids.get(channel) or 0)
-            try:
-                messages = await self.tg.messages(channel, min_id=since, limit=200)
-            except Exception as exc:  # noqa: BLE001 - one bad channel must not stop the rest
-                log.warning("proxy channel %s unreadable (%s)", channel, type(exc).__name__)
-                continue
-            links = extract_links([m.text for m in messages] + [u for m in messages for u in m.urls])
-            for start in range(0, len(links), 500):
-                result = await self.api.candidates(links[start:start + 500], f"channel:{channel}")
-                added += int(result.get("added") or 0)
-            if messages:
-                last_ids[channel] = max(m.id for m in messages)
-            log.info("proxy channel %s: %d links", channel, len(links))
+            links, way = await self._channel_links(channel, last_ids)
+            if way:
+                ways.append(way)
+            seen = {raw for raw, _ in found}
+            found += [(raw, f"channel:{channel}") for raw in links if raw not in seen]
+            log.info("proxy channel %s: %d links (%s)", channel, len(links), way or "unreadable")
+        added, tested = await self._test_and_add(found, healthy)
         await self.api.put_json_state(K_PROXY_LAST_IDS, last_ids)
         await self.api.put_state(K_COLLECTED_AT, self._now().isoformat(timespec="seconds"))
+        self.collect_info = {"at": self._now().isoformat(timespec="seconds"), "found": len(found),
+                             "tested": tested, "added": added, "via": ",".join(ways)}
+        if added and not self.tg.connected:
+            self._next["health"] = 0.0          # a new proxy may get us connected now
         return added
+
+    async def _test_and_add(self, found: list[tuple[str, str]], healthy: int) -> tuple[int, int]:
+        """Test links the server never saw, until the pool holds pool_size + spare
+        working proxies (at most TG_PROXY_TEST_MAX tests). Returns (added, tested)."""
+        need = self.s.pool_size + POOL_SPARE - healthy
+        if not found or need <= 0:
+            return 0, 0
+        unknown: set[str] = set()
+        raws = [raw for raw, _ in found]
+        for start in range(0, len(raws), 500):
+            unknown.update(await self.api.unknown(raws[start:start + 500]))
+        by_source: dict[str, tuple[list[dict], list[str]]] = {}
+        added = tested = 0
+        for raw, source in found:
+            if raw not in unknown:
+                continue
+            if added >= need or tested >= self.s.proxy_test_max:
+                break
+            link = parse_proxy_link(raw)
+            if link is None:
+                continue
+            tested += 1
+            ok, bad = by_source.setdefault(source, ([], []))
+            try:
+                latency = await self.tg.probe(link)
+            except Exception as exc:  # noqa: BLE001 - a dead proxy is the common case
+                log.debug("test %s failed (%s)", link.masked(), type(exc).__name__)
+                bad.append(raw)
+                continue
+            ok.append({"link": raw, "latency_ms": latency})
+            added += 1
+        for source, (ok, bad) in by_source.items():
+            if ok or bad:
+                await self.api.candidates([], source, tested=ok, failed=bad)
+        log.info("tested %d new proxies: %d working", tested, added)
+        return added, tested
 
     # ---- status / loop ----------------------------------------------------------------
     async def publish_status(self) -> None:
@@ -273,6 +405,12 @@ class Worker:
             "login_required": self._login_missing,
             "error": self.last_error[:200],
             "at": self._now().isoformat(timespec="seconds"),
+            # v2.9.0 (no secrets: which key kind, the channel, counts and times)
+            "api_preset": self.s.api_preset,
+            "price_channel": self.s.price_channel,
+            "pool_size": self.s.pool_size,
+            "price": dict(self.price_info),
+            "collect": dict(self.collect_info),
         }
         try:
             await self.api.put_json_state(K_STATUS, status)
@@ -282,20 +420,27 @@ class Worker:
     async def step(self) -> None:
         """Run whatever is due (called every few seconds)."""
         now = self._clock()
+        if now < self._paused_until:
+            return
         if now >= self._next["health"]:
             self._next["health"] = now + self.s.health_interval_sec
-            await self.health_tick()
+            try:
+                await self.health_tick()
+            except Exception as exc:  # noqa: BLE001
+                if not self._flood(exc, now):
+                    raise
             await self.publish_status()
-        if not self.tg.connected:
+        connected = self.tg.connected
+        if not connected:
             # Retry sooner than the health interval while down, but not in a tight loop.
             self._next["health"] = min(self._next["health"], now + 60)
-            return
-        for name, interval, job in (
-            ("price", self.s.price_interval_sec, self.price_tick),
-            ("collect", 6 * 3600, self.collect_tick),
-            ("probe", self.s.probe_interval_sec, self.probe_tick),
+        for name, interval, job, needs_connection in (
+            ("price", self.s.price_interval_sec, self.price_tick, True),
+            # v2.9.0: also without a connection (web preview + anonymous tests)
+            ("collect", COLLECT_CHECK_SEC, self.collect_tick, False),
+            ("probe", self.s.probe_interval_sec, self.probe_tick, True),
         ):
-            if now < self._next[name]:
+            if now < self._next[name] or (needs_connection and not connected):
                 continue
             self._next[name] = now + interval
             try:
@@ -303,9 +448,24 @@ class Worker:
             except ApiError as exc:
                 log.warning("%s: %s", name, exc)
             except Exception as exc:  # noqa: BLE001 - FloodWait, network, ...
+                if self._flood(exc, now):
+                    await self.publish_status()
+                    break
                 log.warning("%s failed (%s)", name, type(exc).__name__)
                 if name != "probe":
                     self._next["health"] = 0.0      # check the connection now
+            if name in ("price", "collect"):
+                await self.publish_status()
+
+    def _flood(self, exc: BaseException, now: float) -> bool:
+        """A FloodWait: pause every job for as long as Telegram asks."""
+        seconds = flood_seconds(exc)
+        if not seconds:
+            return False
+        self._paused_until = now + seconds + 5
+        self.last_error = f"Telegram asked to wait {seconds} s"
+        log.warning("Telegram asked to wait %d s: every job paused", seconds)
+        return True
 
     async def run(self, stop: asyncio.Event) -> None:
         log.info("shoptg worker started (price channel @%s, %d proxy channels)",

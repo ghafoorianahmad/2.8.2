@@ -58,9 +58,22 @@ class WorkerApi:
     async def report(self, results: list[dict]) -> dict:
         return await self._call("POST", "/worker/proxies/report", {"results": results})
 
-    async def candidates(self, links: list[str], source: str) -> dict:
-        return await self._call("POST", "/worker/proxies/candidates",
-                                {"links": links, "source": source[:100]})
+    async def candidates(self, links: list[str], source: str, *,
+                         tested: list[dict] | None = None,
+                         failed: list[str] | None = None) -> dict:
+        """v2.9.0: ``tested`` = links that answered our test (with latency), added to
+        the pool; ``failed`` = links that did not (kept as retired, never retested)."""
+        body: dict = {"links": links, "source": source[:100]}
+        if tested is not None:
+            body["tested"] = tested
+        if failed is not None:
+            body["failed"] = failed
+        return await self._call("POST", "/worker/proxies/candidates", body)
+
+    async def unknown(self, links: list[str]) -> list[str]:
+        """v2.9.0: the links the server has never seen (worth testing)."""
+        result = await self._call("POST", "/worker/proxies/unknown", {"links": links})
+        return list((result or {}).get("unknown") or [])
 
     async def post_pricelist(self, data: bytes, *, source_ref: str, posted_at: str | None) -> dict:
         return await self._call("POST", "/worker/pricelists", {

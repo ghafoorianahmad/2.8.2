@@ -48,8 +48,13 @@ SERVER_WARNINGS = {
     "pricelist_held": "لیست قیمت جدید به‌خاطر تغییر زیاد قیمت نگه داشته شد؛ بررسی و تأیید کنید.",
     "pricelist_failed": "لیست قیمت جدید خوانده نشد؛ قیمت‌های قبلی همچنان فعال است.",
     "proxies_all_dead": "هیچ پراکسی تلگرامی کار نمی‌کند؛ یک پراکسی تازه وارد کنید.",
-    "telegram_login_required": "کارگر تلگرام نیاز به ورود دوباره دارد.",
-    "telegram_unreachable": "کارگر تلگرام به تلگرام وصل نمی‌شود.",
+    "telegram_login_required": "خوانندهٔ تلگرام نیاز به ورود دارد («تنظیمات سرور» روی خود سرور › "
+                               "تلگرام › ورود به حساب تلگرام).",
+    "telegram_unreachable": "خوانندهٔ تلگرام به تلگرام وصل نمی‌شود؛ در «سرور فروشگاه» یک پراکسی "
+                            "دستی اضافه کنید.",
+    # v2.9.0
+    "telegram_pricelist_error": "لیست قیمت تازهٔ کانال تلگرام دریافت نشد؛ قیمت‌های قبلی فعال است. "
+                                "در صورت نیاز PDF را دستی در «لیست قیمت» بارگذاری کنید.",
     "security_alert": "فعالیت مشکوک (ربات یا ورود به کنسول) دیده شد؛ گزارش ممیزی را ببینید.",
     "model_review": "بررسی شبانه: کالای یک مدل سایت در حسابداری پیدا نشد یا نامش عوض شده؛ "
                     "مدل تا تأیید شما از دید مشتری پنهان است.",
@@ -73,6 +78,8 @@ SALES_NOTICES = {
     "sales_holiday": "امروز تعطیل اعلام شد؛ فروش گوشی تا صبح فردا بسته است.",
 }
 KIND_AUTO_CANCELLED = "order_auto_cancelled"
+#: v2.9.0: the Telegram reader imported a new list of the channel (actor "worker").
+KIND_PRICELIST_IMPORTED = "pricelist_imported"
 #: v2.8.3: an order of this user (or nobody's yet) still waits for «ارسال اطلاعات پرداخت».
 KIND_PAYMENT_INFO_DUE = "payment_info_due"
 #: Every this many seconds while such an order exists (not a user setting).
@@ -87,7 +94,12 @@ TARGETS = {
     KIND_ITEM_REQUEST: ("item_requests", "open"),
     "pricelist_held": ("pricelist", ""),
     "pricelist_failed": ("pricelist", ""),
-    "proxies_all_dead": ("pricelist", ""),
+    "proxies_all_dead": ("server", ""),
+    # v2.9.0: the Telegram reader
+    "pricelist_imported": ("pricelist", ""),
+    "telegram_pricelist_error": ("pricelist", ""),
+    "telegram_login_required": ("server", ""),
+    "telegram_unreachable": ("server", ""),
     "model_review": ("catalog", "review"),
     KIND_AUTO_CANCELLED: ("orders", "cancelled"),
     KIND_PAYMENT_INFO_DUE: ("orders", "awaiting_payment"),
@@ -151,6 +163,10 @@ def notice_for(event: dict) -> Optional[Notice]:
         return Notice(kind, "سرور فروشگاه", f"{label} دوباره کار می‌کند.", None)
     if kind in SERVER_WARNINGS:
         return Notice(kind, "هشدار سرور فروشگاه", SERVER_WARNINGS[kind], ref, warning=True)
+    if kind == KIND_PRICELIST_IMPORTED and str(event.get("actor") or "") == "worker":
+        # v2.9.0: a list a person uploaded is not announced back to them
+        return Notice(kind, "لیست قیمت تازه",
+                      "لیست قیمت تازه از کانال تلگرام خوانده و فعال شد.", ref)
     if kind == KIND_CUSTOMER_CANCEL:
         return Notice(kind, "لغو سفارش توسط مشتری",
                       f"مشتری سفارش شمارهٔ {ref_fa} را پیش از ارسال رسید لغو کرد.", ref)

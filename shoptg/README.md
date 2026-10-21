@@ -1,8 +1,17 @@
-# shoptg — Telegram price/proxy worker (REQUIREMENTS §5–6)
+# shoptg — Telegram price/proxy worker (REQUIREMENTS §5–6, §7c)
+
+> **v2.9.0: bundled in ShopSystem.exe** (`shoptg_app`, `ShopSystem.exe --tg-worker`), started by the
+> service when `TG_READER_ENABLED=true`; settings come from the server's `.env` («تنظیمات سرور» ›
+> تلگرام), never from a `.env` here (`SHOPTG_NO_DOTENV=1`). Login: «تنظیمات سرور» › «ورود به حساب
+> تلگرام» → `ShopSystem.exe --tg-login` → `app/login_flow.py` (JSON lines on stdin/stdout). Key:
+> `TG_API_PRESET=tdesktop` (default without `TG_API_ID`: the public Telegram Desktop key and device
+> parameters — temporary, secondary account only) or `custom` (`TG_API_ID` / `TG_API_HASH`). The
+> separate install below (`SHOPTG_DIR`, `login.ps1`) still works.
 
 Acts as the shop's Telegram **user** account (Telethon, MTProto), read-only:
 - every 10 min (`TG_PRICE_INTERVAL_MIN`): new PDFs of the distributor channel → `POST /worker/pricelists` (shopapi parses, checks, holds);
-- weekly: proxy links from followed channels → `POST /worker/proxies/candidates`;
+- v2.9.0: daily (`TG_PROXY_COLLECT_HOURS`=24; hourly while fewer than `TG_PROXY_POOL_SIZE`=5 work) proxy links of `@ProxyMTProto` (`TG_PROXY_CHANNELS`; with the account, or the web preview `t.me/s/…` without one) → never-seen links (`/worker/proxies/unknown`) tested anonymously → `POST /worker/proxies/candidates` with `tested` / `failed`;
+- a FloodWait pauses every job for the time Telegram asks;
 - health check every 3 min with immediate failover through the shopapi proxy ranking (`/worker/proxies`), then `TG_PROXY`, then direct;
 - hourly probe of other proxies with an *anonymous* client (never the shop session: the same auth key from two IPs risks `AUTH_KEY_DUPLICATED`) → `/worker/proxies/report`;
 - alerts via `/worker/alerts` (`telegram_login_required`, `telegram_unreachable`; shopapi raises `proxies_all_dead`);

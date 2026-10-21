@@ -14,16 +14,17 @@ if /i "%~1"=="onefile" set "MODE=onefile"
 echo ==============================================================
 echo   ShopSystem build script            mode: %MODE%
 echo ==============================================================
-echo   sources : %WS%\shopapi  and  %WS%\shopbots
+echo   sources : %WS%\shopapi, %WS%\shopbots and %WS%\shoptg
 echo   package : %PKG%
 echo.
 
 if not exist "%PY%" goto :novenv
 if not exist "%WS%\shopapi\app" goto :nosrc
 if not exist "%WS%\shopbots\app" goto :nosrc
+if not exist "%WS%\shoptg\app" goto :nosrc
 
 rem ------------------------------------------------------------------
-echo [1/6] Running the test suites (shopapi, then shopbots) ...
+echo [1/6] Running the test suites (shopapi, shopbots, shoptg) ...
 rem SHOP_TESTS_ALREADY_RUN=1: the shopapi/shopbots suites were run separately
 rem (e.g. where the venv Python cannot create temp files). Opt-in only.
 if "%SHOP_TESTS_ALREADY_RUN%"=="1" (
@@ -57,6 +58,21 @@ if exist ".venv\Scripts\python.exe" (
 )
 popd
 
+rem v2.9.0: the Telegram reader is bundled in ShopSystem.exe (--tg-worker / --tg-login)
+pushd "%WS%\shoptg"
+if exist ".venv\Scripts\python.exe" (
+    rem a fresh folder: shoptg's pytest.ini default (.pytest_tmp) can be left locked
+    ".venv\Scripts\python.exe" -m pytest -q --basetemp="%TEMP%\shoptg_pytest_%RANDOM%"
+    if errorlevel 1 (
+        echo [ERROR] shoptg tests FAILED - fix them before building.
+        popd
+        exit /b 1
+    )
+) else (
+    echo [WARN] shoptg\.venv not found - skipping its tests
+)
+popd
+
 :teststail
 if exist "%PY%" (
     "%PY%" -m pytest -q "%PKG%\tests" -p no:cacheprovider
@@ -67,11 +83,12 @@ if exist "%PY%" (
 )
 
 rem ------------------------------------------------------------------
-echo [2/6] Collecting the two "app" packages as shopapi_app / shopbots_app ...
+echo [2/6] Collecting the "app" packages as shopapi_app / shopbots_app / shoptg_app ...
 if exist "%SRC%" rmdir /s /q "%SRC%"
 mkdir "%SRC%"
 xcopy /e /i /q /y "%WS%\shopapi\app" "%SRC%\shopapi_app\" >nul
 xcopy /e /i /q /y "%WS%\shopbots\app" "%SRC%\shopbots_app\" >nul
+xcopy /e /i /q /y "%WS%\shoptg\app" "%SRC%\shoptg_app\" >nul
 for /d /r "%SRC%" %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
 
 rem The user's real configuration must survive a rebuild: PyInstaller
@@ -106,6 +123,8 @@ echo [3/6] Running PyInstaller (%MODE%) - this takes a few minutes ...
     --collect-submodules starlette ^
     --collect-submodules shopapi_app ^
     --collect-submodules shopbots_app ^
+    --collect-submodules shoptg_app ^
+    --hidden-import shoptg_app.main ^
     --collect-submodules telethon ^
     --collect-submodules tgproxy ^
     --collect-data certifi ^
@@ -194,7 +213,7 @@ exit /b 1
 
 :nosrc
 echo [ERROR] Could not find the source projects.
-echo         Expected: %WS%\shopapi\app  and  %WS%\shopbots\app
+echo         Expected: %WS%\shopapi\app, %WS%\shopbots\app and %WS%\shoptg\app
 echo         Adjust WS at the top of this script if they live elsewhere.
 exit /b 1
 

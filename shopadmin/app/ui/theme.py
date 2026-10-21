@@ -1,38 +1,38 @@
-"""Design tokens: soft modern palette, spacing, radii and the global RTL theme.
+"""Design tokens: palettes, spacing, radii, effects and the global RTL theme.
 
-One calm blue accent on a white background, generous sizes for readable Persian
-text, and rounded controls with clear hover states.
+v2.9.0: three palettes (اقیانوس / شفق / زمرد) in light / dark / follow Windows,
+«جلوه‌ها» (auto / full / simple), a gradient side bar, rounded cards and rounded
+buttons with soft shadows; generous sizes for readable Persian text.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap
-from PySide6.QtCore import QByteArray, QRectF, Qt
+from PySide6.QtCore import QByteArray, QObject, QRectF, Qt
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication, QWidget
 
 from ..paths import fonts_dir
 
 # --------------------------------------------------------------------------
-# palette (v2.7.0: the Phone Bridge «ocean» look, light and dark)
+# palettes (v2.9.0: three looks × light / dark / follow Windows, + «جلوه‌ها»)
 #
-# Phone Bridge (E:\Soft\phonebridge\app\theme.py) uses a soft blue-grey window
-# gradient, white "glass" cards with large radii, raised buttons, a deep-blue
-# gradient side bar and an ocean-blue accent. The same look is recreated here
-# with tokens. Solid fills that carry WHITE text are kept dark enough for WCAG
-# AA (scripts/contrast_audit.py); the bright Phone Bridge blue is used for
-# borders, gradients' light end and accents only.
+# Taken from the owner's two other programs:
+# * Phone Bridge (E:\Soft\phonebridge\app\theme.py): «ocean» and «emerald», a
+#   soft blue-grey window gradient, white cards with large radii, raised buttons
+#   with soft (animated) shadows, a deep gradient side bar, and «جلوه‌ها»:
+#   full / simple (weak or Remote Desktop PCs get the simple look automatically);
+# * the equipment control panel (E:\AsrNetworkProject, v36): «aurora», the
+#   indigo → cyan accent with a soft colour glow behind the window, option cards
+#   to choose the look, gradient stat icons.
+# Every palette shares the neutral base of its mode; only the accent family,
+# the side bar and the window tint change. Solid fills that carry WHITE text are
+# dark enough for WCAG AA in every palette (scripts/contrast_audit.py --all);
+# PRIMARY_TEXT is the accent used AS text on light / dark surfaces.
 # --------------------------------------------------------------------------
-PALETTES: dict[str, dict[str, str]] = {
+_BASE: dict[str, dict[str, str]] = {
     "light": {
-        "PRIMARY": "#1F6AE0",          # white text on this = 5.0:1
-        "PRIMARY_DARK": "#1957BF",     # white text on this = 6.6:1
-        "PRIMARY_PRESSED": "#14479C",  # white text on this = 8.6:1
-        "PRIMARY_LIGHT": "#D6E6FD",
-        "PRIMARY_SOFT": "#EAF2FE",
-        "ACCENT": "#2F7CF6",           # Phone Bridge accent (borders, focus, gradients)
-        "ACCENT2": "#1FB5D6",
         "SUCCESS": "#047857", "SUCCESS_DARK": "#065F46", "SUCCESS_LIGHT": "#D1FAE5",
         "WARNING": "#D97706", "WARNING_TEXT": "#92400E", "WARNING_LIGHT": "#FEF3C7",
         "WARNING_BG": "#FFF8E6", "WARNING_BORDER": "#FCD34D",
@@ -46,35 +46,26 @@ PALETTES: dict[str, dict[str, str]] = {
         "BORDER": "#DCE3EE",
         "BORDER_STRONG": "#C3CEDF",
         "SURFACE": "#FFFFFF",
-        "BACKGROUND": "#EEF2F8",
-        "BACKGROUND2": "#E3E9F4",
         "BUTTON2": "#E9EEF6",
-        "SIDEBAR_BG": "#16325C",
-        "SIDEBAR_BG2": "#0F5A8A",
-        "SIDEBAR_TEXT": "#E9EFFA",
-        "SIDEBAR_MUTED": "#B8C8E0",
-        "SIDEBAR_HOVER": "#24477A",
-        "SIDEBAR_ACTIVE": "#1F6AE0",
-        "SIDEBAR_ACTIVE2": "#0B7A99",
         "SIDEBAR_OK": "#6EE7B7",
         "SIDEBAR_BAD": "#FCA5A5",
-        "HOVER": "#F1F5FB",
-        "SELECTED_BG": "#EAF2FE",
         "ALT_ROW": "#F7F9FD",
         "ROW_LINE": "#EDF1F7",
-        "HEADER_BG": "#EEF2F8",
         "ERROR_BG": "#FEF2F2",
         "DISABLED_BG": "#EEF1F6",
         "DISABLED_TEXT": "#5B6779",
+        "SHADOW": "#26304D",
+        # v2.9.0: button fills (white text) apart from the same colours used as text
+        "SUCCESS_FILL": "#047857", "SUCCESS_FILL_DARK": "#065F46",
+        "DANGER_FILL": "#C5221F", "DANGER_FILL_DARK": "#A51B18",
     },
     "dark": {
-        "PRIMARY": "#2F6FD8", "PRIMARY_DARK": "#2A62C0", "PRIMARY_PRESSED": "#22519F",
-        "PRIMARY_LIGHT": "#24395E", "PRIMARY_SOFT": "#1E2D47",
-        "ACCENT": "#4E8EF7", "ACCENT2": "#3FC4DE",
-        "SUCCESS": "#1E7F4E", "SUCCESS_DARK": "#176A40", "SUCCESS_LIGHT": "#173A2A",
+        # v2.9.0: SUCCESS_DARK / DANGER are mostly TEXT on dark surfaces: light enough
+        # to read (the white-text button fills are SUCCESS_FILL / DANGER_FILL)
+        "SUCCESS": "#1E7F4E", "SUCCESS_DARK": "#5FD39A", "SUCCESS_LIGHT": "#173A2A",
         "WARNING": "#F0A33A", "WARNING_TEXT": "#F6C67E", "WARNING_LIGHT": "#3A2E17",
         "WARNING_BG": "#2E2515", "WARNING_BORDER": "#7A5A20",
-        "DANGER": "#C2413A", "DANGER_DARK": "#A93630", "DANGER_LIGHT": "#3D1F1E",
+        "DANGER": "#F47A72", "DANGER_DARK": "#A93630", "DANGER_LIGHT": "#3D1F1E",
         "INFO": "#3FC4DE", "INFO_DARK": "#9BE3F1", "INFO_LIGHT": "#173540",
         "ROLE_PURPLE": "#B6A2FF",
         "INK": "#F1F4F9",
@@ -84,34 +75,114 @@ PALETTES: dict[str, dict[str, str]] = {
         "BORDER": "#2B3341",
         "BORDER_STRONG": "#3A4456",
         "SURFACE": "#1B212B",
-        "BACKGROUND": "#11151C",
-        "BACKGROUND2": "#1A2030",
         "BUTTON2": "#212833",
-        "SIDEBAR_BG": "#0E1A2E",
-        "SIDEBAR_BG2": "#0F3550",
-        "SIDEBAR_TEXT": "#D6DEEB",
-        "SIDEBAR_MUTED": "#9FB0C8",
-        "SIDEBAR_HOVER": "#1D2D47",
-        "SIDEBAR_ACTIVE": "#2F6FD8",
-        "SIDEBAR_ACTIVE2": "#147A94",
         "SIDEBAR_OK": "#6EE7B7",
         "SIDEBAR_BAD": "#FCA5A5",
-        "HOVER": "#232B38",
-        "SELECTED_BG": "#1E2D47",
         "ALT_ROW": "#1F2631",
         "ROW_LINE": "#262E3A",
-        "HEADER_BG": "#212833",
         "ERROR_BG": "#3D1F1E",
         "DISABLED_BG": "#232A35",
         "DISABLED_TEXT": "#8D99AB",
+        "SHADOW": "#000000",
+        "SUCCESS_FILL": "#1E7F4E", "SUCCESS_FILL_DARK": "#176A40",
+        "DANGER_FILL": "#C2413A", "DANGER_FILL_DARK": "#A93630",
     },
 }
-THEME_MODES = ("light", "dark", "system")
-#: The palette in use ("light" / "dark"); see :func:`set_mode`.
-MODE = "light"
 
-PRIMARY = PRIMARY_DARK = PRIMARY_PRESSED = PRIMARY_LIGHT = PRIMARY_SOFT = ""
-ACCENT = ACCENT2 = ""
+#: palette -> mode -> accent family, side bar and window tint.
+_ACCENTS: dict[str, dict[str, dict[str, str]]] = {
+    "ocean": {     # Phone Bridge «ocean»
+        "light": {
+            "PRIMARY": "#1F6AE0", "PRIMARY_DARK": "#1957BF", "PRIMARY_PRESSED": "#14479C",
+            "PRIMARY_LIGHT": "#D6E6FD", "PRIMARY_SOFT": "#EAF2FE", "PRIMARY_TEXT": "#1957BF",
+            "ACCENT": "#2F7CF6", "ACCENT2": "#1FB5D6",
+            "SIDEBAR_BG": "#16325C", "SIDEBAR_BG2": "#0F5A8A", "SIDEBAR_TEXT": "#E9EFFA",
+            "SIDEBAR_MUTED": "#B8C8E0", "SIDEBAR_HOVER": "#24477A",
+            "SIDEBAR_ACTIVE": "#1F6AE0", "SIDEBAR_ACTIVE2": "#0B7A99",
+            "BACKGROUND": "#EEF2F8", "BACKGROUND2": "#E3E9F4", "GLOW": "#DBE7FB",
+            "HOVER": "#F1F5FB", "SELECTED_BG": "#EAF2FE", "HEADER_BG": "#EEF2F8",
+        },
+        "dark": {
+            "PRIMARY": "#2F6FD8", "PRIMARY_DARK": "#2A62C0", "PRIMARY_PRESSED": "#22519F",
+            "PRIMARY_LIGHT": "#24395E", "PRIMARY_SOFT": "#1E2D47", "PRIMARY_TEXT": "#8DB6FF",
+            "ACCENT": "#4E8EF7", "ACCENT2": "#3FC4DE",
+            "SIDEBAR_BG": "#0E1A2E", "SIDEBAR_BG2": "#0F3550", "SIDEBAR_TEXT": "#D6DEEB",
+            "SIDEBAR_MUTED": "#9FB0C8", "SIDEBAR_HOVER": "#1D2D47",
+            "SIDEBAR_ACTIVE": "#2F6FD8", "SIDEBAR_ACTIVE2": "#147A94",
+            "BACKGROUND": "#11151C", "BACKGROUND2": "#1A2030", "GLOW": "#17253D",
+            "HOVER": "#232B38", "SELECTED_BG": "#1E2D47", "HEADER_BG": "#212833",
+        },
+    },
+    "aurora": {    # the equipment control panel (indigo -> cyan, colour glow)
+        "light": {
+            "PRIMARY": "#4F46E5", "PRIMARY_DARK": "#4338CA", "PRIMARY_PRESSED": "#3730A3",
+            "PRIMARY_LIGHT": "#E0E7FF", "PRIMARY_SOFT": "#EEF2FF", "PRIMARY_TEXT": "#4338CA",
+            "ACCENT": "#5A6CFF", "ACCENT2": "#12B5D8",
+            "SIDEBAR_BG": "#221E5C", "SIDEBAR_BG2": "#0E4E6E", "SIDEBAR_TEXT": "#ECEBFD",
+            "SIDEBAR_MUTED": "#C0C3EE", "SIDEBAR_HOVER": "#332E7E",
+            "SIDEBAR_ACTIVE": "#4F46E5", "SIDEBAR_ACTIVE2": "#0E7490",
+            "BACKGROUND": "#EEF0FB", "BACKGROUND2": "#E5E8F8", "GLOW": "#E4DDFB",
+            "HOVER": "#F2F2FD", "SELECTED_BG": "#EEF2FF", "HEADER_BG": "#EEF0FB",
+        },
+        "dark": {
+            "PRIMARY": "#5850D8", "PRIMARY_DARK": "#4B44C2", "PRIMARY_PRESSED": "#3E37A3",
+            "PRIMARY_LIGHT": "#2B2A5E", "PRIMARY_SOFT": "#222248", "PRIMARY_TEXT": "#A5B0FF",
+            "ACCENT": "#8B9BFF", "ACCENT2": "#22D3EE",
+            "SIDEBAR_BG": "#15123A", "SIDEBAR_BG2": "#0C3247", "SIDEBAR_TEXT": "#DEE0F7",
+            "SIDEBAR_MUTED": "#A9AEDB", "SIDEBAR_HOVER": "#26225A",
+            "SIDEBAR_ACTIVE": "#5850D8", "SIDEBAR_ACTIVE2": "#0E7490",
+            "BACKGROUND": "#0E1020", "BACKGROUND2": "#171A33", "GLOW": "#201C4A",
+            "HOVER": "#22253A", "SELECTED_BG": "#222248", "HEADER_BG": "#1F2236",
+        },
+    },
+    "emerald": {   # Phone Bridge «emerald»
+        "light": {
+            "PRIMARY": "#047857", "PRIMARY_DARK": "#065F46", "PRIMARY_PRESSED": "#064E3B",
+            "PRIMARY_LIGHT": "#D1FAE5", "PRIMARY_SOFT": "#ECFDF5", "PRIMARY_TEXT": "#065F46",
+            "ACCENT": "#14A37F", "ACCENT2": "#3FC4B0",
+            "SIDEBAR_BG": "#0F3B37", "SIDEBAR_BG2": "#11624F", "SIDEBAR_TEXT": "#E6F4EF",
+            "SIDEBAR_MUTED": "#B5D6CC", "SIDEBAR_HOVER": "#1A5049",
+            "SIDEBAR_ACTIVE": "#047857", "SIDEBAR_ACTIVE2": "#0F766E",
+            "BACKGROUND": "#EDF4F1", "BACKGROUND2": "#E2EDE8", "GLOW": "#D4F0E4",
+            "HOVER": "#F0F7F4", "SELECTED_BG": "#ECFDF5", "HEADER_BG": "#EDF4F1",
+        },
+        "dark": {
+            "PRIMARY": "#0E8063", "PRIMARY_DARK": "#0B6E55", "PRIMARY_PRESSED": "#095A46",
+            "PRIMARY_LIGHT": "#173A30", "PRIMARY_SOFT": "#142E27", "PRIMARY_TEXT": "#5FD4B0",
+            "ACCENT": "#2BC49A", "ACCENT2": "#3FC4B0",
+            "SIDEBAR_BG": "#0B2622", "SIDEBAR_BG2": "#0E4438", "SIDEBAR_TEXT": "#D5ECE5",
+            "SIDEBAR_MUTED": "#9CC4B8", "SIDEBAR_HOVER": "#163A34",
+            "SIDEBAR_ACTIVE": "#0E8063", "SIDEBAR_ACTIVE2": "#0F766E",
+            "BACKGROUND": "#0D1513", "BACKGROUND2": "#14211E", "GLOW": "#12302A",
+            "HOVER": "#1F2B2A", "SELECTED_BG": "#142E27", "HEADER_BG": "#1C2624",
+        },
+    },
+}
+PALETTE_NAMES = ("ocean", "aurora", "emerald")
+PALETTE_LABELS = {"ocean": "اقیانوس", "aurora": "شفق", "emerald": "زمرد"}
+THEME_MODES = ("light", "dark", "system")
+MODE_LABELS = {"light": "روشن", "dark": "تیره", "system": "مطابق ویندوز"}
+EFFECT_CHOICES = ("auto", "full", "simple")
+EFFECT_LABELS = {"auto": "خودکار", "full": "کامل", "simple": "ساده"}
+
+
+def palette_tokens(palette: str = "ocean", mode: str = "light") -> dict[str, str]:
+    """Every colour token of one palette in one mode (``light`` / ``dark``)."""
+    mode = mode if mode in _BASE else "light"
+    accents = _ACCENTS.get(palette, _ACCENTS["ocean"])
+    return {**_BASE[mode], **accents[mode]}
+
+
+#: v2.7.0 name kept: the «ocean» palette per mode.
+PALETTES: dict[str, dict[str, str]] = {m: palette_tokens("ocean", m) for m in ("light", "dark")}
+
+#: The look in use: "light" / "dark", the palette and "full" / "simple" effects.
+MODE = "light"
+PALETTE = "ocean"
+EFFECTS = "full"
+
+PRIMARY = PRIMARY_DARK = PRIMARY_PRESSED = PRIMARY_LIGHT = PRIMARY_SOFT = PRIMARY_TEXT = ""
+ACCENT = ACCENT2 = GLOW = SHADOW = ""
 SUCCESS = SUCCESS_DARK = SUCCESS_LIGHT = ""
 WARNING = WARNING_TEXT = WARNING_LIGHT = WARNING_BG = WARNING_BORDER = ""
 DANGER = DANGER_DARK = DANGER_LIGHT = ""
@@ -122,15 +193,23 @@ SIDEBAR_BG = SIDEBAR_BG2 = SIDEBAR_TEXT = SIDEBAR_MUTED = SIDEBAR_HOVER = ""
 SIDEBAR_ACTIVE = SIDEBAR_ACTIVE2 = SIDEBAR_OK = SIDEBAR_BAD = ""
 HOVER = SELECTED_BG = ALT_ROW = ROW_LINE = HEADER_BG = ERROR_BG = ""
 DISABLED_BG = DISABLED_TEXT = ""
+SUCCESS_FILL = SUCCESS_FILL_DARK = DANGER_FILL = DANGER_FILL_DARK = ""
 
 
-def set_mode(mode: str) -> str:
-    """Load the light or dark palette into this module (before widgets are made;
-    a change takes effect at the next start). Returns the palette used."""
-    global MODE
-    resolved = mode if mode in PALETTES else ("dark" if mode == "system" and system_prefers_dark()
-                                             else "light")
-    globals().update(PALETTES[resolved])
+def resolve_mode(mode: str) -> str:
+    if mode in ("light", "dark"):
+        return mode
+    return "dark" if mode == "system" and system_prefers_dark() else "light"
+
+
+def set_mode(mode: str, palette: str | None = None) -> str:
+    """Load a palette in light or dark into this module (before widgets are made;
+    a change shows fully at the next start). Returns the mode used."""
+    global MODE, PALETTE
+    resolved = resolve_mode(mode)
+    if palette in PALETTE_NAMES:
+        PALETTE = palette
+    globals().update(palette_tokens(PALETTE, resolved))
     MODE = resolved
     if "_ICON_CACHE" in globals():
         _ICON_CACHE.clear()
@@ -148,20 +227,76 @@ def system_prefers_dark() -> bool:
         return False
 
 
+def weak_pc() -> bool:
+    """Few cores, little memory or a Remote Desktop session -> simple effects
+    (the same rule as Phone Bridge, without psutil)."""
+    import os
+    import sys
+
+    if (os.cpu_count() or 4) <= 2:
+        return True
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        if ctypes.windll.user32.GetSystemMetrics(0x1000):     # SM_REMOTESESSION
+            return True
+
+        class _Memory(ctypes.Structure):
+            _fields_ = [("dwLength", wintypes.DWORD), ("dwMemoryLoad", wintypes.DWORD),
+                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong),
+                        ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong),
+                        ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+        memory = _Memory()
+        memory.dwLength = ctypes.sizeof(_Memory)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memory)):
+            return memory.ullTotalPhys < 4 * 1024 ** 3
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
+def resolve_effects(effects: str) -> str:
+    """auto -> simple on a weak / remote PC, else full."""
+    if effects == "auto":
+        return "simple" if weak_pc() else "full"
+    return effects if effects in ("full", "simple") else "full"
+
+
 def sidebar_gradient() -> str:
-    """The Phone Bridge side bar: a vertical deep-blue gradient."""
+    """The side bar: a vertical gradient in the palette's deep colours."""
     return (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {SIDEBAR_BG}, "
             f"stop:1 {SIDEBAR_BG2})")
 
 
-globals().update(PALETTES["light"])
+def window_background() -> str:
+    """Full effects: a soft colour glow in the top corner over the window
+    gradient (the control panel's look); simple: one flat colour."""
+    if EFFECTS == "simple":
+        return BACKGROUND
+    return (f"qradialgradient(cx:0.9, cy:0.0, radius:1.25, fx:0.9, fy:0.0, stop:0 {GLOW}, "
+            f"stop:0.55 {BACKGROUND}, stop:1 {BACKGROUND2})")
+
+
+def shadow_color(alpha: int | None = None) -> QColor:
+    color = QColor(SHADOW)
+    color.setAlpha(alpha if alpha is not None else (130 if MODE == "dark" else 46))
+    return color
+
+
+globals().update(palette_tokens("ocean", "light"))
 
 # --------------------------------------------------------------------------
 # metrics
 # --------------------------------------------------------------------------
 RADIUS_SM = 10
-RADIUS = 12
-RADIUS_LG = 18
+RADIUS = 14          # v2.9.0: rounder buttons (radius never changes a widget's size)
+RADIUS_LG = 20
 SPACE_XS = 4
 SPACE_SM = 8
 SPACE = 16
@@ -404,6 +539,12 @@ def indicator_images() -> tuple[str, str]:
 def _stylesheet_template() -> str:
     # v2.7.0: Phone Bridge look - soft gradient window, rounded white cards,
     # raised buttons with a darker bottom edge, gradient side bar and accents.
+    # v2.9.0: three palettes; «ساده» = flat fills (no gradients, no shadows).
+    simple = EFFECTS == "simple"
+    button_fill = SURFACE if simple else (
+        f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {SURFACE}, stop:1 {BUTTON2})")
+    primary_fill = PRIMARY if simple else (
+        f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {PRIMARY}, stop:1 {PRIMARY_DARK})")
     return f"""
 QWidget {{
     font-family: "__FONT_FAMILY__";
@@ -411,7 +552,7 @@ QWidget {{
     color: {TEXT};
 }}
 QMainWindow, QDialog {{
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {BACKGROUND}, stop:1 {BACKGROUND2});
+    background: {window_background()};
 }}
 
 QToolTip {{
@@ -442,12 +583,12 @@ QLabel#EmptyHint {{ color: {TEXT_MUTED}; }}
 
 /* ---------------- buttons (raised, Phone Bridge) ---------------- */
 QPushButton {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {SURFACE}, stop:1 {BUTTON2});
+    background: {button_fill};
     color: {TEXT}; border: 1px solid {BORDER_STRONG}; border-bottom: 2px solid {BORDER_STRONG};
     border-radius: {RADIUS}px; padding: 8px 16px; font-size: {BASE_FONT_SIZE}pt;
     min-height: 20px;
 }}
-QPushButton:hover {{ border-color: {ACCENT}; color: {PRIMARY_DARK}; }}
+QPushButton:hover {{ border-color: {ACCENT}; color: {PRIMARY_TEXT}; }}
 QPushButton:pressed {{ background: {BUTTON2}; border-bottom: 1px solid {BORDER_STRONG};
                        padding-top: 9px; padding-bottom: 7px; }}
 QPushButton:disabled {{
@@ -455,7 +596,7 @@ QPushButton:disabled {{
 }}
 
 QPushButton#Primary {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {PRIMARY}, stop:1 {PRIMARY_DARK});
+    background: {primary_fill};
     color: #FFFFFF; border: none; border-bottom: 3px solid {PRIMARY_PRESSED};
     font-weight: 700; padding: 9px 20px;
 }}
@@ -466,22 +607,22 @@ QPushButton#Primary:disabled {{
     background: {DISABLED_BG}; border: 1px solid {BORDER}; color: {DISABLED_TEXT};
 }}
 
-QPushButton#Success {{ background: {SUCCESS}; color: #FFFFFF; border: none;
-                       border-bottom: 3px solid {SUCCESS_DARK}; font-weight: 700; }}
-QPushButton#Success:hover {{ background: {SUCCESS_DARK}; color: #FFFFFF; }}
+QPushButton#Success {{ background: {SUCCESS_FILL}; color: #FFFFFF; border: none;
+                       border-bottom: 3px solid {SUCCESS_FILL_DARK}; font-weight: 700; }}
+QPushButton#Success:hover {{ background: {SUCCESS_FILL_DARK}; color: #FFFFFF; }}
 QPushButton#Success:disabled {{
     background: {DISABLED_BG}; border: 1px solid {BORDER}; color: {DISABLED_TEXT};
 }}
 
-QPushButton#Danger {{ background: {DANGER}; color: #FFFFFF; border: none;
-                      border-bottom: 3px solid {DANGER_DARK}; font-weight: 700; }}
-QPushButton#Danger:hover {{ background: {DANGER_DARK}; color: #FFFFFF; }}
+QPushButton#Danger {{ background: {DANGER_FILL}; color: #FFFFFF; border: none;
+                      border-bottom: 3px solid {DANGER_FILL_DARK}; font-weight: 700; }}
+QPushButton#Danger:hover {{ background: {DANGER_FILL_DARK}; color: #FFFFFF; }}
 QPushButton#Danger:disabled {{
     background: {DISABLED_BG}; border: 1px solid {BORDER}; color: {DISABLED_TEXT};
 }}
 
 QPushButton#Ghost {{ background: transparent; border: none; color: {TEXT_MUTED}; padding: 6px 10px; }}
-QPushButton#Ghost:hover {{ background: {HOVER}; color: {PRIMARY_DARK}; }}
+QPushButton#Ghost:hover {{ background: {HOVER}; color: {PRIMARY_TEXT}; }}
 
 /* big, clear actions for everyday work (orders) */
 QPushButton[big="true"] {{ font-size: 12pt; padding: 12px 22px; min-height: 26px; }}
@@ -506,25 +647,34 @@ QFrame#Sidebar QLabel {{ background: transparent; }}
 QLabel#SidebarTitle {{ color: #FFFFFF; font-size: 13pt; font-weight: 700; }}
 QLabel#SidebarMuted {{ color: {SIDEBAR_MUTED}; }}
 
+/* v2.9.0: option cards («ظاهر برنامه»): one weight in every state (text fit) */
+QPushButton#OptionCard {{
+    background: {SURFACE}; color: {TEXT}; border: 2px solid {BORDER}; border-radius: {RADIUS}px;
+    padding: 8px 12px; font-weight: 600;
+}}
+QPushButton#OptionCard:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
+QPushButton#OptionCard:checked {{ border: 2px solid {ACCENT}; background: {PRIMARY_SOFT};
+                                  color: {PRIMARY_TEXT}; }}
+
 QPushButton#Tab {{
     border: 1px solid transparent; border-radius: {RADIUS_SM}px; padding: 8px 16px;
     background: transparent; color: {TEXT_MUTED}; font-size: {BASE_FONT_SIZE}pt;
     font-weight: 700;
 }}
 QPushButton#Tab:hover {{ background: {HOVER}; color: {TEXT}; }}
-QPushButton#Tab:checked {{ background: {PRIMARY_SOFT}; color: {PRIMARY_DARK};
+QPushButton#Tab:checked {{ background: {PRIMARY_SOFT}; color: {PRIMARY_TEXT};
                            border: 1px solid {ACCENT}; }}
 
 QPushButton#LinkButton {{
-    border: none; background: transparent; color: {PRIMARY}; padding: 2px 4px;
+    border: none; background: transparent; color: {PRIMARY_TEXT}; padding: 2px 4px;
     text-decoration: underline; text-align: left;   /* = the right edge in RTL */
 }}
-QPushButton#LinkButton:hover {{ color: {PRIMARY_DARK}; }}
+QPushButton#LinkButton:hover {{ color: {INK}; }}
 
 QTabWidget::pane {{ border: 1px solid {BORDER}; border-radius: {RADIUS}px; background: {SURFACE}; top: -1px; }}
 QTabBar::tab {{ background: transparent; padding: 8px 18px; border-radius: {RADIUS_SM}px; margin: 2px;
                 color: {TEXT_MUTED}; font-weight: 700; }}
-QTabBar::tab:selected {{ background: {PRIMARY_SOFT}; color: {PRIMARY_DARK}; }}
+QTabBar::tab:selected {{ background: {PRIMARY_SOFT}; color: {PRIMARY_TEXT}; }}
 
 /* ---------------- inputs ---------------- */
 QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QComboBox, QDateEdit {{
@@ -607,25 +757,30 @@ QProgressBar::chunk {{ border-radius: 7px;
 
 QMenu {{ background: {SURFACE}; border: 1px solid {BORDER_STRONG}; border-radius: {RADIUS_SM}px; padding: 6px; }}
 QMenu::item {{ padding: 8px 16px; border-radius: 6px; }}
-QMenu::item:selected {{ background: {PRIMARY_SOFT}; color: {PRIMARY_DARK}; }}
+QMenu::item:selected {{ background: {PRIMARY_SOFT}; color: {PRIMARY_TEXT}; }}
 
 QGroupBox {{
     border: 1px solid {BORDER}; border-radius: {RADIUS_LG}px; margin-top: 16px;
     padding: 14px; background: {SURFACE}; font-weight: 700;
 }}
 QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top right; padding: 2px 10px;
-                    color: {PRIMARY_DARK}; }}
+                    color: {PRIMARY_TEXT}; }}
 
 QSplitter::handle {{ background: {BORDER}; }}
 QStackedWidget {{ background: transparent; }}
 """
 
 
-def apply_theme(app: QApplication, mode: str | None = None) -> None:
-    """Apply fonts, RTL layout direction, the light/dark palette (v2.7.0) and the
-    global stylesheet. ``mode``: light / dark / system; None keeps the current one."""
-    if mode is not None:
-        set_mode(mode)
+def apply_theme(app: QApplication, mode: str | None = None, *, palette: str | None = None,
+                effects: str | None = None) -> str:
+    """Apply fonts, RTL layout direction, the palette (v2.9.0: ocean / aurora /
+    emerald) in light / dark / system, «جلوه‌ها» (auto / full / simple) and the
+    global stylesheet. None keeps the current choice. Returns the effects used."""
+    global EFFECTS
+    if mode is not None or palette is not None:
+        set_mode(mode if mode is not None else MODE, palette)
+    if effects is not None:
+        EFFECTS = resolve_effects(effects)
     _apply_qt_palette(app)
     loaded = load_application_fonts()
     family = resolve_font_family(loaded)
@@ -635,6 +790,119 @@ def apply_theme(app: QApplication, mode: str | None = None) -> None:
     # Full RTL everywhere: layout direction, alignment and widget mirroring.
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     app.setStyleSheet(stylesheet(family))
+    _install_effects(app)
+    return EFFECTS
+
+
+# --------------------------------------------------------------------------
+# «جلوه‌ها» (v2.9.0, from Phone Bridge): soft shadows under panels and under the
+# main buttons; the buttons' shadow grows on hover and shrinks when pressed.
+# --------------------------------------------------------------------------
+#: Buttons that get the soft, animated shadow (full effects only).
+SHADOW_BUTTONS = ("Primary", "Success", "Danger")
+
+
+def _inside_item_view(widget: QWidget) -> bool:
+    """Cell widgets of tables / lists never get an effect (scrolling cost)."""
+    from PySide6.QtWidgets import QAbstractItemView
+
+    parent = widget.parentWidget()
+    while parent is not None:
+        if isinstance(parent, QAbstractItemView):
+            return True
+        parent = parent.parentWidget()
+    return False
+
+
+def _panel_can_have_shadow(widget: QWidget) -> bool:
+    """A graphics effect re-renders everything inside it: only panels without
+    tables, lists, text boxes or scroll areas get one."""
+    from PySide6.QtWidgets import QAbstractItemView, QAbstractScrollArea
+
+    return not widget.findChildren(QAbstractItemView) and \
+        not widget.findChildren(QAbstractScrollArea)
+
+
+class _Effects(QObject):
+    def __init__(self) -> None:
+        super().__init__()
+        self._anims: dict[int, object] = {}
+
+    def eventFilter(self, obj, event):  # noqa: N802 - Qt naming
+        from PySide6.QtCore import QEvent
+        from PySide6.QtWidgets import QFrame, QGraphicsDropShadowEffect, QPushButton
+
+        kind = event.type()
+        if kind == QEvent.Type.Polish and isinstance(obj, QWidget) and obj.graphicsEffect() is None:
+            name = obj.objectName()
+            if isinstance(obj, QPushButton) and name in SHADOW_BUTTONS:
+                if not _inside_item_view(obj):
+                    _shadow(obj, 12, 3, button=True)
+            elif isinstance(obj, QFrame) and name == "Panel" and _panel_can_have_shadow(obj):
+                _shadow(obj, 26, 6)
+        elif isinstance(obj, QPushButton) and obj.objectName() in SHADOW_BUTTONS and \
+                isinstance(obj.graphicsEffect(), QGraphicsDropShadowEffect):
+            if kind == QEvent.Type.Enter and obj.isEnabled():
+                self._animate(obj, 22, 6)
+            elif kind == QEvent.Type.Leave:
+                self._animate(obj, 12, 3)
+            elif kind == QEvent.Type.MouseButtonPress:
+                self._animate(obj, 4, 1, 80)
+            elif kind == QEvent.Type.MouseButtonRelease:
+                self._animate(obj, 22, 6, 120)
+        return False
+
+    def _animate(self, widget, blur: float, dy: float, ms: int = 160) -> None:
+        from PySide6.QtCore import QEasingCurve, QPointF, QVariantAnimation
+
+        effect = widget.graphicsEffect()
+        old = self._anims.pop(id(widget), None)
+        if old is not None:
+            old.stop()
+        anim = QVariantAnimation(widget)
+        anim.setDuration(ms)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.setStartValue(QPointF(effect.blurRadius(), effect.offset().y()))
+        anim.setEndValue(QPointF(blur, dy))
+
+        def step(value, effect=effect):
+            try:
+                effect.setBlurRadius(value.x())
+                effect.setOffset(0, value.y())
+            except RuntimeError:      # the widget is gone
+                pass
+        anim.valueChanged.connect(step)
+        anim.start()
+        self._anims[id(widget)] = anim
+
+
+def _shadow(widget: QWidget, blur: float, dy: float, *, button: bool = False) -> None:
+    from PySide6.QtWidgets import QGraphicsDropShadowEffect
+
+    effect = QGraphicsDropShadowEffect(widget)
+    effect.setBlurRadius(blur)
+    effect.setOffset(0, dy)
+    effect.setColor(shadow_color(90 if button and MODE != "dark" else None))
+    widget.setGraphicsEffect(effect)
+
+
+_EFFECTS_FILTER: _Effects | None = None
+
+
+def _install_effects(app: QApplication) -> None:
+    global _EFFECTS_FILTER
+    from PySide6.QtWidgets import QGraphicsDropShadowEffect
+
+    if _EFFECTS_FILTER is not None:
+        app.removeEventFilter(_EFFECTS_FILTER)
+        _EFFECTS_FILTER = None
+    if EFFECTS == "full":
+        _EFFECTS_FILTER = _Effects()
+        app.installEventFilter(_EFFECTS_FILTER)
+        return
+    for widget in app.allWidgets():          # simple: take away the shadows already there
+        if isinstance(widget.graphicsEffect(), QGraphicsDropShadowEffect):
+            widget.setGraphicsEffect(None)
 
 
 def _apply_qt_palette(app: QApplication) -> None:

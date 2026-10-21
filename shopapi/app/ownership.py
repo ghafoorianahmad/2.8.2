@@ -114,7 +114,11 @@ _SECTION_EVENTS = {"password_request": "passwords.view", "pricelist_imported": "
                    "proxies_all_dead": "pricelist.view", "model_review": "models.view",
                    "price_inquiry": "pricelist.view", "security_alert": "server.view",
                    "accounting_duplicate_order": "server.view", "archive_done": "archive.view",
-                   "product_groups_changed": "groups.view"}
+                   "product_groups_changed": "groups.view",
+                   # v2.9.0: Telegram reader problems are for whoever runs the server
+                   "telegram_login_required": "server.view",
+                   "telegram_unreachable": "server.view",
+                   "telegram_pricelist_error": "server.view"}
 
 
 def event_visible(db: OwnDB, who: Identity, event: dict) -> bool:

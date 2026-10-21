@@ -353,7 +353,7 @@ class TransferDialog(widgets.ResponsiveDialog):
 def _role_pill(role: str) -> widgets.StatusPill:
     colors = {
         ROLE_SUPER_ADMIN: theme.ROLE_PURPLE,
-        "admin": theme.PRIMARY_DARK,
+        "admin": theme.PRIMARY_TEXT,
         "operator": theme.INFO_DARK,
         "viewer": theme.TEXT_MUTED,
     }

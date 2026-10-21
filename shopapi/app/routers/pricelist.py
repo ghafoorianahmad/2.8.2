@@ -22,7 +22,7 @@ from ..pricelist.importer import ImportResult, import_pdf
 from .. import groups as group_config
 from ..pricelist.matching import SUGGESTIONS, auto_match, confident, name_candidates, name_match
 from ..pricelist.repo import PriceListRepo
-from ..proxypool import ProxyLink, ProxyPool, masked_secret, parse_proxy_link
+from ..proxypool import ACTIVE_CAP, ProxyLink, ProxyPool, masked_secret, parse_proxy_link
 from ..security import Identity, require_any, require_permission, require_worker
 from ..staff import P_PRICELIST, P_PRICELIST_VIEW, P_PROXIES, P_REQUESTS_VIEW
 from ..util import now_utc
@@ -43,7 +43,9 @@ WORKER_STATE_KEYS = frozenset({
     "tg_price_last_id", "tg_proxy_collected_at", "tg_proxy_last_ids", "tg_status",
 })
 #: Alerts the worker may raise (each at most once per ALERT_REPEAT).
-WORKER_ALERTS = frozenset({"telegram_login_required", "telegram_unreachable"})
+WORKER_ALERTS = frozenset({"telegram_login_required", "telegram_unreachable",
+                           # v2.9.0: a price-list PDF of the channel could not be downloaded
+                           "telegram_pricelist_error"})
 ALERT_REPEAT = timedelta(hours=6)
 
 
@@ -97,9 +99,21 @@ class ProxyReportIn(BaseModel):
     results: list[ProxyResult] = Field(max_length=500)
 
 
+class TestedLink(BaseModel):
+    link: str = Field(min_length=10, max_length=1000)
+    latency_ms: Optional[int] = Field(default=None, ge=0, le=600_000)
+
+
 class CandidatesIn(BaseModel):
-    links: list[str] = Field(max_length=2000)
+    links: list[str] = Field(default_factory=list, max_length=2000)
     source: str = Field(default="channel", max_length=100)
+    #: v2.9.0: links the worker tested itself (working ones / failed ones)
+    tested: list[TestedLink] = Field(default_factory=list, max_length=500)
+    failed: list[str] = Field(default_factory=list, max_length=2000)
+
+
+class LinksIn(BaseModel):
+    links: list[str] = Field(max_length=2000)
 
 
 class WorkerStateIn(BaseModel):
@@ -595,7 +609,7 @@ def worker_proxy_candidates(
     payload: CandidatesIn, db: OwnDB = Depends(deps.get_db), _: str = WORKER
 ) -> dict:
     pool = ProxyPool(db)
-    added = invalid = 0
+    added = invalid = skipped = 0
     for raw in payload.links:
         link = parse_proxy_link(raw)
         if link is None:
@@ -603,7 +617,41 @@ def worker_proxy_candidates(
             continue
         _, created = pool.add(link, payload.source)
         added += int(created)
-    return {"added": added, "invalid": invalid}
+    for item in payload.tested:
+        link = parse_proxy_link(item.link)
+        if link is None:
+            invalid += 1
+            continue
+        if not pool.known(link) and pool.active_count() >= ACTIVE_CAP:
+            skipped += 1
+            continue
+        row, created = pool.add(link, payload.source)
+        if created:
+            pool.record(row["id"], True, item.latency_ms)
+        added += int(created)
+    for raw in payload.failed:
+        link = parse_proxy_link(raw)
+        if link is None:
+            invalid += 1
+            continue
+        row, created = pool.add(link, payload.source, state="retired")
+        if created:
+            pool.record(row["id"], False)
+    return {"added": added, "invalid": invalid, "skipped": skipped}
+
+
+@router.post("/worker/proxies/unknown")
+def worker_proxy_unknown(
+    payload: LinksIn, db: OwnDB = Depends(deps.get_db), _: str = WORKER
+) -> dict:
+    """v2.9.0: which of these links the server has never seen (worth a test)."""
+    pool = ProxyPool(db)
+    unknown = []
+    for raw in payload.links:
+        link = parse_proxy_link(raw)
+        if link is not None and not pool.known(link) and raw not in unknown:
+            unknown.append(raw)
+    return {"unknown": unknown}
 
 
 @router.post("/worker/alerts")

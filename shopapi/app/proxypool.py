@@ -43,6 +43,9 @@ ALERT_REPEAT = timedelta(hours=6)
 ALERT_STATE_KEY = "proxies_dead_alert_at"
 
 ACTIVE_STATES = ("main", "probation")
+#: v2.9.0: the worker tests new links before adding them; never more usable
+#: proxies than this (a busy channel must not grow the pool without end).
+ACTIVE_CAP = 30
 PROXY_STATES = ("probation", "main", "retired", "disabled")
 
 _HOST = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9\-.]*[A-Za-z0-9])?$")
@@ -147,9 +150,23 @@ class ProxyPool:
         with self.db._lock:
             return self.db._fetchone("SELECT * FROM proxies WHERE id=?", (int(proxy_id),))
 
+    def known(self, link: ProxyLink) -> bool:
+        with self.db._lock:
+            return self.db._fetchone(
+                "SELECT id FROM proxies WHERE host=? AND port=? AND secret=?",
+                (link.host, link.port, link.secret)) is not None
+
+    def active_count(self) -> int:
+        with self.db._lock:
+            row = self.db._fetchone(
+                "SELECT COUNT(*) AS c FROM proxies WHERE state IN ('main','probation')")
+            return int(row["c"])
+
     def add(self, link: ProxyLink, source: str, *, state: str = "probation") -> tuple[dict, bool]:
-        """Add a proxy (new ones start on probation). Returns (row, created)."""
-        if state not in ("probation", "main"):
+        """Add a proxy (new ones start on probation; v2.9.0: a link that failed the
+        worker's first test is kept as ``retired`` so it is never tested again).
+        Returns (row, created)."""
+        if state not in ("probation", "main", "retired"):
             raise ValueError("state")
         with self.db._lock:
             existing = self.db._fetchone(
@@ -160,10 +177,10 @@ class ProxyPool:
                 return existing, False
             ts = self.clock().isoformat(timespec="seconds")
             cur = self.db._conn.execute(
-                "INSERT INTO proxies (host, port, secret, source, state, added_at, promoted_at) "
-                "VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO proxies (host, port, secret, source, state, added_at, promoted_at, "
+                "retired_at) VALUES (?,?,?,?,?,?,?,?)",
                 (link.host, link.port, link.secret, source[:100], state, ts,
-                 ts if state == "main" else None),
+                 ts if state == "main" else None, ts if state == "retired" else None),
             )
             self.db._commit()
             return self.get(cur.lastrowid), True
@@ -325,6 +342,24 @@ class ProxyPool:
                 pass
         self.db.set_state(ALERT_STATE_KEY, now.isoformat(timespec="seconds"), "system:proxypool")
         return True
+
+
+def pool_summary(pool: "ProxyPool", target: int | None = None) -> dict:
+    """v2.9.0: counts for «سرور فروشگاه» (no hosts, no secrets)."""
+    proxies = pool.list_all()
+    active = [p for p in proxies if p["state"] in ACTIVE_STATES]
+    working = [p for p in active if p.get("last_ok_at") and not p["failing_now"]]
+    return {
+        "target": target,
+        "working": len(working),
+        "active": len(active),
+        "main": sum(1 for p in active if p["state"] == "main"),
+        "probation": sum(1 for p in active if p["state"] == "probation"),
+        "manual": sum(1 for p in active if p.get("source") == "manual"),
+        "retired": sum(1 for p in proxies if p["state"] == "retired"),
+        "disabled": sum(1 for p in proxies if p["state"] == "disabled"),
+        "all_failing": bool(active) and not working,
+    }
 
 
 def masked_secret(secret: str) -> str:

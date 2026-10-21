@@ -64,11 +64,14 @@ def label(text: str, *, name: str = "", size: int | None = None, bold: bool = Fa
 
 def add_shadow(widget: QWidget, *, blur: int = 24, dy: int = 4, alpha: int = 28) -> QWidget:
     """Soft drop shadow for a card. Use on small cards only: a graphics effect
-    re-renders its children, so it must not wrap big tables."""
+    re-renders its children, so it must not wrap big tables. v2.9.0: none with
+    «جلوه‌ها: ساده»; deeper in the dark look."""
+    if theme.EFFECTS == "simple":
+        return widget
     effect = QGraphicsDropShadowEffect(widget)
     effect.setBlurRadius(blur)
     effect.setOffset(0, dy)
-    effect.setColor(QColor(15, 23, 42, alpha))
+    effect.setColor(theme.shadow_color(alpha * 4 if theme.MODE == "dark" else alpha + 10))
     widget.setGraphicsEffect(effect)
     return widget
 
@@ -259,9 +262,12 @@ class StatCard(QFrame):
     clicked = Signal()
 
     def __init__(self, title: str, value: str = "—", *, icon_name: str = "info",
-                 accent: str = theme.PRIMARY, tint: str = theme.PRIMARY_SOFT,
+                 accent: str | None = None, tint: str | None = None,
                  hint: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        # v2.9.0: read at run time (the palette is chosen after this module loads)
+        accent = accent or theme.PRIMARY
+        tint = tint or theme.PRIMARY_SOFT
         self.setObjectName("Card")
         self._accent = accent
         self.setMinimumHeight(122)
@@ -273,10 +279,18 @@ class StatCard(QFrame):
         root.setSpacing(14)
 
         icon_holder = QLabel()
-        icon_holder.setPixmap(theme.icon_pixmap(icon_name, 30, accent))
         icon_holder.setFixedSize(58, 58)
         icon_holder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_holder.setStyleSheet(f"background: {tint}; border-radius: 16px;")
+        if theme.EFFECTS == "simple":
+            icon_holder.setPixmap(theme.icon_pixmap(icon_name, 30, accent))
+            icon_holder.setStyleSheet(f"background: {tint}; border-radius: 16px;")
+        else:
+            # v2.9.0 (the control panel's stat icons): a white icon on an accent gradient
+            light = QColor(accent).lighter(135).name()
+            icon_holder.setPixmap(theme.icon_pixmap(icon_name, 30, "#FFFFFF"))
+            icon_holder.setStyleSheet(
+                f"background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {accent}, "
+                f"stop:1 {light}); border-radius: 16px;")
         root.addWidget(icon_holder)
 
         text_column = QVBoxLayout()
@@ -499,6 +513,49 @@ class SearchBox(QLineEdit):
 # --------------------------------------------------------------------------
 # data table with loading / empty states
 # --------------------------------------------------------------------------
+class MaskedLineEdit(QLineEdit):
+    """v2.9.0: clicking or tabbing into a field with an input mask (card number,
+    Sheba) puts the cursor on the FIRST EMPTY place of the mask, not where the
+    mouse happened to land among the blanks. A click inside what is already
+    typed keeps its place (to correct a digit); a field without a mask (account
+    number) goes to the end of its text."""
+
+    def blank_char(self) -> str:
+        mask = self.inputMask()
+        if ";" in mask:
+            return mask.rsplit(";", 1)[1][:1] or " "
+        return " "
+
+    def first_empty_position(self) -> int:
+        if not self.inputMask():
+            return len(self.text())
+        shown = self.displayText()
+        index = shown.find(self.blank_char())
+        return index if index >= 0 else len(shown)
+
+    def jump_to_first_empty(self) -> None:
+        if not self.hasSelectedText():
+            self.setCursorPosition(self.first_empty_position())
+
+    def focusInEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().focusInEvent(event)
+        if event.reason() != Qt.FocusReason.MouseFocusReason:
+            # after Qt's own placement (it moves to the mask's first place)
+            QTimer.singleShot(0, self.jump_to_first_empty)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().mousePressEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton and \
+                self.cursorPosition() > self.first_empty_position():
+            self.setCursorPosition(self.first_empty_position())
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().mouseReleaseEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton and not self.hasSelectedText() and \
+                self.cursorPosition() > self.first_empty_position():
+            self.setCursorPosition(self.first_empty_position())
+
+
 class BidiDelegate(QStyledItemDelegate):
     """v2.8.0: a cell whose text has no Persian letter (a code, path, URL, English
     name) is laid out left-to-right; it stays on the right edge (``RIGHT``)."""

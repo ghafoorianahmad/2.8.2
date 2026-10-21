@@ -21,7 +21,7 @@ from fakes import FakeShopApi, FakeTelegram  # noqa: E402
 def settings(tmp_path) -> Settings:
     return Settings(api_id=12345, api_hash="h" * 32, worker_api_key="worker-key",
                     data_dir=tmp_path / "data", proxy_channels=["ProxyChan"],
-                    local_proxies=[], connect_timeout_sec=5)
+                    local_proxies=[], connect_timeout_sec=5, web_preview=False)
 
 
 class Clock:

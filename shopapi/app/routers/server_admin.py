@@ -69,6 +69,7 @@ def server_status(
         "components": control.provider_status(),
         "health": monitor.CURRENT.snapshot() if monitor.CURRENT else None,
         "telegram_worker": _tg_status(db),
+        "proxy_pool": _pool_status(db),
         "backup": _backup_status(),
         "counts": counts,
     }
@@ -106,8 +107,27 @@ def _tg_status(db: OwnDB) -> dict | None:
         return None
     if not isinstance(value, dict):
         return None
-    keep = ("connected", "proxy", "login_required", "error", "at")
-    return {key: value.get(key) for key in keep}
+    keep = ("connected", "proxy", "login_required", "error", "at",
+            # v2.9.0
+            "api_preset", "price_channel", "pool_size")
+    out = {key: value.get(key) for key in keep}
+    for nested, fields in (("price", ("checked_at", "ref", "outcome", "at")),
+                           ("collect", ("at", "found", "tested", "added", "via"))):
+        raw = value.get(nested)
+        out[nested] = {k: raw.get(k) for k in fields} if isinstance(raw, dict) else {}
+    return out
+
+
+def _pool_status(db: OwnDB) -> dict:
+    """v2.9.0: the Telegram proxy pool in numbers (hosts and secrets stay out)."""
+    from ..proxypool import ProxyPool, pool_summary
+
+    worker = _tg_status(db) or {}
+    try:
+        target = int(worker.get("pool_size") or 5)
+    except (TypeError, ValueError):
+        target = 5
+    return pool_summary(ProxyPool(db), target)
 
 
 @router.get("/settings")

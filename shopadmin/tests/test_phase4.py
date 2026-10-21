@@ -142,11 +142,11 @@ def test_store_defaults(store):
 
 # ---- server page rows ---------------------------------------------------------------------
 def test_telegram_row():
-    assert telegram_text(None)[1].startswith("نصب نشده")
+    assert telegram_text(None)[1].startswith("روشن نشده")      # v2.9.0: bundled, off by default
     key, text, color = telegram_text({"connected": True, "proxy": "1.2.3.4:443 (faketls)",
                                       "at": "2026-10-12T08:00:00+00:00"})
     assert key == "telegram" and "1.2.3.4:443" in text and color is not None
-    assert "ورود دوباره" in telegram_text({"login_required": True, "at": None})[1]
+    assert "ورود به حساب تلگرام" in telegram_text({"login_required": True, "at": None})[1]
     assert "قطع" in telegram_text({"connected": False, "error": "TimeoutError"})[1]
 
 

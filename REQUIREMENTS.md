@@ -91,6 +91,15 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 - `ACCOUNTING_STATUS_CODE` is editable from ShopAdmin's server settings (super admin), same rule (required, whole number, not 6808).
 - Rate limits: button taps have their own limit (`RATE_LIMIT_CALLBACKS`, 120/min), messages 20/min, one warning per window, `/start` is never limited.
 
+## 7c. v2.9.0 (decision 2026-10-21; supersedes the login script and the weekly proxy collection of §5–6)
+- **Telegram reader bundled**: `ShopSystem.exe --tg-worker` (no separate Python install); started by the service when `TG_READER_ENABLED=true`. The old separate install (`SHOPTG_DIR`) still works.
+- **Key (temporary, owner's decision)**: the public api_id / api_hash of the official Telegram Desktop app with matching InitConnection parameters (device "Desktop", "Windows 10", app "5.12.3 x64", lang_pack "tdesktop"), **for a separate secondary account only**; editable in «تنظیمات سرور» › تلگرام («کلید خودم» = my.telegram.org, also used by the Telegram bot). Telegram may restrict accounts that use these keys from other software.
+- **Login from «تنظیمات سرور»** (server only, administrator): phone → code → 2FA password through `ShopSystem.exe --tg-login` (JSON lines on stdin/stdout; nothing on a command line, nothing stored but the DPAPI LocalMachine session with the SYSTEM / Administrators (+ service read) ACL).
+- **Read-only, low rate**: price channel every 10 min, health ping every 3 min, FloodWait pauses everything for the time asked; never joins, posts or marks read.
+- **Price lists**: a new PDF of `@AbrishamiiPhoneMashhad` goes through the same import as a manual upload (same morning / afternoon rules); ShopAdmin announces «لیست قیمت تازه»; a PDF that cannot be downloaded (3 tries, too large, not a PDF) → `telegram_pricelist_error` to the owner (ShopAdmin + Bale admin chats). Images are ignored.
+- **Proxy pool**: daily (hourly while fewer than `TG_PROXY_POOL_SIZE`=5 work) links of `@ProxyMTProto` (with the account; without login / proxy from the public web preview `t.me/s/…`); links the server never saw are tested with an anonymous client until pool_size + 2 work (≤ 40 tests); working ones join (probation), failed ones are kept as retired (never retested); at most 30 usable proxies. Rotation on failure is immediate; manual proxies (ShopAdmin «سرور فروشگاه» › «افزودن پراکسی دستی», or `TG_PROXY` in «تنظیمات سرور») are tried when the pool is empty (first start). Status (reader, last list, pool counts, last collection) on «سرور فروشگاه».
+- **Look**: ShopAdmin palettes اقیانوس / شفق / زمرد × روشن / تیره / مطابق ویندوز × «جلوه‌ها» خودکار / کامل / ساده, per computer, in «اعلان‌ها و ظاهر» for every user; WCAG AA (`contrast_audit.py --all`) and 0 cut texts (`text_fit_audit.py`) in every look.
+
 ## 8. Alerts to the owner
 - Bale message to the owner's chat (ChatId in .env) on every new order and pending customer.
 - Windows tray app: detects when the Sazeh Hesab program starts (process watch) → "X new orders, Y customers awaiting approval" + link to shopadmin.

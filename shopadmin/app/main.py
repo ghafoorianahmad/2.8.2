@@ -74,10 +74,14 @@ class ShopAdminApp(QObject):
         super().__init__()
         self.app = app
         self.store = Store()
-        # v2.7.0: light / dark / follow Windows (Settings › ظاهر), before any window
-        mode = str(self.store.get_setting("theme_mode", "light") or "light")
-        if mode != "light":
-            theme.apply_theme(app, mode)
+        # v2.7.0 / v2.9.0: palette, light / dark / follow Windows and «جلوه‌ها»
+        # («اعلان‌ها و ظاهر», per computer), before any window
+        from .ui.appearance import saved_look
+
+        palette, mode, effects = saved_look(self.store)
+        theme.apply_theme(app, mode, palette=palette, effects=effects)
+        #: the single-instance listener (closed before a restart)
+        self.instance_server = None
         self.api = ShopApiClient()
         self.auth = AuthService(self.store, self.api)
         self.context: Optional[AppContext] = None
@@ -302,6 +306,7 @@ class ShopAdminApp(QObject):
             api=self.api,
             principal=principal,
         )
+        self.context.restart_app = self.restart_application
         self._start_notifications()
         if self.notifier is not None:
             self.notifier.user_key = principal.username
@@ -545,6 +550,24 @@ class ShopAdminApp(QObject):
             self.main_window.allow_close = True
         self.app.quit()
 
+    def restart_application(self) -> None:
+        """v2.9.0: open the program again (a new look is applied at start). This
+        copy stops answering «already running» first, so the new one starts."""
+        from PySide6.QtCore import QProcess
+
+        from .paths import app_dir
+
+        if self.instance_server is not None:
+            self.instance_server.close()
+            self.instance_server = None
+        if is_frozen():
+            program, args = sys.executable, []
+        else:
+            program, args = sys.executable, [str(app_dir() / "run_shopadmin.py")]
+        if not QProcess.startDetached(program, args):
+            log.warning("restart: the new copy did not start")
+        self.quit_application()
+
     def shutdown(self) -> None:
         """Stop notifications on quit. Safe to call twice; no server is touched."""
         self._stop_notifications()
@@ -729,7 +752,8 @@ def run(argv: list[str] | None = None) -> int:
     mutex = None if setup_window else _hold_instance_mutex()  # noqa: F841
 
     controller = ShopAdminApp(app)
-    instance_server = None if setup_window else _listen_for_second_instances(controller)  # noqa: F841
+    instance_server = None if setup_window else _listen_for_second_instances(controller)
+    controller.instance_server = instance_server
     app.aboutToQuit.connect(controller.shutdown)
     controller.start(server_setup=server_setup, tray=tray, server_settings=server_settings)
     return app.exec()

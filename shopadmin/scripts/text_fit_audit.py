@@ -3,9 +3,11 @@
 Renders every page (as «مدیر» and as «کاربر فروش», at two window widths) and
 the main dialogs against a fake shopapi, then checks every visible widget that
 shows one line of text: its width must be at least what its text needs.
+v2.9.0: in every look (3 palettes × light / dark / follow Windows).
 Exits with 1 and a list when something is cut.
 
-    python scripts/text_fit_audit.py
+    python scripts/text_fit_audit.py            (every look)
+    python scripts/text_fit_audit.py --quick    (the default look only)
 """
 from __future__ import annotations
 
@@ -91,64 +93,99 @@ def problems_in(root: QWidget, where: str) -> list[str]:
     return out
 
 
-def main() -> int:
-    app = QApplication.instance() or QApplication(sys.argv)
-    theme.apply_theme(app)
+#: v2.9.0: every look (palette × light / dark / follow Windows); «جلوه‌ها» alternate
+#: (shadows and gradients never change a widget's size, but both are exercised).
+LOOKS = [(palette, mode, "full" if index % 2 == 0 else "simple")
+         for index, (palette, mode) in enumerate(
+             (p, m) for p in theme.PALETTE_NAMES for m in theme.THEME_MODES)]
+
+
+def audit_look(app, tmp: Path, look: tuple[str, str, str]) -> list[str]:
+    palette, mode, effects = look
+    theme.apply_theme(app, mode, palette=palette, effects=effects)
+    tag = f"[{palette}/{mode}/{effects}]"
     from app.ui.main_window import NAV_ITEMS, MainWindow
 
     found: list[str] = []
-    with tempfile.TemporaryDirectory() as tmp:
-        opened: list = []
-        context, store, fake = rs.build_context(Path(tmp))
-        sales_perms = perms.client_permissions(sorted(perms.SALES_SERVER_PERMISSIONS))
-        for role in ("manager", "sales"):
-            if role == "sales":
-                context.principal = replace(context.principal, role=ROLE_OPERATOR,
-                                            permissions=sales_perms)
-            for width, height in ((1360, 840), (1000, 700)):
-                window = MainWindow(context)
-                window.resize(width, height)
-                window.show()
-                rs.settle(app, 10)
-                found += problems_in(window, f"{role} {width} top/sidebar")
-                for key, _text, _icon, _perm in NAV_ITEMS:
-                    if key not in window._pages:
-                        continue
-                    window.navigate(key)
-                    rs.settle(app, 10)
-                    found += problems_in(window._pages[key], f"{role} {width} {key}")
-                window.close()
-        # ---- dialogs -------------------------------------------------------------
-        context.principal = replace(context.principal, role="super_admin", permissions=None)
-        from app.ui.pages.item_requests import ItemRequestDialog
-        from app.ui.pages.orders import OrderDetailDialog, PaymentInfoDialog, ShipDialog
-        from app.ui.pages.users import UserFormDialog
-
-        dialogs = []
-        orders = [o for o in getattr(fake, "orders", []) if isinstance(o, dict)]
-        for order in orders[:3]:
-            dialogs.append((f"order {order.get('id')}", OrderDetailDialog(context, order)))
-        if orders:
-            dialogs.append(("payment", PaymentInfoDialog(None, context, orders[0])))
-        dialogs.append(("ship", ShipDialog(None, "۱۲")))
-        dialogs.append(("user form", UserFormDialog(context, None)))
-        for request in list(getattr(fake, "item_requests", []))[:2]:
-            dialogs.append((f"request {request.get('id')}", ItemRequestDialog(context, request)))
-        for name, dialog in dialogs:
-            from app.ui import widgets
-
-            widgets.make_responsive(dialog)
-            dialog.show()
+    context, store, fake = rs.build_context(tmp)
+    sales_perms = perms.client_permissions(sorted(perms.SALES_SERVER_PERMISSIONS))
+    for role in ("manager", "sales"):
+        if role == "sales":
+            context.principal = replace(context.principal, role=ROLE_OPERATOR,
+                                        permissions=sales_perms)
+        for width, height in ((1360, 840), (1000, 700)):
+            window = MainWindow(context)
+            window.resize(width, height)
+            window.show()
             rs.settle(app, 10)
-            found += problems_in(dialog, f"dialog {name}")
-            dialog.close()
-        for item in opened:
-            item.close()
-        store.close()
+            found += problems_in(window, f"{tag} {role} {width} top/sidebar")
+            for key, _text, _icon, _perm in NAV_ITEMS:
+                if key not in window._pages:
+                    continue
+                window.navigate(key)
+                rs.settle(app, 10)
+                found += problems_in(window._pages[key], f"{tag} {role} {width} {key}")
+            window.close()
+            window.deleteLater()            # the next look restyles only live widgets
+    # ---- dialogs -------------------------------------------------------------
+    context.principal = replace(context.principal, role="super_admin", permissions=None)
+    from app.ui import widgets
+    from app.ui.main_window import NotificationDialog
+    from app.ui.pages.item_requests import ItemRequestDialog
+    from app.ui.pages.orders import OrderDetailDialog, PaymentInfoDialog, ShipDialog
+    from app.ui.pages.users import UserFormDialog
+
+    dialogs = []
+    orders = [o for o in getattr(fake, "orders", []) if isinstance(o, dict)]
+    for order in orders[:3]:
+        dialogs.append((f"order {order.get('id')}", OrderDetailDialog(context, order)))
+    if orders:
+        dialogs.append(("payment", PaymentInfoDialog(None, context, orders[0])))
+    dialogs.append(("ship", ShipDialog(None, "۱۲")))
+    dialogs.append(("user form", UserFormDialog(context, None)))
+    # v2.9.0: «اعلان‌ها و ظاهر» (option cards) and the Telegram login (server only)
+    dialogs.append(("notifications and look", NotificationDialog(context)))
+    try:
+        from app.ui.telegram_login import TelegramLoginDialog
+    except ImportError:
+        TelegramLoginDialog = None
+    if TelegramLoginDialog is not None:
+        login = TelegramLoginDialog(None)
+        dialogs.append(("telegram login", login))
+        for step in (login.STEP_CODE, login.STEP_PASSWORD, login.STEP_DONE):
+            other = TelegramLoginDialog(None)
+            other._go(step)
+            dialogs.append((f"telegram login step {step}", other))
+    for request in list(getattr(fake, "item_requests", []))[:2]:
+        dialogs.append((f"request {request.get('id')}", ItemRequestDialog(context, request)))
+    for name, dialog in dialogs:
+        widgets.make_responsive(dialog)
+        dialog.show()
+        rs.settle(app, 10)
+        found += problems_in(dialog, f"{tag} dialog {name}")
+        dialog.close()
+        dialog.deleteLater()
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    store.close()
+    return found
+
+
+def main() -> int:
+    """``--all`` (default): every look; ``--quick``: the default look only."""
+    app = QApplication.instance() or QApplication(sys.argv)
+    looks = [("ocean", "light", "full")] if "--quick" in sys.argv else LOOKS
+    found: list[str] = []
+    for look in looks:
+        with tempfile.TemporaryDirectory() as tmp:
+            problems = audit_look(app, Path(tmp), look)
+        print(f"{look[0]:8} {look[1]:6} {look[2]:6}: {len(set(problems))} cut texts", flush=True)
+        found += problems
     unique = sorted(set(found))
     for line in unique:
         print(line)
-    print(f"{len(unique)} cut texts")
+    print(f"{len(unique)} cut texts in {len(looks)} looks")
     return 1 if unique else 0
 
 

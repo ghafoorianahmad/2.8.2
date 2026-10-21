@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import os
 import subprocess
 import threading
 from pathlib import Path
@@ -317,3 +318,73 @@ def test_service_tool_reports_json(data_dir, monkeypatch, capsys):
     assert out["ok"] and out["state"] == "stopped"
     assert launcher.main(["--service-status", "--data-dir", str(data_dir)]) == 0
     assert json.loads(capsys.readouterr().out)["state"] == "stopped"
+
+
+# ---- v2.9.0: the Telegram reader bundled in ShopSystem ---------------------------------
+def test_bundled_reader_starts_only_when_enabled(monkeypatch, data_dir):
+    launcher.configure_paths(data_dir)
+    monkeypatch.setenv("TG_PROXY", "tg://from-the-old-shell")     # never inherited
+    values = {"TG_READER_ENABLED": "true", "TG_API_PRESET": "tdesktop", "API_TLS": "true",
+              "API_PORT": "8443", "WORKER_API_KEY": "wk", "TG_PRICE_CHANNEL": "Chan_x",
+              "TG_PROXY": "tg://proxy?server=a&port=1&secret=dd", "BALE_TOKEN": "secret",
+              "TELEGRAM_BOT_TOKEN": "1:x", "DB_PASSWORD": "pw"}
+    spec = launcher.shoptg_spec(values, run_mode="service")
+    assert spec.command[-3:] == ["--tg-worker", "--data-dir", str(data_dir)]
+    env = spec.env
+    assert env["TG_API_PRESET"] == "tdesktop" and env["TG_PRICE_CHANNEL"] == "Chan_x"
+    assert env["TG_PROXY"].startswith("tg://proxy?server=a")
+    assert env["TG_DATA_DIR"] == str(data_dir / "shoptg")
+    assert env["TG_LOG_FILE"] == str(data_dir / "shoptg.log")
+    assert env["SHOPTG_NO_DOTENV"] == "1" and env["WORKER_API_KEY"] == "wk"
+    assert env["TG_SERVICE_ACCOUNT"] == r"NT SERVICE\ShopServer"
+    for secret in ("BALE_TOKEN", "TELEGRAM_BOT_TOKEN", "DB_PASSWORD"):
+        assert secret not in env
+    assert launcher.shoptg_spec({**values, "TG_READER_ENABLED": "false"}, run_mode="task") is None
+    assert [s.name for s in launcher.child_specs(values, run_mode="task")] == ["server", "shoptg"]
+
+
+def test_reader_rereads_settings_at_every_start(monkeypatch, data_dir):
+    launcher.configure_paths(data_dir)
+    (data_dir / ".env").write_text("TG_READER_ENABLED=true\nTG_PRICE_CHANNEL=First_ch\n",
+                                   encoding="utf-8")
+    spec = launcher.shoptg_spec(launcher.read_env_values(), run_mode="task")
+    assert spec.current_env()["TG_PRICE_CHANNEL"] == "First_ch"
+    (data_dir / ".env").write_text("TG_READER_ENABLED=true\nTG_PRICE_CHANNEL=Second_ch\n",
+                                   encoding="utf-8")
+    assert spec.current_env()["TG_PRICE_CHANNEL"] == "Second_ch"
+
+
+def test_setup_fields_for_the_reader():
+    for field, key in (("tg_reader_enabled", "TG_READER_ENABLED"), ("tg_api_preset", "TG_API_PRESET"),
+                       ("tg_price_channel", "TG_PRICE_CHANNEL"), ("tg_proxy", "TG_PROXY")):
+        assert launcher.SETUP_FIELDS[field] == key
+
+
+def test_tg_login_and_worker_modes_use_the_shoptg_package(monkeypatch, data_dir):
+    launcher.configure_paths(data_dir)
+    calls = []
+
+    class FakeMain:
+        @staticmethod
+        def main(argv):
+            calls.append((argv, os.environ.get("TG_DATA_DIR"), os.environ.get("SHOPTG_NO_DOTENV")))
+            return 0
+    monkeypatch.setattr(launcher, "_shoptg", lambda name: FakeMain)
+    monkeypatch.setattr(launcher, "_service_installed", lambda ws: False)
+    saved = dict(os.environ)
+    try:
+        for key in ("TG_DATA_DIR", "SHOPTG_NO_DOTENV", "TG_SERVICE_ACCOUNT"):
+            os.environ.pop(key, None)
+        assert launcher.main(["--tg-login", "--data-dir", str(data_dir)]) == 0
+        assert calls[-1] == (["--login-pipe"], str(data_dir / "shoptg"), "1")
+        assert "TG_SERVICE_ACCOUNT" not in os.environ      # no service yet: no grant for it
+        assert launcher.main(["--tg-worker", "--data-dir", str(data_dir)]) == 0
+        assert calls[-1][0][0] == "--log-level"
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+
+
+def test_the_real_shoptg_package_is_importable_from_the_source_tree():
+    main = launcher._shoptg("main")
+    assert hasattr(main, "main") and hasattr(launcher._shoptg("login_flow"), "run_pipe")

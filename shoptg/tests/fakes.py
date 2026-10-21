@@ -138,6 +138,8 @@ class FakeShopApi:
     candidates: list[dict] = field(default_factory=list)
     pricelists: list[dict] = field(default_factory=list)
     alerts: list[str] = field(default_factory=list)
+    #: v2.9.0: links the server already knows (never tested again)
+    known: set[str] = field(default_factory=set)
     down: bool = False
     keys_seen: set[str] = field(default_factory=set)
 
@@ -162,7 +164,14 @@ class FakeShopApi:
             return httpx.Response(200, json={"recorded": len(body["results"])})
         if path == "/worker/proxies/candidates":
             self.candidates.append(body)
-            return httpx.Response(200, json={"added": len(body["links"]), "invalid": 0})
+            for item in body.get("tested") or []:
+                self.known.add(item["link"])
+            self.known.update(body.get("failed") or [])
+            added = len(body["links"]) + len(body.get("tested") or [])
+            return httpx.Response(200, json={"added": added, "invalid": 0})
+        if path == "/worker/proxies/unknown":
+            return httpx.Response(200, json={"unknown": [l for l in body["links"]
+                                                         if l not in self.known]})
         if path == "/worker/pricelists":
             self.pricelists.append(body)
             return httpx.Response(200, json={"outcome": "imported", "list_id": len(self.pricelists),

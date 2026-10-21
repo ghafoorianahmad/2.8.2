@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from ...api_client import short_fingerprint
 from ...edition import is_server_edition
 from ...logging_setup import get_logger
-from ...permissions import SERVER_MANAGE, SERVER_VIEW
+from ...permissions import PROXIES_MANAGE, SERVER_MANAGE, SERVER_VIEW
 from ...persian import format_shamsi, to_english_digits, to_persian_digits
 from ...server_settings import SETTINGS_FA, local_problem, translate_field_errors
 from .. import theme, widgets
@@ -127,6 +127,7 @@ class ServerPage(BasePage):
         layout.setContentsMargins(0, 0, 8, 0)
         layout.setSpacing(16)
         layout.addWidget(self._build_status_panel())
+        layout.addWidget(self._build_telegram_panel())
         layout.addWidget(self._build_settings_panel())
         layout.addWidget(self._build_log_panel())
         layout.addStretch(1)
@@ -148,7 +149,7 @@ class ServerPage(BasePage):
             ("uptime", "مدت روشن بودن سرور"),
             ("version", "نسخه"),
             ("bots", "ربات‌ها"),
-            ("telegram", "کارگر تلگرام"),
+            ("telegram", "خوانندهٔ تلگرام"),
             ("health", "پایش سلامت"),
             ("backup", "پشتیبان‌گیری روزانه"),
             ("counts", "در انتظار رسیدگی"),
@@ -206,10 +207,110 @@ class ServerPage(BasePage):
                           "«تنظیمات سرور» به دسترسی مدیر ویندوز نیاز دارد و درخواست آن تأیید نشد. "
                           "دوباره بزنید و در پنجرهٔ ویندوز «Yes / بله» را انتخاب کنید.")
 
+    # ------------------------------------------------------------------ telegram (v2.9.0)
+    def _build_telegram_panel(self) -> QWidget:
+        panel = widgets.Panel("خوانندهٔ تلگرام و استخر پراکسی")
+        panel.body.addWidget(widgets.label(
+            "لیست قیمت کانال خودکار خوانده می‌شود و پراکسی‌های تازه هر روز آزموده می‌شوند؛ اگر "
+            "پراکسی فعلی قطع شود خودکار سراغ بعدی می‌رود. ورود حساب تلگرام و کلید برنامه در "
+            "«تنظیمات سرور» روی خود رایانهٔ سرور است.", name="Muted", wrap=True))
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(24)
+        grid.setVerticalSpacing(10)
+        self.tg_labels: dict[str, QWidget] = {}
+        for index, (key, caption) in enumerate((
+            ("reader", "خواننده"),
+            ("price", "لیست قیمت کانال"),
+            ("pool", "استخر پراکسی"),
+            ("collect", "آخرین جمع‌آوری پراکسی"),
+        )):
+            grid.addWidget(widgets.label(caption + ":", name="Muted"), index, 0)
+            value = widgets.label("—", wrap=True)
+            grid.addWidget(value, index, 1)
+            self.tg_labels[key] = value
+        grid.setColumnStretch(1, 1)
+        panel.body.addLayout(grid)
+        self.proxy_table = widgets.DataTable(SERVER_PROXY_HEADERS, key="server_proxies")
+        self.proxy_table.set_empty_state("هنوز پراکسی‌ای در استخر نیست",
+                                         "یک پراکسی دستی اضافه کنید تا خواننده بتواند شروع کند.",
+                                         "wifi")
+        self.proxy_table.setMinimumHeight(200)
+        panel.body.addWidget(self.proxy_table)
+        self.proxy_hint = widgets.label("", name="Muted", wrap=True)
+        self.proxy_hint.setVisible(False)
+        panel.body.addWidget(self.proxy_hint)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.add_proxy_button = widgets.button(
+            "افزودن پراکسی دستی…", icon_name="plus", variant="primary", on_click=self._add_proxy,
+            tooltip="پیوند tg://proxy یا t.me/proxy؛ اول از همه امتحان می‌شود")
+        self.add_proxy_button.setVisible(self.context.can(PROXIES_MANAGE))
+        buttons.addWidget(self.add_proxy_button)
+        buttons.addWidget(widgets.button("به‌روزرسانی", icon_name="refresh", on_click=self.load))
+        panel.body.addLayout(buttons)
+        return panel
+
+    def _show_telegram(self, status: dict) -> None:
+        for key, (text, color) in telegram_details(status.get("telegram_worker"),
+                                                   status.get("proxy_pool")).items():
+            label = self.tg_labels[key]
+            label.setText(text)
+            label.setStyleSheet(f"color: {color};" if color else "")
+
+    def _load_proxies(self) -> None:
+        self.proxy_table.set_busy(True)
+        self.run(self.context.api.list_proxies, on_success=self._show_proxies,
+                 on_error=self._proxies_unavailable)
+
+    def _show_proxies(self, proxies: list) -> None:
+        table = self.proxy_table
+        table.set_busy(False)
+        table.setRowCount(0)
+        active = [p for p in proxies or [] if p.get("state") in ("main", "probation")][:15]
+        for p in active:
+            row = table.rowCount()
+            table.insertRow(row)
+            table.set_cell(row, 0, f"{p.get('host') or ''}:{p.get('port') or ''}", bold=True)
+            table.set_cell(row, 1, str(p.get("kind") or ""))
+            table.set_cell(row, 2, PROXY_STATE_FA.get(p.get("state"), str(p.get("state") or "")))
+            failing = bool(p.get("failing_now"))
+            checked = bool(p.get("last_ok_at") or p.get("last_fail_at"))
+            table.set_cell(row, 3, "قطع" if failing else ("سالم" if checked else "آزموده نشده"),
+                           color=theme.DANGER if failing else
+                           (theme.SUCCESS_DARK if checked else theme.TEXT_MUTED))
+            latency = p.get("last_latency_ms")
+            table.set_cell(row, 4, f"{to_persian_digits(latency)} میلی‌ثانیه" if latency else "—")
+            table.set_cell(row, 5, proxy_source_fa(p.get("source")))
+        self.proxy_hint.setVisible(False)
+        if not active:
+            table.fill([])
+
+    def _proxies_unavailable(self, message: str, kind: str) -> None:
+        self.proxy_table.set_busy(False)
+        self.proxy_table.fill([])
+        self.proxy_hint.setText("فهرست پراکسی‌ها دیده نشد: " + (message or "")
+                                + " (دیدن آن دسترسی «لیست قیمت — دیدن» می‌خواهد.)")
+        self.proxy_hint.setVisible(True)
+
+    def _add_proxy(self) -> None:
+        from PySide6.QtWidgets import QDialog
+
+        from .pricelist import AddProxyDialog
+
+        dialog = AddProxyDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        link, main = dialog.link, dialog.main
+        self.run(lambda: self.context.api.add_proxy(link, main),
+                 on_success=lambda _r: (self.notify_success(
+                     "پراکسی اضافه شد؛ خواننده در چند دقیقه آن را امتحان می‌کند."),
+                     self._load_proxies()))
+
     def load(self) -> None:
         if not self.context.can(SERVER_VIEW):
             return
         self.run(self.context.api.server_status, on_success=self._show_status)
+        self._load_proxies()
         self.run(self.context.api.server_settings, on_success=self._show_settings,
                  on_error=self._settings_unavailable)
 
@@ -242,6 +343,7 @@ class ServerPage(BasePage):
             self._set("bots", "\n".join(parts), theme.DANGER if bad else theme.SUCCESS_DARK)
 
         self._set(*telegram_text(status.get("telegram_worker")))
+        self._show_telegram(status)
         self._set(*health_text(status.get("health")))
         self._set(*backup_text(status.get("backup")))
 
@@ -437,13 +539,88 @@ def backup_text(backup: dict | None) -> tuple[str, str, str | None]:
     return "backup", text, theme.SUCCESS_DARK if backup.get("offsite_configured") else theme.WARNING_TEXT
 
 
+SERVER_PROXY_HEADERS = ("پراکسی", "نوع", "وضعیت", "الان", "تأخیر", "منبع")
+PROXY_STATE_FA = {"main": "اصلی", "probation": "آزمایشی", "retired": "کنار گذاشته",
+                  "disabled": "غیرفعال"}
+PRICE_OUTCOME_FA = {
+    "active": "لیست تازه فعال شد", "held": "نگه داشته شد (تغییر زیاد قیمت؛ تأیید لازم است)",
+    "failed": "خوانده نشد (قالب ناشناخته)", "duplicate": "همان لیست قبلی بود",
+    "older": "قدیمی‌تر از لیست فعال بود", "too_large": "فایل بیش از حد بزرگ بود",
+    "not_pdf": "فایل PDF نبود", "download_failed": "دریافت نشد",
+}
+
+
+def proxy_source_fa(source) -> str:
+    text = str(source or "")
+    if text == "manual":
+        return "دستی"
+    if text.startswith("channel:"):
+        return "کانال @" + text.split(":", 1)[1]
+    return text or "—"
+
+
+def telegram_details(worker: dict | None, pool: dict | None) -> dict[str, tuple[str, str | None]]:
+    """v2.9.0: the rows of «خوانندهٔ تلگرام و استخر پراکسی» (no secrets in there)."""
+    worker = worker or {}
+    out: dict[str, tuple[str, str | None]] = {}
+    _, text, color = telegram_text(worker or None)
+    preset = worker.get("api_preset")
+    if preset:
+        text += "\nکلید: " + ("عمومی Telegram Desktop (موقت)" if preset == "tdesktop"
+                              else "کلید خودِ فروشگاه")
+    out["reader"] = (text, color)
+    price = worker.get("price") or {}
+    channel = worker.get("price_channel")
+    if price.get("checked_at") or price.get("at"):
+        parts = []
+        if channel:
+            parts.append(f"@{channel}")
+        if price.get("checked_at"):
+            parts.append(f"آخرین بررسی: {format_shamsi(price['checked_at'])}")
+        if price.get("at"):
+            outcome = PRICE_OUTCOME_FA.get(price.get("outcome") or "", price.get("outcome") or "")
+            parts.append(f"آخرین فایل: {format_shamsi(price['at'])} — {outcome}")
+        bad = price.get("outcome") in ("failed", "too_large", "not_pdf", "download_failed")
+        out["price"] = ("\n".join(parts), theme.DANGER if bad else None)
+    else:
+        out["price"] = (f"@{channel} — هنوز بررسی نشده" if channel else "هنوز بررسی نشده", None)
+    pool = pool or {}
+    if pool:
+        target = int(pool.get("target") or 5)
+        working = int(pool.get("working") or 0)
+        text = (f"{to_persian_digits(working)} پراکسی سالم از {to_persian_digits(target)} "
+                f"(در استخر: {to_persian_digits(pool.get('active') or 0)}، "
+                f"دستی: {to_persian_digits(pool.get('manual') or 0)}، "
+                f"کنار گذاشته: {to_persian_digits(pool.get('retired') or 0)})")
+        if pool.get("all_failing"):
+            text += "\nهیچ پراکسی‌ای کار نمی‌کند؛ یک پراکسی دستی اضافه کنید."
+        color = theme.DANGER if not working else (theme.WARNING_TEXT if working < target
+                                                  else theme.SUCCESS_DARK)
+        out["pool"] = (text, color)
+    else:
+        out["pool"] = ("—", None)
+    collect = worker.get("collect") or {}
+    if collect.get("at"):
+        via = {"account": "با حساب تلگرام", "web": "از صفحهٔ عمومی کانال"}
+        ways = "، ".join(via.get(w, w) for w in str(collect.get("via") or "").split(",") if w)
+        out["collect"] = (
+            f"{format_shamsi(collect['at'])} — {to_persian_digits(collect.get('found') or 0)} پیوند، "
+            f"{to_persian_digits(collect.get('tested') or 0)} آزموده، "
+            f"{to_persian_digits(collect.get('added') or 0)} سالم اضافه شد"
+            + (f" ({ways})" if ways else ""), None)
+    else:
+        out["collect"] = ("هنوز انجام نشده (روزی یک بار؛ وقتی استخر کم باشد هر ساعت)", None)
+    return out
+
+
 def telegram_text(worker: dict | None) -> tuple[str, str, str | None]:
-    """Status-row text for the Telegram price/proxy worker (shoptg)."""
+    """Status-row text for the Telegram reader (price lists + proxy pool)."""
     if not worker:
-        return "telegram", "نصب نشده یا هنوز گزارشی نداده است", None
+        return "telegram", "روشن نشده یا هنوز گزارشی نداده است («تنظیمات سرور» › تلگرام)", None
     when = format_shamsi(worker["at"]) if worker.get("at") else "—"
     if worker.get("login_required"):
-        return "telegram", f"نیاز به ورود دوباره به تلگرام (login.ps1 روی سرور) — {when}", theme.DANGER
+        return ("telegram", "نیاز به ورود به حساب تلگرام («تنظیمات سرور» روی خود سرور › "
+                f"تلگرام › ورود به حساب تلگرام) — {when}", theme.DANGER)
     if worker.get("connected"):
         via = worker.get("proxy") or "اتصال مستقیم"
         return "telegram", f"متصل از طریق {via} — آخرین گزارش: {when}", theme.SUCCESS_DARK

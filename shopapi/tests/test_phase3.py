@@ -666,7 +666,7 @@ def test_worker_proxy_flow(client, db, worker):
     links = [f"tg://proxy?server=1.1.1.{i}&port=443&secret={SECRET}" for i in range(3)]
     r = client.post("/worker/proxies/candidates", headers=worker,
                     json={"links": links + ["junk"], "source": "channel:proxyA"})
-    assert r.json() == {"added": 3, "invalid": 1}
+    assert r.json() == {"added": 3, "invalid": 1, "skipped": 0}
     ranked = client.get("/worker/proxies", headers=worker).json()
     assert len(ranked) == 3 and ranked[0]["secret"] == SECRET
     report = {"results": [{"id": p["id"], "ok": False} for p in ranked]}

@@ -46,7 +46,10 @@ FILTERS = (
 STATUS_FA = {"ok": "فعال", "review": "پنهان — منتظر تأیید", "unmapped": "نگاشت‌نشده"}
 STATUS_COLOR = {"ok": "success", "review": "danger", "unmapped": "warning"}
 ITEM_STATE_FA = {"ok": "درست", "drifted": "نام تغییرکرده", "missing": "پیدا نشد / تغییر زیاد"}
-ITEM_STATE_COLOR = {"ok": theme.SUCCESS_DARK, "drifted": theme.WARNING_TEXT, "missing": theme.DANGER}
+def item_state_color(state: str) -> str | None:
+    """v2.9.0: read at run time (light / dark is chosen after this module loads)."""
+    return {"ok": theme.SUCCESS_DARK, "drifted": theme.WARNING_TEXT,
+            "missing": theme.DANGER}.get(state)
 
 _BRAND_RE = re.compile(r'^\s*name:\s*"([^"]+)",\s*mark:', re.MULTILINE)
 _ITEM_RE = re.compile(r'\{\s*id:\s*"([^"]+)",\s*name:\s*"([^"]+)"')
@@ -339,9 +342,9 @@ class CatalogModelsPage(BasePage):
             table.set_cell(i, 2, str(item.get("confirmed_name") or ""))
             current = str(item.get("current_name") or "")
             table.set_cell(i, 3, current if state != "ok" else "—",
-                           color=ITEM_STATE_COLOR.get(state) if state != "ok" else None)
+                           color=item_state_color(state) if state != "ok" else None)
             table.set_cell(i, 4, ITEM_STATE_FA.get(state, state), bold=True,
-                           color=ITEM_STATE_COLOR.get(state))
+                           color=item_state_color(state))
             table.set_cell(i, 5, score_fa(item.get("score")) if state != "ok" else "—")
             table.set_cell(i, 6, format_int(item.get("pricelist_rows") or 0))
         table._refresh_states()

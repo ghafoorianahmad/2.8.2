@@ -46,7 +46,7 @@ EXCLUDED_QT_MODULES = (
 #: Left out of the staff-computer (client) build: only the server installer
 #: runs the server setup, and the client must carry nothing that knows how to
 #: find or start the server program.
-SERVER_ONLY_MODULES = ("app.server_setup", "app.ui.server_setup_wizard")
+SERVER_ONLY_MODULES = ("app.server_setup", "app.ui.server_setup_wizard", "app.ui.telegram_login")
 
 
 def check_environment() -> None:

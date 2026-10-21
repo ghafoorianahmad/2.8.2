@@ -49,7 +49,7 @@ async def login(settings: Settings) -> int:
         SessionPasswordNeededError,
     )
 
-    gateway = TelegramGateway(settings.api_id, settings.api_hash,
+    gateway = TelegramGateway(settings.api_id, settings.api_hash, device=settings.device(),
                               timeout=settings.connect_timeout_sec)
     client = await connect_any(gateway, choose_proxies(settings), settings.connect_timeout_sec)
     if client is None:

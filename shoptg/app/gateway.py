@@ -19,8 +19,10 @@ from tgproxy.connection import connection_for
 
 log = logging.getLogger(__name__)
 
-DEVICE = dict(device_model="ShopServer", system_version="Windows", app_version="shoptg 1.0",
-              lang_code="fa", system_lang_code="fa")
+#: The default InitConnection parameters (own api_id); Settings.device() gives
+#: the Telegram Desktop ones for the public key (v2.9.0).
+DEVICE = dict(device_model="ShopServer", system_version="Windows", app_version="shoptg 1.1",
+              lang_code="fa", system_lang_code="fa", lang_pack="")
 
 
 class NotAuthorized(Exception):
@@ -73,10 +75,13 @@ def to_message(msg: Any) -> TgMessage:
 class TelegramGateway:
     def __init__(self, api_id: int, api_hash: str, *, timeout: float = 20,
                  client_factory: Callable[..., Any] = _default_client_factory,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic,
+                 device: dict[str, str] | None = None, probe_timeout: float | None = None):
         self._api_id = api_id
         self._api_hash = api_hash
         self._timeout = timeout
+        self._probe_timeout = probe_timeout or min(timeout, 12)
+        self._device = dict(DEVICE, **(device or {}))
         self._factory = client_factory
         self._clock = clock
         self._client: Any = None
@@ -89,10 +94,18 @@ class TelegramGateway:
             return self._make_client(session, link)
 
     def _make_client(self, session: str, link: ProxyLink | None):
-        return self._factory(session, self._api_id, self._api_hash,
-                             receive_updates=False, connection_retries=1, retry_delay=1,
-                             request_retries=2, timeout=self._timeout,
-                             flood_sleep_threshold=0, **DEVICE, **connection_for(link))
+        device = dict(self._device)
+        lang_pack = device.pop("lang_pack", "")
+        client = self._factory(session, self._api_id, self._api_hash,
+                               receive_updates=False, connection_retries=1, retry_delay=1,
+                               request_retries=2, timeout=self._timeout,
+                               flood_sleep_threshold=0, **device, **connection_for(link))
+        # Telethon 1.x has no constructor argument for InitConnection.lang_pack
+        # (Telegram Desktop sends "tdesktop"); it is set on the prepared request.
+        init = getattr(client, "_init_request", None)
+        if lang_pack and init is not None and hasattr(init, "lang_pack"):
+            init.lang_pack = lang_pack
+        return client
 
     @property
     def connected(self) -> bool:
@@ -130,7 +143,7 @@ class TelegramGateway:
         client = self.make_client("", link)
         started = self._clock()
         try:
-            await asyncio.wait_for(client.connect(), self._timeout)
+            await asyncio.wait_for(client.connect(), self._probe_timeout)
             return int((self._clock() - started) * 1000)
         finally:
             await _quiet_disconnect(client)

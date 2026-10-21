@@ -8,7 +8,8 @@ Reports pass/fail for WCAG AA: 4.5:1 for normal text, 3:1 for large text and
 non-text UI.
 
 Usage:
-    python scripts/contrast_audit.py
+    python scripts/contrast_audit.py          (the default look, plus rendered windows)
+    python scripts/contrast_audit.py --all    (v2.9.0: also every palette × light / dark)
 """
 from __future__ import annotations
 
@@ -81,22 +82,29 @@ def from_theme() -> list[tuple[str, str, str, float]]:
         ("TEXT on HOVER (button hover)", theme.TEXT, theme.HOVER, 4.5),
         ("TEXT_MUTED on SURFACE (hint)", theme.TEXT_MUTED, theme.SURFACE, 4.5),
         ("TEXT_MUTED on BACKGROUND (panel hint)", theme.TEXT_MUTED, theme.BACKGROUND, 4.5),
-        ("TEXT_MUTED on header surface", theme.TEXT_MUTED, "#F8FAFC", 4.5),
+        ("TEXT_MUTED on HEADER_BG (table header)", theme.TEXT_MUTED, theme.HEADER_BG, 4.5),
         ("TEXT_FAINT on SURFACE (auxiliary)", theme.TEXT_FAINT, theme.SURFACE, 4.5),
         ("INK on SURFACE (card value)", theme.INK, theme.SURFACE, 4.5),
         ("white on PRIMARY (primary button)", "#FFFFFF", theme.PRIMARY, 4.5),
         ("white on PRIMARY_DARK (hover)", "#FFFFFF", theme.PRIMARY_DARK, 4.5),
         ("white on PRIMARY_PRESSED", "#FFFFFF", theme.PRIMARY_PRESSED, 4.5),
-        ("white on SUCCESS (confirm button)", "#FFFFFF", theme.SUCCESS, 4.5),
-        ("white on SUCCESS_DARK (hover)", "#FFFFFF", theme.SUCCESS_DARK, 4.5),
-        ("white on DANGER (reject button)", "#FFFFFF", theme.DANGER, 4.5),
-        ("white on DANGER_DARK (hover)", "#FFFFFF", theme.DANGER_DARK, 4.5),
-        ("white on ROLE_PURPLE", "#FFFFFF", theme.ROLE_PURPLE, 4.5),
+        ("white on SUCCESS_FILL (confirm button)", "#FFFFFF", theme.SUCCESS_FILL, 4.5),
+        ("white on SUCCESS_FILL_DARK (hover)", "#FFFFFF", theme.SUCCESS_FILL_DARK, 4.5),
+        ("white on DANGER_FILL (reject button)", "#FFFFFF", theme.DANGER_FILL, 4.5),
+        ("white on DANGER_FILL_DARK (hover)", "#FFFFFF", theme.DANGER_FILL_DARK, 4.5),
+        # a fill with white text only in the light look (dark: it is a text colour)
+        *([("white on ROLE_PURPLE", "#FFFFFF", theme.ROLE_PURPLE, 4.5)]
+          if theme.MODE == "light" else []),
         ("DISABLED_TEXT on DISABLED_BG", theme.DISABLED_TEXT, theme.DISABLED_BG, 4.5),
-        ("PRIMARY_DARK on HOVER (hover text)", theme.PRIMARY_DARK, theme.HOVER, 4.5),
-        ("PRIMARY_DARK on PRIMARY_LIGHT", theme.PRIMARY_DARK, theme.PRIMARY_LIGHT, 4.5),
-        ("PRIMARY_DARK on PRIMARY_SOFT (selected nav)", theme.PRIMARY_DARK, theme.PRIMARY_SOFT, 4.5),
-        ("PRIMARY_DARK on SELECTED_BG", theme.PRIMARY_DARK, theme.SELECTED_BG, 4.5),
+        ("PRIMARY_TEXT on HOVER (hover text)", theme.PRIMARY_TEXT, theme.HOVER, 4.5),
+        ("PRIMARY_TEXT on PRIMARY_LIGHT", theme.PRIMARY_TEXT, theme.PRIMARY_LIGHT, 4.5),
+        ("PRIMARY_TEXT on PRIMARY_SOFT (selected tab / option)", theme.PRIMARY_TEXT,
+         theme.PRIMARY_SOFT, 4.5),
+        ("PRIMARY_TEXT on SELECTED_BG", theme.PRIMARY_TEXT, theme.SELECTED_BG, 4.5),
+        ("PRIMARY_TEXT on SURFACE (links)", theme.PRIMARY_TEXT, theme.SURFACE, 4.5),
+        ("TEXT on GLOW (window corner, full effects)", theme.TEXT, theme.GLOW, 4.5),
+        ("SIDEBAR_TEXT on SIDEBAR_BG2 (bar bottom)", theme.SIDEBAR_TEXT, theme.SIDEBAR_BG2, 4.5),
+        ("white on SIDEBAR_ACTIVE2 (nav checked end)", "#FFFFFF", theme.SIDEBAR_ACTIVE2, 4.5),
         ("SUCCESS_DARK on SUCCESS_LIGHT", theme.SUCCESS_DARK, theme.SUCCESS_LIGHT, 4.5),
         ("INFO_DARK on INFO_LIGHT", theme.INFO_DARK, theme.INFO_LIGHT, 4.5),
         ("WARNING_TEXT on WARNING_BG (banner)", theme.WARNING_TEXT, theme.WARNING_BG, 4.5),
@@ -276,8 +284,27 @@ def rendered_pairs() -> list[tuple[str, str, str, float]]:
     return results
 
 
+def all_looks() -> list[tuple[str, str, str, float]]:
+    """v2.9.0: the theme pairs and stylesheet literals in every palette × mode."""
+    from app.ui import theme
+
+    before = (theme.PALETTE, theme.MODE)
+    out: list[tuple[str, str, str, float]] = []
+    try:
+        for palette in theme.PALETTE_NAMES:
+            for mode in ("light", "dark"):
+                theme.set_mode(mode, palette)
+                out += [(f"[{palette}/{mode}] {label}", fg, bg, minimum)
+                        for label, fg, bg, minimum in from_theme() + stylesheet_literals()]
+    finally:
+        theme.set_mode(before[1], before[0])
+    return out
+
+
 def main() -> int:
     pairs: list[tuple[str, str, str, float]] = []
+    if "--all" in sys.argv:
+        pairs += all_looks()
     pairs += from_theme()
     pairs += EXTRA_PAIRS
     pairs += PILL_PAIRS

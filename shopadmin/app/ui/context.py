@@ -33,6 +33,8 @@ class AppContext(QObject):
     notifier: Optional[object] = None
     #: v2.8.3: ids of the orders this user is reminded to send payment details for
     payment_info_due: frozenset = field(default_factory=frozenset)
+    #: v2.9.0: closes and reopens the program (a new look); None in tests
+    restart_app: Optional[object] = None
 
     # emitted when the shopapi connection state changes (green/red dot)
     connection_changed = Signal(bool)

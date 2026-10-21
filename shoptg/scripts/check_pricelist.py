@@ -49,7 +49,7 @@ async def check(settings: Settings, *, scan: int, save: bool, proxy_channels: bo
     parser, pricing = load_parser()
     if session is None:
         session = secure_store.load_session(settings.session_file)
-    gateway = gateway or TelegramGateway(settings.api_id, settings.api_hash,
+    gateway = gateway or TelegramGateway(settings.api_id, settings.api_hash, device=settings.device(),
                                          timeout=settings.connect_timeout_sec)
     if links is None:
         links = choose_proxies(settings)

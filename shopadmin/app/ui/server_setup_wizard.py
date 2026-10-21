@@ -14,6 +14,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -50,10 +52,19 @@ MODE_SETTINGS = "settings"
 
 #: step key -> title. «مدیر کل» only on the first setup.
 STEP_TITLES = {"checks": "پیش‌نیازها", "database": "حسابداری", "network": "شبکه",
-               "bots": "ربات‌ها", "admin": "مدیر کل", "run": "اجرا"}
+               "bots": "ربات‌ها", "telegram": "تلگرام", "admin": "مدیر کل", "run": "اجرا"}
 STEPS = tuple(STEP_TITLES.values())   # the first setup (kept for older callers)
 
 KEEP_SECRET = "تنظیم شده — خالی بگذارید تا تغییر نکند"
+#: v2.9.0: the public channel the price lists come from
+DEFAULT_PRICE_CHANNEL = "AbrishamiiPhoneMashhad"
+_CHANNEL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
+_PROXY_RE = re.compile(r"^(tg://proxy\?|(https?://)?(www\.)?(t|telegram)\.me/proxy\?)\S+$", re.I)
+TDESKTOP_WARNING = (
+    "این کلیدِ عمومیِ برنامهٔ رسمی Telegram Desktop است و فقط برای شروع است؛ تلگرام ممکن است "
+    "حسابی را که با آن از برنامهٔ دیگری وارد می‌شود محدود کند. فقط با یک حساب دوم (جدا از "
+    "حساب اصلی فروشگاه) به کار ببرید و هر وقت توانستید «کلید خودم» را از my.telegram.org "
+    "بگذارید.")
 WRITE_WARNING = (
     "با روشن کردن «ثبت واقعی» برای «{name}»، سفارش‌هایی که در «مدیریت فروشگاه» تأیید "
     "می‌شوند واقعاً در «سازه حساب» (پایگاه‌دادهٔ {name}) ثبت می‌شوند و از این برنامه "
@@ -265,6 +276,7 @@ class ServerSetupWizard(QWidget):
 
         builders = {"checks": self._page_checks, "database": self._page_database,
                     "network": self._page_network, "bots": self._page_bots,
+                    "telegram": self._page_telegram,
                     "admin": self._page_admin, "run": self._page_run}
         self.stack = QStackedWidget()
         for key in self._steps:
@@ -421,22 +433,81 @@ class ServerSetupWizard(QWidget):
         self.admin_chats = _line("bale:654321")
         form.addRow(widgets.label("توکن ربات بله:"), self.bale_token)
         form.addRow(widgets.label("گفت‌وگوی مدیران در ربات:"), self.admin_chats)
-        # v2.8.1: the Telegram bot (token from BotFather) and the api_id / api_hash
-        # of my.telegram.org, shared with the Telegram worker (shoptg)
+        # v2.8.1: the Telegram bot (token from BotFather); its api_id / api_hash
+        # (my.telegram.org) are on the «تلگرام» page, shared with the reader
         self.telegram_token = _line("از BotFather در تلگرام", password=True)
-        self.tg_api_id = _line("از my.telegram.org — عدد", password=True)
-        self.tg_api_hash = _line("از my.telegram.org — ۳۲ نویسه", password=True)
         form.addRow(widgets.label("توکن ربات تلگرام:"), self.telegram_token)
-        form.addRow(widgets.label("شناسهٔ برنامهٔ تلگرام (api_id):"), self.tg_api_id)
-        form.addRow(widgets.label("کلید برنامهٔ تلگرام (api_hash):"), self.tg_api_hash)
-        self.shoptg_dir = _line(r"C:\ShopServer\shoptg")
-        form.addRow(widgets.label("پوشهٔ کارگر تلگرام (اختیاری):"), self.shoptg_dir)
         panel.body.addLayout(form)
         panel.body.addWidget(widgets.label(
-            "ربات تلگرام فقط وقتی روشن می‌شود که هر سه مقدار تلگرام وارد شده باشد. "
-            "api_id و api_hash برای کارگر تلگرام (لیست قیمت و پراکسی) هم به کار می‌روند.",
-            name="Muted", wrap=True))
+            "ربات تلگرام فقط وقتی روشن می‌شود که توکن آن و «کلید خودم» (api_id و api_hash) "
+            "در صفحهٔ «تلگرام» وارد شده باشد.", name="Muted", wrap=True))
         return panel
+
+    def _page_telegram(self) -> QWidget:
+        """v2.9.0: the Telegram reader: price lists of the channel + proxy pool."""
+        holder = QWidget()
+        column = QVBoxLayout(holder)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(12)
+        panel = widgets.Panel("خوانندهٔ تلگرام (لیست قیمت و پراکسی)")
+        self.tg_enabled = QCheckBox("لیست قیمت تازهٔ کانال را خودکار بخوان و وارد «لیست قیمت» کن")
+        panel.body.addWidget(self.tg_enabled)
+        form = _form()
+        self.tg_channel = _line(DEFAULT_PRICE_CHANNEL)
+        form.addRow(widgets.label("کانال لیست قیمت (بدون @):"), self.tg_channel)
+        panel.body.addLayout(form)
+        panel.body.addWidget(widgets.label(
+            "فقط PDF لیست قیمت خوانده می‌شود (عکس‌ها فعلاً نه)، از همان راه بارگذاری دستی و با همان "
+            "قاعدهٔ لیست صبح و عصر. لیست تازه در «مدیریت فروشگاه» اعلام می‌شود و اگر دریافت "
+            "نشود به مدیر هشدار داده می‌شود. فقط خواندن؛ هیچ پیامی فرستاده نمی‌شود.",
+            name="Muted", wrap=True))
+        column.addWidget(panel)
+
+        keys = widgets.Panel("کلید برنامهٔ تلگرام")
+        self.tg_key_desktop = QRadioButton("کلید عمومی Telegram Desktop (موقت)")
+        self.tg_key_own = QRadioButton("کلید خودم (my.telegram.org)")
+        self._tg_key_group = QButtonGroup(self)
+        for radio in (self.tg_key_desktop, self.tg_key_own):
+            self._tg_key_group.addButton(radio)
+            keys.body.addWidget(radio)
+        self.tg_key_desktop.setChecked(True)
+        self.tg_key_warning = widgets.label(TDESKTOP_WARNING, color=theme.WARNING_TEXT, wrap=True)
+        keys.body.addWidget(self.tg_key_warning)
+        key_form = _form()
+        self.tg_api_id = _line("از my.telegram.org — عدد", password=True)
+        self.tg_api_hash = _line("از my.telegram.org — ۳۲ نویسه", password=True)
+        key_form.addRow(widgets.label("شناسهٔ برنامه (api_id):"), self.tg_api_id)
+        key_form.addRow(widgets.label("کلید برنامه (api_hash):"), self.tg_api_hash)
+        keys.body.addLayout(key_form)
+        keys.body.addWidget(widgets.label(
+            "«کلید خودم» برای ربات تلگرام هم به کار می‌رود. مقدارها هرگز نمایش داده نمی‌شوند.",
+            name="Muted", wrap=True))
+        self.tg_key_desktop.toggled.connect(self._tg_key_changed)
+        column.addWidget(keys)
+
+        login = widgets.Panel("حساب تلگرام و نخستین پراکسی")
+        proxy_form = _form()
+        self.tg_proxy = _line("tg://proxy?server=…&port=…&secret=…", password=True)
+        proxy_form.addRow(widgets.label("پراکسی دستی (برای شروع):"), self.tg_proxy)
+        self.shoptg_dir = _line(r"C:\ShopServer\shoptg")
+        proxy_form.addRow(widgets.label("پوشهٔ نسخهٔ جداگانهٔ قدیمی (معمولاً خالی):"),
+                          self.shoptg_dir)
+        login.body.addLayout(proxy_form)
+        login.body.addWidget(widgets.label(
+            "تا وقتی استخر پراکسی خالی است همین پراکسی به کار می‌رود؛ پس از آن هر روز پراکسی‌های "
+            "تازهٔ کانال @ProxyMTProto آزموده و چند پراکسی سالم نگه داشته می‌شود. پراکسی دستیِ "
+            "بیشتر را در «سرور فروشگاه» اضافه کنید.", name="Muted", wrap=True))
+        row = QHBoxLayout()
+        self.tg_login_status = widgets.label("", wrap=True)
+        row.addWidget(self.tg_login_status, 1)
+        self.tg_login_button = widgets.button("ورود به حساب تلگرام…", variant="primary",
+                                              icon_name="key", on_click=self._open_tg_login)
+        row.addWidget(self.tg_login_button)
+        login.body.addLayout(row)
+        column.addWidget(login)
+        self._tg_key_changed()
+        self._update_tg_login_status()
+        return holder
 
     def _page_admin(self) -> QWidget:
         panel = widgets.Panel("نخستین «مدیر کل»")
@@ -501,6 +572,9 @@ class ServerSetupWizard(QWidget):
         self.allowed_ips.setText(current.allowed_ips)
         self.admin_chats.setText(current.admin_chats)
         self.shoptg_dir.setText(current.shoptg_dir)
+        self.tg_enabled.setChecked(current.tg_reader_enabled)
+        (self.tg_key_own if current.tg_api_preset == "custom" else self.tg_key_desktop).setChecked(True)
+        self.tg_channel.setText(current.tg_price_channel)
         secrets = current.secrets_set or {}
         for key, field in self._secret_fields().items():
             if secrets.get(key):
@@ -511,7 +585,63 @@ class ServerSetupWizard(QWidget):
 
     def _secret_fields(self) -> dict[str, QLineEdit]:
         return {"BALE_TOKEN": self.bale_token, "TELEGRAM_BOT_TOKEN": self.telegram_token,
-                "TG_API_ID": self.tg_api_id, "TG_API_HASH": self.tg_api_hash}
+                "TG_API_ID": self.tg_api_id, "TG_API_HASH": self.tg_api_hash,
+                "TG_PROXY": self.tg_proxy}
+
+    # ------------------------------------------------------------------ telegram (v2.9.0)
+    def tg_preset(self) -> str:
+        return "custom" if self.tg_key_own.isChecked() else "tdesktop"
+
+    def _tg_key_changed(self, *_args) -> None:
+        own = self.tg_key_own.isChecked()
+        self.tg_api_id.setEnabled(own)
+        self.tg_api_hash.setEnabled(own)
+        self.tg_key_warning.setVisible(not own)
+
+    def _update_tg_login_status(self) -> None:
+        if setup.telegram_logged_in():
+            self.tg_login_status.setText("✔ حساب تلگرام وارد شده است (نشست رمزشده روی این سرور).")
+            self.tg_login_status.setStyleSheet(f"color: {theme.SUCCESS_DARK};")
+            self.tg_login_button.setText("ورود دوباره…")
+        else:
+            self.tg_login_status.setText("هنوز وارد حساب تلگرام نشده‌اید.")
+            self.tg_login_status.setStyleSheet(f"color: {theme.WARNING_TEXT};")
+            self.tg_login_button.setText("ورود به حساب تلگرام…")
+
+    def telegram_problem(self) -> str:
+        channel = self.tg_channel.text().strip().lstrip("@") or DEFAULT_PRICE_CHANNEL
+        if not _CHANNEL_RE.match(channel):
+            return "نام کانال باید فقط حرف انگلیسی، عدد و _ باشد (۵ تا ۳۲ نویسه)."
+        api_id = to_english_digits(self.tg_api_id.text()).strip()
+        if self.tg_preset() == "custom":
+            if api_id and not api_id.isdigit():
+                return "api_id باید فقط عدد باشد."
+            api_hash = self.tg_api_hash.text().strip()
+            if api_hash and not re.fullmatch(r"[0-9a-fA-F]{32}", api_hash):
+                return "api_hash باید ۳۲ نویسهٔ ۰-۹ و a-f باشد."
+            saved = (self._current.secrets_set or {}) if self._current else {}
+            if not (api_id or saved.get("TG_API_ID")) or not (api_hash or saved.get("TG_API_HASH")):
+                return "برای «کلید خودم» هر دو مقدار api_id و api_hash لازم است."
+        proxy = self.tg_proxy.text().strip()
+        if proxy and not _PROXY_RE.match(proxy):
+            return "پراکسی باید پیوند tg://proxy?… یا https://t.me/proxy?… باشد."
+        return ""
+
+    def _open_tg_login(self) -> None:
+        problem = self.telegram_problem()
+        if problem:
+            widgets.error(self, "تلگرام", problem)
+            return
+        from .telegram_login import TelegramLoginDialog
+
+        custom = self.tg_preset() == "custom"
+        dialog = TelegramLoginDialog(
+            self, preset=self.tg_preset(),
+            api_id=to_english_digits(self.tg_api_id.text()).strip() if custom else "",
+            api_hash=self.tg_api_hash.text().strip() if custom else "",
+            proxy=self.tg_proxy.text().strip())
+        dialog.exec()
+        self._update_tg_login_status()
 
     # ------------------------------------------------------------------ helpers
     def _auth_changed(self) -> None:
@@ -676,6 +806,11 @@ class ServerSetupWizard(QWidget):
             except setup.SetupError as exc:
                 widgets.error(self, "شبکه", exc.message)
                 return
+        elif key == "telegram":
+            problem = self.telegram_problem()
+            if problem:
+                widgets.error(self, "تلگرام", problem)
+                return
         elif key == "run":
             if self._result:
                 self.completed.emit(*self._result)
@@ -738,9 +873,14 @@ class ServerSetupWizard(QWidget):
         for field_key, field in (("bale_token", self.bale_token),
                                  ("telegram_bot_token", self.telegram_token),
                                  ("tg_api_id", self.tg_api_id),
-                                 ("tg_api_hash", self.tg_api_hash)):
+                                 ("tg_api_hash", self.tg_api_hash),
+                                 ("tg_proxy", self.tg_proxy)):
             value = to_english_digits(field.text()).strip()
             extra[field_key] = value or None
+        # v2.9.0: the Telegram reader
+        extra["tg_reader_enabled"] = self.tg_enabled.isChecked()
+        extra["tg_api_preset"] = self.tg_preset()
+        extra["tg_price_channel"] = self.tg_channel.text().strip().lstrip("@") or DEFAULT_PRICE_CHANNEL
         return extra
 
     def _execute(self) -> None:

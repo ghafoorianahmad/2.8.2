@@ -206,7 +206,7 @@ LINK1 = f"tg://proxy?server=one.example&port=443&secret=dd{'ab' * 16}"
 LINK2 = f"https://t.me/proxy?server=two.example&port=8443&secret={'cd' * 16}"
 
 
-def test_weekly_collection_sends_links_from_text_entities_and_buttons(env):
+def test_daily_collection_tests_new_links_and_adds_only_working_ones(env):
     worker, tg, shop, _ = env
     tg.channels["ProxyChan"] = [
         fake_message(5, text=f"fast proxy {LINK1} enjoy"),
@@ -214,24 +214,151 @@ def test_weekly_collection_sends_links_from_text_entities_and_buttons(env):
         fake_message(7, text="x", button_urls=[LINK1, "https://example.com"]),
         fake_message(8, text="tg://proxy?server=bad&port=x&secret=zz"),
     ]
+    tg.dead_proxies.add(("one.example", 443))
     run(worker.ensure_connected())
-    assert run(worker.collect_tick()) == 2
-    assert shop.candidates == [{"links": [LINK1, LINK2], "source": "channel:ProxyChan"}]
+    assert run(worker.collect_tick()) == 1
+    body = shop.candidates[-1]
+    assert body["source"] == "channel:ProxyChan" and body["links"] == []
+    assert [t["link"] for t in body["tested"]] == [LINK2]
+    assert body["failed"] == [LINK1]
     assert json.loads(shop.state["tg_proxy_last_ids"]) == {"ProxyChan": 8}
-    # not due again for a week
+    assert worker.collect_info["tested"] == 2 and worker.collect_info["via"] == "account"
+    # tests used throw-away anonymous clients, never the shop's session
+    assert all(c.session_str == "" for c in tg.clients[1:])
+    # not due again for a day (the pool counts as full here)
+    shop.pool = [dict(pool_entry(i, f"p{i}.example"), last_ok_at="2026-10-12T08:00:00")
+                 for i in range(1, 6)]
     assert run(worker.collect_tick()) == 0
     assert len(shop.candidates) == 1
 
 
-def test_collection_due_after_the_interval(env, settings):
+def test_known_links_are_never_tested_again(env):
+    worker, tg, shop, _ = env
+    shop.known.add(LINK1)
+    tg.channels["ProxyChan"] = [fake_message(5, text=f"{LINK1} {LINK2}")]
+    run(worker.ensure_connected())
+    before = len(tg.clients)
+    assert run(worker.collect_tick()) == 1
+    assert len(tg.clients) == before + 1          # only LINK2 was tested
+    assert [t["link"] for t in shop.candidates[-1]["tested"]] == [LINK2]
+
+
+def test_testing_stops_when_the_pool_is_full(env, settings):
+    worker, tg, shop, _ = env
+    settings.pool_size = 1                       # 1 + 2 spare working proxies wanted
+    links = [f"tg://proxy?server=n{i}.example&port=443&secret=dd{'ab' * 16}" for i in range(6)]
+    tg.channels["ProxyChan"] = [fake_message(9, text=" ".join(links))]
+    run(worker.ensure_connected())
+    assert run(worker.collect_tick()) == 3
+    assert len(shop.candidates[-1]["tested"]) == 3
+
+
+def test_collection_without_login_uses_the_web_preview(env, settings, monkeypatch):
+    worker, tg, shop, _ = env
+    from app import webpreview
+
+    settings.web_preview = True
+    async def fake_fetch(channel, **_):
+        assert channel == "ProxyChan"
+        return [LINK2]
+    monkeypatch.setattr(webpreview, "fetch_links", fake_fetch)
+    assert not worker.tg.connected
+    assert run(worker.collect_tick()) == 1
+    assert worker.collect_info["via"] == "web"
+    assert worker._next["health"] == 0.0         # try to connect right away
+
+
+def test_web_preview_page_parsing():
+    from app.webpreview import links_in_page
+
+    page = ('<a href="tg://proxy?server=a.example&amp;port=443&amp;secret=dd' + "ab" * 16 + '">'
+            'x</a> <a href="https://t.me/proxy?server=b.example&amp;port=1&amp;secret='
+            + "cd" * 16 + '">y</a> <a href="https://t.me/ProxyMTProto">z</a>')
+    links = links_in_page(page)
+    assert links[0].startswith("https://t.me/proxy?server=b.example&port=1")   # newest first
+    assert links[1] == "tg://proxy?server=a.example&port=443&secret=dd" + "ab" * 16
+    assert len(links) == 2
+
+
+def test_web_preview_fetch_errors_are_preview_errors():
+    import httpx
+    import pytest
+
+    from app import webpreview
+
+    def factory():
+        return httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(403)))
+    with pytest.raises(webpreview.PreviewError):
+        run(webpreview.fetch_links("ProxyMTProto", client_factory=factory))
+
+    def ok_factory():
+        return httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, text=f"<a href='{LINK1}'>p</a>")))
+    assert run(webpreview.fetch_links("ProxyMTProto", client_factory=ok_factory)) == [LINK1]
+
+
+def test_collection_due_daily_and_hourly_while_short(env, settings):
     worker, _, _, _ = env
     now = datetime(2026, 10, 12, tzinfo=timezone.utc)
     worker._now = lambda: now
     assert worker.collect_due("")
-    assert not worker.collect_due((now - timedelta(days=6)).isoformat())
-    assert worker.collect_due((now - timedelta(days=7)).isoformat())
+    assert not worker.collect_due((now - timedelta(hours=23)).isoformat(), healthy=5)
+    assert worker.collect_due((now - timedelta(hours=24)).isoformat(), healthy=5)
+    assert worker.collect_due((now - timedelta(minutes=61)).isoformat(), healthy=2)
+    assert not worker.collect_due((now - timedelta(minutes=30)).isoformat(), healthy=2)
     settings.proxy_channels = []
     assert not worker.collect_due("")
+
+
+def test_flood_wait_pauses_every_job(env):
+    worker, tg, shop, clock = env
+    shop.pool = [pool_entry(1, "a.example")]
+    run(worker.ensure_connected())
+
+    class FloodWaitError(Exception):
+        seconds = 120
+
+    async def flooding(*a, **k):
+        raise FloodWaitError()
+    worker.price_tick = flooding
+    worker._next["health"] = clock.t + 999
+    run(worker.step())
+    assert worker._paused_until == clock.t + 125
+    assert "120" in worker.last_error
+    calls = len(tg.calls)
+    clock.t += 60
+    run(worker.step())                      # still paused: nothing at all
+    assert len(tg.calls) == calls
+
+
+def test_price_download_failures_alert_the_owner(env):
+    worker, tg, shop, _ = env
+    shop.state["tg_price_last_id"] = "1"
+    _channel(tg, [fake_message(2, pdf=PDF)])
+    run(worker.ensure_connected())
+
+    async def broken(*a, **k):
+        raise ConnectionError("dropped")
+    worker.tg.download = broken
+    for _ in range(3):
+        try:
+            run(worker.price_tick())
+        except ConnectionError:
+            pass
+    assert shop.alerts == ["telegram_pricelist_error"]
+    assert worker.price_info["outcome"] == "download_failed"
+    assert shop.state["tg_price_last_id"] == "1"      # tried again next time
+
+
+def test_oversized_pdf_alerts_once(env, settings):
+    worker, tg, shop, _ = env
+    settings.pdf_max_bytes = 10
+    shop.state["tg_price_last_id"] = "1"
+    _channel(tg, [fake_message(2, pdf=b"%PDF" + b"x" * 50)])
+    run(worker.ensure_connected())
+    run(worker.price_tick())
+    assert shop.alerts == ["telegram_pricelist_error"]
+    assert worker.price_info["outcome"] == "too_large"
 
 
 # ---- loop ---------------------------------------------------------------------------------
@@ -244,6 +371,8 @@ def test_step_runs_due_jobs_and_publishes_status(env):
     status = json.loads(shop.state["tg_status"])
     assert status["connected"] and status["proxy"] == "a.example:443 (dd)"
     assert "secret" not in shop.state["tg_status"]
+    assert status["price"]["ref"].endswith("/3") and status["pool_size"] == 5
+    assert "h" * 32 not in shop.state["tg_status"]
     # 10 minutes later: health is due again, price is not
     clock.t += 600
     run(worker.step())

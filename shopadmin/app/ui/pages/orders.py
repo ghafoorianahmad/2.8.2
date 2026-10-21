@@ -950,7 +950,9 @@ class PaymentInfoDialog(widgets.ResponsiveDialog):
         form.setVerticalSpacing(8)
         self.inputs: dict[str, QLineEdit] = {}
         for key, caption, hint in PAYMENT_FIELDS:
-            field = QLineEdit()
+            # v2.9.0: card / account / Sheba: the cursor goes to the first empty place
+            field = widgets.MaskedLineEdit() if key in ("card_number", "account_number", "sheba") \
+                else QLineEdit()
             field.setPlaceholderText(hint)
             field.setMinimumHeight(38)
             field.setMaxLength(300 if key == "note" else 80)

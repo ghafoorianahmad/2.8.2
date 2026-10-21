@@ -1,5 +1,10 @@
 # shoptg on the shop server: step-by-step guide
 
+> **v2.9.0: not needed any more.** The reader is part of `ShopSystem.exe`. On the server open
+> «تنظیمات سرور» (desktop shortcut of the server package, as administrator) › step «تلگرام»: switch
+> it on, choose the key, enter a first proxy and press «ورود به حساب تلگرام…» (phone → code → 2FA).
+> The steps below are only for the old separate install (`SHOPTG_DIR`).
+
 This is for the one-time Telegram login on the **shop server** (Windows 10), plus a read-only test.
 It does not need shopapi. Nothing here posts to Telegram, joins a channel or changes the accounting database.
 

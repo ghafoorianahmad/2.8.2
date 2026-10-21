@@ -905,6 +905,18 @@ class FakeShopApi:
                     "bale": {"running": True, "last_ok_at": TS, "consecutive_errors": 0}}}},
                 "counts": {"customers_pending": 2, "orders_awaiting_payment": 1,
                            "orders_receipt_uploaded": 3, "staff": len(self.staff)},
+                # v2.9.0: the bundled Telegram reader and its proxy pool
+                "telegram_worker": {
+                    "connected": True, "proxy": "1.2.3.4:443 (ee)", "login_required": False,
+                    "error": "", "at": TS, "api_preset": "tdesktop",
+                    "price_channel": "AbrishamiiPhoneMashhad", "pool_size": 5,
+                    "price": {"checked_at": TS, "ref": "t.me/AbrishamiiPhoneMashhad/812",
+                              "outcome": "active", "at": TS},
+                    "collect": {"at": TS, "found": 40, "tested": 9, "added": 3,
+                                "via": "account"}},
+                "proxy_pool": {"target": 5, "working": 3, "active": 4, "main": 1,
+                               "probation": 3, "manual": 1, "retired": 6, "disabled": 0,
+                               "all_failing": False},
             })
         if path == "/admin/server/settings" and request.method == "GET":
             out = {}

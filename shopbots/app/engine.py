@@ -164,6 +164,8 @@ OWNER_EVENT_TEXTS = {
     "proxies_all_dead": "PROXIES_DEAD_NOTICE",
     "telegram_login_required": "TG_LOGIN_NOTICE",
     "telegram_unreachable": "TG_UNREACHABLE_NOTICE",
+    # v2.9.0: a price-list PDF of the channel could not be downloaded
+    "telegram_pricelist_error": "TG_PRICELIST_ERROR_NOTICE",
     "price_inquiry": "INQUIRY_NOTICE",
     # v2.5.0: never deleted in the accounting DB; the owner decides there
     "accounting_duplicate_order": "DUPLICATE_ORDER_NOTICE",

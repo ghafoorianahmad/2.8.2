@@ -80,7 +80,7 @@ def test_current_config_never_returns_secrets(server_folder):
     assert current.allowed_databases == ["hesab5 t", "hesab5"]
     assert current.write_databases == ["hesab5 t"]
     assert current.secrets_set == {"BALE_TOKEN": True, "TELEGRAM_BOT_TOKEN": False,
-                                   "TG_API_ID": True, "TG_API_HASH": False}
+                                   "TG_API_ID": True, "TG_API_HASH": False, "TG_PROXY": False}
     assert "S3cret" not in repr(current) and "abcdefgh" not in repr(current)
 
 
@@ -363,8 +363,8 @@ def test_theme_choice_is_in_everyones_preferences(ui_context, admin_qapp, monkey
 
     monkeypatch.setattr(widgets, "info", lambda *a, **k: None)
     dialog = NotificationDialog(make_context_with_role(ui_context, ROLE_OPERATOR))
-    assert [dialog.theme_combo.itemData(i) for i in range(dialog.theme_combo.count())] == \
-        ["light", "dark", "system"]
-    dialog.theme_combo.setCurrentIndex(1)
+    # v2.9.0: option cards (palette × mode × effects) instead of one combo box
+    assert list(dialog.appearance.cards["mode"]) == ["light", "dark", "system"]
+    dialog.appearance.select(mode="dark")
     dialog.save()
     assert ui_context.store.get_setting("theme_mode") == "dark"

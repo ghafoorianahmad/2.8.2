@@ -438,9 +438,14 @@ class CurrentConfig:
     allowed_databases: list[str] | None = None
     write_databases: list[str] | None = None
     secrets_set: dict[str, bool] | None = None
+    #: v2.9.0: the Telegram reader (bundled in ShopSystem)
+    tg_reader_enabled: bool = False
+    tg_api_preset: str = "tdesktop"
+    tg_price_channel: str = ""
 
 
-SECRET_KEYS = ("BALE_TOKEN", "TELEGRAM_BOT_TOKEN", "TG_API_ID", "TG_API_HASH")
+#: v2.9.0: TG_PROXY (the manual first proxy) carries a proxy secret: never shown
+SECRET_KEYS = ("BALE_TOKEN", "TELEGRAM_BOT_TOKEN", "TG_API_ID", "TG_API_HASH", "TG_PROXY")
 
 
 def read_current_config() -> Optional[CurrentConfig]:
@@ -481,6 +486,10 @@ def read_current_config() -> Optional[CurrentConfig]:
         allowed_databases=_split_names(get("ACCOUNTING_ALLOWED_DATABASES")),
         write_databases=_split_names(get("ACCOUNTING_WRITE_DATABASES")),
         secrets_set={key: bool(get(key)) for key in SECRET_KEYS},
+        tg_reader_enabled=get("TG_READER_ENABLED").lower() in ("1", "true", "yes", "on"),
+        tg_api_preset=(get("TG_API_PRESET").lower()
+                       or ("custom" if get("TG_API_ID") else "tdesktop")),
+        tg_price_channel=get("TG_PRICE_CHANNEL"),
     )
 
 
@@ -503,3 +512,93 @@ def existing_config_port() -> Optional[int]:
         return int(dotenv_values(env).get("API_PORT") or DEFAULT_PORT)
     except (ValueError, PermissionError):
         return None
+
+
+# --------------------------------------------------------------------------
+# v2.9.0: Telegram reader (login from «تنظیمات سرور»)
+# --------------------------------------------------------------------------
+def telegram_session_file() -> Path:
+    return data_dir() / "shoptg" / "tg_session.dpapi"
+
+
+def telegram_logged_in() -> bool:
+    """A saved (encrypted) Telegram session exists on this server."""
+    try:
+        return telegram_session_file().is_file()
+    except OSError:
+        return False
+
+
+#: events after which the login waits for the next answer from the person
+LOGIN_FINAL_EVENTS = ("code_sent", "password_needed", "done", "error")
+
+
+class TelegramLogin:
+    """``ShopSystem.exe --tg-login``: the login of the shop's Telegram reader
+    account, in JSON lines over the process pipes. The phone number, the code
+    and the 2FA password go only through stdin (never a command line, never a
+    file); the server program stores the session encrypted (DPAPI + ACL).
+    Blocking calls: run them on a worker thread."""
+
+    def __init__(self, *, popen=subprocess.Popen) -> None:
+        self._popen = popen
+        self.process = None
+
+    def open(self) -> dict:
+        command = server_command() + ["--data-dir", str(data_dir()), "--tg-login"]
+        try:
+            self.process = self._popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=subprocess.DEVNULL,
+                                       creationflags=CREATE_NO_WINDOW, env=_server_env())
+        except OSError as exc:
+            raise SetupError("برنامهٔ سرور برای ورود به تلگرام اجرا نشد.",
+                             type(exc).__name__) from exc
+        return self._read()
+
+    def _read(self) -> dict:
+        if self.process is None or self.process.stdout is None:
+            raise SetupError("ارتباط با برنامهٔ سرور قطع شد.")
+        while True:
+            raw = self.process.stdout.readline()
+            if not raw:
+                raise SetupError("برنامهٔ ورود به تلگرام بسته شد. دوباره امتحان کنید.")
+            line = raw.decode("utf-8", errors="replace").strip()
+            if line.startswith("{"):
+                try:
+                    return json.loads(line)
+                except ValueError:
+                    continue
+
+    def send(self, payload: dict) -> list[dict]:
+        """Send one command; the events until the next question or the end."""
+        if self.process is None or self.process.stdin is None:
+            raise SetupError("ارتباط با برنامهٔ سرور قطع شد.")
+        try:
+            self.process.stdin.write((json.dumps(payload, ensure_ascii=True) + "\n").encode("ascii"))
+            self.process.stdin.flush()
+        except OSError as exc:
+            raise SetupError("ارتباط با برنامهٔ سرور قطع شد.", type(exc).__name__) from exc
+        events = []
+        while True:
+            event = self._read()
+            events.append(event)
+            if event.get("event") in LOGIN_FINAL_EVENTS:
+                return events
+
+    def close(self) -> None:
+        process, self.process = self.process, None
+        if process is None:
+            return
+        try:
+            if process.poll() is None and process.stdin is not None:
+                process.stdin.write(b'{"cmd": "cancel"}\n')
+                process.stdin.flush()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=5)
+        except Exception:  # noqa: BLE001 - still running: stop it
+            try:
+                process.kill()
+            except OSError:
+                pass

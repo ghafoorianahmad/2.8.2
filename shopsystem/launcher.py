@@ -10,6 +10,11 @@ Modes
                                 the Telegram worker; each is restarted on its own
                                 when it crashes or asks for a restart.
     ShopSystem.exe --worker     the actual server (started by the supervisor).
+    ShopSystem.exe --tg-worker  v2.9.0: the bundled Telegram reader (price lists +
+                                proxy pool), started by the supervisor when
+                                ``TG_READER_ENABLED=true`` (and no ``SHOPTG_DIR``).
+    ShopSystem.exe --tg-login   v2.9.0: Telegram login over JSON lines on
+                                stdin/stdout, for «تنظیمات سرور» (administrator).
     ShopSystem.exe --install-service | --uninstall-service | --start-service |
                    --stop-service | --service-status   (administrator; JSON output)
     ShopSystem.exe --health-check [--timeout 90]   wait for /health (update.ps1)
@@ -556,11 +561,22 @@ def self_command() -> list[str]:
 
 
 class ChildSpec:
-    """One process the supervisor keeps running."""
+    """One process the supervisor keeps running. ``env_factory`` (v2.9.0) is asked
+    for a fresh environment at every start, so a restart sees new settings."""
 
     def __init__(self, name: str, label: str, command: list[str], *,
-                 env: dict, cwd: str | None = None) -> None:
+                 env: dict, cwd: str | None = None, env_factory=None) -> None:
         self.name, self.label, self.command, self.env, self.cwd = name, label, command, env, cwd
+        self.env_factory = env_factory
+
+    def current_env(self) -> dict:
+        if self.env_factory is not None:
+            try:
+                self.env = self.env_factory()
+            except Exception as exc:  # noqa: BLE001 - keep the last good environment
+                logging.getLogger("shopsystem.supervisor").warning(
+                    "%s: settings not re-read (%s)", self.name, type(exc).__name__)
+        return self.env
 
 
 def read_env_values() -> dict[str, str]:
@@ -572,28 +588,31 @@ def read_env_values() -> dict[str, str]:
     return {k: v for k, v in dotenv_values(Paths.env).items() if v is not None}
 
 
-def shoptg_spec(values: dict[str, str], *, run_mode: str) -> ChildSpec | None:
-    """The Telegram worker (``SHOPTG_DIR`` in ``.env`` = its install folder).
+#: v2.9.0: the server settings the Telegram reader may receive (nothing else:
+#: never the Bale / Telegram bot tokens or the database password).
+TG_ENV_KEYS = ("TG_API_PRESET", "TG_API_ID", "TG_API_HASH", "TG_PRICE_CHANNEL", "TG_PROXY",
+               "TG_PROXY_CHANNELS", "TG_PROXY_POOL_SIZE", "TG_PROXY_COLLECT_HOURS",
+               "TG_PROXY_TEST_MAX", "TG_PROXY_WEB_PREVIEW", "TG_ALLOW_DIRECT",
+               "TG_DEVICE_MODEL", "TG_SYSTEM_VERSION", "TG_APP_VERSION",
+               "TG_PRICE_INTERVAL_MIN")
 
-    It gets the plain system environment plus only what it needs from the
-    server: the local API address, the certificate to pin and its own key -
-    never the Bale token or the database password.
-    """
-    root = (values.get("SHOPTG_DIR") or "").strip()
-    if not root:
-        return None
-    python = Path(root) / ".venv" / "Scripts" / "python.exe"
-    if not python.exists():
-        logging.getLogger("shopsystem.supervisor").warning(
-            "SHOPTG_DIR is set but %s is missing - Telegram worker not started", python)
-        return None
+
+def tg_reader_enabled(values: dict[str, str]) -> bool:
+    return _truthy(values.get("TG_READER_ENABLED", "false"))
+
+
+def shoptg_env(values: dict[str, str], *, run_mode: str, bundled: bool) -> dict[str, str]:
+    """The Telegram reader's environment: the plain system environment plus only
+    what it needs from the server: the local API address, the certificate to
+    pin, its own key and the ``TG_*`` settings."""
     tls = _truthy(values.get("API_TLS", "false"))
     port = (values.get("API_PORT") or "").strip() or "8000"
-    env = {k: v for k, v in os.environ.items() if not k.startswith("SHOPSERVER_")}
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("SHOPSERVER_") and not k.startswith("TG_")}
     env["SHOPAPI_BASE_URL"] = f"{'https' if tls else 'http'}://127.0.0.1:{port}"
     env["WORKER_API_KEY"] = values.get("WORKER_API_KEY", "")
-    # v2.8.1: api_id / api_hash may be set in «تنظیمات سرور» instead of shoptg's own .env
-    for key in ("TG_API_ID", "TG_API_HASH"):
+    # v2.8.1 / v2.9.0: the reader's settings come from «تنظیمات سرور»
+    for key in TG_ENV_KEYS:
         if (values.get(key) or "").strip():
             env[key] = values[key].strip()
     env["PYTHONIOENCODING"] = "utf-8"
@@ -605,7 +624,75 @@ def shoptg_spec(values: dict[str, str], *, run_mode: str) -> ChildSpec | None:
         from winservice import SERVICE_ACCOUNT
 
         env["TG_SERVICE_ACCOUNT"] = SERVICE_ACCOUNT
-    return ChildSpec("shoptg", "کارگر تلگرام", [str(python), "-m", "app.main"], env=env, cwd=root)
+    if bundled:
+        env["TG_DATA_DIR"] = str(Paths.data_dir / "shoptg")
+        # the service may write here (the session folder is read-only for it)
+        env["TG_LOG_FILE"] = str(Paths.data_dir / "shoptg.log")
+        env["SHOPTG_NO_DOTENV"] = "1"
+    return env
+
+
+def shoptg_spec(values: dict[str, str], *, run_mode: str) -> ChildSpec | None:
+    """The Telegram reader: the old separate install (``SHOPTG_DIR`` = its folder,
+    its own Python) or, v2.9.0, the copy bundled in this program
+    (``TG_READER_ENABLED=true``)."""
+    root = (values.get("SHOPTG_DIR") or "").strip()
+    if root:
+        python = Path(root) / ".venv" / "Scripts" / "python.exe"
+        if not python.exists():
+            logging.getLogger("shopsystem.supervisor").warning(
+                "SHOPTG_DIR is set but %s is missing - Telegram worker not started", python)
+            return None
+        env = shoptg_env(values, run_mode=run_mode, bundled=False)
+        return ChildSpec("shoptg", "کارگر تلگرام", [str(python), "-m", "app.main"], env=env,
+                         cwd=root)
+    if not tg_reader_enabled(values):
+        return None
+    env = shoptg_env(values, run_mode=run_mode, bundled=True)
+    return ChildSpec("shoptg", "کارگر تلگرام",
+                     [*self_command(), "--tg-worker", "--data-dir", str(Paths.data_dir)], env=env,
+                     env_factory=lambda: shoptg_env(read_env_values(), run_mode=run_mode,
+                                                    bundled=True))
+
+
+def _shoptg(module: str):
+    """A module of the Telegram reader: ``shoptg_app`` in the build, ``../shoptg/app``
+    when run from the source tree."""
+    import importlib
+    import importlib.util
+
+    if importlib.util.find_spec("shoptg_app") is None and not getattr(sys, "frozen", False):
+        root = APP_DIR.parent / "shoptg"
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        return importlib.import_module(f"app.{module}")
+    return importlib.import_module(f"shoptg_app.{module}")
+
+
+def run_tg_worker() -> int:
+    """``--tg-worker``: the bundled Telegram reader (its settings come from the
+    supervisor; a manual start reads them from the server's ``.env``)."""
+    if os.environ.get("SHOPTG_NO_DOTENV") != "1":
+        os.environ.update(shoptg_env(read_env_values(), run_mode="task", bundled=True))
+    return int(_shoptg("main").main(["--log-level", os.environ.get("LOG_LEVEL", "INFO")]) or 0)
+
+
+def run_tg_login() -> int:
+    """``--tg-login``: the Telegram login of «تنظیمات سرور» (JSON lines on stdin /
+    stdout, see shoptg ``login_flow``). The session is readable by the service
+    account only when the service exists already (else install grants it)."""
+    import winservice
+
+    run_mode = "service" if _service_installed(winservice) else "task"
+    os.environ.update(shoptg_env(read_env_values(), run_mode=run_mode, bundled=True))
+    return int(_shoptg("main").main(["--login-pipe"]) or 0)
+
+
+def _service_installed(winservice) -> bool:
+    try:
+        return bool(winservice.exists())
+    except Exception:  # noqa: BLE001 - not Windows / sc.exe missing
+        return False
 
 
 def child_specs(values: dict[str, str], *, run_mode: str) -> list[ChildSpec]:
@@ -671,7 +758,7 @@ def supervise_child(spec: ChildSpec, stop: threading.Event, *, job=None,
     while not stop.is_set():
         started = time.monotonic()
         try:
-            process = popen(spec.command, env=spec.env, cwd=spec.cwd, creationflags=flags,
+            process = popen(spec.command, env=spec.current_env(), cwd=spec.cwd, creationflags=flags,
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
         except OSError as exc:
@@ -964,6 +1051,11 @@ SETUP_FIELDS = {
     "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
     "tg_api_id": "TG_API_ID",
     "tg_api_hash": "TG_API_HASH",
+    # v2.9.0: the Telegram reader (price lists + proxy pool), bundled in ShopSystem
+    "tg_reader_enabled": "TG_READER_ENABLED",
+    "tg_api_preset": "TG_API_PRESET",
+    "tg_price_channel": "TG_PRICE_CHANNEL",
+    "tg_proxy": "TG_PROXY",
     "firewall_allowed_ips": "FIREWALL_ALLOWED_IPS",
     "allowed_databases": "ACCOUNTING_ALLOWED_DATABASES",
     "write_databases": "ACCOUNTING_WRITE_DATABASES",
@@ -1096,6 +1188,10 @@ def main(argv: list[str] | None = None) -> int:
             text = str(exc).splitlines()[0][:300] if str(exc) else ""
             _emit({"ok": False, "error": type(exc).__name__, "message": f"{type(exc).__name__}: {text}"})
             return 1
+    if "--tg-login" in args:
+        return run_tg_login()
+    if "--tg-worker" in args:
+        return run_tg_worker()
     if "--fingerprint" in args:
         from server_tls import ensure_certificate
 

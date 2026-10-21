@@ -24,7 +24,9 @@ from tests.test_ui import make_context_with_role, ui_context  # noqa: F401 - fix
 APP_DIR = Path(__file__).resolve().parent.parent / "app"
 #: Only the server setup (run by ShopServerSetup, left out of the client
 #: build) may know about the server program.
-SERVER_ONLY = {APP_DIR / "server_setup.py", APP_DIR / "ui" / "server_setup_wizard.py"}
+SERVER_ONLY = {APP_DIR / "server_setup.py", APP_DIR / "ui" / "server_setup_wizard.py",
+               # v2.9.0: the Telegram login of «تنظیمات سرور» (left out of the client build)
+               APP_DIR / "ui" / "telegram_login.py"}
 
 
 def _pump(app, rounds: int = 60) -> None:

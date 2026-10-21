@@ -13,7 +13,6 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
@@ -175,29 +174,28 @@ class SettingsPage(BasePage):
         return panel
 
     def _build_appearance_panel(self) -> QWidget:
-        """v2.7.0: light / dark look (Phone Bridge palette), per computer."""
+        """v2.9.0: palette × light/dark × «جلوه‌ها», per computer (also in
+        «اعلان‌ها و ظاهر» for every user)."""
+        from ..appearance import AppearancePicker
+
         panel = widgets.Panel("ظاهر برنامه (همین رایانه)")
+        self.appearance = AppearancePicker(self.context.store)
+        panel.body.addWidget(self.appearance)
         row = QHBoxLayout()
-        row.addWidget(widgets.label("رنگ‌بندی:"))
-        self.theme_combo = QComboBox()
-        for key, text in (("light", "روشن"), ("dark", "تیره"), ("system", "مطابق ویندوز")):
-            self.theme_combo.addItem(text, key)
-        current = str(self.context.store.get_setting("theme_mode", "light") or "light")
-        self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(current)))
-        row.addWidget(self.theme_combo)
         row.addStretch(1)
         save = widgets.button("ذخیره", icon_name="save", variant="primary",
                               on_click=self._save_appearance)
         row.addWidget(save)
         panel.body.addLayout(row)
-        panel.body.addWidget(widgets.label(
-            "رنگ‌بندی تازه از اجرای بعدی برنامه نشان داده می‌شود.", name="Muted", wrap=True))
         return panel
 
     def _save_appearance(self) -> None:
-        mode = str(self.theme_combo.currentData() or "light")
-        self.context.store.set_setting("theme_mode", mode)
-        self.notify_success("ذخیره شد؛ برنامه را یک بار ببندید و دوباره باز کنید.")
+        from ..appearance import offer_restart
+
+        if self.appearance.save():
+            offer_restart(self, self.context)
+        else:
+            self.notify_success("ذخیره شد.")
 
     def _build_notifications_panel(self) -> QWidget:
         panel = widgets.Panel("اعلان‌ها (همین رایانه)")
