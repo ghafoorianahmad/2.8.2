@@ -393,6 +393,8 @@ CLOSED_ORDER_STATUSES = ("rejected", "cancelled", "expired")
 
 #: cancel_reason of an order whose receipt did not arrive in time.
 CANCEL_RECEIPT_TIMEOUT = "receipt_timeout"
+#: cancel_reason of an order the customer cancelled in the bot (v2.6.2).
+CANCEL_BY_CUSTOMER = "customer"
 
 # Orders in these statuses hold a stock reservation.
 RESERVING_STATUSES = ("awaiting_payment", "receipt_uploaded")
@@ -434,6 +436,17 @@ class OwnDB:
             if moved is not None:
                 self._conn.execute("UPDATE staff_users SET perm_grant=?, perm_revoke=? WHERE id=?",
                                    (moved[0], moved[1], row["id"]))
+        # v2.8.3: the daily-work sections are always on (no tick): their old ticks go.
+        from .staff import strip_always
+
+        for row in self._conn.execute(
+                "SELECT id, perm_grant, perm_revoke FROM staff_users").fetchall():
+            grant, revoke = strip_always(row["perm_grant"]), strip_always(row["perm_revoke"])
+            if grant is not None or revoke is not None:
+                self._conn.execute(
+                    "UPDATE staff_users SET perm_grant=?, perm_revoke=? WHERE id=?",
+                    (row["perm_grant"] if grant is None else grant,
+                     row["perm_revoke"] if revoke is None else revoke, row["id"]))
 
     # ---- low level ----
     def _fetchone(self, sql: str, params: tuple = ()) -> dict | None:
@@ -993,10 +1006,11 @@ class OwnDB:
         with self._lock:
             rows = self._fetchall(
                 "SELECT user_id FROM orders WHERE owner_id=? OR (owner_id IS NULL AND "
-                "(status IN ('awaiting_payment','receipt_uploaded') OR (status IN "
-                "('approved','written') AND shipped_at IS NULL))) "
+                "archived_at IS NULL AND status IN ('awaiting_payment','receipt_uploaded') "
+                "AND shipped_at IS NULL) "
                 "UNION SELECT user_id FROM item_requests WHERE owner_id=? OR "
-                "(owner_id IS NULL AND status <> 'done')", (staff_id, staff_id))
+                "(owner_id IS NULL AND archived_at IS NULL AND status <> 'done')",
+                (staff_id, staff_id))
         return {int(r["user_id"]) for r in rows if r["user_id"] is not None}
 
     def set_owner(self, target_type: str, target_id: int, staff_id: int | None) -> None:
@@ -1005,6 +1019,20 @@ class OwnDB:
             self._conn.execute(f"UPDATE {table} SET owner_id=?, owner_at=? WHERE id=?",
                                (staff_id, now_iso(), target_id))
             self._commit()
+
+    def open_owned(self, staff_id: int) -> dict[str, list[dict]]:
+        """v2.8.3: the unfinished orders / requests of one staff member (for
+        «انتقال همهٔ کارهای باز»)."""
+        marks = ",".join("?" for _ in CLOSED_ORDER_STATUSES)
+        with self._lock:
+            orders = self._fetchall(
+                "SELECT id, user_id, owner_id FROM orders WHERE owner_id=? AND archived_at IS NULL "
+                f"AND shipped_at IS NULL AND status NOT IN ({marks}) ORDER BY id",
+                (staff_id, *CLOSED_ORDER_STATUSES))
+            requests = self._fetchall(
+                "SELECT id, user_id, owner_id FROM item_requests WHERE owner_id=? "
+                "AND archived_at IS NULL AND status <> 'done' ORDER BY id", (staff_id,))
+        return {"order": orders, "request": requests}
 
     def staff_names(self, ids) -> dict[int, str]:
         wanted = sorted({int(i) for i in ids if i is not None})
@@ -1033,10 +1061,11 @@ class OwnDB:
             if mine_only or archived:
                 clauses.append("o.owner_id=?")
             else:
-                # v2.8.2: their own + new orders nobody has taken yet
-                clauses.append("(o.owner_id=? OR (o.owner_id IS NULL AND (o.status IN "
-                               "('awaiting_payment','receipt_uploaded') OR (o.status IN "
-                               "('approved','written') AND o.shipped_at IS NULL))))")
+                # v2.8.3: their own + OPEN orders nobody has taken yet (finished or
+                # accepted ones without an owner are the manager's only)
+                clauses.append("(o.owner_id=? OR (o.owner_id IS NULL AND o.status IN "
+                               "('awaiting_payment','receipt_uploaded') "
+                               "AND o.shipped_at IS NULL))")
             params.append(viewer_id)
         if accounting_db:
             clauses.append("lower(trim(COALESCE(o.accounting_db,''))) = lower(trim(?))")
@@ -1103,6 +1132,25 @@ class OwnDB:
             self._commit()
         return {"orders": int(orders), "requests": int(requests)}
 
+    def archive_abandoned(self, cutoff: str) -> dict[str, int]:
+        """v2.8.3 (nightly): orders nobody took that the customer cancelled or that
+        lapsed (no receipt in time / expired), and the requests of such orders
+        nobody took, go to the archive. Nothing is deleted."""
+        ts = now_iso()
+        abandoned = ("owner_id IS NULL AND archived_at IS NULL AND updated_at<=? AND "
+                     "(status='expired' OR (status='cancelled' AND cancel_reason IN (?, ?)))")
+        params = (cutoff, CANCEL_BY_CUSTOMER, CANCEL_RECEIPT_TIMEOUT)
+        with self._lock:
+            requests = self._conn.execute(
+                "UPDATE item_requests SET archived_at=? WHERE archived_at IS NULL AND "
+                "owner_id IS NULL AND order_id IN (SELECT id FROM orders WHERE "
+                + abandoned + ")", (ts, *params)).rowcount
+            orders = self._conn.execute(
+                "UPDATE orders SET archived_at=? WHERE " + abandoned,
+                (ts, *params)).rowcount
+            self._commit()
+        return {"orders": int(orders), "requests": int(requests)}
+
     # ---- activity log (v2.8.0) ----
     def log_activity(self, *, staff_id: int | None, actor: str, action: str, target_type: str,
                      target_id: int | None, customer_id: int | None = None,
@@ -1119,9 +1167,14 @@ class OwnDB:
     def list_activity(self, *, staff_id: int | None = None, customer_id: int | None = None,
                       date_from: str | None = None, date_to: str | None = None,
                       targets: list[tuple[str, int]] | None = None,
-                      limit: int = 500) -> list[dict]:
+                      own_only: bool = False, limit: int = 500) -> list[dict]:
+        """``own_only`` (v2.8.3): only what ``staff_id`` did themselves (not what a
+        colleague handed to them)."""
         clauses, params = [], []
-        if staff_id is not None:
+        if staff_id is not None and own_only:
+            clauses.append("a.staff_id=?")
+            params.append(staff_id)
+        elif staff_id is not None:
             clauses.append("(a.staff_id=? OR a.to_staff_id=?)")
             params += [staff_id, staff_id]
         if customer_id is not None:

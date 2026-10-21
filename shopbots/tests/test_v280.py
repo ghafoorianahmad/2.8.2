@@ -129,7 +129,7 @@ def test_confirmed_purchase_request_asks_for_payment(env, bot_apis, shopapi):
                                              "bank": "ملت"}
         shopapi.add_event("order_payment_info", 7)
         await engine.notify_customers_from_events()
-        body = bot_apis["bale"].last_text(CUSTOMER_CHAT)
+        body = bot_apis["bale"].last_text(CUSTOMER_CHAT).replace("‎", "")
         assert "6037-0000-1111-2222" in body and "بانک: ملت" in body
         assert "شبا" not in body                          # empty fields are left out
         assert "ocx:7" in _callbacks(bot_apis["bale"], CUSTOMER_CHAT)

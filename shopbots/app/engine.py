@@ -10,6 +10,7 @@ produced only by `utils.log_event` (platform, update id, event type).
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -131,6 +132,8 @@ CALLBACK_ARG_COUNTS: dict[str, int] = {
     "pbv": 2,
     "snot": 0,
     "psl": 0,
+    # v2.8.3: «مرحلهٔ قبل» (one screen back, the earlier choices kept)
+    "back": 0,
 }
 ADMIN_ACTIONS = frozenset({"addu", "adru", "adap", "adrp", "adsug", "adst"})
 #: Screens anyone may open, even before registration is approved.
@@ -178,6 +181,8 @@ PAYMENT_INFO_LINES = (("card_number", "PAYMENT_INFO_CARD"),
                       ("account_number", "PAYMENT_INFO_ACCOUNT"),
                       ("sheba", "PAYMENT_INFO_SHEBA"), ("holder", "PAYMENT_INFO_HOLDER"),
                       ("bank", "PAYMENT_INFO_BANK"), ("note", "PAYMENT_INFO_NOTE"))
+#: v2.8.3: numbers that must read left to right in the customer's message.
+LTR_PAYMENT_FIELDS = frozenset({"card_number", "account_number", "sheba"})
 #: v2.8.0: sales state the sweep saw last ("1" open / "0" closed) for the watchers.
 SALES_SEEN_KEY = "sales_last_open"
 #: shopapi detail of a refused cart item: "Product <code> <reason>".
@@ -195,6 +200,25 @@ DEFAULT_RECEIPT_MINUTES = 30
 EVENT_CURSOR_KEY = "shopapi_event_cursor"
 MAX_CALLBACK_LEN = 64
 MAX_CALLBACK_ARG = 1_000_000_000
+#: v2.8.3: «مرحلهٔ قبل». Every customer screen says which screen it is (``id``) and
+#: how to draw it again (``cb``: a callback, or an internal ``@…`` step); the
+#: chat's screens are kept (with the conversation data of each) in the bot's kv
+#: store, so going back restores the earlier choices exactly.
+NAV_ROOT = "__root__"
+NAV_MAX = 15
+#: Unicode LEFT-TO-RIGHT MARK: card / account / Sheba numbers keep their order
+#: inside a right-to-left message (v2.8.3: they arrived reversed).
+LRM = "\u200e"
+
+
+def ltr(value: str) -> str:
+    """A number like 6037-1234-5678-1234 shown left to right in any client: an
+    LRM around it and around every separator (each separator is then between
+    two left-to-right marks and cannot flip the groups)."""
+    out = []
+    for ch in str(value):
+        out.append(f"{LRM}{ch}{LRM}" if not ch.isalnum() else ch)
+    return f"{LRM}{''.join(out)}{LRM}"
 
 
 def variant_label(color: dict) -> str:
@@ -465,17 +489,133 @@ class BotEngine:
         state: str | None = None,
         data: dict | None = None,
         edit_message_id=None,
+        screen=None,
     ):
         current_state, current_data = self.store.get_conversation(platform, chat_id)
-        merged = self._with_labels(data if data is not None else current_data, rows)
-        self.store.set_conversation(
-            platform, chat_id, state if state is not None else current_state, merged
-        )
+        new_state = state if state is not None else current_state
+        new_data = data if data is not None else current_data
+        rows = self._nav_rows(platform, chat_id, rows, screen, new_state, new_data)
+        merged = self._with_labels(new_data, rows)
+        self.store.set_conversation(platform, chat_id, new_state, merged)
         markup = self._markup(adapter, rows)
         body = self._flatten(text, markup, rows)
         if edit_message_id is not None:
             return await self._edit_text(adapter, chat_id, edit_message_id, body, markup)
         return await self._send_text(adapter, chat_id, body, markup)
+
+    # ================= «مرحلهٔ قبل» (v2.8.3) ===================================
+    @staticmethod
+    def _nav_key(platform: str, chat_id) -> str:
+        return f"nav:{platform}:{chat_id}"
+
+    def _nav_load(self, platform: str, chat_id) -> list[dict]:
+        try:
+            raw = json.loads(self.store.get_value(self._nav_key(platform, chat_id)) or "[]")
+        except (TypeError, ValueError):
+            return []
+        return [e for e in raw if isinstance(e, dict)] if isinstance(raw, list) else []
+
+    def _nav_save(self, platform: str, chat_id, nav: list[dict]) -> None:
+        self.store.set_value(self._nav_key(platform, chat_id),
+                             json.dumps(nav[-NAV_MAX:], ensure_ascii=False))
+
+    def _nav_rows(self, platform: str, chat_id, rows, screen, state: str, data: dict):
+        """Record this screen and, when there is an earlier one, put «مرحلهٔ قبل»
+        next to «منوی اصلی» (screens without «منوی اصلی» are left alone).
+        ``screen``: NAV_ROOT (the main menu: history starts again), ``(id, cb)``
+        or ``(id, cb, drop_prefix, keep_id)`` (earlier screens starting with
+        ``drop_prefix`` are forgotten, except ``keep_id``), or None (a one-off
+        answer, e.g. «ثبت شد»)."""
+        has_menu = any(cb == "menu" for row in rows or [] for _label, cb in row)
+        if screen == NAV_ROOT:
+            self._nav_save(platform, chat_id, [{"id": NAV_ROOT, "cb": "menu"}])
+            return rows
+        if not has_menu:
+            return rows
+        nav = self._nav_load(platform, chat_id)
+        if not nav or nav[0].get("id") != NAV_ROOT:
+            # every chat starts at the main menu (also after /start or a deep link)
+            nav.insert(0, {"id": NAV_ROOT, "cb": "menu"})
+        if screen is None:
+            if nav[-1].get("id") is None:
+                nav = nav[:-1]
+            nav.append({"id": None})
+        else:
+            sid, cb = screen[0], screen[1]
+            drop = screen[2] if len(screen) > 2 else ""
+            keep = screen[3] if len(screen) > 3 else None
+            index = next((i for i, e in enumerate(nav) if e.get("id") == sid), None)
+            if index is not None:
+                nav = nav[:index]
+            # a screen before a one-off answer is still the step before this one
+            nav = [e for e in nav if e.get("id") is not None
+                   and not (drop and str(e.get("id")).startswith(drop)
+                            and e.get("id") != keep)]
+            snapshot = {k: v for k, v in (data or {}).items() if k != "labels"}
+            nav.append({"id": sid, "cb": cb, "state": state or "", "data": snapshot})
+        self._nav_save(platform, chat_id, nav)
+        if len(nav) < 2:
+            return rows
+        out = []
+        for row in rows:
+            kept = [(label, cb) for label, cb in row if cb != "menu"]
+            if kept:
+                out.append(kept)
+        out.append([(texts.BTN_BACK, "back"), (texts.BTN_MENU, "menu")])
+        return out
+
+    async def _go_back(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, message_id, callback_id,
+        status: str,
+    ) -> None:
+        """One screen back with the conversation data that screen had."""
+        nav = self._nav_load(platform, chat_id)
+        if nav:
+            nav.pop()                                    # the screen shown now
+        while nav and nav[-1].get("id") is None:
+            nav.pop()
+        if not nav or nav[-1].get("id") == NAV_ROOT or not nav[-1].get("cb"):
+            await self._answer_callback(adapter, callback_id)
+            await self._show_main_menu(adapter, platform, chat_id, status=status)
+            return
+        target = nav[-1]
+        self._nav_save(platform, chat_id, nav)
+        data = target.get("data") if isinstance(target.get("data"), dict) else {}
+        self.store.set_conversation(platform, chat_id, str(target.get("state") or ""), data)
+        await self._replay(adapter, platform, chat_id, message_id, callback_id,
+                           str(target["cb"]))
+
+    async def _replay(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, message_id, callback_id,
+        cb: str,
+    ) -> None:
+        """Draw a recorded screen again: an internal step or a normal callback."""
+        if not cb.startswith("@"):
+            await self._dispatch_callback(adapter, platform, chat_id, message_id, callback_id, cb)
+            return
+        await self._answer_callback(adapter, callback_id)
+        kind, _, rest = cb[1:].partition(":")
+        if kind == "q":
+            page, _, query = rest.partition(":")
+            await self._show_products(adapter, platform, chat_id, q=query, group=None,
+                                      page=int(page) if page.isdigit() else 1,
+                                      edit_message_id=message_id)
+        elif kind == "stmt":
+            await self._show_statement(adapter, platform, chat_id,
+                                       int(rest) if rest.isdigit() else 1,
+                                       edit_message_id=message_id)
+        elif kind == "model" and rest:
+            if not await self._show_model(adapter, platform, chat_id, rest):
+                await self._show_main_menu(adapter, platform, chat_id)
+        elif kind == "ireqtext":
+            _state, data = self.store.get_conversation(platform, chat_id)
+            typed = str((data or {}).get("ireq_text") or "")
+            if typed:
+                await self._item_request_text(adapter, platform, chat_id, typed)
+            else:
+                await self._ask_item_request(adapter, platform, chat_id)
+        else:
+            await self._show_main_menu(adapter, platform, chat_id)
 
     # ================= message routing ====================================
     async def _handle_message(
@@ -514,6 +654,7 @@ class BotEngine:
         # the parameter in the 2026-10-11 live test; typing the code is the fallback).
         if command in ("/start", "/menu"):
             self.store.clear_conversation(platform, chat_id)
+            self._nav_save(platform, chat_id, [])          # v2.8.3: a fresh history
             args = text.split()[1:]
             model_ref = args[0] if args and looks_like_model_ref(args[0]) else None
             product_code = (
@@ -737,6 +878,7 @@ class BotEngine:
         await self._send_options(
             adapter, platform, chat_id, "\n\n".join(parts),
             self._main_menu_rows(status == STATUS_APPROVED), state=STATE_NONE, data={},
+            screen=NAV_ROOT,
         )
 
     async def _sales_state(self) -> dict:
@@ -772,10 +914,11 @@ class BotEngine:
         return texts.SALES_CLOSED
 
     async def _show_static(
-        self, adapter: PlatformAdapter, platform: str, chat_id: str, text: str
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, text: str,
+        screen=None,
     ) -> None:
         await self._send_options(
-            adapter, platform, chat_id, text, [[(texts.BTN_MENU, "menu")]],
+            adapter, platform, chat_id, text, [[(texts.BTN_MENU, "menu")]], screen=screen,
         )
 
     @staticmethod
@@ -805,7 +948,7 @@ class BotEngine:
         if not groups:
             await self._send_options(
                 adapter, platform, chat_id, texts.NO_GROUPS, [[(texts.BTN_MENU, "menu")]],
-                state=STATE_NONE, data={},
+                state=STATE_NONE, data={}, screen=("groups", "groups"),
             )
             return
         # v2.6.1: a subgroup (e.g. a brand under گوشی) follows its parent, indented.
@@ -814,7 +957,8 @@ class BotEngine:
                   f"grp:{g.get('code')}")] for g in self._tree_order(groups)]
         rows.append([(texts.BTN_MENU, "menu")])
         await self._send_options(
-            adapter, platform, chat_id, texts.GROUPS_TITLE, rows, state=STATE_NONE, data={}
+            adapter, platform, chat_id, texts.GROUPS_TITLE, rows, state=STATE_NONE, data={},
+            screen=("groups", "groups"),
         )
 
     async def _show_products(
@@ -878,9 +1022,12 @@ class BotEngine:
             # Last prices stay visible; orders are refused until sales reopen.
             body = f"{texts.SHOP_CLOSED_NOTICE}\n\n{body}"
         rows.append([(texts.BTN_MENU, "menu")])
+        replay = (f"@q:{int(page)}:{q}" if q else
+                  f"pg:{int(group) if group is not None else 0}:{int(page)}")
         await self._send_options(
             adapter, platform, chat_id, body, rows,
             state=STATE_NONE, data={"pcache": cache}, edit_message_id=edit_message_id,
+            screen=("list", replay),
         )
 
     async def _show_product(
@@ -904,6 +1051,7 @@ class BotEngine:
                 texts.PRODUCT_DETAIL_INQUIRY.format(name=product["name"]),
                 [[(texts.BTN_INQUIRY, f"pinq:{code}")], [(texts.BTN_MENU, "menu")]],
                 state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+                screen=(f"product:{code}", f"prod:{code}"),
             )
             return
         if product.get("colors") is not None:
@@ -921,6 +1069,7 @@ class BotEngine:
                 adapter, platform, chat_id, f"{body}\n{texts.OUT_OF_STOCK}",
                 [[(texts.BTN_REQUEST_THIS, f"ireqk:{code}")], [(texts.BTN_MENU, "menu")]],
                 state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+                screen=(f"product:{code}", f"prod:{code}"),
             )
             return
         rows = [
@@ -934,6 +1083,7 @@ class BotEngine:
         await self._send_options(
             adapter, platform, chat_id, body, rows,
             state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+            screen=(f"product:{code}", f"qty:{code}:{qty}"),
         )
 
     async def _show_product_by_code(
@@ -984,7 +1134,7 @@ class BotEngine:
                 rows.append([(texts.BTN_MENU, "menu")])
                 await self._send_options(
                     adapter, platform, chat_id, texts.MODEL_PICK_VARIANT.format(name=name),
-                    rows, state=STATE_NONE, data={},
+                    rows, state=STATE_NONE, data={}, screen=("model", f"@model:{text}"),
                 )
                 return True
             status = "unavailable"
@@ -998,6 +1148,7 @@ class BotEngine:
                 await self._send_options(
                     adapter, platform, chat_id, texts.MODEL_AMBIGUOUS, rows,
                     state=STATE_NONE, data={"model_opts": [str(o["slug"]) for o in options]},
+                    screen=("model", f"@model:{text}"),
                 )
                 return True
             status = "unknown"
@@ -1083,6 +1234,7 @@ class BotEngine:
                 f"«{product['name']}»\n{texts.COLOR_NO_COLORS}",
                 [[(texts.BTN_INQUIRY, f"inq:{code}:0")], [(texts.BTN_MENU, "menu")]],
                 state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+                screen=(f"product:{code}", f"prod:{code}"),
             )
             return
         rows = self._color_rows(code, colors)
@@ -1094,6 +1246,7 @@ class BotEngine:
         await self._send_options(
             adapter, platform, chat_id, body, rows,
             state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+            screen=(f"product:{code}", f"prod:{code}"),
         )
 
     async def _show_color(
@@ -1138,6 +1291,7 @@ class BotEngine:
                     texts.CHOOSE_PART.format(name=product["name"], color=color["name"]), rows,
                     state=STATE_NONE, data={**data, "pcache": cache},
                     edit_message_id=edit_message_id,
+                    screen=(f"part:{code}:{color.get('name') or ''}", f"col:{code}:{color_id}"),
                 )
                 return
             if len(parts) == 1:
@@ -1150,6 +1304,10 @@ class BotEngine:
         data = {**data, "pcache": cache, "color_sel": selected}
         name = product["name"]
         others = self._color_rows(code, colors, current=color_id)
+        # v2.8.3: «مرحلهٔ قبل» from the price goes to the part of THIS color (if it
+        # was asked), else to the colors
+        detail_screen = (f"color:{code}", f"prt:{code}:{color_id}", f"part:{code}:",
+                         f"part:{code}:{color.get('name') or ''}")
 
         if not color.get("available") or not color.get("price"):
             await self._answer_callback(adapter, callback_id)
@@ -1159,6 +1317,7 @@ class BotEngine:
                 adapter, platform, chat_id,
                 texts.COLOR_UNAVAILABLE.format(name=name, color=color["name"]), rows,
                 state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+                screen=detail_screen,
             )
             return
 
@@ -1177,6 +1336,7 @@ class BotEngine:
                 adapter, platform, chat_id,
                 texts.COLOR_UNAVAILABLE.format(name=name, color=color["name"]), rows,
                 state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+                screen=detail_screen,
             )
             return
         if refusal == "stock" or (
@@ -1193,6 +1353,7 @@ class BotEngine:
                 [[(texts.BTN_PURCHASE_REQUEST, f"pbv:{code}:{color_id}")], *others,
                  [(texts.BTN_MENU, "menu")]],
                 state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+                screen=detail_screen,
             )
             return
         changed = bool(previous) and previous != int(color_id)
@@ -1231,6 +1392,7 @@ class BotEngine:
         await self._send_options(
             adapter, platform, chat_id, body, rows,
             state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+            screen=(detail_screen[0], f"vqty:{code}:{color_id}:{qty}", *detail_screen[2:]),
         )
 
     async def _add_color_to_cart(
@@ -1349,7 +1511,7 @@ class BotEngine:
         if not items:
             await self._send_options(
                 adapter, platform, chat_id, texts.CART_EMPTY, [[(texts.BTN_MENU, "menu")]],
-                state=STATE_NONE, data={},
+                state=STATE_NONE, data={}, screen=("cart", "cart"),
             )
             return
         lines = [texts.CART_TITLE]
@@ -1393,7 +1555,8 @@ class BotEngine:
             rows.append([(texts.BTN_CHECKOUT, "checkout")])
         rows.append([(texts.BTN_CLEAR_CART, "cclear"), (texts.BTN_MENU, "menu")])
         await self._send_options(
-            adapter, platform, chat_id, "\n".join(lines), rows, state=STATE_NONE, data={}
+            adapter, platform, chat_id, "\n".join(lines), rows, state=STATE_NONE, data={},
+            screen=("cart", "cart"),
         )
 
     async def _cart_change(
@@ -1536,6 +1699,8 @@ class BotEngine:
             currency=texts.SHOP.get("currency", "ریال"))]
         for key, text_key in PAYMENT_INFO_LINES:
             value = str(info.get(key) or "").strip()
+            if value and key in LTR_PAYMENT_FIELDS:
+                value = ltr(value)          # v2.8.3: never reversed by the client
             if value:
                 lines.append(getattr(texts, text_key).format(value=value))
         lines.append(texts.PAYMENT_SEND_RECEIPT)
@@ -1557,11 +1722,11 @@ class BotEngine:
         owner = str(order.get("payment_owner") or "").strip()
         sheba = str(order.get("payment_sheba") or "").strip()
         note = str(order.get("payment_instructions") or "").strip()
-        lines = [texts.PAYMENT_DETAILS.format(order_id=order_id, total=total, card=card)]
+        lines = [texts.PAYMENT_DETAILS.format(order_id=order_id, total=total, card=ltr(card))]
         if owner:
             lines.append(texts.PAYMENT_OWNER_LINE.format(owner=owner))
         if sheba:
-            lines.append(texts.PAYMENT_SHEBA_LINE.format(sheba=sheba))
+            lines.append(texts.PAYMENT_SHEBA_LINE.format(sheba=ltr(sheba)))
         if note and "xxxx" not in note.lower():
             lines.append(note)
         lines.append(texts.PAYMENT_SEND_RECEIPT)
@@ -1613,7 +1778,7 @@ class BotEngine:
         if not orders:
             await self._send_options(
                 adapter, platform, chat_id, texts.ORDERS_EMPTY, [[(texts.BTN_MENU, "menu")]],
-                state=STATE_NONE, data={},
+                state=STATE_NONE, data={}, screen=("orders", "orders"),
             )
             return
         lines = [texts.ORDERS_TITLE]
@@ -1633,6 +1798,7 @@ class BotEngine:
         rows.append([(texts.BTN_MENU, "menu")])
         await self._send_options(
             adapter, platform, chat_id, "\n".join(lines), rows, state=STATE_NONE, data={},
+            screen=("orders", "orders"),
         )
 
     # ---- v2.6.2: the customer cancels their own order (no receipt sent yet) ----
@@ -1698,7 +1864,8 @@ class BotEngine:
         menu = [[(texts.BTN_MENU, "menu")]]
         if not isinstance(result, dict):
             await self._send_options(
-                adapter, platform, chat_id, texts.STATEMENT_EMPTY, menu, state=STATE_NONE, data={}
+                adapter, platform, chat_id, texts.STATEMENT_EMPTY, menu, state=STATE_NONE, data={},
+                screen=("stmt", f"@stmt:{page}"),
             )
             return
         sides = {"debtor": texts.SIDE_DEBTOR, "creditor": texts.SIDE_CREDITOR,
@@ -1730,7 +1897,7 @@ class BotEngine:
         rows += menu
         await self._send_options(
             adapter, platform, chat_id, "\n".join(lines), rows, state=STATE_NONE, data={},
-            edit_message_id=edit_message_id,
+            edit_message_id=edit_message_id, screen=("stmt", f"@stmt:{page}"),
         )
 
     async def _send_statement_pdf(
@@ -1767,7 +1934,7 @@ class BotEngine:
             return False
         await self._send_options(
             adapter, platform, chat_id, texts.MAIN_MENU, self._main_menu_rows(True),
-            state=STATE_NONE, data={},
+            state=STATE_NONE, data={}, screen=NAV_ROOT,
         )
         return True
 
@@ -1826,7 +1993,8 @@ class BotEngine:
         await self._send_options(
             adapter, platform, chat_id,
             texts.PHONE_SEARCH_MODELS.format(text=shorten(data["ps"].get("text") or "", 60)),
-            buttons, state=STATE_NONE, data=data, edit_message_id=edit_message_id)
+            buttons, state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+            screen=("ps", "psl"))
 
     async def _ps_model(self, adapter: PlatformAdapter, platform: str, chat_id: str,
                         model: int, edit_message_id=None) -> None:
@@ -1854,7 +2022,8 @@ class BotEngine:
         buttons.append([(texts.BTN_MENU, "menu")])
         await self._send_options(
             adapter, platform, chat_id, texts.PHONE_SEARCH_COLORS.format(model=mine[0]["n"]),
-            buttons, state=STATE_NONE, data=data, edit_message_id=edit_message_id)
+            buttons, state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+            screen=("ps:model", f"psm:{int(model)}"))
 
     async def _ps_color(self, adapter: PlatformAdapter, platform: str, chat_id: str,
                         model: int, color_index: int, edit_message_id=None) -> None:
@@ -1876,7 +2045,8 @@ class BotEngine:
         await self._send_options(
             adapter, platform, chat_id,
             texts.PHONE_SEARCH_PARTS.format(model=parts[0][1]["n"], color=color),
-            buttons, state=STATE_NONE, data=data, edit_message_id=edit_message_id)
+            buttons, state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+            screen=("ps:color", f"psc:{int(model)}:{int(color_index)}"))
 
     async def _ps_row(self, adapter: PlatformAdapter, platform: str, chat_id: str,
                       index: int, *, callback_id=None, edit_message_id=None) -> None:
@@ -1909,7 +2079,8 @@ class BotEngine:
             buttons.append([(texts.BTN_OTHER_MODELS, "psl")])
         buttons.append([(texts.BTN_MENU, "menu")])
         await self._send_options(adapter, platform, chat_id, body, buttons, state=STATE_NONE,
-                                 data=data, edit_message_id=edit_message_id)
+                                 data=data, edit_message_id=edit_message_id,
+                                 screen=("ps:row", f"psr:{int(index)}"))
 
     async def _purchase_request(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, callback_id=None, *,
@@ -2086,7 +2257,7 @@ class BotEngine:
     async def _ask_item_request(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
         await self._send_options(
             adapter, platform, chat_id, texts.ITEM_REQUEST_ASK, [[(texts.BTN_MENU, "menu")]],
-            state=STATE_AWAIT_ITEM_REQUEST, data={},
+            state=STATE_AWAIT_ITEM_REQUEST, data={}, screen=("ireq", "ireq"),
         )
 
     async def _item_request_text(
@@ -2109,6 +2280,7 @@ class BotEngine:
         await self._send_options(
             adapter, platform, chat_id, body, rows,
             state=STATE_AWAIT_ITEM_REQUEST, data={"ireq_text": typed},
+            screen=("ireq:text", "@ireqtext"),
         )
 
     async def _submit_item_request(
@@ -2137,15 +2309,13 @@ class BotEngine:
         )
         await self._send_options(
             adapter, platform, chat_id, texts.ASK_RECEIPT.format(order_id=order_id),
-            [[(texts.BTN_MENU, "menu")]],
+            [[(texts.BTN_MENU, "menu")]], screen=("rcpt", f"rcpt:{int(order_id)}"),
         )
 
     async def _ask_search(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
-        self.store.set_conversation(platform, chat_id, STATE_AWAIT_SEARCH, {})
-        await self._send_text(
-            adapter, chat_id, texts.ASK_SEARCH, reply_markup=self._markup(
-                adapter, [[(texts.BTN_MENU, "menu")]]
-            )
+        await self._send_options(
+            adapter, platform, chat_id, texts.ASK_SEARCH, [[(texts.BTN_MENU, "menu")]],
+            state=STATE_AWAIT_SEARCH, data={}, screen=("search", "search"),
         )
 
     # ================= callback routing ===================================
@@ -2184,7 +2354,7 @@ class BotEngine:
         if action in PUBLIC_ACTIONS:
             await self._answer_callback(adapter, callback_id)
             text = texts.SHOP_INFO if action == "info" else texts.SUPPORT
-            await self._show_static(adapter, platform, chat_id, text)
+            await self._show_static(adapter, platform, chat_id, text, screen=(action, action))
             return
 
         user = await self.api.get_user(platform, chat_id)
@@ -2205,6 +2375,8 @@ class BotEngine:
         if action == "menu":
             await self._answer_callback(adapter, callback_id)
             await self._show_main_menu(adapter, platform, chat_id, status=status)
+        elif action == "back":
+            await self._go_back(adapter, platform, chat_id, message_id, callback_id, status)
         elif action == "groups":
             await self._answer_callback(adapter, callback_id)
             await self._show_groups(adapter, platform, chat_id)

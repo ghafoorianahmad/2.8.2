@@ -30,13 +30,13 @@ from ..schemas import (
     ProductGroupsIn,
 )
 from ..security import Identity, require_any, require_permission
-from ..staff import (P_ARCHIVE, P_DASHBOARD, P_GROUPS_EDIT, P_GROUPS_VIEW, P_REQUESTS_EDIT,
+from ..staff import (P_ARCHIVE, P_GROUPS_EDIT, P_GROUPS_VIEW, P_REQUESTS_EDIT,
                      P_REQUESTS_VIEW)
 
 router = APIRouter(prefix="/admin")
 
-# v2.8.2: the dashboard warns when no «گروه گوشی» is chosen
-CAN_VIEW = Depends(require_any(P_GROUPS_VIEW, P_DASHBOARD))
+# v2.8.3: «گروه‌های کالا — دیدن» only (the dashboard reads its warnings from /shop/state)
+CAN_VIEW = Depends(require_any(P_GROUPS_VIEW))
 #: «درخواست کالا»: «دیدن» for the lists, «تغییر» for every action
 CAN_SEE_REQUESTS = Depends(require_permission(P_REQUESTS_VIEW))
 CAN_REQUESTS = Depends(require_permission(P_REQUESTS_EDIT))

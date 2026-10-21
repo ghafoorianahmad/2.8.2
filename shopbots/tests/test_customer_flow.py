@@ -233,7 +233,8 @@ def test_checkout_and_receipt_upload(env, bot_apis, shopapi):
         await push_callback(engine, "bale", 4, CUSTOMER_CHAT, "add:101:2")
         await push_callback(engine, "bale", 5, CUSTOMER_CHAT, "checkout")
 
-        body = bot_apis["bale"].last_text_any(CUSTOMER_CHAT)
+        # v2.8.3: the numbers carry left-to-right marks (never reversed)
+        body = bot_apis["bale"].last_text_any(CUSTOMER_CHAT).replace("‎", "")
         assert "شمارهٔ سفارش" in body
         assert "2,000" in body
         assert "6037-0000-1111-2222" in body      # v2.8.2: the details staff sent

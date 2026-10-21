@@ -309,11 +309,11 @@ def test_super_admin_sees_the_add_user_button(ui_context, admin_qapp):
     assert context.can(USERS_MANAGE) is True
 
 
-def test_viewer_cannot_export_reports(ui_context, admin_qapp):
+def test_viewer_can_export_reports(ui_context, admin_qapp):
+    # v2.8.3: «گزارش‌ها» is always on (each user's reports hold only their own work)
     context = make_context_with_role(ui_context, ROLE_VIEWER)
     page = ReportsPage(context)
-    assert page.export_excel_button.isEnabled() is False
-    assert "نقش شما" in page.export_excel_button.toolTip()
+    assert page.export_excel_button.isEnabled() is True
 
 
 def test_viewer_cannot_edit_the_connection_settings(ui_context, admin_qapp):
@@ -341,13 +341,14 @@ def test_notification_preferences_are_saved_locally(ui_context, admin_qapp):
     assert context.store.get_setting("event_poll_seconds") == 30
 
 
-def test_viewer_sees_disabled_action_buttons_on_customers(ui_context, admin_qapp):
+def test_viewer_may_approve_customers(ui_context, admin_qapp):
+    # v2.8.3: approving / rejecting customers is always on
     context = make_context_with_role(ui_context, ROLE_VIEWER)
     page = CustomersPage(context)
     customer = {"id": 1, "name": "مشتری", "phone": "09120000000", "status": "pending"}
     holder = page._actions_for(customer)
     enabled = [b for b in holder.findChildren(type(page.refresh_button)) if b.isEnabled()]
-    assert enabled == []
+    assert len(enabled) == 2
 
 
 def test_admin_gets_enabled_action_buttons_on_customers(ui_context, admin_qapp):
@@ -417,8 +418,9 @@ def test_sidebar_hides_users_for_a_non_super_admin(ui_context, admin_qapp):
     assert "users" not in window._nav_buttons
     # v2.7.0: «کاربر فروش» sees orders, item requests and customers only
     # v2.8.0: + «بایگانی»; v2.8.2: + «تنظیمات برنامه» (this computer, for everyone)
-    assert set(window._nav_buttons) == {"orders", "item_requests", "customers", "archive",
-                                        "settings"}
+    # v2.8.3: + «داشبورد» and «گزارش‌ها» (always on)
+    assert set(window._nav_buttons) == {"dashboard", "orders", "item_requests", "customers",
+                                        "archive", "reports", "settings"}
     assert window._current_key == "orders"                    # lands on the orders
     window.close()
 

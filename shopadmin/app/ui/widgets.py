@@ -522,8 +522,12 @@ class DataTable(QTableWidget):
 
     def __init__(self, headers: Sequence[str], *, selectable_rows: bool = False,
                  key: str = "", keep_columns: Iterable[int] = (),
+                 fit_width: bool = False, stretch_column: int = 1,
                  parent: QWidget | None = None) -> None:
         super().__init__(0, len(headers), parent)
+        #: v2.8.3: the columns fit the visible width (never a horizontal scroll bar):
+        #: each column as wide as its content, ``stretch_column`` takes the rest
+        self._fit_width = bool(fit_width)
         self._key = key
         #: v2.6.1: columns never squeezed below their content (dates, short codes)
         self._keep = frozenset(int(c) for c in keep_columns)
@@ -565,6 +569,13 @@ class DataTable(QTableWidget):
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.verticalHeader().setDefaultSectionSize(46)
+        if self._fit_width:
+            header.setStretchLastSection(False)
+            header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+            if 0 <= stretch_column < len(headers):
+                header.setSectionResizeMode(stretch_column, QHeaderView.ResizeMode.Stretch)
+            # the stretching column absorbs the rest: a scroll bar only appears on a
+            # window too narrow for the content itself (never hides a column)
         self._headers = list(headers)
         # v2.8.1: every header is readable from the start (also while empty)
         self._header_floor = [self.header_width(text) for text in self._headers]
@@ -583,12 +594,27 @@ class DataTable(QTableWidget):
             self.doubleClicked.connect(lambda index: self.row_activated.emit(index.row()))
 
     # ---- column widths ---------------------------------------------------
+    def sizeHintForColumn(self, column: int) -> int:  # noqa: N802 - Qt naming
+        """v2.8.3 (``fit_width``): a content-sized column is never narrower than
+        its header or a pill / button in it."""
+        hint = super().sizeHintForColumn(column)
+        if not getattr(self, "_fit_width", False):
+            return hint
+        floors = getattr(self, "_header_floor", [])
+        if column < len(floors):
+            hint = max(hint, floors[column])
+        for row in range(min(self.rowCount(), 50)):
+            widget = self.cellWidget(row, column)
+            if widget is not None:
+                hint = max(hint, widget.sizeHint().width() + 24)
+        return hint
+
     def _settings_name(self) -> str:
         return f"table_widths.{self._key}"
 
     def _restore_widths(self) -> None:
         store = DataTable.settings_store
-        if not self._key or store is None:
+        if not self._key or store is None or self._fit_width:
             return
         try:
             saved = store.get_setting(self._settings_name())
@@ -624,7 +650,7 @@ class DataTable(QTableWidget):
             self._sizing = False
 
     def _on_section_resized(self, index: int, _old: int, _new: int) -> None:
-        if self._sizing:
+        if self._sizing or self._fit_width:
             return
         if index == self.columnCount() - 1 and self.horizontalHeader().stretchLastSection():
             # v2.6.1: the stretching last column follows the window, not the user;

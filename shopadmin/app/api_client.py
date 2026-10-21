@@ -632,6 +632,16 @@ class ShopApiClient:
     def list_assignees(self) -> list[dict]:
         return list(self._request("GET", "/admin/assignees") or [])
 
+    def payment_info_due(self) -> list[dict]:
+        """v2.8.3: orders still waiting for «ارسال اطلاعات پرداخت» that this user
+        must be reminded of (their own, or nobody's yet)."""
+        return list(self._request("GET", "/admin/orders/payment-info-due") or [])
+
+    def transfer_open_work(self, from_staff_id: int, to_staff_id: int) -> dict:
+        """v2.8.3 (manager): every open order / request of one user to another."""
+        return self._request("POST", f"/admin/staff/{int(from_staff_id)}/transfer-open",
+                             json_body={"staff_id": int(to_staff_id)}) or {}
+
     def activity(self, *, staff_id: int | None = None, customer_id: int | None = None,
                  date_from: str | None = None, date_to: str | None = None,
                  limit: int = 1000) -> list[dict]:

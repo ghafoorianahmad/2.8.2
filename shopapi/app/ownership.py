@@ -62,8 +62,10 @@ def can_assign(who: Identity, row: dict) -> bool:
 
 
 # ---- visibility ----------------------------------------------------------------------------------
-#: v2.8.2: an order nobody has taken is shown to every sales user only while it
-#: still needs work (new, or paid and not sent yet).
+#: v2.8.3: an order nobody has taken is shown to every sales user only while it
+#: is open (new, or its receipt waits for a decision). Accepted / written orders
+#: without an owner (e.g. approved in the Bale admin chat, or older ones) are the
+#: manager's only.
 FREE_ORDER_STATUSES = ("awaiting_payment", "receipt_uploaded")
 
 
@@ -79,9 +81,7 @@ def visible(who: Identity, row: dict) -> bool:
         return row.get("status") != "done" and not row.get("archived_at")      # request
     if row.get("archived_at"):
         return False
-    # new orders, and paid ones still to be sent (e.g. approved in the Bale admin chat)
-    return row.get("status") in FREE_ORDER_STATUSES or (
-        row.get("status") in ("approved", "written") and not row.get("shipped_at"))
+    return row.get("status") in FREE_ORDER_STATUSES and not row.get("shipped_at")
 
 
 def customer_visible(db: OwnDB, who: Identity, user: dict | None) -> bool:
@@ -225,12 +225,22 @@ def scrub_request(who: Identity, row: dict) -> dict:
     return {**row, "handled_by": "", "note_by": ""}
 
 
+def _from_staff(entry: dict) -> int | None:
+    """The previous owner of an «ارجاع» (``detail`` = ``from=<id>[ bulk]``)."""
+    if entry.get("action") not in (A_ASSIGN, A_HANDOVER):
+        return None
+    head = str(entry.get("detail") or "").split(" ", 1)[0]
+    value = head[5:] if head.startswith("from=") else ""
+    return int(value) if value.isdigit() else None
+
+
 def timeline(db: OwnDB, who: Identity, entries: list[dict]) -> list[dict]:
     """Activity entries for the order / request dialog. A sales user sees what
     was done but never who did it (only «شما» for their own steps)."""
     manager = is_manager(who)
     names = db.staff_names([e.get("staff_id") for e in entries]
-                           + [e.get("to_staff_id") for e in entries]) if manager else {}
+                           + [e.get("to_staff_id") for e in entries]
+                           + [_from_staff(e) for e in entries]) if manager else {}
     out = []
     for e in entries:
         item = {"id": e["id"], "ts": e["ts"], "action": e["action"],
@@ -242,6 +252,8 @@ def timeline(db: OwnDB, who: Identity, entries: list[dict]) -> list[dict]:
         if manager:
             item["actor_name"] = names.get(e.get("staff_id")) or e.get("actor") or ""
             item["to_name"] = names.get(e.get("to_staff_id")) if e.get("to_staff_id") else None
+            # v2.8.3: whose work the manager moved («از … به …»)
+            item["from_name"] = names.get(_from_staff(e)) if _from_staff(e) else None
             item["staff_id"] = e.get("staff_id")
             item["customer_id"] = e.get("customer_id")
             item["customer_name"] = e.get("customer_name")
@@ -252,7 +264,8 @@ def timeline(db: OwnDB, who: Identity, entries: list[dict]) -> list[dict]:
     return out
 
 
-def assign(db: OwnDB, who: Identity, target_type: str, row: dict, to_staff_id: int) -> None:
+def assign(db: OwnDB, who: Identity, target_type: str, row: dict, to_staff_id: int,
+           detail_extra: str = "") -> None:
     """Hand a row over (manager / «ارجاع سفارش» / its owner). The new owner must
     be an active staff member."""
     if not visible(who, row):
@@ -265,8 +278,9 @@ def assign(db: OwnDB, who: Identity, target_type: str, row: dict, to_staff_id: i
     previous = row.get("owner_id")
     db.set_owner(target_type, int(row["id"]), int(to_staff_id))
     own_handover = previous is not None and previous == who.user_id and not is_manager(who)
+    detail = f"from={previous or '-'}" + (f" {detail_extra}" if detail_extra else "")
     log(db, who, A_HANDOVER if own_handover else A_ASSIGN, target_type, row,
-        detail=f"from={previous or '-'}", to_staff_id=int(to_staff_id))
+        detail=detail, to_staff_id=int(to_staff_id))
     db.audit(who.actor, f"{target_type}_assign",
              f"{target_type} id={row['id']} from={previous or '-'} to={to_staff_id}")
     db.add_event(f"{target_type}_assigned", int(row["id"]), who.actor)

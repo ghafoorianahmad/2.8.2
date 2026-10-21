@@ -73,6 +73,10 @@ SALES_NOTICES = {
     "sales_holiday": "امروز تعطیل اعلام شد؛ فروش گوشی تا صبح فردا بسته است.",
 }
 KIND_AUTO_CANCELLED = "order_auto_cancelled"
+#: v2.8.3: an order of this user (or nobody's yet) still waits for «ارسال اطلاعات پرداخت».
+KIND_PAYMENT_INFO_DUE = "payment_info_due"
+#: Every this many seconds while such an order exists (not a user setting).
+PAYMENT_REMINDER_SECONDS = 30
 
 #: Which page (and filter) a notification opens.
 TARGETS = {
@@ -86,6 +90,7 @@ TARGETS = {
     "proxies_all_dead": ("pricelist", ""),
     "model_review": ("catalog", "review"),
     KIND_AUTO_CANCELLED: ("orders", "cancelled"),
+    KIND_PAYMENT_INFO_DUE: ("orders", "awaiting_payment"),
     "accounting_duplicate_order": ("orders", "written"),
     "order_timeout_written": ("orders", "awaiting_payment"),
     KIND_CUSTOMER_CANCEL: ("orders", "cancelled"),
@@ -264,6 +269,83 @@ class EventWatcher(QObject):
             self._on_error(exc.message, exc.kind)
 
 
+def payment_reminder_notice(order_ids: list[int]) -> Optional[Notice]:
+    """v2.8.3: the small reminder for orders waiting for their payment details."""
+    ids = [int(i) for i in order_ids or []]
+    if not ids:
+        return None
+    if len(ids) == 1:
+        body = (f"سفارش شمارهٔ {to_persian_digits(ids[0])} منتظر «ارسال اطلاعات پرداخت» است؛ "
+                "مشتری تا آن را نگیرد نمی‌تواند پرداخت کند.")
+    else:
+        numbers = "، ".join(to_persian_digits(i) for i in ids[:5])
+        more = "…" if len(ids) > 5 else ""
+        body = (f"{to_persian_digits(len(ids))} سفارش منتظر «ارسال اطلاعات پرداخت» است "
+                f"(شماره‌های {numbers}{more}).")
+    return Notice(KIND_PAYMENT_INFO_DUE, "اطلاعات پرداخت را بفرستید", body, ids[0])
+
+
+class PaymentInfoReminder(QObject):
+    """v2.8.3: every 30 seconds asks the server which orders still wait for «ارسال
+    اطلاعات پرداخت» for THIS user (their own, or nobody's yet) and reminds with a
+    small Windows notification and a short sound. Never a window, never the focus;
+    it cannot be switched off and ends by itself once the details are sent or the
+    order is cancelled. Nothing is cancelled automatically."""
+
+    due_changed = Signal(list)          # order ids (for the highlighted rows)
+    remind = Signal(list)               # order ids to remind about now
+
+    def __init__(self, base_url: str, token: str, *, interval_seconds: int = PAYMENT_REMINDER_SECONDS,
+                 client: ShopApiClient | None = None, parent: QObject | None = None,
+                 server_cert_pem: str = "") -> None:
+        super().__init__(parent)
+        self.client = client or ShopApiClient(base_url, token, timeout=10,
+                                              server_cert_pem=server_cert_pem)
+        self.due: list[int] = []
+        self._busy = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(max(5, int(interval_seconds)) * 1000)
+        self._timer.timeout.connect(self.poll)
+
+    @property
+    def running(self) -> bool:
+        return self._timer.isActive()
+
+    def start(self) -> None:
+        self._timer.start()
+        self.poll()
+
+    def stop(self) -> None:
+        self._timer.stop()
+
+    def set_token(self, token: str) -> None:
+        self.client.set_token(token)
+
+    def poll(self) -> None:
+        if self._busy:
+            return
+        from .ui.async_utils import run_async
+
+        self._busy = True
+        run_async(self.client.payment_info_due, on_success=self._on_result,
+                  on_error=self._on_error, on_done=self._done)
+
+    def _done(self) -> None:
+        self._busy = False
+
+    def _on_result(self, orders) -> None:
+        ids = sorted(int(o["id"]) for o in (orders or []) if isinstance(o, dict) and "id" in o)
+        if ids != self.due:
+            self.due = ids
+            self.due_changed.emit(list(ids))
+        if ids:
+            self.remind.emit(list(ids))
+
+    def _on_error(self, _message: str, _kind: str) -> None:
+        # an older server (no such endpoint) or a short outage: try again next round
+        log.info("payment-info reminder: server did not answer")
+
+
 class TrayNotifier(QObject):
     """System-tray icon, Windows balloon notifications and unread counters."""
 
@@ -344,6 +426,21 @@ class TrayNotifier(QObject):
             self.tray.showMessage(notice.title, notice.body, icon, 10000 if notice.warning else 8000)
         if self.enabled("notify_sound"):
             play_notification_sound()
+
+    def remind_payment_info(self, order_ids: list[int]) -> Optional[Notice]:
+        """v2.8.3: always shown (not the user's notification / sound settings): a
+        small balloon (closable, never a window or the focus) and a short sound."""
+        notice = payment_reminder_notice(order_ids)
+        if notice is None:
+            return None
+        self._last_notice = notice
+        if self.tray is not None:
+            from PySide6.QtWidgets import QSystemTrayIcon
+
+            self.tray.showMessage(notice.title, notice.body,
+                                  QSystemTrayIcon.MessageIcon.Information, 6000)
+        play_notification_sound()
+        return notice
 
     def enabled(self, key: str) -> bool:
         """v2.8.0: the signed-in user's own choice, else this computer's setting."""

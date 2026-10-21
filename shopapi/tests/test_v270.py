@@ -28,13 +28,16 @@ def test_two_roles_and_effective_permissions():
     # v2.8.2: sections with «دیدن» / «تغییر»
     assert {"orders.view", "orders.edit", "requests.view", "requests.edit",
             "customers.view"} <= sales
-    for admin_only in ("dashboard.view", "customers.edit", "sales.edit", "pricelist.edit",
-                       "groups.edit", "models.edit", "staff.edit", "server.edit",
-                       "products.view"):
+    # v2.8.3: the daily work is always on (never a tick)
+    assert st.ALWAYS_PERMISSIONS <= sales
+    assert {"dashboard.view", "customers.edit", "assign.edit", "archive.view",
+            "reports.view"} <= sales
+    for admin_only in ("sales.edit", "pricelist.edit", "groups.edit", "models.edit",
+                       "staff.edit", "server.edit", "products.view", "activity.view"):
         assert admin_only not in sales
     eff = st.effective_permissions("operator", "sales.edit,bogus", ["orders.edit"])
     assert "sales.edit" in eff and "sales.view" in eff          # «تغییر» includes «دیدن»
-    assert "orders.edit" not in eff and "bogus" not in eff
+    assert "orders.edit" in eff and "bogus" not in eff          # an always-on tick is ignored
     assert set(st.PERMISSION_LABELS) == set(st.ALL_PERMISSIONS)
 
 
@@ -52,6 +55,8 @@ def test_old_roles_are_migrated_on_start(tmp_path):
 SALES_ALLOWED = [
     ("GET", "/admin/orders"), ("GET", "/admin/users"), ("GET", "/admin/item-requests"),
     ("GET", "/admin/events"), ("GET", "/admin/system-info"),
+    # v2.8.3: the dashboard (phone-sales state) is always on
+    ("GET", "/admin/shop/state"),
     # v2.8.2: price inquiries belong to «درخواست کالا» too
     ("GET", "/admin/inquiries"),
 ]
@@ -59,12 +64,11 @@ SALES_FORBIDDEN = [
     ("GET", "/admin/product-groups"), ("PUT", "/admin/product-groups"),
     ("GET", "/admin/pricelists"), ("GET", "/admin/pricelists/rows"),
     ("PUT", "/admin/price-mappings"), ("POST", "/admin/price-mappings/auto"),
-    ("POST", "/admin/sales/action"), ("PUT", "/admin/shop/state"), ("GET", "/admin/shop/state"),
+    ("POST", "/admin/sales/action"), ("PUT", "/admin/shop/state"),
     ("GET", "/admin/server/settings"), ("GET", "/admin/server/status"),
     ("GET", "/admin/staff"), ("POST", "/admin/staff"), ("GET", "/admin/audit"),
     ("GET", "/admin/catalog-models"), ("GET", "/admin/proxies"),
     ("GET", "/admin/password-requests"), ("GET", "/products"), ("GET", "/groups"),
-    ("POST", "/admin/users/1/approve"), ("POST", "/admin/users/1/reject"),
     # v2.8.2: per-section rights
     ("GET", "/admin/activity"), ("GET", "/admin/staff"), ("GET", "/admin/permission-sections"),
 ]
@@ -98,26 +102,28 @@ def test_per_user_ticks_are_enforced(client, db, reader):
     owner = owner_token(client)
     user = add_staff(client, owner, "mina", "operator")
     token = login(client, "mina").json()["token"]
-    assert client.get("/admin/shop/state", headers=bearer(token)).status_code == 403
-    # grant «فروش گوشی — تغییر» and the dashboard, take «سفارش‌ها — تغییر» away
+    assert client.post("/admin/sales/action", headers=bearer(token),
+                       json={"action": "close"}).status_code == 403
+    # grant «فروش گوشی — تغییر» and «محصولات»; v2.8.3: «سفارش‌ها» stays on
     r = client.patch(f"/admin/staff/{user['id']}", headers=bearer(owner), json={
-        "extra_permissions": ["sales.edit", "dashboard.view"],
+        "extra_permissions": ["sales.edit", "dashboard.view", "products.view"],
         "removed_permissions": ["orders.edit"]})
     assert r.status_code == 200
     body = r.json()
-    assert body["extra_permissions"] == ["dashboard.view", "sales.edit"]
-    assert "orders.edit" not in body["permissions"] and "sales.edit" in body["permissions"]
+    assert body["extra_permissions"] == ["products.view", "sales.edit"]
+    assert body["removed_permissions"] == []
+    assert "orders.edit" in body["permissions"] and "sales.edit" in body["permissions"]
     # changed rights end the old session at once
     assert client.get("/auth/me", headers=bearer(token)).status_code == 401
     token = login(client, "mina").json()["token"]
     me = client.get("/auth/me", headers=bearer(token)).json()
-    assert "sales.edit" in me["permissions"] and "orders.edit" not in me["permissions"]
-    assert client.get("/admin/shop/state", headers=bearer(token)).status_code == 200
-    assert client.post("/admin/orders/1/cancel", headers=bearer(token)).status_code == 403
+    assert "sales.edit" in me["permissions"] and "orders.edit" in me["permissions"]
+    assert client.post("/admin/sales/action", headers=bearer(token),
+                       json={"action": "close"}).status_code == 200
     assert client.patch(f"/admin/staff/{user['id']}", headers=bearer(owner),
                         json={"extra_permissions": ["root"]}).status_code == 422
     labels = client.get("/admin/permissions", headers=bearer(owner)).json()
-    assert {p["name"] for p in labels} == set(st.ALL_PERMISSIONS)
+    assert {p["name"] for p in labels} == set(st.ALL_PERMISSIONS - st.ALWAYS_PERMISSIONS)
     assert client.get("/admin/permissions", headers=bearer(token)).status_code == 403
 
 
@@ -143,6 +149,8 @@ def _paid(client, db, reader) -> int:
 def test_ship_with_courier(client, db, reader):
     order_id = _paid(client, db, reader)
     sales = staff(db, "operator", "mina")
+    # v2.8.3: an accepted order nobody owns is the manager's; handed to mina
+    db.set_owner("order", order_id, db.get_staff_by_username("mina")["id"])
     r = client.post(f"/admin/orders/{order_id}/ship", headers=sales,
                     json={"courier_name": "  علی   پیک ", "courier_phone": "۰۹۱۲ ۳۴۵ ۶۷۸۹"})
     assert r.status_code == 200, r.text

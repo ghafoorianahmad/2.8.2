@@ -244,7 +244,7 @@ def test_card_comes_from_shopapi_never_from_the_messages_file(env, bot_apis, sho
 
     async def scenario(engine, adapters, api):
         await _order_one(engine)
-        body = bot_apis["bale"].last_text(CUSTOMER_CHAT)
+        body = bot_apis["bale"].last_text(CUSTOMER_CHAT).replace("‎", "")
         assert "6037-9911-2233-4455" in body and "2,000" in body
         assert "XXXX" not in body
 

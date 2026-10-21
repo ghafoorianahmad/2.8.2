@@ -1,4 +1,4 @@
-"""صفحهٔ «گزارش فعالیت» (نسخهٔ ۲٫۸٫۰، فقط مدیر).
+"""صفحهٔ «گزارش فعالیت» (نسخهٔ ۲٫۸٫۰؛ ۲٫۸٫۳: غیرمدیر فقط کارهای خودش).
 
 چه کسی، چه کاری، روی کدام سفارش / مشتری / درخواست و چه زمانی انجام داد:
 تأیید مشتری، تأیید یا رد رسید، ارسال، لغو، پاسخ، برداشتن و ارجاع کار.
@@ -32,18 +32,26 @@ def day_bounds(start: date, end: date) -> tuple[str, str]:
 class ActivityPage(BasePage):
     title = "گزارش فعالیت"
     subtitle = "چه کسی، چه کاری، روی کدام سفارش یا مشتری و چه زمانی"
-    help_text = ("همهٔ کارهای همکاران: تأیید مشتری و رسید، ارسال، لغو، پاسخ، برداشتن و "
-                 "ارجاع کار. با فیلترها کاربر، مشتری یا بازهٔ تاریخ را انتخاب کنید.")
+    help_text = ("کارهای انجام‌شده: تأیید مشتری و رسید، ارسال، لغو، پاسخ، برداشتن و ارجاع "
+                 "کار. مدیر کارهای همه را می‌بیند و بقیه فقط کارهای خودشان را. با فیلترها "
+                 "مشتری یا بازهٔ تاریخ را انتخاب کنید.")
     auto_refreshable = True
 
     def build_body(self) -> None:
         filters_holder = QWidget()
         filters = widgets.FlowLayout(filters_holder, spacing=10)
-        filters.addWidget(widgets.label("کاربر:", name="Muted"))
+        principal = self.context.principal
+        #: v2.8.3: a user who is not a manager sees only their own actions (the
+        #: server enforces it); no «کاربر» filter and no list of colleagues
+        self.own_only = not (principal is not None and principal.is_manager)
+        self.user_caption = widgets.label("کاربر:", name="Muted")
+        filters.addWidget(self.user_caption)
         self.user_combo = QComboBox()
         self.user_combo.addItem("همهٔ کاربران", None)
         self.user_combo.setMinimumWidth(170)
         filters.addWidget(self.user_combo)
+        self.user_caption.setVisible(not self.own_only)
+        self.user_combo.setVisible(not self.own_only)
         filters.addWidget(widgets.label("مشتری:", name="Muted"))
         self.customer_combo = QComboBox()
         self.customer_combo.addItem("همهٔ مشتریان", None)
@@ -72,8 +80,10 @@ class ActivityPage(BasePage):
         self._filters_loaded = True
         api = self.context.api
 
+        own_only = self.own_only
+
         def work():
-            staff = api.list_staff()
+            staff = [] if own_only else api.list_staff()
             customers = api.list_customers()
             return staff, customers
 
@@ -95,7 +105,7 @@ class ActivityPage(BasePage):
     def query(self) -> dict:
         start, end = self.range_picker.range()
         date_from, date_to = day_bounds(start, end)
-        return {"staff_id": self.user_combo.currentData(),
+        return {"staff_id": None if self.own_only else self.user_combo.currentData(),
                 "customer_id": self.customer_combo.currentData(),
                 "date_from": date_from, "date_to": date_to}
 

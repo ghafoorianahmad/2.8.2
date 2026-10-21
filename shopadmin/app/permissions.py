@@ -63,9 +63,9 @@ PASSWORDS_DECIDE = "passwords.decide"
 ALL_ROLES = (ROLE_SUPER_ADMIN, ROLE_OPERATOR)
 DEFAULT_ROLE = ROLE_OPERATOR
 
-#: v2.8.2: the permission table of «کاربران سیستم» (same rows as shopapi
-#: ``staff.SECTIONS``): (section, Persian name, has «دیدن», has «تغییر»).
-SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
+#: v2.8.2: every section (same rows as shopapi ``staff.ALL_SECTIONS``):
+#: (section, Persian name, has «دیدن», has «تغییر»).
+ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("dashboard", "داشبورد", True, False),
     ("orders", "سفارش‌ها و رسیدها (تأیید/رد رسید، اطلاعات پرداخت، ارسال، لغو)", True, True),
     ("requests", "درخواست کالا (پیام، یادداشت، تأیید موجودی)", True, True),
@@ -84,7 +84,19 @@ SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("server", "تنظیمات سرور فروشگاه", True, True),
 )
 SECTION_PERMISSIONS = frozenset(
-    [f"{k}.view" for k, _l, v, _e in SECTIONS if v] + [f"{k}.edit" for k, _l, _v, e in SECTIONS if e])
+    [f"{k}.view" for k, _l, v, _e in ALL_SECTIONS if v]
+    + [f"{k}.edit" for k, _l, _v, e in ALL_SECTIONS if e])
+#: v2.8.3: the daily work is always on for every user and is not in the table
+#: (each user still sees only their own work and new free work).
+ALWAYS_SECTIONS = frozenset({"dashboard", "orders", "requests", "customers", "assign",
+                             "archive", "reports"})
+ALWAYS_SERVER_PERMISSIONS = frozenset(
+    name for name in SECTION_PERMISSIONS if name.split(".", 1)[0] in ALWAYS_SECTIONS)
+#: The permission table of «کاربران سیستم» (shopapi ``staff.SECTIONS``).
+SECTIONS: tuple[tuple[str, str, bool, bool], ...] = tuple(
+    row for row in ALL_SECTIONS if row[0] not in ALWAYS_SECTIONS)
+#: Ticks shown in the table.
+TABLE_PERMISSIONS = SECTION_PERMISSIONS - ALWAYS_SERVER_PERMISSIONS
 
 _ORDERS_EDIT = frozenset({ORDERS_APPROVE_PAYMENT, ORDERS_REJECT_PAYMENT, ORDERS_UPLOAD_RECEIPT,
                           ORDERS_SHIP, ORDERS_CANCEL, ORDERS_EXPIRE, ORDERS_PAYMENT_INFO})
@@ -146,13 +158,12 @@ ALWAYS = frozenset({SETTINGS_CHANGE_OWN_PASSWORD, SETTINGS_VIEW, SETTINGS_EDIT_G
 
 #: Persian names of the server permissions, in display order (v2.8.2: per section).
 SERVER_PERMISSION_FA: dict[str, str] = {}
-for _key, _label, _view, _edit in SECTIONS:
+for _key, _label, _view, _edit in ALL_SECTIONS:
     if _view:
         SERVER_PERMISSION_FA[f"{_key}.view"] = f"{_label} — دیدن"
     if _edit:
         SERVER_PERMISSION_FA[f"{_key}.edit"] = f"{_label} — تغییر"
-SALES_SERVER_PERMISSIONS = frozenset({"orders.view", "orders.edit", "requests.view",
-                                      "requests.edit", "customers.view", "archive.view"})
+SALES_SERVER_PERMISSIONS = ALWAYS_SERVER_PERMISSIONS
 ROLE_SERVER_PERMISSIONS: dict[str, frozenset[str]] = {
     ROLE_SUPER_ADMIN: SECTION_PERMISSIONS,
     ROLE_OPERATOR: SALES_SERVER_PERMISSIONS,

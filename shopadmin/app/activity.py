@@ -49,7 +49,10 @@ def to_fa(entry: dict) -> str:
 
 def sentence(entry: dict, *, with_actor: bool = True) -> str:
     template = ACTION_FA.get(str(entry.get("action") or ""), "کاری انجام داد")
-    text = template.format(to=to_fa(entry))
+    if entry.get("from_name") and entry.get("action") == "assign":
+        # v2.8.3 (manager only): whose work was moved
+        template = "کار {from_} را به {to} ارجاع داد"
+    text = template.format(to=to_fa(entry), from_=str(entry.get("from_name") or ""))
     return f"{actor_fa(entry)} {text}" if with_actor else text
 
 

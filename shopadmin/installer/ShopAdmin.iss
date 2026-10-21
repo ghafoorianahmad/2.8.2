@@ -21,7 +21,7 @@
 
 #define MyAppName "ShopAdmin"
 #define MyAppNameFa "مدیریت فروشگاه"
-#define MyAppVersion "2.8.2"
+#define MyAppVersion "2.8.3"
 #define MyAppPublisher "فروشگاه"
 #define MyAppExeName "ShopAdmin.exe"
 #define MyServiceExeName "ShopSystem.exe"

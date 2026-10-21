@@ -87,6 +87,8 @@ class ShopAdminApp(QObject):
         self.watcher = None
         self.notifier = None
         self.sazeh_watcher = None
+        #: v2.8.3: «ارسال اطلاعات پرداخت» reminders (every 30 s)
+        self.payment_reminder = None
         #: Started with --tray (Windows sign-in): stay hidden until asked.
         self.tray_mode = False
         #: Probe-only reachability monitor; the console never runs a server.
@@ -347,7 +349,31 @@ class ShopAdminApp(QObject):
         self.watcher.events_arrived.connect(self._on_server_events)
         self.watcher.session_lost.connect(self._on_session_invalid)
         self.watcher.start()
+        self._start_payment_reminder()
         self._start_sazeh_watch()
+
+    def _start_payment_reminder(self) -> None:
+        """v2.8.3: orders waiting for «ارسال اطلاعات پرداخت» (every 30 s)."""
+        from .notifications import PaymentInfoReminder
+
+        if self.payment_reminder is not None:
+            self.payment_reminder.stop()
+            self.payment_reminder.client.close()
+        self.payment_reminder = PaymentInfoReminder(
+            self.store.base_url, self.api.token, parent=self,
+            server_cert_pem=self.store.server_cert_pem)
+        self.payment_reminder.remind.connect(self._remind_payment_info)
+        self.payment_reminder.due_changed.connect(self._payment_info_due_changed)
+        self.payment_reminder.start()
+
+    def _remind_payment_info(self, order_ids: list) -> None:
+        if self.notifier is not None:
+            self.notifier.remind_payment_info(order_ids)
+
+    def _payment_info_due_changed(self, order_ids: list) -> None:
+        if self.context is not None:
+            self.context.payment_info_due = frozenset(int(i) for i in order_ids)
+            self.context.data_changed.emit()
 
     # ------------------------------------------------------ accounting program
     def _start_sazeh_watch(self) -> None:
@@ -383,6 +409,10 @@ class ShopAdminApp(QObject):
                   on_error=lambda _m, _k: log.info("pending summary unavailable"))
 
     def _stop_notifications(self) -> None:
+        if self.payment_reminder is not None:
+            self.payment_reminder.stop()
+            self.payment_reminder.client.close()
+            self.payment_reminder = None
         if self.sazeh_watcher is not None:
             self.sazeh_watcher.stop()
             self.sazeh_watcher = None
@@ -458,6 +488,10 @@ class ShopAdminApp(QObject):
             self.watcher.set_token(self.api.token)
             if not self.watcher.running:
                 self.watcher.start()
+        if self.payment_reminder is not None:
+            self.payment_reminder.set_token(self.api.token)
+            if not self.payment_reminder.running:
+                self.payment_reminder.start()
         if old_token and old_token != self.api.token:
             _logout_token(self.store.base_url, old_token, self.store.server_cert_pem)
         self.main_window.showNormal()

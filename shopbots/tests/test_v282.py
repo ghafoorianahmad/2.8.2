@@ -80,7 +80,7 @@ def test_checkout_waits_for_the_payment_details(env, bot_apis, shopapi):
                                                     "holder": "فروشگاه"}
         shopapi.add_event("order_payment_info", order_id)
         await engine.notify_customers_from_events()
-        body = bot_apis["bale"].last_text(CUSTOMER_CHAT)
+        body = bot_apis["bale"].last_text(CUSTOMER_CHAT).replace("‎", "")
         assert "شمارهٔ حساب: 0123456789" in body and "به نام: فروشگاه" in body
         assert "شمارهٔ کارت" not in body
         state, data = engine.store.get_conversation("bale", str(CUSTOMER_CHAT))

@@ -278,6 +278,26 @@ def list_orders(
             for o in orders]
 
 
+@router.get("/orders/payment-info-due", response_model=list[OrderOut])
+def payment_info_due(
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_VIEW_ORDERS,
+) -> list[OrderOut]:
+    """v2.8.3: orders still waiting for «ارسال اطلاعات پرداخت» that THIS user must
+    be reminded of: their own, or (nobody's yet) every user who may handle orders
+    and the manager. An order of a colleague is never listed."""
+    me = who.user_id if who.kind == "staff" else None
+    out = []
+    for order in db.query_orders(status="awaiting_payment", viewer_id=ownership.viewer_id(who)):
+        if order.get("payment_info_at") or order.get("payment_info"):
+            continue
+        owner = order.get("owner_id")
+        if owner is not None and owner != me:
+            continue
+        out.append(order_out(db, who, order))
+    return out
+
+
 def _visible_order(db: OwnDB, who: Identity, order_id: int) -> dict:
     return ownership.ensure_visible(who, db.get_order(order_id), "Order")
 
@@ -355,10 +375,48 @@ def list_activity(
     who: Identity = CAN_ACTIVITY,
 ) -> list[dict]:
     """«گزارش فعالیت» («گزارش فعالیت — دیدن»): who did what, on which order /
-    customer / request, and when. Dates are ISO (UTC) bounds: from <= ts < to."""
-    rows = db.list_activity(staff_id=staff_id, customer_id=customer_id, date_from=date_from,
-                            date_to=date_to, limit=limit)
+    customer / request, and when. Dates are ISO (UTC) bounds: from <= ts < to.
+    v2.8.3: a user who is not a manager gets only their OWN actions (no colleague
+    rows, whatever ``staff_id`` asks)."""
+    if not ownership.is_manager(who):
+        if who.user_id is None:
+            return []
+        rows = db.list_activity(staff_id=who.user_id, own_only=True, customer_id=customer_id,
+                                date_from=date_from, date_to=date_to, limit=limit)
+    else:
+        rows = db.list_activity(staff_id=staff_id, customer_id=customer_id,
+                                date_from=date_from, date_to=date_to, limit=limit)
     return ownership.timeline(db, who, rows)
+
+
+@router.post("/staff/{from_staff_id}/transfer-open")
+def transfer_open_work(
+    from_staff_id: int,
+    payload: AssignIn,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = SIGNED_IN,
+) -> dict:
+    """v2.8.3 (manager): «انتقال همهٔ کارهای باز» of user X to user Y. Every moved
+    order / request is logged on its history and in «گزارش فعالیت»."""
+    if not ownership.is_manager(who):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Managers only")
+    if db.get_staff(int(from_staff_id)) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Staff account not found")
+    if int(payload.staff_id) == int(from_staff_id):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Same colleague")
+    target = db.get_staff(int(payload.staff_id))
+    if target is None or not target["active"]:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown colleague")
+    moved = {"orders": 0, "requests": 0}
+    for target_type, rows in db.open_owned(int(from_staff_id)).items():
+        for row in rows:
+            ownership.assign(db, who, target_type, row, int(payload.staff_id),
+                             detail_extra="bulk")
+            moved["orders" if target_type == "order" else "requests"] += 1
+    db.audit(who.actor, "staff_transfer_open",
+             f"from={from_staff_id} to={payload.staff_id} orders={moved['orders']} "
+             f"requests={moved['requests']}")
+    return moved
 
 
 @router.get("/archive/orders", response_model=list[OrderOut])
@@ -700,13 +758,23 @@ def sync_invoices(
     return {"changed": tracking.sync_invoices(db, reader, settings.database_name(), who.actor)}
 
 
+def staff_shop_state(db: OwnDB, settings: Settings, who: Identity) -> ShopStateOut:
+    """v2.8.3: who opened / closed phone sales is a name only for the manager; a
+    sales user reads «شما» for their own change, nothing for a colleague's."""
+    state = shop_state(db, settings)
+    if ownership.is_manager(who) or not state.override_by:
+        return state
+    mine = state.override_by == who.actor
+    return state.model_copy(update={"override_by": "شما" if mine else ""})
+
+
 @router.get("/shop/state", response_model=ShopStateOut)
 def get_shop_state(
     db: OwnDB = Depends(deps.get_db),
     settings: Settings = Depends(deps.get_settings),
-    _: Identity = CAN_VIEW,
+    who: Identity = CAN_VIEW,
 ) -> ShopStateOut:
-    return shop_state(db, settings)
+    return staff_shop_state(db, settings, who)
 
 
 @router.put("/shop/state", response_model=ShopStateOut)
@@ -718,7 +786,7 @@ def set_shop_state(
 ) -> ShopStateOut:
     """Old switch (kept for older clients): closed -> «بستن فروش», else «باز کردن فروش»."""
     sales.set_override(db, settings, "close" if payload.closed else "open", who.actor)
-    return shop_state(db, settings)
+    return staff_shop_state(db, settings, who)
 
 
 @router.post("/sales/action", response_model=ShopStateOut)
@@ -732,4 +800,4 @@ def sales_action(
     «بستن فروش» (close now), «باز کردن فروش» (open until the next transition:
     a new list or the next closing time). Stored on the server and audited."""
     sales.set_override(db, settings, payload.action, who.actor)
-    return shop_state(db, settings)
+    return staff_shop_state(db, settings, who)

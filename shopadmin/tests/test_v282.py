@@ -85,7 +85,7 @@ def test_payment_form_checks_and_previews():
     from app.ui.pages.orders import payment_info_preview, payment_info_problem
 
     assert "دست‌کم یکی" in payment_info_problem({"holder": "علی"})
-    assert payment_info_problem({"card_number": "1234"}) == "شمارهٔ کارت باید ۱۶ رقم باشد."
+    assert payment_info_problem({"card_number": "1234"}) == "شمارهٔ کارت باید دقیقاً ۱۶ رقم باشد."
     assert payment_info_problem({"card_number": "۶۰۳۷-۹۹۱۱-۲۲۳۳-۴۴۵۵"}) == ""
     assert "شبا" in payment_info_problem({"sheba": "IR12"})
     assert payment_info_problem({"sheba": "IR" + "1" * 24}) == ""
@@ -114,7 +114,8 @@ def test_payment_button_sends_after_confirmation(ui_context, fake_api, admin_qap
     form._accept()                                    # «بازگشت»: nothing sent
     assert not form.info
     form._accept()
-    assert form.info == {"card_number": "6037 9911 2233 4455", "holder": "فروشگاه"}
+    # v2.8.3: the masked field keeps the four groups
+    assert form.info == {"card_number": "6037-9911-2233-4455", "holder": "فروشگاه"}
 
     class Accepting(page_mod.PaymentInfoDialog):
         def exec(self):
@@ -210,7 +211,8 @@ def test_user_row_actions_are_in_a_menu(ui_context, fake_api, admin_qapp):
     assert texts == ["ویرایش", "بیشتر"]
     more = [b for b in holder.findChildren(QPushButton) if b.text() == "بیشتر"][0]
     assert [a.text() for a in more.menu_actions if a.text()] == [
-        "تغییر گذرواژه", "بازنشانی گذرواژه به ۱۲۳۴۵", "رفع قفل", "غیرفعال کردن", "حذف کاربر"]
+        "تغییر گذرواژه", "بازنشانی گذرواژه به ۱۲۳۴۵", "رفع قفل",
+        "انتقال همهٔ کارهای باز به همکار دیگر", "غیرفعال کردن", "حذف کاربر"]
 
 
 def test_text_fit_audit_script_exists():

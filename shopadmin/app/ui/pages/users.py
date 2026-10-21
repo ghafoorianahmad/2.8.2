@@ -42,7 +42,9 @@ HEADERS = ("نام کاربری", "نام و نام خانوادگی", "نقش",
 class UsersPage(BasePage):
     title = "کاربران سیستم"
     subtitle = "حساب کارکنان فروشگاه و دسترسی هر بخش (دیدن / تغییر)"
-    help_text = "کاربران برنامه: «مدیر» همهٔ بخش‌ها را دارد و «کاربر فروش» فقط سفارش‌ها، درخواست‌ها و مشتریان. دسترسی هر نفر را می‌توانید جداگانه کم یا زیاد کنید."
+    help_text = ("کاربران برنامه: «مدیر» همهٔ بخش‌ها را دارد و «کاربر فروش» کار روزانه (فقط کار "
+                 "خودش). بقیهٔ بخش‌ها را برای هر نفر جداگانه بدهید یا بگیرید؛ «انتقال کارهای "
+                 "باز» همهٔ کارهای باز یک نفر را به دیگری می‌دهد.")
 
     def build_body(self) -> None:
         if not self.context.can(USERS_VIEW):
@@ -158,6 +160,11 @@ class UsersPage(BasePage):
         ]
         if user.get("locked"):
             actions.append(("رفع قفل", lambda u=user: self._unlock(u), can_manage, ""))
+        # v2.8.3: the manager hands every open order / request of this user to another
+        manager = bool(self.context.principal and self.context.principal.is_manager)
+        actions.append(("انتقال همهٔ کارهای باز به همکار دیگر",
+                        lambda u=user: self._transfer_open(u), manager,
+                        "" if manager else "فقط مدیر"))
         actions += [
             None,
             ("غیرفعال کردن" if active else "فعال‌سازی", lambda u=user: self._toggle_active(u),
@@ -172,6 +179,28 @@ class UsersPage(BasePage):
 
         layout.addStretch(1)
         return holder
+
+    def _transfer_open(self, user: dict) -> None:
+        """v2.8.3: «انتقال همهٔ کارهای باز» of ``user`` to a colleague (logged on each
+        order / request and in «گزارش فعالیت»)."""
+        others = [u for u in self._users if int(u["id"]) != int(user["id"]) and u.get("active")]
+        if not others:
+            widgets.error(self, "انتقال کارهای باز", "کاربر فعال دیگری نیست.")
+            return
+        dialog = TransferDialog(self, user, others)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.staff_id is None:
+            return
+        from_id, to_id = int(user["id"]), int(dialog.staff_id)
+
+        def done(result) -> None:
+            moved = result or {}
+            widgets.success(self, "انتقال کارهای باز", (
+                f"{to_persian_digits(moved.get('orders', 0))} سفارش و "
+                f"{to_persian_digits(moved.get('requests', 0))} درخواست منتقل شد."))
+            self.context.data_changed.emit()
+
+        self.run(lambda: self.context.api.transfer_open_work(from_id, to_id),
+                 on_success=done, on_error=self.default_error)
 
     def _create_user(self) -> None:
         if not self._manage_allowed():
@@ -283,6 +312,42 @@ class UsersPage(BasePage):
         widgets.error(self, "دسترسی غیرمجاز",
                       "مدیریت کاربران سیستم فقط برای نقش «مدیر کل» مجاز است.")
         return False
+
+
+class TransferDialog(widgets.ResponsiveDialog):
+    """v2.8.3: pick who gets every open order / request of one user."""
+
+    def __init__(self, parent: QWidget | None, user: dict, others: list[dict]) -> None:
+        super().__init__(parent)
+        self.staff_id: Optional[int] = None
+        name = str(user.get("full_name") or user.get("username") or "")
+        self.setWindowTitle("انتقال کارهای باز")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumWidth(460)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(10)
+        root.addWidget(widgets.label(f"انتقال همهٔ کارهای باز «{name}»", size=14, bold=True))
+        root.addWidget(widgets.label(
+            "همهٔ سفارش‌ها و درخواست‌های تمام‌نشدهٔ این کاربر به همکار انتخاب‌شده داده می‌شود. "
+            "کارهای تمام‌شده و بایگانی جابه‌جا نمی‌شوند. هر انتقال در تاریخچهٔ همان سفارش / "
+            "درخواست و در «گزارش فعالیت» ثبت می‌شود.", name="Muted", wrap=True))
+        self.combo = QComboBox()
+        self.combo.setMinimumHeight(40)
+        for row in others:
+            self.combo.addItem(str(row.get("full_name") or row.get("username") or ""),
+                               int(row["id"]))
+        root.addWidget(self.combo)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(widgets.button("انتقال بده", variant="primary", icon_name="check",
+                                         on_click=self._accept))
+        buttons.addWidget(widgets.button("انصراف", on_click=self.reject))
+        root.addLayout(buttons)
+
+    def _accept(self) -> None:
+        self.staff_id = self.combo.currentData()
+        self.accept()
 
 
 def _role_pill(role: str) -> widgets.StatusPill:
@@ -416,8 +481,10 @@ class UserFormDialog(widgets.ResponsiveDialog):
         # ---- v2.8.2: one row per section, «دیدن» and «تغییر» ----------------
         perms_panel = widgets.Panel("دسترسی‌های این کاربر")
         perms_panel.body.addWidget(widgets.label(
-            "تیک‌ها از نقش گرفته می‌شوند؛ می‌توانید برای همین یک نفر کم یا زیاد کنید. «تغییر» "
-            "بدون «دیدن» نمی‌شود. بخشی که «دیدن» ندارد در منوی او اصلاً نشان داده نمی‌شود.",
+            "داشبورد، سفارش‌ها و رسیدها، درخواست کالا، مشتریان (تأیید و رد)، ارجاع، بایگانی و "
+            "گزارش‌ها برای همه همیشه روشن است و هر کس فقط کار خودش و کار تازهٔ بی‌صاحب را "
+            "می‌بیند. بقیهٔ بخش‌ها را اینجا برای همین یک نفر کم یا زیاد کنید؛ «تغییر» بدون "
+            "«دیدن» نمی‌شود و بخشی که «دیدن» ندارد در منوی او نشان داده نمی‌شود.",
             name="Muted", wrap=True))
         perms_holder = QWidget()
         perms_grid = QGridLayout(perms_holder)
@@ -499,7 +566,8 @@ class UserFormDialog(widgets.ResponsiveDialog):
     def permission_changes(self) -> tuple[list[str], list[str]]:
         """(extra, removed) compared with the chosen role."""
         ticked = {n for n, c in self.permission_checks.items() if c.isChecked()}
-        base = with_implied(self.role_permissions())
+        # v2.8.3: only the ticks of the table (the daily work is always on)
+        base = with_implied(self.role_permissions()) & set(self.permission_checks)
         return sorted(ticked - base), sorted(base - ticked)
 
     def _update_role_hint(self) -> None:

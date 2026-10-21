@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from ...api_client import ApiError
-from ...permissions import SHOP_STATE
+from ...permissions import PRODUCTS_VIEW, SHOP_STATE
 from ...persian import (
     format_datetime_shamsi,
     format_int,
@@ -53,8 +53,13 @@ class DashboardPage(BasePage):
             "تعداد محصولات فعال", icon_name="products",
             accent=theme.INFO, tint=theme.INFO_LIGHT,
         )
-        for card in (self.card_pending_customers, self.card_receipts,
-                     self.card_today, self.card_products):
+        # v2.8.3: «محصولات» is its own permission (the dashboard is for everyone)
+        shown = [self.card_pending_customers, self.card_receipts, self.card_today]
+        if self.context.can(PRODUCTS_VIEW):
+            shown.append(self.card_products)
+        else:
+            self.card_products.setVisible(False)
+        for card in shown:
             cards.add_card(card)
         self.body.addWidget(cards)
 
@@ -109,7 +114,8 @@ class DashboardPage(BasePage):
         self.body.addWidget(chart_panel)
 
         panel = widgets.Panel("آخرین ۱۰ سفارش")
-        self.table = widgets.DataTable(DASHBOARD_HEADERS, key="dashboard")
+        # v2.8.3: the columns fill the panel; no horizontal scroll bar under the table
+        self.table = widgets.DataTable(DASHBOARD_HEADERS, key="dashboard", fit_width=True)
         self.table.set_empty_state(
             "هنوز سفارشی ثبت نشده است",
             "به‌محض ثبت سفارش توسط مشتریان، اینجا نمایش داده می‌شود.",
@@ -129,6 +135,8 @@ class DashboardPage(BasePage):
             card.set_loading()
         self.table.set_busy(True)
 
+        show_products = self.context.can(PRODUCTS_VIEW)
+
         def work() -> dict:
             api = self.context.api
             return {
@@ -136,7 +144,8 @@ class DashboardPage(BasePage):
                 "receipts": api.list_orders(ORDER_RECEIPT_UPLOADED),
                 "approved": api.list_orders(ORDER_APPROVED),
                 "written": api.list_orders(ORDER_WRITTEN),
-                "products": api.list_products(page=1, page_size=1),
+                "products": (api.list_products(page=1, page_size=1) if show_products
+                             else {"total": 0}),
                 "info": api.system_info(),
                 "shop": _shop_state(api),
             }
@@ -175,7 +184,11 @@ class DashboardPage(BasePage):
         self._render_shop_state(data.get("shop"))
 
         all_orders = list(receipts) + list(approved) + list(written)
-        self.chart.set_data(orders_per_day(all_orders))
+        # v2.8.3: the chart of a user who is not a manager counts only their own work
+        principal = self.context.principal
+        manager = principal is not None and principal.is_manager
+        self.chart.set_data(orders_per_day(all_orders if manager
+                                           else [o for o in all_orders if o.get("owned_by_me")]))
         rows = sorted(
             all_orders,
             key=lambda order: order.get("created_at") or "",

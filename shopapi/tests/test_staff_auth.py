@@ -156,9 +156,10 @@ def test_garbage_bearer_rejected(client):
 
 
 # ---- server-side roles -------------------------------------------------------
+# v2.8.3: approving / rejecting customers is always on for every staff member
 @pytest.mark.parametrize("role, can_view, can_decide", [
-    ("viewer", True, False),
-    ("operator", True, False),
+    ("viewer", True, True),
+    ("operator", True, True),
     ("admin", True, True),
     ("super_admin", True, True),
 ])

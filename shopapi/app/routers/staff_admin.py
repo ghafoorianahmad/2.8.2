@@ -11,6 +11,7 @@ from ..schemas import PasswordRequestOut, PasswordResetIn, StaffCreate, StaffOut
 from ..security import Identity, require_permission
 from ..staff import (
     ALL_PERMISSIONS,
+    ALWAYS_PERMISSIONS,
     DEFAULT_RESET_PASSWORD,
     LEGACY_ROLE_MAP,
     PERMISSION_LABELS,
@@ -55,13 +56,16 @@ def _ticks(values) -> str:
     unknown = [v for v in values or () if v not in ALL_PERMISSIONS]
     if unknown:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown permission")
-    return ",".join(sorted(set(values or ())))
+    # v2.8.3: the always-on sections are never stored as ticks
+    return ",".join(sorted(set(values or ()) - ALWAYS_PERMISSIONS))
 
 
 @router.get("/permissions")
 def list_permissions(_: Identity = CAN_SEE_STAFF) -> list[dict]:
-    """Every permission with its Persian name (the per-user ticks in ShopAdmin)."""
-    return [{"name": name, "label": label} for name, label in PERMISSION_LABELS.items()]
+    """Every permission with its Persian name (the per-user ticks in ShopAdmin;
+    v2.8.3: without the always-on sections)."""
+    return [{"name": name, "label": label} for name, label in PERMISSION_LABELS.items()
+            if name not in ALWAYS_PERMISSIONS]
 
 
 @router.get("/permission-sections")

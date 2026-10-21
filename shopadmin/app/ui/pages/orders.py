@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QScrollArea,
@@ -79,6 +79,11 @@ def waiting_too_long(row: dict, now=None, minutes: int = WAITING_MINUTES,
         when = when.replace(tzinfo=timezone.utc)
     now = now or datetime.now(timezone.utc)
     return (now - when).total_seconds() >= minutes * 60
+
+
+def needs_payment_info(row: dict) -> bool:
+    """v2.8.3: waiting for «ارسال اطلاعات پرداخت» (highlighted until it is sent)."""
+    return row.get("status") == ORDER_AWAITING_PAYMENT and not row.get("payment_info_at")         and not row.get("payment_info")
 
 
 def owner_label(row: dict) -> str:
@@ -275,6 +280,14 @@ class OrdersPage(BasePage):
                                     bold=bool(order.get("owned_by_me")))
                 self.table.set_cell(row, 6, format_shamsi(order.get("reserve_until")) if order.get("reserve_until") else "—")
                 self.table.set_cell(row, 7, format_shamsi(order.get("created_at")))
+                if needs_payment_info(order) and (order.get("owned_by_me")
+                                                  or not order.get("owned")):
+                    # v2.8.3: the whole row stands out until the details are sent
+                    for column in range(self.table.columnCount()):
+                        item = self.table.item(row, column)
+                        if item is not None:
+                            item.setBackground(QColor(theme.WARNING_BG))
+                            item.setToolTip("منتظر «ارسال اطلاعات پرداخت» است")
                 if waiting_too_long(order):
                     # v2.8.0: a receipt nobody checked for 10 minutes stands out
                     late = self.table.set_cell(
@@ -285,10 +298,17 @@ class OrdersPage(BasePage):
         finally:
             self.table.setUpdatesEnabled(True)
         late_count = sum(1 for order in rows if waiting_too_long(order))
-        self.waiting_label.setText(
-            f"⏱ {to_persian_digits(late_count)} رسید بیش از "
-            f"{to_persian_digits(WAITING_MINUTES)} دقیقه منتظر بررسی است" if late_count else "")
-        self.waiting_label.setVisible(bool(late_count))
+        info_count = sum(1 for order in rows if needs_payment_info(order)
+                         and (order.get("owned_by_me") or not order.get("owned")))
+        notes = []
+        if late_count:
+            notes.append(f"⏱ {to_persian_digits(late_count)} رسید بیش از "
+                         f"{to_persian_digits(WAITING_MINUTES)} دقیقه منتظر بررسی است")
+        if info_count:
+            notes.append(f"💳 {to_persian_digits(info_count)} سفارش منتظر «ارسال اطلاعات "
+                         "پرداخت» است")
+        self.waiting_label.setText(" — ".join(notes))
+        self.waiting_label.setVisible(bool(notes))
 
         status_fa = order_status_fa(self._status_for_tab())
         if not rows:
@@ -842,24 +862,49 @@ def courier_text(order: dict) -> str:
 # number fields are left-to-right: their examples are Latin only (no mixed bidi)
 PAYMENT_FIELDS = (("card_number", "شمارهٔ کارت (۱۶ رقم)", "6037-9911-2233-4455"),
                   ("account_number", "شمارهٔ حساب", "0123456789"),
-                  ("sheba", "شمارهٔ شبا", "IR000000000000000000000000"),
+                  ("sheba", "شمارهٔ شبا (IR و ۲۴ رقم)", "IR000000000000000000000000"),
                   ("holder", "به نام (صاحب حساب)", "اختیاری"),
                   ("bank", "نام بانک", "اختیاری"),
                   ("note", "توضیح برای مشتری", "اختیاری، مثلاً «مبلغ را دقیق واریز کنید»"))
 #: per user, on this computer: the last details typed (button «مثل دفعهٔ قبل»)
 LAST_PAYMENT_KEY = "last_payment_info"
+#: v2.8.3: fixed masks: the card in four groups of four digits, the Sheba with a
+#: fixed «IR» and 24 digits (only digits can be typed; the groups fill by themselves)
+CARD_MASK = "9999-9999-9999-9999;_"
+SHEBA_MASK = "IR999999999999999999999999;_"
+
+
+def card_digits(text: str) -> str:
+    from ...persian import to_english_digits
+
+    return "".join(ch for ch in to_english_digits(str(text or "")) if ch.isdigit())
+
+
+def card_text(text: str) -> str:
+    """The card as the customer reads it: 6037-1234-5678-1234 ("" when empty)."""
+    digits = card_digits(text)
+    if len(digits) != 16:
+        return digits
+    return "-".join(digits[i:i + 4] for i in range(0, 16, 4))
+
+
+def sheba_text(text: str) -> str:
+    """IR + the 24 digits ("" when no digit was typed)."""
+    from ...persian import to_english_digits
+
+    raw = to_english_digits(str(text or "")).upper().replace(" ", "").replace("-", "")
+    digits = "".join(ch for ch in (raw[2:] if raw.startswith("IR") else raw) if ch.isdigit())
+    return f"IR{digits}" if digits else ""
 
 
 def payment_info_problem(info: dict) -> str:
     """Persian reason the details cannot be sent, or "" (the server checks again)."""
-    from ...persian import to_english_digits
-
-    card = "".join(ch for ch in to_english_digits(info.get("card_number", "")) if ch.isdigit())
-    sheba = to_english_digits(info.get("sheba", "")).replace(" ", "").replace("-", "").upper()
-    if not any(str(info.get(k) or "").strip() for k in ("card_number", "account_number", "sheba")):
+    card = card_digits(info.get("card_number", ""))
+    sheba = sheba_text(info.get("sheba", ""))
+    if not (card or sheba or str(info.get("account_number") or "").strip()):
         return "دست‌کم یکی از شمارهٔ کارت، شمارهٔ حساب یا شبا را وارد کنید."
-    if info.get("card_number", "").strip() and len(card) != 16:
-        return "شمارهٔ کارت باید ۱۶ رقم باشد."
+    if card and len(card) != 16:
+        return "شمارهٔ کارت باید دقیقاً ۱۶ رقم باشد."
     if sheba:
         digits = sheba[2:] if sheba.startswith("IR") else sheba
         if len(digits) != 24 or not digits.isdigit():
@@ -911,6 +956,11 @@ class PaymentInfoDialog(widgets.ResponsiveDialog):
             field.setMaxLength(300 if key == "note" else 80)
             if key in ("card_number", "account_number", "sheba"):
                 field.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+                field.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            if key == "card_number":
+                field.setInputMask(CARD_MASK)
+            elif key == "sheba":
+                field.setInputMask(SHEBA_MASK)
             self.inputs[key] = field
             form.addRow(widgets.label(caption + ":"), field)
         root.addLayout(form)
@@ -950,10 +1000,22 @@ class PaymentInfoDialog(widgets.ResponsiveDialog):
     def fill_last(self) -> None:
         last = self._last()
         for key, field in self.inputs.items():
-            field.setText(str(last.get(key) or ""))
+            value = str(last.get(key) or "")
+            if key == "card_number":
+                value = card_digits(value)
+            elif key == "sheba":
+                value = sheba_text(value)[2:]
+                field.setText("IR" + value if value else "")
+                continue
+            field.setText(value)
 
     def values(self) -> dict:
-        return {key: " ".join(field.text().split()) for key, field in self.inputs.items()}
+        """The typed details; the masked card / Sheba as the customer reads them
+        (6037-1234-5678-1234, IR + 24 digits), "" when left empty."""
+        out = {key: " ".join(field.text().split()) for key, field in self.inputs.items()}
+        out["card_number"] = card_text(self.inputs["card_number"].text())
+        out["sheba"] = sheba_text(self.inputs["sheba"].text())
+        return out
 
     def _accept(self) -> None:
         info = self.values()

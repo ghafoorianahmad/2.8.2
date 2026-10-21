@@ -28,10 +28,13 @@ def test_two_roles_with_persian_names():
     for allowed in (perms.ORDERS_VIEW, perms.ORDERS_APPROVE_PAYMENT, perms.ORDERS_SHIP,
                     perms.ORDERS_CANCEL, perms.ITEM_REQUESTS, perms.CUSTOMERS_VIEW):
         assert allowed in sales
-    for admin_only in (perms.DASHBOARD_VIEW, perms.PRICELIST_VIEW, perms.CATALOG_VIEW,
-                       perms.SHOP_STATE, perms.SERVER_VIEW, perms.USERS_VIEW,
-                       perms.SERVER_MANAGE, perms.REPORTS_VIEW, perms.PROXIES_MANAGE,
-                       perms.CUSTOMERS_APPROVE, perms.PRODUCTS_VIEW):
+    # v2.8.3: dashboard, reports, customers (approve / reject), referral: always on
+    for always in (perms.DASHBOARD_VIEW, perms.REPORTS_VIEW, perms.CUSTOMERS_APPROVE,
+                   perms.ORDERS_ASSIGN, perms.ARCHIVE_VIEW):
+        assert always in sales
+    for admin_only in (perms.PRICELIST_VIEW, perms.CATALOG_VIEW, perms.SHOP_STATE,
+                       perms.SERVER_VIEW, perms.USERS_VIEW, perms.SERVER_MANAGE,
+                       perms.PROXIES_MANAGE, perms.PRODUCTS_VIEW, perms.ACTIVITY_VIEW):
         assert admin_only not in sales
     assert perms.role_permissions(ROLE_SUPER_ADMIN) >= sales
 
@@ -60,11 +63,11 @@ def test_sales_menu_and_landing(ui_context, admin_qapp):
     from app.ui.main_window import MainWindow
 
     window = MainWindow(make_context_with_role(ui_context, ROLE_OPERATOR))
-    # v2.8.0: + «بایگانی» (own finished work)
-    assert set(window._nav_buttons) == {"orders", "item_requests", "customers", "archive",
-                                        "settings"}
-    assert set(window._pages) == {"orders", "item_requests", "customers", "archive",
-                                  "settings"}
+    # v2.8.0: + «بایگانی» (own finished work); v2.8.3: + «داشبورد», «گزارش‌ها»
+    menu = {"dashboard", "orders", "item_requests", "customers", "archive", "reports",
+            "settings"}
+    assert set(window._nav_buttons) == menu
+    assert set(window._pages) == menu
     assert window._current_key == "orders" and window.home_key() == "orders"
     assert window.password_button.text() == "گذرواژهٔ من"
     window.close()
@@ -257,18 +260,19 @@ def test_users_form_ticks_follow_the_role(ui_context, admin_qapp, fake_api):
     context = make_context_with_role(ui_context, ROLE_SUPER_ADMIN)
     form = UserFormDialog(context, None)
     assert form.role_combo.currentData() == ROLE_OPERATOR                # default role
-    assert form.permission_checks["orders.view"].isChecked()
+    # v2.8.3: the daily work is not in the table (always on)
+    assert "orders.view" not in form.permission_checks
+    assert "dashboard.view" not in form.permission_checks
     assert not form.permission_checks["pricelist.edit"].isChecked()
     # v2.8.2: «تغییر» ticks «دیدن» of the same section
     form.permission_checks["sales.edit"].setChecked(True)
     assert form.permission_checks["sales.view"].isChecked()
-    form.permission_checks["orders.edit"].setChecked(False)
-    assert form.permission_changes() == (["sales.edit", "sales.view"], ["orders.edit"])
+    assert form.permission_changes() == (["sales.edit", "sales.view"], [])
     # clearing «دیدن» clears «تغییر»
-    form.permission_checks["requests.view"].setChecked(False)
-    assert not form.permission_checks["requests.edit"].isChecked()
-    form.permission_checks["requests.view"].setChecked(True)
-    form.permission_checks["requests.edit"].setChecked(True)
+    form.permission_checks["sales.view"].setChecked(False)
+    assert not form.permission_checks["sales.edit"].isChecked()
+    form.permission_checks["sales.view"].setChecked(True)
+    form.permission_checks["sales.edit"].setChecked(True)
     form.username_input.setText("mina")
     form.full_name_input.setText("مینا")
     form.password_input.setText("Secret1234")
@@ -277,6 +281,6 @@ def test_users_form_ticks_follow_the_role(ui_context, admin_qapp, fake_api):
     _pump(admin_qapp)
     row = fake_api.find_staff("mina")
     assert row["extra_permissions"] == ["sales.edit", "sales.view"]
-    assert row["removed_permissions"] == ["orders.edit"]
+    assert row["removed_permissions"] == []
     form.role_combo.setCurrentIndex(form.role_combo.findData(ROLE_SUPER_ADMIN))
     assert all(c.isChecked() for c in form.permission_checks.values())

@@ -465,5 +465,5 @@ def test_new_permission_has_a_label():
     from app import staff as st
 
     assert st.PERMISSION_LABELS[st.P_ORDERS_ASSIGN] == "ارجاع کار به همکار — تغییر"
-    assert st.P_ORDERS_ASSIGN not in st.PERMISSIONS["operator"]
+    assert st.P_ORDERS_ASSIGN in st.PERMISSIONS["operator"]        # v2.8.3: always on
     assert st.P_ORDERS_ASSIGN in st.PERMISSIONS["super_admin"]

@@ -41,7 +41,9 @@ def test_old_ticks_are_migrated_on_start(tmp_path):
     eff = st.effective_permissions(mina["role"], mina["perm_grant"], mina["perm_revoke"])
     assert {"dashboard.view", "products.view", "reports.view", "sales.edit", "assign.edit",
             "orders.edit"} <= eff
-    assert "requests.view" not in eff and "requests.edit" not in eff
+    # v2.8.3: «درخواست کالا» is always on; the old revoke tick is gone
+    assert "requests.view" in eff and "requests.edit" in eff
+    assert "requests" not in mina["perm_revoke"]
     chief = again.get_staff(boss["id"])
     eff = st.effective_permissions(chief["role"], chief["perm_grant"], chief["perm_revoke"])
     assert "server.edit" not in eff and "staff.edit" not in eff and "orders.edit" in eff
@@ -61,16 +63,20 @@ def test_view_without_edit_is_read_only(client, db, reader):
     items = client.get("/admin/item-requests", headers=looker)
     assert items.status_code == 200
     req_id = items.json()[0]["id"]
+    # v2.8.3: «درخواست کالا» / «سفارش‌ها» cannot be taken away any more
     assert client.put(f"/admin/item-requests/{req_id}/note", json={"note": "x"},
-                      headers=looker).status_code == 403
-    order_id = _order(client)
-    assert client.post(f"/admin/orders/{order_id}/payment-info", headers=looker,
-                       json={"card_number": "6037991122334455"}).status_code == 403
+                      headers=looker).status_code == 200
+    viewer = staff(db, "operator", "looker2")
+    db.update_staff(db.get_staff_by_username("looker2")["id"], perm_grant="groups.view")
+    assert client.get("/admin/product-groups", headers=viewer).status_code == 200
+    assert client.put("/admin/product-groups", json={"groups": []},
+                      headers=viewer).status_code == 403
     assert client.get("/admin/permission-sections", headers=looker).status_code == 403
     sections = client.get("/admin/permission-sections",
                           headers=staff(db, "super_admin", "boss")).json()
-    assert sections[0] == {"key": "dashboard", "label": "داشبورد", "view": "dashboard.view",
-                           "edit": None}
+    assert sections[0] == {"key": "products", "label": "محصولات و موجودی",
+                           "view": "products.view", "edit": None}
+    assert not {s["key"] for s in sections} & st.ALWAYS_SECTIONS
 
 
 # ---- 8: no «برمی‌دارم»; the first action takes; the second user is told -------------------------

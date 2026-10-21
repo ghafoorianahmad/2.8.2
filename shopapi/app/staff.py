@@ -35,7 +35,8 @@ ROLE_SERVICE = "service"
 #: shows the table in «کاربران سیستم». A permission is ``<section>.view`` or
 #: ``<section>.edit``; «تغییر» always includes «دیدن». A section without «دیدن»
 #: is hidden from the menu, and every endpoint checks the same names here.
-SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
+#: v2.8.3: every section that exists (names stay valid for old ticks and checks).
+ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("dashboard", "داشبورد", True, False),
     ("orders", "سفارش‌ها و رسیدها (تأیید/رد رسید، اطلاعات پرداخت، ارسال، لغو)", True, True),
     ("requests", "درخواست کالا (پیام، یادداشت، تأیید موجودی)", True, True),
@@ -53,11 +54,18 @@ SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("staff", "کاربران سیستم و دسترسی‌ها", True, True),
     ("server", "تنظیمات سرور فروشگاه", True, True),
 )
+#: v2.8.3: the daily work of every staff member is always on and is no longer in
+#: the table (each user still sees only their own work and new free work).
+ALWAYS_SECTIONS = frozenset({"dashboard", "orders", "requests", "customers", "assign",
+                             "archive", "reports"})
+#: The permission table of «کاربران سیستم» (rows = sections).
+SECTIONS: tuple[tuple[str, str, bool, bool], ...] = tuple(
+    s for s in ALL_SECTIONS if s[0] not in ALWAYS_SECTIONS)
 
 
 def _names() -> dict[str, str]:
     out: dict[str, str] = {}
-    for key, label, view, edit in SECTIONS:
+    for key, label, view, edit in ALL_SECTIONS:
         if view:
             out[f"{key}.view"] = f"{label} — دیدن"
         if edit:
@@ -68,6 +76,9 @@ def _names() -> dict[str, str]:
 #: Every permission with its Persian name (also returned by /admin/permissions).
 PERMISSION_LABELS: dict[str, str] = _names()
 ALL_PERMISSIONS = frozenset(PERMISSION_LABELS)
+#: v2.8.3: what every staff member always has (not a tick any more).
+ALWAYS_PERMISSIONS = frozenset(name for name in ALL_PERMISSIONS
+                               if name.split(".", 1)[0] in ALWAYS_SECTIONS)
 
 # The names the endpoints check (kept as constants; v2.8.2 values).
 P_DASHBOARD = "dashboard.view"
@@ -103,13 +114,12 @@ P_STAFF_MANAGE = "staff.edit"
 P_SERVER_VIEW = "server.view"
 P_SERVER_MANAGE = "server.edit"
 #: Product / group reads for staff (low sensitivity: names, prices, stock).
-CATALOG_READERS = ("products.view", "groups.view", "pricelist.view", "models.view",
-                   "dashboard.view")
+#: v2.8.3: not «داشبورد» any more (it is always on; it must not open the catalog).
+CATALOG_READERS = ("products.view", "groups.view", "pricelist.view", "models.view")
 #: Notifications: every staff member gets the feed (filtered to what they may see).
 P_EVENTS = "events.view"
 
-_SALES = frozenset({"orders.view", "orders.edit", "requests.view", "requests.edit",
-                    "customers.view", "archive.view"})
+_SALES = ALWAYS_PERMISSIONS
 
 PERMISSIONS: dict[str, frozenset[str]] = {
     ROLE_SUPER_ADMIN: ALL_PERMISSIONS,
@@ -184,6 +194,13 @@ def migrate_ticks(role: str, grants: str, revokes: str) -> tuple[str, str] | Non
     return (",".join(sorted(new_effective - base_new)), ",".join(sorted(base_new - new_effective)))
 
 
+def strip_always(raw: str) -> str | None:
+    """v2.8.3: a stored tick list without the always-on names (None = unchanged)."""
+    items = [p.strip() for p in str(raw or "").split(",") if p.strip()]
+    kept = [p for p in items if p not in ALWAYS_PERMISSIONS]
+    return ",".join(sorted(set(kept))) if len(kept) != len(items) else None
+
+
 def parse_permission_list(raw) -> frozenset[str]:
     """A stored comma list (or any iterable) -> known permission names only."""
     if raw is None:
@@ -198,6 +215,8 @@ def effective_permissions(role: str | None, grants=None, revokes=None) -> frozen
     (filtered) notification feed."""
     base = PERMISSIONS.get(str(role or ""), frozenset())
     perms = with_implied((base | parse_permission_list(grants)) - parse_permission_list(revokes))
+    if str(role or "") in PERMISSIONS:
+        perms = perms | ALWAYS_PERMISSIONS        # v2.8.3: never a tick
     return perms | {P_EVENTS}
 
 

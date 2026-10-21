@@ -157,8 +157,11 @@ class MainWindow(QMainWindow):
         self.navigate(self.home_key())
 
     def home_key(self) -> str:
-        """v2.7.0: a sales user starts on the orders, a manager on the dashboard."""
-        for key in ("dashboard", "orders"):
+        """v2.7.0: a sales user starts on the orders, a manager on the dashboard
+        (v2.8.3: everyone has the dashboard; the sales user still lands on orders)."""
+        principal = self.context.principal
+        manager = principal is None or principal.is_manager
+        for key in (("dashboard", "orders") if manager else ("orders", "dashboard")):
             if key in self._pages and (key != "dashboard" or self.context.can(DASHBOARD_VIEW)):
                 return key
         return "orders" if "orders" in self._pages else next(iter(self._pages), "")

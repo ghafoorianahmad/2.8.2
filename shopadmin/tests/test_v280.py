@@ -128,7 +128,8 @@ def test_free_order_has_no_take_button(ui_context, fake_api, admin_qapp):
     order = fake_api.add_order(id=6, owned=False)
     dialog = OrderDetailDialog(make_context_with_role(ui_context, ROLE_OPERATOR), order)
     assert not hasattr(dialog, "claim_button")
-    assert not dialog.assign_button.isVisibleTo(dialog)      # not theirs, no tick
+    # v2.8.3: «ارجاع» is always on (the server lets anyone hand over a free order)
+    assert dialog.assign_button.isVisibleTo(dialog)
 
 
 def test_finished_order_is_read_only(ui_context, fake_api, admin_qapp):
