@@ -1,6 +1,10 @@
 """Long-lived login tokens for «مرا به خاطر بسپار».
 
-The password is NEVER stored anywhere. What is stored is a random refresh token:
+v2.9.1 (owner's decision): the last user's password is ALSO kept on this computer,
+encrypted with Windows DPAPI for the signed-in Windows user only
+(``remembered.pw``), so after «خروج» pressing «ورود» is enough. Where DPAPI does
+not exist (tests on Linux) nothing is stored; there is never a plain-text or
+merely obfuscated copy. Otherwise a random refresh token is stored:
 
 * the token itself → the Windows Credential Manager (via ``keyring``),
 * a SHA-256 hash of it → the local SQLite database,
@@ -255,6 +259,62 @@ def clear_token(username: str) -> None:
         except Exception:
             pass  # already absent is fine
     _clear_fallback()
+
+
+# --------------------------------------------------------------------------
+# v2.9.1: the remembered password (DPAPI only)
+# --------------------------------------------------------------------------
+PASSWORD_FILENAME = "remembered.pw"
+
+
+def _password_path() -> Path:
+    return data_dir() / PASSWORD_FILENAME
+
+
+def dpapi_available() -> bool:
+    return _dpapi(b"probe", protect=True) is not None
+
+
+def save_password(username: str, password: str) -> bool:
+    """Keep the last user's password, DPAPI-encrypted; False when not possible."""
+    if not username or not password:
+        return False
+    protected = _dpapi(password.encode("utf-8"), protect=True)
+    if protected is None:
+        log.info("remembered password not stored: Windows DPAPI is not available")
+        return False
+    try:
+        path = _password_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{username}\n{DPAPI_PREFIX}"
+                        f"{base64.urlsafe_b64encode(protected).decode('ascii')}\n",
+                        encoding="utf-8")
+        return True
+    except OSError as exc:
+        log.warning("remembered password not stored: %s", type(exc).__name__)
+        return False
+
+
+def load_password(username: str) -> Optional[str]:
+    """The remembered password of ``username`` on this computer (or None)."""
+    path = _password_path()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    if len(lines) < 2 or lines[0].strip().lower() != str(username or "").strip().lower():
+        return None
+    value = lines[1].strip()
+    if not value.startswith(DPAPI_PREFIX):
+        return None
+    return decode_fallback(value)
+
+
+def clear_password() -> None:
+    try:
+        _password_path().unlink(missing_ok=True)
+    except OSError as exc:  # pragma: no cover
+        log.warning("could not delete the remembered password: %s", type(exc).__name__)
 
 
 # Backwards-compatible aliases (older call sites / tests used these names).

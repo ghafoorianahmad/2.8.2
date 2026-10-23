@@ -3,9 +3,15 @@
 * the same file twice -> ``duplicate`` (nothing changes);
 * not newer than the active list -> stored as ``superseded`` (``older``);
 * unreadable / layout changed -> stored as ``failed``; the last good prices stay;
-* a mapped price moving more than PRICELIST_MAX_CHANGE_PCT, or most mapped rows
-  missing -> ``held``: the last good prices stay until staff approve the list;
-* otherwise the list becomes ``active``.
+* most mapped rows missing -> ``held``: the last good prices stay until staff
+  approve the list;
+* otherwise the list becomes ``active``. v2.9.1 price guard: a mapped row whose
+  price moves more than PRICE_GUARD_PCT (10 %) keeps its previous price; the new
+  one waits for a manager (``pending_*``, event ``price_held``) - per row, the
+  rest of the list applies at once;
+* v2.9.1: ``latest`` (the reader's newest list post that still exists): a file
+  seen before becomes the active list again when the newer post was deleted;
+  every imported list teaches each model's «روال − نقد» difference (``notes``).
 
 Every outcome except ``duplicate`` adds an event (``pricelist_imported``,
 ``pricelist_held``, ``pricelist_failed``); the bot turns held/failed into a
@@ -23,6 +29,7 @@ from ..config import Settings
 from ..db_own import OwnDB
 from ..util import now_utc
 from .matching import auto_match, smart_key
+from .notes import learn_diffs
 from .parser import ParseError, parse_pdf
 from .pricing import change_pct, customer_price_rial
 from .repo import PriceListRepo
@@ -42,6 +49,8 @@ class ImportResult:
     reasons: list[str] = field(default_factory=list)
     #: v2.6.2: rows decided automatically from earlier decisions
     auto_mapped: int = 0
+    #: v2.9.1: rows whose new price waits for a manager (price guard)
+    held_rows: int = 0
 
 
 def _store_pdf(settings: Settings, list_id: int, list_date: str, data: bytes) -> str | None:
@@ -71,9 +80,34 @@ def _is_older(list_date: str, posted_at: str | None, active: dict) -> bool:
     return False
 
 
+def big_changes(repo: PriceListRepo, active: dict | None, new_rows: dict[str, dict],
+                guard_pct: float) -> list[tuple[dict, dict, float]]:
+    """v2.9.1: (old row, new row, %) of the mapped rows whose price moves more than
+    ``guard_pct`` - those keep the old price until a manager approves."""
+    if active is None:
+        return []
+    old_rows = repo.rows_by_key(active["id"])
+    mapped = repo.mapped_keys()
+    by_smart = {smart_key(r["section"], r["description"], r["kind"], r["color"]): r
+                for r in new_rows.values()}
+    out = []
+    for key in sorted(mapped & set(old_rows)):
+        old = old_rows[key]
+        new = new_rows.get(key) or by_smart.get(
+            smart_key(old["section"], old["description"], old["kind"], old["color"]))
+        if new is None:
+            continue
+        pct = change_pct(old["price_rial"], new["price_rial"])
+        if pct is not None and pct > guard_pct:
+            out.append((old, new, pct))
+    return out
+
+
 def safety_reasons(repo: PriceListRepo, active: dict | None, new_rows: dict[str, dict],
-                   max_change_pct: float) -> list[str]:
-    """Why the new rows must be held for review (empty = safe)."""
+                   max_change_pct: float | None = None) -> list[str]:
+    """Why the whole list must be held for review (empty = safe). v2.9.1: only a
+    changed layout (most mapped rows missing); big price changes are held per row
+    (``big_changes``). ``max_change_pct`` (None = off) keeps the old whole-list rule."""
     if active is None:
         return []
     old_rows = repo.rows_by_key(active["id"])
@@ -92,7 +126,7 @@ def safety_reasons(repo: PriceListRepo, active: dict | None, new_rows: dict[str,
             missing += 1
             continue
         pct = change_pct(old["price_rial"], new["price_rial"])
-        if pct is not None and pct > max_change_pct:
+        if max_change_pct is not None and pct is not None and pct > max_change_pct:
             reasons.append(
                 f"{old['description']} {old['color']}: {old['price_rial']:,} -> "
                 f"{new['price_rial']:,} ({pct:.0f}%)"
@@ -112,11 +146,15 @@ def import_pdf(
     source_ref: str = "",
     posted_at: str | None = None,
     actor: str = "",
+    latest: bool = False,
 ) -> ImportResult:
     repo = PriceListRepo(db)
     sha = hashlib.sha256(data).hexdigest()
     existing = repo.get_by_sha(sha)
     if existing is not None:
+        if latest and _reactivate(db, repo, existing, actor or source):
+            return ImportResult("active", existing["id"], existing["list_date"],
+                                existing["row_count"], ["the newer list post was removed"])
         return ImportResult("duplicate", existing["id"], existing["list_date"],
                             existing["row_count"])
 
@@ -156,9 +194,9 @@ def import_pdf(
         )
         return ImportResult("older", list_id, parsed.list_date, len(rows))
 
-    reasons = safety_reasons(
-        repo, active, {r["row_key"]: r for r in rows}, settings.pricelist_max_change_pct
-    )
+    by_key = {r["row_key"]: r for r in rows}
+    reasons = safety_reasons(repo, active, by_key)
+    guarded = [] if reasons else big_changes(repo, active, by_key, settings.price_guard_pct)
     status_value = "held" if reasons else "active"
     list_id = repo.insert_list(
         list_date=parsed.list_date, sha256=sha, source=source, source_ref=source_ref,
@@ -172,13 +210,52 @@ def import_pdf(
     if auto:
         db.audit(actor or source, "price_mapping_auto", f"list id={list_id} rows={auto}")
     if status_value == "active":
+        for old, new, _pct in guarded:
+            hold_new_row(db, list_id, old, new)
+        learn_diffs(db, list_id, rows)
         repo.activate(list_id)
         db.audit(actor or source, "pricelist_import", f"list id={list_id} date={parsed.list_date}")
         db.add_event("pricelist_imported", list_id, actor or source)
+        if guarded:
+            db.audit(actor or source, "price_held", f"list id={list_id} rows={len(guarded)}")
+            db.add_event("price_held", list_id, actor or source)
     else:
         db.audit(actor or source, "pricelist_held", f"list id={list_id} date={parsed.list_date}")
         db.add_event("pricelist_held", list_id, actor or source)
-    return ImportResult(status_value, list_id, parsed.list_date, len(rows), reasons, auto)
+    result = ImportResult(status_value, list_id, parsed.list_date, len(rows), reasons, auto)
+    result.held_rows = len(guarded)
+    return result
+
+
+def _reactivate(db: OwnDB, repo: PriceListRepo, existing: dict, actor: str) -> bool:
+    """The channel's newest list post was deleted: the newest one that is left (a
+    file seen before) is the list again - only over another channel list (never
+    over a manual upload, a held or a rejected list)."""
+    active = repo.active_list()
+    if active is None or int(active["id"]) == int(existing["id"]):
+        return False
+    if existing["status"] != "superseded" or active.get("source") != "telegram" \
+            or existing.get("source") != "telegram" or not existing.get("row_count"):
+        return False
+    repo.activate(existing["id"], actor)
+    db.audit(actor, "pricelist_reactivated", f"list id={existing['id']} (newer post removed)")
+    db.add_event("pricelist_imported", existing["id"], actor)
+    return True
+
+
+def hold_new_row(db: OwnDB, list_id: int, old: dict, new: dict) -> None:
+    """Price guard on a new list: the row keeps selling at the previous price; the
+    list's price waits for a manager."""
+    with db._lock:
+        db._conn.execute(
+            "UPDATE price_list_rows SET orig_naghd=naghd, orig_raval=raval, "
+            "orig_price_rial=price_rial, pending_naghd=naghd, pending_raval=raval, "
+            "pending_price_rial=price_rial, pending_estimated=0, pending_source='list', "
+            "naghd=?, raval=?, price_rial=?, price_flag='held', flag_note='', "
+            "raval_estimated=? WHERE list_id=? AND row_key=?",
+            (old.get("naghd"), old.get("raval"), old.get("price_rial"),
+             int(bool(old.get("raval_estimated"))), int(list_id), new["row_key"]))
+        db._commit()
 
 
 def active_list_fresh(active: dict | None, settings: Settings) -> bool:

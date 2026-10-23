@@ -21,10 +21,14 @@ from ..db_own import OwnDB
 from ..pricelist.importer import ImportResult, import_pdf
 from .. import groups as group_config
 from ..pricelist.matching import SUGGESTIONS, auto_match, confident, name_candidates, name_match
+from ..pricelist import notes
 from ..pricelist.repo import PriceListRepo
+from .. import sales as sales_state
+from .. import tgchannels
 from ..proxypool import ACTIVE_CAP, ProxyLink, ProxyPool, masked_secret, parse_proxy_link
-from ..security import Identity, require_any, require_permission, require_worker
-from ..staff import P_PRICELIST, P_PRICELIST_VIEW, P_PROXIES, P_REQUESTS_VIEW
+from ..security import Identity, get_identity, require_any, require_permission, require_worker
+from ..staff import (P_PRICELIST, P_PRICELIST_VIEW, P_PROXIES, P_REQUESTS_VIEW,
+                     P_SERVER_MANAGE)
 from ..util import now_utc
 
 router = APIRouter()
@@ -41,6 +45,8 @@ WORKER = Depends(require_worker)
 WORKER_STATE_PREFIX = "worker:"
 WORKER_STATE_KEYS = frozenset({
     "tg_price_last_id", "tg_proxy_collected_at", "tg_proxy_last_ids", "tg_status",
+    # v2.9.1: the newest list post sent (id, edit, size) and the text posts sent
+    "tg_price_version", "tg_price_notes",
 })
 #: Alerts the worker may raise (each at most once per ALERT_REPEAT).
 WORKER_ALERTS = frozenset({"telegram_login_required", "telegram_unreachable",
@@ -54,6 +60,35 @@ class PdfIn(BaseModel):
     data_b64: str = Field(min_length=8)
     source_ref: str = Field(default="", max_length=200)
     posted_at: Optional[str] = Field(default=None, max_length=40)
+    #: v2.9.1 (worker): the newest list post that still exists in the channel
+    latest: bool = False
+
+
+class NoteIn(BaseModel):
+    """v2.9.1: a text post of the price channel after the list."""
+    text: str = Field(min_length=1, max_length=4000)
+    source_ref: str = Field(default="", max_length=200)
+    posted_at: Optional[str] = Field(default=None, max_length=40)
+
+
+class RowDecisionIn(BaseModel):
+    row_key: str = Field(min_length=1, max_length=400)
+    list_id: Optional[int] = None
+
+
+class ChannelIn(BaseModel):
+    id: int
+    username: str = Field(default="", max_length=64)
+    title: str = Field(default="", max_length=200)
+    broadcast: bool = True
+
+
+class ChannelsIn(BaseModel):
+    channels: list[ChannelIn] = Field(default_factory=list, max_length=1000)
+
+
+class ChannelRoleIn(BaseModel):
+    role: Literal["", "pricelist", "proxy", "accessories", "used", "ignore"]
 
 
 class ImportOut(BaseModel):
@@ -63,6 +98,7 @@ class ImportOut(BaseModel):
     row_count: int = 0
     reasons: list[str] = []
     auto_mapped: int = 0
+    held_rows: int = 0
 
 
 class MappingIn(BaseModel):
@@ -238,7 +274,8 @@ def upload_pricelist(
 
 @router.get("/admin/pricelists/rows")
 def pricelist_rows(
-    filter: Literal["unmapped", "mapped", "ignored", "auto", "all"] = Query("all"),
+    filter: Literal["unmapped", "mapped", "ignored", "auto", "held", "corrected",
+                    "all"] = Query("all"),
     section: Optional[str] = Query(None, max_length=100),
     list_id: Optional[int] = Query(None),
     db: OwnDB = Depends(deps.get_db),
@@ -258,6 +295,9 @@ def pricelist_rows(
         "mapped": sum(1 for r in rows if r["action"] == "map"),
         "ignored": sum(1 for r in rows if r["action"] == "ignore"),
         "auto": sum(1 for r in rows if r["action"] is not None and r["auto"]),
+        # v2.9.1: a new price waiting for a manager / a correction of the channel
+        "held": sum(1 for r in rows if r.get("pending_price_rial") is not None),
+        "corrected": sum(1 for r in rows if r.get("price_flag") == "correction"),
         "all": len(rows),
     }
     if section:
@@ -270,7 +310,101 @@ def pricelist_rows(
         rows = [r for r in rows if r["action"] == "ignore"]
     elif filter == "auto":
         rows = [r for r in rows if r["action"] is not None and r["auto"]]
+    elif filter == "held":
+        rows = [r for r in rows if r.get("pending_price_rial") is not None]
+    elif filter == "corrected":
+        rows = [r for r in rows if r.get("price_flag") == "correction"]
     return {"list": plist, "sections": sections, "rows": rows, "counts": counts}
+
+
+# ---- v2.9.1: price guard decisions, channel posts --------------------------------------
+def _held_row(repo: PriceListRepo, payload: RowDecisionIn) -> tuple[dict, dict]:
+    plist = repo.get_list(payload.list_id) if payload.list_id else repo.active_list()
+    if plist is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Price list not found")
+    row = repo.rows_by_key(plist["id"]).get(payload.row_key)
+    if row is None or row.get("pending_price_rial") is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "No price waits for approval on this row")
+    return plist, row
+
+
+@router.post("/admin/pricelists/rows/approve")
+def approve_row_price(
+    payload: RowDecisionIn,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_PRICELIST,
+) -> dict:
+    """The held new price of a row (more than PRICE_GUARD_PCT) is sold from now."""
+    repo = PriceListRepo(db)
+    plist, row = _held_row(repo, payload)
+    flag = notes.FLAG_CORRECTION if row.get("pending_source") == "correction" else ""
+    notes.set_row_price(db, plist["id"], row, row["pending_naghd"], row["pending_raval"],
+                        row["pending_price_rial"], flag=flag, note=row.get("flag_note") or "",
+                        estimated=bool(row.get("pending_estimated")))
+    db.audit(who.actor, "price_row_approve", f"list id={plist['id']}")
+    db.add_event("pricelist_corrected", plist["id"], who.actor)
+    return repo.rows_by_key(plist["id"])[payload.row_key]
+
+
+@router.post("/admin/pricelists/rows/reject")
+def reject_row_price(
+    payload: RowDecisionIn,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_PRICELIST,
+) -> dict:
+    """The held new price is dropped; the previous price stays."""
+    repo = PriceListRepo(db)
+    plist, row = _held_row(repo, payload)
+    notes.set_row_price(db, plist["id"], row, row["naghd"], row["raval"], row["price_rial"],
+                        flag="" if row.get("price_flag") == notes.FLAG_HELD
+                        else row.get("price_flag") or "",
+                        note="" if row.get("price_flag") == notes.FLAG_HELD
+                        else row.get("flag_note") or "",
+                        estimated=bool(row.get("raval_estimated")))
+    db.audit(who.actor, "price_row_reject", f"list id={plist['id']}")
+    db.add_event("pricelist_corrected", plist["id"], who.actor)
+    return repo.rows_by_key(plist["id"])[payload.row_key]
+
+
+@router.get("/admin/pricelists/notes")
+def pricelist_notes(
+    limit: int = Query(30, ge=1, le=200),
+    db: OwnDB = Depends(deps.get_db),
+    _: Identity = CAN_VIEW,
+) -> list[dict]:
+    """The price channel's text posts (corrections, «فروش بسته») and their outcome."""
+    return notes.list_notes(db, limit)
+
+
+def _can_channels(identity: Identity = Depends(get_identity)) -> Identity:
+    """«تنظیمات سرور» on the server (service key) or a manager."""
+    if identity.kind == "service":
+        return identity
+    if identity.must_change_password or not (identity.can(P_SERVER_MANAGE)
+                                             or identity.can(P_PRICELIST)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this account")
+    return identity
+
+
+@router.get("/admin/telegram/channels")
+def telegram_channels(db: OwnDB = Depends(deps.get_db),
+                      _: Identity = Depends(_can_channels)) -> dict:
+    """v2.9.1: the channels the shop's Telegram account has joined, with roles."""
+    return {"channels": tgchannels.load(db), "roles": list(tgchannels.ROLES),
+            "working_roles": list(tgchannels.WORKING_ROLES)}
+
+
+@router.put("/admin/telegram/channels/{channel_id}")
+def set_telegram_channel_role(
+    channel_id: int,
+    payload: ChannelRoleIn,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = Depends(_can_channels),
+) -> dict:
+    channel = tgchannels.set_role(db, channel_id, payload.role, who.actor)
+    if channel is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Channel not found")
+    return channel
 
 
 @router.get("/admin/pricelists/{list_id}")
@@ -560,12 +694,59 @@ def worker_pricelist(
 ) -> ImportOut:
     data = _decode_pdf(payload.data_b64, settings)
     result = import_pdf(db, settings, data, source="telegram", source_ref=payload.source_ref,
-                        posted_at=payload.posted_at, actor="worker")
+                        posted_at=payload.posted_at, actor="worker", latest=payload.latest)
     out = _import_out(result)
     if result.list_id:
         out.auto_mapped += _name_match(db, PriceListRepo(db), reader, settings, result.list_id,
                                        "worker")
     return out
+
+
+@router.post("/worker/pricelist-notes")
+def worker_pricelist_note(
+    payload: NoteIn,
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+    _: str = WORKER,
+) -> dict:
+    """v2.9.1: a text post after the list: a correction («اصلاحیه») is applied to
+    the active list, «فروش بسته» closes phone sales; anything else is ignored."""
+    kind = notes.classify(payload.text)
+    result = notes.NoteResult(kind=kind)
+    active = PriceListRepo(db).active_list()
+    result.list_id = int(active["id"]) if active else None
+    if kind == notes.KIND_CORRECTION:
+        notes.apply_correction(db, settings, payload.text, guard_pct=settings.price_guard_pct,
+                               result=result)
+        if result.applied or result.held:
+            db.audit("worker", "pricelist_correction",
+                     f"list id={result.list_id} applied={len(result.applied)} "
+                     f"held={len(result.held)} unmatched={len(result.unmatched)}")
+            db.add_event("pricelist_corrected", result.list_id, "worker")
+        if result.held:
+            db.add_event("price_held", result.list_id, "worker")
+    elif kind == notes.KIND_CLOSED:
+        sales_state.close_by_channel(db, settings, payload.source_ref)
+    note_id = notes.store_note(db, kind, list_id=result.list_id, source_ref=payload.source_ref,
+                               posted_at=payload.posted_at, text=payload.text,
+                               result=result.as_dict())
+    result.note_id = note_id
+    if result.unmatched:
+        db.add_event("price_correction_unmatched", note_id, "worker")
+    return result.as_dict()
+
+
+@router.post("/worker/telegram/channels")
+def worker_channels(payload: ChannelsIn, db: OwnDB = Depends(deps.get_db),
+                    _: str = WORKER) -> dict:
+    """v2.9.1: the channels the account has joined (new ones alert the admin)."""
+    out = tgchannels.sync(db, [c.model_dump() for c in payload.channels])
+    return {"known": out["known"], "new": len(out["new"])}
+
+
+@router.get("/worker/telegram/roles")
+def worker_channel_roles(db: OwnDB = Depends(deps.get_db), _: str = WORKER) -> dict:
+    return {"channels": tgchannels.roles_for_worker(db)}
 
 
 @router.get("/worker/state")

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import html
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -50,7 +51,8 @@ PROXY_STATES = ("probation", "main", "retired", "disabled")
 
 _HOST = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9\-.]*[A-Za-z0-9])?$")
 _LINK = re.compile(
-    r"(?:tg://proxy\?|(?:https?://)?(?:www\.)?(?:t|telegram)\.me/proxy\?)[^\s<>\"')\]]+",
+    r"(?:tg://(?:web)?proxy\?|(?:https?://)?(?:www\.)?(?:t|telegram)\.(?:me|dog)/(?:web)?proxy/?\?)"
+    r"[^\s<>\"')\]]+",
     re.IGNORECASE,
 )
 
@@ -98,25 +100,26 @@ def normalize_secret(raw: str) -> str | None:
 
 
 def parse_proxy_link(text: str) -> ProxyLink | None:
-    """``tg://proxy?server=..&port=..&secret=..`` or the t.me/proxy form."""
-    value = (text or "").strip()
+    """``tg://proxy?server=..&port=..&secret=..`` or the t.me/proxy form. v2.9.1:
+    also ``t.me/webproxy`` (no port = 443), ``&amp;`` and a host ending with a dot."""
+    value = html.unescape(text or "").strip()
     if not value:
         return None
-    if value.lower().startswith(("t.me/", "telegram.me/", "www.t.me/")):
+    if value.lower().startswith(("t.me/", "telegram.me/", "www.t.me/", "telegram.dog/")):
         value = "https://" + value
     parts = urlsplit(value)
     if parts.scheme.lower() == "tg":
-        if parts.netloc.lower() != "proxy":
+        if parts.netloc.lower() not in ("proxy", "webproxy"):
             return None
     elif parts.scheme.lower() in ("http", "https"):
-        if parts.netloc.lower() not in ("t.me", "www.t.me", "telegram.me") or \
-                parts.path.rstrip("/").lower() != "/proxy":
+        if parts.netloc.lower() not in ("t.me", "www.t.me", "telegram.me", "telegram.dog") or \
+                parts.path.rstrip("/").lower() not in ("/proxy", "/webproxy"):
             return None
     else:
         return None
     query = parse_qs(parts.query)
-    host = unquote((query.get("server") or [""])[0]).strip()
-    port_raw = (query.get("port") or [""])[0].strip()
+    host = unquote((query.get("server") or [""])[0]).strip().rstrip(".")
+    port_raw = (query.get("port") or [""])[0].strip() or "443"
     secret = normalize_secret(unquote((query.get("secret") or [""])[0]))
     if not host or not _HOST.match(host) or not port_raw.isdigit() or secret is None:
         return None

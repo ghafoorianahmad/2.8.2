@@ -216,16 +216,23 @@ def _map_first(db, list_id, kala_code=900, n=1):
                             color=row["color"], actor="t")
 
 
-def test_big_change_of_a_mapped_row_holds(db, settings, fake_parse):
+def test_big_change_of_a_mapped_row_holds_only_that_row(db, settings, fake_parse):
+    """v2.9.1 price guard: the list applies; the mapped row moving more than 10 %
+    keeps its old price until a manager approves the new one."""
     fake_parse[b"A"] = _fake_list()
     first = _imp(db, settings, b"A").list_id
     _map_first(db, first)
-    # +20% on every row: the mapped one triggers the hold.
+    old_price = PriceListRepo(db).rows(first)[0]["price_rial"]
+    # +20% on every row: only the mapped one is held.
     fake_parse[b"B"] = _fake_list("1405/07/20", price=120000)
-    held = _imp(db, settings, b"B")
-    assert held.outcome == "held" and "Phone 0" in held.reasons[0]
-    assert PriceListRepo(db).active_list()["id"] == first
-    assert "pricelist_held" in events(db)
+    result = _imp(db, settings, b"B")
+    assert result.outcome == "active" and result.held_rows == 1
+    assert PriceListRepo(db).active_list()["id"] == result.list_id
+    rows = PriceListRepo(db).rows(result.list_id)
+    assert rows[0]["price_rial"] == old_price and rows[0]["price_flag"] == "held"
+    assert rows[0]["pending_price_rial"] == (120000 + 500) * 10_000
+    assert rows[1]["price_rial"] == (120001 + 500) * 10_000 and rows[1]["price_flag"] == ""
+    assert "price_held" in events(db) and "pricelist_held" not in events(db)
 
 
 def test_big_change_of_unmapped_rows_does_not_hold(db, settings, fake_parse):
@@ -304,7 +311,8 @@ def test_upload_map_ignore_and_filters(client, db, reader):
     assert r.json()["outcome"] == "active"
     rows = client.get("/admin/pricelists/rows", params={"filter": "unmapped"},
                       headers=admin).json()
-    assert rows["counts"] == {"unmapped": 195, "mapped": 0, "ignored": 0, "auto": 0, "all": 195}
+    assert rows["counts"] == {"unmapped": 195, "mapped": 0, "ignored": 0, "auto": 0, "held": 0,
+                              "corrected": 0, "all": 195}
     iphone = client.get("/admin/pricelists/rows", params={"section": "iPHONE"},
                         headers=admin).json()["rows"]
     assert {r["section"] for r in iphone} == {"iPHONE"} and len(iphone) == 19
@@ -324,7 +332,8 @@ def test_upload_map_ignore_and_filters(client, db, reader):
     assert r.json() == {"ignored": 15}
     counts = client.get("/admin/pricelists/rows", headers=admin).json()["counts"]
     # v2.6.2: the other colors of «17 Promax 256 ZAA» followed the staff decision
-    assert counts == {"unmapped": 177, "mapped": 3, "ignored": 15, "auto": 2, "all": 195}
+    assert counts == {"unmapped": 177, "mapped": 3, "ignored": 15, "auto": 2, "held": 0,
+                      "corrected": 0, "all": 195}
     ignored = client.get("/admin/pricelists/rows", params={"filter": "ignored"},
                          headers=admin).json()["rows"]
     assert len(ignored) == 15
@@ -351,8 +360,11 @@ def test_approve_and_reject_held_lists(client, db, settings, fake_parse):
     fake_parse[b"A"] = _fake_list()
     first = _imp(db, settings, b"A").list_id
     _map_first(db, first)
-    fake_parse[b"B"] = _fake_list("1405/07/20", price=150000)
-    fake_parse[b"C"] = _fake_list("1405/07/21", price=150000)
+    # v2.9.1: a whole list is held only when most mapped rows are missing
+    _map_first(db, first, n=6)
+    renamed = [_row(f"Fone {i}", "Black", 1, 2) for i in range(30)]
+    fake_parse[b"B"] = ParsedList("1405/07/20", renamed)
+    fake_parse[b"C"] = ParsedList("1405/07/21", renamed + [_row("Other", "Red", 3, 4)])
     held_b = _imp(db, settings, b"B").list_id
     held_c = _imp(db, settings, b"C").list_id
     admin = staff(db)

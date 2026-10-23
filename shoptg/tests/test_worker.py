@@ -150,23 +150,81 @@ def test_first_run_sends_only_the_newest_pdf(env):
     sent = shop.pricelists[0]
     assert sent["source_ref"] == "t.me/AbrishamiiPhoneMashhad/12"
     assert sent["posted_at"].startswith("2026-10-12T08:12")
-    assert shop.state["tg_price_last_id"] == "13"      # past the text post too
+    assert sent["latest"] is True
+    assert shop.state["tg_price_last_id"] == "12"
+    # v2.9.1: the text post after the list goes to shopapi (a correction / «فروش بسته»?)
+    assert [n["source_ref"] for n in shop.notes] == ["t.me/AbrishamiiPhoneMashhad/13"]
 
 
-def test_later_runs_send_every_new_pdf_in_order(env):
+def test_newest_list_only_and_again_when_edited_or_deleted(env):
+    """v2.9.1: always the newest list post that exists; an edit (new file in the
+    same post) or a deleted newest post sends the list again."""
     worker, tg, shop, _ = env
-    shop.state["tg_price_last_id"] = "12"
-    _channel(tg, [fake_message(12, pdf=PDF), fake_message(14, pdf=PDF + b"a"),
-                  fake_message(15, image=True), fake_message(16, pdf=PDF + b"b")])
+    msgs = [fake_message(12, pdf=PDF), fake_message(14, pdf=PDF + b"a"),
+            fake_message(15, image=True), fake_message(16, pdf=PDF + b"b")]
+    _channel(tg, msgs)
     run(worker.ensure_connected())
-    assert run(worker.price_tick()) == 2
-    assert [p["source_ref"].rsplit("/", 1)[1] for p in shop.pricelists] == ["14", "16"]
-    assert shop.state["tg_price_last_id"] == "16"
-    assert "iter:AbrishamiiPhoneMashhad:12:100" in tg.calls
-    # nothing new -> nothing sent, no download
+    assert run(worker.price_tick()) == 1
+    assert [p["source_ref"].rsplit("/", 1)[1] for p in shop.pricelists] == ["16"]
+    assert "iter:AbrishamiiPhoneMashhad:0:30" in tg.calls
+    # nothing changed -> nothing sent, no download
     tg.calls.clear()
     assert run(worker.price_tick()) == 0
     assert not [c for c in tg.calls if c.startswith("download")]
+    # the post is edited: a new file in the same post
+    edited = fake_message(16, pdf=PDF + b"c", edit_date=datetime(2026, 10, 12, 9, 30,
+                                                                 tzinfo=timezone.utc))
+    _channel(tg, msgs[:3] + [edited])
+    assert run(worker.price_tick()) == 1
+    assert shop.pricelists[-1]["posted_at"].startswith("2026-10-12T09:30")
+    # the newest post is deleted: the one before it is the list again
+    _channel(tg, msgs[:3])
+    assert run(worker.price_tick()) == 1
+    assert shop.pricelists[-1]["source_ref"].endswith("/14")
+
+
+def test_text_posts_after_the_list_are_sent_once_per_version(env):
+    worker, tg, shop, _ = env
+    msgs = [fake_message(9, text="old note"), fake_message(10, pdf=PDF),
+            fake_message(11, text="اصلاحیه\nA17 128-6 72.000")]
+    _channel(tg, msgs)
+    run(worker.ensure_connected())
+    run(worker.price_tick())
+    assert [n["text"] for n in shop.notes] == ["اصلاحیه\nA17 128-6 72.000"]
+    run(worker.price_tick())
+    assert len(shop.notes) == 1
+    msgs[2] = fake_message(11, text="اصلاحیه\nA17 128-6 71.000",
+                           edit_date=datetime(2026, 10, 12, 9, 0, tzinfo=timezone.utc))
+    run(worker.price_tick())
+    assert shop.notes[-1]["text"].endswith("71.000")
+
+
+def test_channel_roles_choose_the_price_and_proxy_channels(env, settings):
+    worker, tg, shop, _ = env
+    shop.roles = [{"ref": "OtherPrices", "role": "pricelist"},
+                  {"ref": "ProxyMTProto", "role": "ignore"},
+                  {"ref": "MoreProxies", "role": "proxy"}]
+    settings.proxy_channels = ["ProxyMTProto", "ProxyChan"]
+    assert run(worker.price_channel()) == "OtherPrices"
+    assert run(worker.proxy_channels()) == ["MoreProxies", "ProxyChan"]
+
+
+def test_joined_channels_are_reported(env):
+    from types import SimpleNamespace
+
+    worker, tg, shop, _ = env
+    tg.dialogs = [
+        SimpleNamespace(is_channel=True, name="لیست قیمت",
+                        entity=SimpleNamespace(id=11, username="AbrishamiiPhoneMashhad",
+                                               broadcast=True)),
+        SimpleNamespace(is_channel=False, name="a person", entity=SimpleNamespace(id=5)),
+        SimpleNamespace(is_channel=True, name="private", entity=SimpleNamespace(
+            id=12, username=None, broadcast=True)),
+    ]
+    run(worker.ensure_connected())
+    assert run(worker.channels_tick()) == 2
+    assert [(c["id"], c["username"]) for c in shop.channels] == [
+        (11, "AbrishamiiPhoneMashhad"), (12, "")]
 
 
 def test_shopapi_down_keeps_the_cursor(env):
@@ -188,6 +246,7 @@ def test_shopapi_down_keeps_the_cursor(env):
         return await worker.price_tick()
     assert run(scenario()) == 0
     assert shop.state["tg_price_last_id"] == "1"
+    assert "tg_price_version" not in shop.state
 
 
 def test_oversized_and_fake_pdfs_are_skipped(env, settings):
@@ -204,6 +263,8 @@ def test_oversized_and_fake_pdfs_are_skipped(env, settings):
 # ---- proxy channels ----------------------------------------------------------------------
 LINK1 = f"tg://proxy?server=one.example&port=443&secret=dd{'ab' * 16}"
 LINK2 = f"https://t.me/proxy?server=two.example&port=8443&secret={'cd' * 16}"
+#: v2.9.1: every link travels on in the canonical tg:// form
+LINK2_TG = f"tg://proxy?server=two.example&port=8443&secret={'cd' * 16}"
 
 
 def test_daily_collection_tests_new_links_and_adds_only_working_ones(env):
@@ -219,7 +280,7 @@ def test_daily_collection_tests_new_links_and_adds_only_working_ones(env):
     assert run(worker.collect_tick()) == 1
     body = shop.candidates[-1]
     assert body["source"] == "channel:ProxyChan" and body["links"] == []
-    assert [t["link"] for t in body["tested"]] == [LINK2]
+    assert [t["link"] for t in body["tested"]] == [LINK2_TG]
     assert body["failed"] == [LINK1]
     assert json.loads(shop.state["tg_proxy_last_ids"]) == {"ProxyChan": 8}
     assert worker.collect_info["tested"] == 2 and worker.collect_info["via"] == "account"
@@ -240,7 +301,7 @@ def test_known_links_are_never_tested_again(env):
     before = len(tg.clients)
     assert run(worker.collect_tick()) == 1
     assert len(tg.clients) == before + 1          # only LINK2 was tested
-    assert [t["link"] for t in shop.candidates[-1]["tested"]] == [LINK2]
+    assert [t["link"] for t in shop.candidates[-1]["tested"]] == [LINK2_TG]
 
 
 def test_testing_stops_when_the_pool_is_full(env, settings):
@@ -271,13 +332,20 @@ def test_collection_without_login_uses_the_web_preview(env, settings, monkeypatc
 def test_web_preview_page_parsing():
     from app.webpreview import links_in_page
 
-    page = ('<a href="tg://proxy?server=a.example&amp;port=443&amp;secret=dd' + "ab" * 16 + '">'
-            'x</a> <a href="https://t.me/proxy?server=b.example&amp;port=1&amp;secret='
-            + "cd" * 16 + '">y</a> <a href="https://t.me/ProxyMTProto">z</a>')
+    post = '<div class="tgme_widget_message_wrap">'
+    page = (post + '<a href="tg://proxy?server=a.example&amp;port=443&amp;secret=dd' + "ab" * 16
+            + '">x</a></div>' + post + '<a href="https://t.me/proxy?server=b.example&amp;port=1&amp;'
+            'secret=' + "cd" * 16 + '">y</a> <a href="https://t.me/ProxyMTProto">z</a>'
+            '<a href="https://t.me/webproxy?server=c.example.&amp;secret=' + "ef" * 16 + '">w</a>'
+            '</div>' + post + 'Server: <code>d.example</code><br/>Port: <code>8443</code><br/>'
+            'Secret: <code>' + "12" * 16 + '</code></div>')
     links = links_in_page(page)
-    assert links[0].startswith("https://t.me/proxy?server=b.example&port=1")   # newest first
-    assert links[1] == "tg://proxy?server=a.example&port=443&secret=dd" + "ab" * 16
-    assert len(links) == 2
+    assert links == [   # newest post first, canonical links, every format
+        "tg://proxy?server=d.example&port=8443&secret=" + "12" * 16,
+        "tg://proxy?server=b.example&port=1&secret=" + "cd" * 16,
+        "tg://proxy?server=c.example&port=443&secret=" + "ef" * 16,
+        "tg://proxy?server=a.example&port=443&secret=dd" + "ab" * 16,
+    ]
 
 
 def test_web_preview_fetch_errors_are_preview_errors():
@@ -293,8 +361,15 @@ def test_web_preview_fetch_errors_are_preview_errors():
 
     def ok_factory():
         return httpx.AsyncClient(transport=httpx.MockTransport(
-            lambda r: httpx.Response(200, text=f"<a href='{LINK1}'>p</a>")))
+            lambda r: httpx.Response(200, text="<div class='tgme_widget_message_wrap'>"
+                                               f"<a href='{LINK1}'>p</a></div>")))
     assert run(webpreview.fetch_links("ProxyMTProto", client_factory=ok_factory)) == [LINK1]
+
+    def filtered_factory():   # v2.9.1: a filter page answers 200 too
+        return httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, text="<html>blocked</html>")))
+    with pytest.raises(webpreview.PreviewError):
+        run(webpreview.fetch_links("ProxyMTProto", client_factory=filtered_factory))
 
 
 def test_collection_due_daily_and_hourly_while_short(env, settings):
@@ -307,7 +382,7 @@ def test_collection_due_daily_and_hourly_while_short(env, settings):
     assert worker.collect_due((now - timedelta(minutes=61)).isoformat(), healthy=2)
     assert not worker.collect_due((now - timedelta(minutes=30)).isoformat(), healthy=2)
     settings.proxy_channels = []
-    assert not worker.collect_due("")
+    assert run(worker.collect_tick(force=True)) == 0
 
 
 def test_flood_wait_pauses_every_job(env):

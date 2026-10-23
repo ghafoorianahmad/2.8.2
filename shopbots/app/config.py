@@ -116,6 +116,10 @@ class Settings:
     #: Send branded image cards (price / pre-invoice / invoice) as photos. Off by
     #: default; any rendering or upload failure falls back to the plain text.
     bot_image_cards: bool = False
+    #: v2.9.1: the admin chat gets only problems (reader down, list not imported,
+    #: suspicious price, …). New orders / receipts / customers / inquiries go there
+    #: too only when this is on (ShopAdmin shows them anyway).
+    admin_chat_order_notices: bool = False
     #: Operator copy of messages.fa.json ("" = built-in texts only).
     messages_file: str = ""
 
@@ -155,6 +159,7 @@ class Settings:
             receipt_rate_window=_env_float("RECEIPT_RATE_WINDOW", 600.0),
             statement_page_size=_env_int("STATEMENT_PAGE_SIZE", 8),
             bot_image_cards=_env_bool("BOT_IMAGE_CARDS", False),
+            admin_chat_order_notices=_env_bool("ADMIN_CHAT_ORDER_NOTICES", False),
             messages_file=_env("BOT_MESSAGES_FILE", ""),
         )
 

@@ -1059,6 +1059,10 @@ SETUP_FIELDS = {
     "firewall_allowed_ips": "FIREWALL_ALLOWED_IPS",
     "allowed_databases": "ACCOUNTING_ALLOWED_DATABASES",
     "write_databases": "ACCOUNTING_WRITE_DATABASES",
+    # v2.9.1: the encrypted off-server backup copy («تنظیمات سرور» › شبکه و پشتیبان)
+    "backup_copy_dir": "BACKUP_COPY_DIR",
+    "backup_passphrase": "BACKUP_PASSPHRASE",
+    "backup_keep_days": "BACKUP_KEEP_DAYS",
 }
 
 #: Written once, on the first setup. Existing values are never replaced.

@@ -56,6 +56,13 @@ SERVER_WARNINGS = {
     "telegram_pricelist_error": "لیست قیمت تازهٔ کانال تلگرام دریافت نشد؛ قیمت‌های قبلی فعال است. "
                                 "در صورت نیاز PDF را دستی در «لیست قیمت» بارگذاری کنید.",
     "security_alert": "فعالیت مشکوک (ربات یا ورود به کنسول) دیده شد؛ گزارش ممیزی را ببینید.",
+    # v2.9.1: price guard, corrections that matched nothing, the distributor closed sales
+    "price_held": "قیمت تازهٔ یک یا چند مدل بیش از ۱۰٪ تغییر کرده و خودکار اعمال نشد؛ قیمت قبلی "
+                  "فعال است. در «لیست قیمت» ردیف‌های «منتظر تأیید» را تأیید یا رد کنید.",
+    "price_correction_unmatched": "چند سطر «اصلاحیه» کانال لیست قیمت با هیچ مدلی جور نشد؛ در "
+                                  "«لیست قیمت › پیام‌های کانال» ببینید.",
+    "sales_closed_channel": "پخش‌کننده در کانال «فروش بسته» اعلام کرد؛ فروش گوشی تا لیست قیمت "
+                            "بعدی بسته شد.",
     "model_review": "بررسی شبانه: کالای یک مدل سایت در حسابداری پیدا نشد یا نامش عوض شده؛ "
                     "مدل تا تأیید شما از دید مشتری پنهان است.",
     # v2.5.0: nothing is ever deleted in the accounting DB; a person decides there.
@@ -78,6 +85,16 @@ SALES_NOTICES = {
     "sales_holiday": "امروز تعطیل اعلام شد؛ فروش گوشی تا صبح فردا بسته است.",
 }
 KIND_AUTO_CANCELLED = "order_auto_cancelled"
+#: v2.9.1: a correction («اصلاحیه») of the channel, or a manager's decision on a held price
+KIND_PRICELIST_CORRECTED = "pricelist_corrected"
+#: v2.9.1: the shop's Telegram account joined a channel (choose its role)
+KIND_CHANNEL_NEW = "telegram_channel_new"
+#: v2.9.1: events after which the price list and the dashboard show something new
+PRICE_EVENT_KINDS = frozenset({"pricelist_imported", "pricelist_held", "pricelist_failed",
+                               KIND_PRICELIST_CORRECTED, "price_held",
+                               "price_correction_unmatched", "sales_opened", "sales_closed",
+                               "sales_opened_manual", "sales_closed_manual", "sales_holiday",
+                               "sales_closed_channel"})
 #: v2.9.0: the Telegram reader imported a new list of the channel (actor "worker").
 KIND_PRICELIST_IMPORTED = "pricelist_imported"
 #: v2.8.3: an order of this user (or nobody's yet) still waits for «ارسال اطلاعات پرداخت».
@@ -97,6 +114,11 @@ TARGETS = {
     "proxies_all_dead": ("server", ""),
     # v2.9.0: the Telegram reader
     "pricelist_imported": ("pricelist", ""),
+    KIND_PRICELIST_CORRECTED: ("pricelist", ""),
+    "price_held": ("pricelist", "held"),
+    "price_correction_unmatched": ("pricelist", ""),
+    "sales_closed_channel": ("dashboard", ""),
+    KIND_CHANNEL_NEW: ("server", ""),
     "telegram_pricelist_error": ("pricelist", ""),
     "telegram_login_required": ("server", ""),
     "telegram_unreachable": ("server", ""),
@@ -167,6 +189,13 @@ def notice_for(event: dict) -> Optional[Notice]:
         # v2.9.0: a list a person uploaded is not announced back to them
         return Notice(kind, "لیست قیمت تازه",
                       "لیست قیمت تازه از کانال تلگرام خوانده و فعال شد.", ref)
+    if kind == KIND_PRICELIST_CORRECTED and str(event.get("actor") or "") == "worker":
+        return Notice(kind, "اصلاحیهٔ قیمت",
+                      "اصلاحیهٔ کانال لیست قیمت اعمال شد (در «لیست قیمت» با برچسب «اصلاحیه»).", ref)
+    if kind == KIND_CHANNEL_NEW:
+        return Notice(kind, "کانال تازهٔ تلگرام",
+                      "حساب تلگرام فروشگاه عضو کانال تازه‌ای شد؛ در «تنظیمات سرور › تلگرام» نقش آن "
+                      "را انتخاب کنید.", ref, warning=True)
     if kind == KIND_CUSTOMER_CANCEL:
         return Notice(kind, "لغو سفارش توسط مشتری",
                       f"مشتری سفارش شمارهٔ {ref_fa} را پیش از ارسال رسید لغو کرد.", ref)

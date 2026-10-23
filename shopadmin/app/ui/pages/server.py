@@ -230,7 +230,10 @@ class ServerPage(BasePage):
             self.tg_labels[key] = value
         grid.setColumnStretch(1, 1)
         panel.body.addLayout(grid)
-        self.proxy_table = widgets.DataTable(SERVER_PROXY_HEADERS, key="server_proxies")
+        # v2.9.1: every column as wide as its content (the host was cut with «…»),
+        # «منبع» takes the rest; never a horizontal scroll bar
+        self.proxy_table = widgets.DataTable(SERVER_PROXY_HEADERS, key="server_proxies",
+                                             fit_width=True, stretch_column=5)
         self.proxy_table.set_empty_state("هنوز پراکسی‌ای در استخر نیست",
                                          "یک پراکسی دستی اضافه کنید تا خواننده بتواند شروع کند.",
                                          "wifi")
@@ -607,7 +610,10 @@ def telegram_details(worker: dict | None, pool: dict | None) -> dict[str, tuple[
             f"{format_shamsi(collect['at'])} — {to_persian_digits(collect.get('found') or 0)} پیوند، "
             f"{to_persian_digits(collect.get('tested') or 0)} آزموده، "
             f"{to_persian_digits(collect.get('added') or 0)} سالم اضافه شد"
-            + (f" ({ways})" if ways else ""), None)
+            + (f" ({ways})" if ways else "")
+            # v2.9.1: why nothing was found (channel unreadable, filtered page, …)
+            + ("\nدلیل: " + str(collect["error"]) if collect.get("error") else ""),
+            theme.WARNING_TEXT if collect.get("error") else None)
     else:
         out["collect"] = ("هنوز انجام نشده (روزی یک بار؛ وقتی استخر کم باشد هر ساعت)", None)
     return out

@@ -210,7 +210,7 @@ def test_operator_sees_rows_but_cannot_change_them(ui_context, fake_api, admin_q
     for b in (page.map_button, page.ignore_button, page.clear_button, page.upload_button,
               page.approve_button, page.reject_button):
         assert not b.isEnabled()
-    assert page.tabs.count() == 2                       # no proxies tab
+    assert page.tabs.count() == 3      # rows, lists, channel posts (no proxies tab)
     opened = []
     monkeypatch.setattr(MapRowDialog, "exec", lambda d: opened.append(d) or 0)
     _select(page.rows_table, 0)
@@ -221,7 +221,7 @@ def test_operator_sees_rows_but_cannot_change_them(ui_context, fake_api, admin_q
 
 def test_manager_has_every_tab(ui_context, fake_api, admin_qapp):
     page = _page(ui_context, admin_qapp, ROLE_ADMIN)               # old "admin" = «مدیر»
-    assert page.tabs.count() == 3 and page.map_button.isEnabled()
+    assert page.tabs.count() == 4 and page.map_button.isEnabled()
     page.close()
 
 
@@ -304,7 +304,7 @@ def test_proxies_tab_add_toggle_delete(ui_context, fake_api, admin_qapp, monkeyp
                          "last_ok_at": "2026-10-11T10:00:00", "failing_now": False}]
     monkeypatch.setattr("app.ui.widgets.confirm", lambda *a, **k: True)
     page = _page(ui_context, admin_qapp)
-    page.tabs.setCurrentIndex(2)
+    page.tabs.setCurrentIndex(3)          # v2.9.1: «پیام‌های کانال» is the third tab
     _pump(admin_qapp, page)
     table = page.proxy_table
     assert table.rowCount() == 1

@@ -25,7 +25,7 @@ def setup_logging(settings: Settings, level: str) -> None:
                                             maxBytes=2_000_000, backupCount=5, encoding="utf-8"))
     except OSError:
         pass
-    logging.basicConfig(level=getattr(logging, level.upper(), logging.INFO),
+    logging.basicConfig(level=getattr(logging, level.upper(), logging.INFO), force=True,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers)
     # Telethon logs connection details at INFO; keep it quiet.
     logging.getLogger("telethon").setLevel(logging.WARNING)

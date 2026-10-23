@@ -738,6 +738,7 @@ QHeaderView::section {{
 QHeaderView::section:first {{ border-top-right-radius: {RADIUS}px; }}
 QHeaderView::section:last {{ border-top-left-radius: {RADIUS}px; }}
 QTableCornerButton::section {{ background: {HEADER_BG}; border: none; }}
+QAbstractScrollArea::corner {{ background: transparent; border: none; }}
 
 /* ---------------- scrollbars ---------------- */
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; }}

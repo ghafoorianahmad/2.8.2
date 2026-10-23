@@ -20,12 +20,14 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPlainTextEdit,
     QRadioButton,
     QScrollArea,
@@ -59,7 +61,13 @@ KEEP_SECRET = "تنظیم شده — خالی بگذارید تا تغییر ن�
 #: v2.9.0: the public channel the price lists come from
 DEFAULT_PRICE_CHANNEL = "AbrishamiiPhoneMashhad"
 _CHANNEL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{3,31}$")
-_PROXY_RE = re.compile(r"^(tg://proxy\?|(https?://)?(www\.)?(t|telegram)\.me/proxy\?)\S+$", re.I)
+_PROXY_RE = re.compile(r"^(tg://(web)?proxy\?|(https?://)?(www\.)?(t|telegram)\.(me|dog)/(web)?proxy/?\?)\S+$",
+                       re.I)
+#: v2.9.1: role of each joined channel (only the first two are read today)
+CHANNEL_ROLES = (("", "انتخاب نشده"), ("pricelist", "لیست قیمت (گوشی)"), ("proxy", "پراکسی"),
+                 ("accessories", "لوازم جانبی (به‌زودی)"), ("used", "گوشی کارکرده (به‌زودی)"),
+                 ("ignore", "نادیده"))
+CHANNEL_HEADERS = ("کانال", "نشانی", "نقش")
 TDESKTOP_WARNING = (
     "این کلیدِ عمومیِ برنامهٔ رسمی Telegram Desktop است و فقط برای شروع است؛ تلگرام ممکن است "
     "حسابی را که با آن از برنامهٔ دیگری وارد می‌شود محدود کند. فقط با یک حساب دوم (جدا از "
@@ -423,7 +431,115 @@ class ServerSetupWizard(QWidget):
         self.public_warning = widgets.label("", color=theme.DANGER, wrap=True)
         self.public_warning.setVisible(False)
         panel.body.addWidget(self.public_warning)
+        holder = QWidget()
+        column = QVBoxLayout(holder)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(12)
+        column.addWidget(panel)
+        column.addWidget(self._backup_panel())
+        return holder
+
+    def _backup_panel(self) -> QWidget:
+        """v2.9.1: the encrypted copy of the nightly backup, outside this computer."""
+        panel = widgets.Panel("پشتیبان بیرون از سرور")
+        panel.body.addWidget(widgets.label(
+            "هر شب پس از پشتیبان روزانه، یک نسخهٔ رمزشده (AES-256) در این پوشه گذاشته و بازخوانی "
+            "می‌شود؛ فقط آخرین نسخه‌ها نگه داشته می‌شوند. پوشهٔ اشتراکی شبکه هم می‌شود "
+            "(\\\\رایانه\\پوشه)؛ سرور با حساب سرویس «NT SERVICE\\ShopServer» می‌نویسد، پس پوشهٔ "
+            "اشتراکی باید به رایانهٔ سرور (یا Everyone) اجازهٔ نوشتن بدهد. خالی = بدون نسخهٔ بیرونی.",
+            name="Muted", wrap=True))
+        form = _form()
+        self.backup_dir = _line(r"\\PC\ShopBackups")
+        form.addRow(widgets.label("پوشهٔ مقصد:"), self.backup_dir)
+        pass_row = QHBoxLayout()
+        self.backup_pass = _line(f"حداقل {to_persian_digits(setup.BACKUP_PASSPHRASE_MIN)} نویسه",
+                                 password=True)
+        pass_row.addWidget(self.backup_pass, 1)
+        pass_row.addWidget(widgets.button("ساخت عبارت تازه…", icon_name="key",
+                                          on_click=self._new_backup_passphrase))
+        form.addRow(widgets.label("عبارت رمز پشتیبان:"), pass_row)
+        self.backup_keep = QSpinBox()
+        self.backup_keep.setRange(3, 60)
+        self.backup_keep.setValue(14)
+        form.addRow(widgets.label("تعداد نسخه‌های نگه‌داشته:"), self.backup_keep)
+        panel.body.addLayout(form)
+        row = QHBoxLayout()
+        self.backup_test_button = widgets.button("آزمایش", icon_name="check", variant="primary",
+                                                 on_click=self._test_backup_folder)
+        row.addWidget(self.backup_test_button)
+        self.backup_result = widgets.label("", wrap=True)
+        row.addWidget(self.backup_result, 1)
+        panel.body.addLayout(row)
+        panel.body.addWidget(widgets.label(
+            "بدون عبارت رمز هیچ نسخه‌ای بیرون نوشته نمی‌شود (در پشتیبان رمز SQL و توکن‌ها هست). "
+            "عبارت را روی کاغذ بنویسید و دور از سرور نگه دارید؛ بدون آن نسخه‌ها باز نمی‌شوند.",
+            name="Muted", wrap=True))
         return panel
+
+    def _new_backup_passphrase(self) -> None:
+        phrase = setup.new_backup_passphrase()
+        box = QMessageBox(self)
+        box.setWindowTitle("عبارت رمز پشتیبان")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText("این عبارت را همین حالا روی کاغذ بنویسید؛ دوباره نمایش داده نمی‌شود:\n\n"
+                    + phrase + "\n\n(خط تیره‌ها و فاصله‌ها مهم نیستند.)")
+        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        box.exec()
+        self.backup_pass.setText(phrase)
+
+    def backup_problem(self) -> str:
+        folder = self.backup_dir.text().strip()
+        typed = self.backup_pass.text()
+        saved = bool(((self._current.secrets_set or {}) if self._current else {})
+                     .get("BACKUP_PASSPHRASE"))
+        if typed and len(setup.normalised_passphrase(typed)) < setup.BACKUP_PASSPHRASE_MIN:
+            return (f"عبارت رمز پشتیبان باید دست‌کم {to_persian_digits(setup.BACKUP_PASSPHRASE_MIN)} "
+                    "نویسه باشد (یا «ساخت عبارت تازه» را بزنید).")
+        if folder and not typed and not saved:
+            return "برای پشتیبان بیرون از سرور یک عبارت رمز لازم است («ساخت عبارت تازه»)."
+        return ""
+
+    def _test_backup_folder(self) -> None:
+        folder = self.backup_dir.text().strip()
+        if not folder:
+            self._backup_message("ابتدا پوشهٔ مقصد را وارد کنید.", False)
+            return
+        port = self.port.value()
+        settings_mode = self.settings_mode
+        self.backup_test_button.setEnabled(False)
+        self._backup_message("در حال آزمایش…", None)
+
+        def work() -> dict:
+            mine = setup.test_backup_folder(folder)
+            service = None
+            if settings_mode and mine.get("ok"):
+                client = setup.local_server_client(port)
+                try:
+                    service = client.backup_folder_test(folder, setup.service_key())
+                except Exception as exc:  # noqa: BLE001 - the server may be stopped
+                    service = {"ok": None, "message_fa": "سرور در دسترس نبود؛ آزمایش با حساب "
+                                                         f"سرویس انجام نشد ({type(exc).__name__})."}
+                finally:
+                    client.close()
+            return {"mine": mine, "service": service}
+
+        def ok(result: dict) -> None:
+            mine, service = result["mine"], result["service"]
+            lines = [mine.get("message_fa") or ""]
+            good = bool(mine.get("ok"))
+            if service is not None:
+                lines.append("با حساب سرویس سرور: " + str(service.get("message_fa") or ""))
+                good = good and service.get("ok") is not False
+            self._backup_message("\n".join(l for l in lines if l), good)
+
+        run_async(work, on_success=ok,
+                  on_error=lambda message, _kind: self._backup_message(message, False),
+                  on_done=lambda: self.backup_test_button.setEnabled(True))
+
+    def _backup_message(self, text: str, ok: bool | None) -> None:
+        color = theme.SUCCESS_DARK if ok else theme.DANGER if ok is False else theme.TEXT_MUTED
+        self.backup_result.setText(text)
+        self.backup_result.setStyleSheet(f"color: {color};")
 
     def _page_bots(self) -> QWidget:
         panel = widgets.Panel("ربات‌ها (اختیاری — بعداً هم از «تنظیمات سرور فروشگاه» قابل تنظیم است)")
@@ -505,9 +621,96 @@ class ServerSetupWizard(QWidget):
         row.addWidget(self.tg_login_button)
         login.body.addLayout(row)
         column.addWidget(login)
+        column.addWidget(self._channels_panel())
         self._tg_key_changed()
         self._update_tg_login_status()
         return holder
+
+    # ------------------------------------------------------------------ v2.9.1: channels
+    def _channels_panel(self) -> QWidget:
+        panel = widgets.Panel("کانال‌های حساب تلگرام و نقش هر کدام")
+        panel.body.addWidget(widgets.label(
+            "همهٔ کانال‌هایی که حساب تلگرام فروشگاه عضو آن‌هاست. برای هر کدام نقش بگذارید: فعلاً "
+            "«لیست قیمت (گوشی)» و «پراکسی» خوانده می‌شوند؛ «لوازم جانبی» و «گوشی کارکرده» برای "
+            "بعد است. عضویت در کانال تازه در «مدیریت فروشگاه» اعلام می‌شود. فقط خواندن؛ هیچ "
+            "پیامی فرستاده نمی‌شود.", name="Muted", wrap=True))
+        self.channels_table = widgets.DataTable(CHANNEL_HEADERS, key="tg_channels",
+                                                fit_width=True, stretch_column=0)
+        self.channels_table.set_empty_state(
+            "فهرستی نیامده", "خوانندهٔ تلگرام پس از ورود و اتصال، فهرست را می‌فرستد.", "wifi")
+        self.channels_table.setMinimumHeight(180)
+        panel.body.addWidget(self.channels_table)
+        row = QHBoxLayout()
+        self.channels_status = widgets.label("", name="Muted", wrap=True)
+        row.addWidget(self.channels_status, 1)
+        self.channels_button = widgets.button("خواندن فهرست", icon_name="refresh",
+                                              on_click=self._load_channels)
+        row.addWidget(self.channels_button)
+        panel.body.addLayout(row)
+        if not self.settings_mode:
+            self.channels_button.setEnabled(False)
+            self.channels_status.setText("پس از راه‌اندازی سرور، در «تنظیمات سرور» در دسترس است.")
+        return panel
+
+    def _load_channels(self) -> None:
+        port = self.port.value()
+        self.channels_button.setEnabled(False)
+        self.channels_status.setText("در حال خواندن…")
+
+        def work() -> dict:
+            client = setup.local_server_client(port)
+            try:
+                return client.telegram_channels(setup.service_key())
+            finally:
+                client.close()
+
+        run_async(work, on_success=self._show_channels,
+                  on_error=lambda message, _kind: self.channels_status.setText(
+                      "فهرست خوانده نشد (سرور روشن است؟): " + message),
+                  on_done=lambda: self.channels_button.setEnabled(True))
+
+    def _show_channels(self, payload: dict) -> None:
+        channels = list((payload or {}).get("channels") or [])
+        table = self.channels_table
+        table.setRowCount(0)
+        for channel in channels:
+            i = table.rowCount()
+            table.insertRow(i)
+            title = str(channel.get("title") or "—")
+            if channel.get("present") is False:
+                title += " (دیگر عضو نیست)"
+            table.set_cell(i, 0, title, bold=True)
+            username = channel.get("username")
+            table.set_cell(i, 1, f"@{username}" if username else "خصوصی")
+            combo = QComboBox()
+            for value, text in CHANNEL_ROLES:
+                combo.addItem(text, value)
+            combo.setCurrentIndex(max(0, combo.findData(str(channel.get("role") or ""))))
+            channel_id = int(channel["id"])
+            combo.currentIndexChanged.connect(
+                lambda _i, c=combo, cid=channel_id: self._set_channel_role(cid, c.currentData()))
+            table.set_widget(i, 2, combo)
+        table._refresh_states()
+        self.channels_status.setText(
+            f"{to_persian_digits(len(channels))} کانال." if channels else
+            "هنوز فهرستی نیامده؛ پس از ورود حساب تلگرام و اتصال خواننده چند دقیقه صبر کنید.")
+
+    def _set_channel_role(self, channel_id: int, role: str) -> None:
+        port = self.port.value()
+
+        def work() -> dict:
+            client = setup.local_server_client(port)
+            try:
+                client.set_channel_role(channel_id, role, setup.service_key())
+                return client.telegram_channels(setup.service_key())
+            finally:
+                client.close()
+
+        run_async(work, on_success=lambda payload: (
+            self._show_channels(payload),
+            self.channels_status.setText("نقش ذخیره شد؛ خوانندهٔ تلگرام چند دقیقهٔ دیگر از آن پیروی "
+                                         "می‌کند.")),
+            on_error=lambda message, _kind: widgets.error(self, "نقش کانال", message))
 
     def _page_admin(self) -> QWidget:
         panel = widgets.Panel("نخستین «مدیر کل»")
@@ -575,6 +778,8 @@ class ServerSetupWizard(QWidget):
         self.tg_enabled.setChecked(current.tg_reader_enabled)
         (self.tg_key_own if current.tg_api_preset == "custom" else self.tg_key_desktop).setChecked(True)
         self.tg_channel.setText(current.tg_price_channel)
+        self.backup_dir.setText(current.backup_copy_dir)
+        self.backup_keep.setValue(current.backup_keep_days or 14)
         secrets = current.secrets_set or {}
         for key, field in self._secret_fields().items():
             if secrets.get(key):
@@ -586,7 +791,7 @@ class ServerSetupWizard(QWidget):
     def _secret_fields(self) -> dict[str, QLineEdit]:
         return {"BALE_TOKEN": self.bale_token, "TELEGRAM_BOT_TOKEN": self.telegram_token,
                 "TG_API_ID": self.tg_api_id, "TG_API_HASH": self.tg_api_hash,
-                "TG_PROXY": self.tg_proxy}
+                "TG_PROXY": self.tg_proxy, "BACKUP_PASSPHRASE": self.backup_pass}
 
     # ------------------------------------------------------------------ telegram (v2.9.0)
     def tg_preset(self) -> str:
@@ -806,6 +1011,10 @@ class ServerSetupWizard(QWidget):
             except setup.SetupError as exc:
                 widgets.error(self, "شبکه", exc.message)
                 return
+            problem = self.backup_problem()
+            if problem:
+                widgets.error(self, "پشتیبان", problem)
+                return
         elif key == "telegram":
             problem = self.telegram_problem()
             if problem:
@@ -881,6 +1090,10 @@ class ServerSetupWizard(QWidget):
         extra["tg_reader_enabled"] = self.tg_enabled.isChecked()
         extra["tg_api_preset"] = self.tg_preset()
         extra["tg_price_channel"] = self.tg_channel.text().strip().lstrip("@") or DEFAULT_PRICE_CHANNEL
+        # v2.9.1: the off-server backup copy (an untouched passphrase = keep the saved one)
+        extra["backup_copy_dir"] = self.backup_dir.text().strip()
+        extra["backup_keep_days"] = str(self.backup_keep.value())
+        extra["backup_passphrase"] = self.backup_pass.text().strip() or None
         return extra
 
     def _execute(self) -> None:

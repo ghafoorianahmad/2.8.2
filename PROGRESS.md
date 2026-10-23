@@ -2,6 +2,27 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## v2.9.1 — price-channel corrections / «فروش بسته», price guard, every proxy format, channel roles, saved password, live look, off-server backup (2026-10-23, same branch) — DONE in code; installed build UNVERIFIED
+
+Owner's list after testing 2.9.0 on this PC (reader connected, Abrishami PDF imported). Decisions in `REQUIREMENTS.md` §7d.
+
+1. **Proxy collection found «0 links»**: @ProxyMTProto (checked 2026-10-23) posts «Server / Port / Secret» text with «Connect» buttons `t.me/proxy?…` and `t.me/webproxy?server=…&secret=…` (no port = 443), hosts sometimes ending with a dot, base64url secrets. New `shoptg/app/proxylinks.py` reads text, entities and buttons in every format and sends canonical `tg://proxy` links (live page: 42 links, the old parser 27). The account path always reads the newest 100 posts (was: only after a cursor); when it finds nothing the web preview is tried; a filter page answering 200 is reported (`not the channel's preview page`); the reason is shown on «سرور فروشگاه» (`collect.error`). shopapi's own parser (manual entry) accepts the same forms. The worker's log file was empty inside ShopSystem.exe (`basicConfig` without `force`) – fixed.
+2. **Proxy table** («سرور فروشگاه»): columns fit their content (`fit_width`, «منبع» stretches); `QAbstractScrollArea::corner` is transparent (the white box).
+3. **Auto refresh**: price / sales events mark «لیست قیمت» and the dashboard stale (reload when shown, also after the tray); a refresh postponed while typing is retried every 4 s (was: waited for «به‌روزرسانی»). Sales already open by themselves inside the window (server side).
+4. **Price channel**: read at least every 20 min during 07:00–21:00 Tehran (default 10). Placed orders keep their price; at checkout the bot asks shopapi (`?check=true`) and, when a cart price changed, updates the cart and asks the customer to confirm again (no order placed).
+5. **Corrections «اصلاحیه»** (`shopapi/app/pricelist/notes.py`): text posts after the newest list go to `POST /worker/pricelist-notes`; lines «model storage-RAM [note] cash-price» apply to every color / type of the model in the active list (A07 vs «A07 (Full)» chosen by the note; «Note 15 Pro» matches «Redmi Note 15 Pro» when unique); the row keeps the PDF values in `orig_*` and is flagged `correction` until the next list; unmatched lines → `price_correction_unmatched` (ShopAdmin + Bale).
+6. **«فروش بسته»** (many wordings): phone sales close at once (`close` override by `channel`, reason `channel_close`) until the next list; `sales_closed_channel` alert.
+7. **Edited / deleted posts**: every poll looks at the newest 30 posts; the newest list post is sent again when its version (id, edit time, size) changes; posted time = edit time; a deleted newest post brings back the previous list (`latest=true` re-activates a known telegram list, never over a manual upload).
+8. **روال for corrections**: `price_raval_diffs` learns each model's «روال − نقد» (median over colors) from every list; without history the median of the same brand at ±25 % price («روال تخمینی»), then the brand, then the whole list.
+9. **ShopAdmin login**: with «مرا به خاطر بسپار» the last user's password is kept with Windows DPAPI (`remembered.pw`, this Windows user only; nothing without DPAPI); «خروج» forgets only the session token, so «ورود» is enough; the eye shows a typed password only (disabled for the saved one); a wrong saved password is forgotten; unticking forgets everything.
+10. **Look applied at once**: «ذخیره» re-applies the theme and rebuilds the main window on the same page (no restart).
+11. **Channel roles**: the reader reports joined channels every 6 h (`iter_dialogs`, read only) → `tgchannels.py` (state `tg_channels`); roles pricelist / proxy / accessories / used / ignore in «تنظیمات سرور › تلگرام» (service key on the server); configured channels get their role when first seen; a channel joined later → `telegram_channel_new` (ShopAdmin). Only pricelist and proxy act today.
+12. **Price guard** (`PRICE_GUARD_PCT` 10): a mapped row whose price (new list or correction) moves more than 10 % keeps its previous price; the new one is `pending_*` («قیمت منتظر تأیید» filter, «تأیید / رد قیمت تازه»), `price_held` alert. The whole list is held only when most mapped rows are missing (layout change).
+13. **Bale admin chat = problems only**: new orders / receipts / customers / price inquiries only with `ADMIN_CHAT_ORDER_NOTICES=true` (default off); new: suspicious price, unmatched correction, sales closed by the channel.
+14. **Off-server backup**: «تنظیمات سرور › شبکه و پشتیبان»: folder (`BACKUP_COPY_DIR`, share allowed), passphrase (`BACKUP_PASSPHRASE`, ≥ 20, «ساخت عبارت تازه»), copies kept (`BACKUP_KEEP_DAYS`, 14), «آزمایش» = write / read / delete with the admin's account AND with the service account (`POST /admin/server/backup-test`).
+
+Tests (Windows, fakes): shopapi **488**, shopbots **279**, shoptg **75**, shopsystem **55**, shopadmin **619** — all passing. Not tried on the installed server, real channels or a real share.
+
 ## v2.9.0 — new look (3 palettes × light/dark/system × effects), payment-form cursor, automatic Telegram reader + proxy pool (2026-10-21, same branch) — DONE in code; installed build UNVERIFIED
 
 Owner's request after approving 2.8.3 on this PC. Decisions in `REQUIREMENTS.md` §7c.

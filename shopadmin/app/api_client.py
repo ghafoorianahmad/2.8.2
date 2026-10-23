@@ -759,6 +759,42 @@ class ShopApiClient:
             "POST", f"/admin/pricelists/{int(list_id)}/reject", json_body={"reason": reason}
         ) or {}
 
+    # ---- v2.9.1: price guard, channel posts, joined channels ------------------
+    def backup_folder_test(self, folder: str, service_key: str = "") -> dict:
+        """The server writes / deletes a test file there with ITS account."""
+        headers = {API_KEY_HEADER: service_key} if service_key else None
+        return self._request("POST", "/admin/server/backup-test", json_body={"folder": folder},
+                             headers=headers, with_auth=not service_key) or {}
+
+    def approve_row_price(self, row_key: str) -> dict:
+        """The held new price of a row (changed more than 10 %) is sold from now."""
+        return self._request("POST", "/admin/pricelists/rows/approve",
+                             json_body={"row_key": row_key}) or {}
+
+    def reject_row_price(self, row_key: str) -> dict:
+        """The held new price is dropped; the previous price stays."""
+        return self._request("POST", "/admin/pricelists/rows/reject",
+                             json_body={"row_key": row_key}) or {}
+
+    def pricelist_notes(self, limit: int = 30) -> list[dict]:
+        """Text posts of the price channel (corrections, «فروش بسته») and outcomes."""
+        return list(self._request("GET", "/admin/pricelists/notes", params={"limit": limit})
+                    or [])
+
+    def telegram_channels(self, service_key: str = "") -> dict:
+        """Channels the shop's Telegram account joined, with roles (the server
+        settings pass the server's own key)."""
+        headers = {API_KEY_HEADER: service_key} if service_key else None
+        payload = self._request("GET", "/admin/telegram/channels", headers=headers,
+                                with_auth=not service_key)
+        return payload if isinstance(payload, dict) else {"channels": []}
+
+    def set_channel_role(self, channel_id: int, role: str, service_key: str = "") -> dict:
+        headers = {API_KEY_HEADER: service_key} if service_key else None
+        return self._request("PUT", f"/admin/telegram/channels/{int(channel_id)}",
+                             json_body={"role": role}, headers=headers,
+                             with_auth=not service_key) or {}
+
     def pricelist_rows(self, *, filter_key: str = "all", section: str | None = None) -> dict:
         payload = self._request(
             "GET", "/admin/pricelists/rows", params={"filter": filter_key, "section": section}

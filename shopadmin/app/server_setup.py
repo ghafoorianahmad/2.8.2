@@ -442,10 +442,14 @@ class CurrentConfig:
     tg_reader_enabled: bool = False
     tg_api_preset: str = "tdesktop"
     tg_price_channel: str = ""
+    #: v2.9.1: the encrypted off-server backup copy (the passphrase is a secret)
+    backup_copy_dir: str = ""
+    backup_keep_days: int = 14
 
 
 #: v2.9.0: TG_PROXY (the manual first proxy) carries a proxy secret: never shown
-SECRET_KEYS = ("BALE_TOKEN", "TELEGRAM_BOT_TOKEN", "TG_API_ID", "TG_API_HASH", "TG_PROXY")
+SECRET_KEYS = ("BALE_TOKEN", "TELEGRAM_BOT_TOKEN", "TG_API_ID", "TG_API_HASH", "TG_PROXY",
+               "BACKUP_PASSPHRASE")
 
 
 def read_current_config() -> Optional[CurrentConfig]:
@@ -490,7 +494,64 @@ def read_current_config() -> Optional[CurrentConfig]:
         tg_api_preset=(get("TG_API_PRESET").lower()
                        or ("custom" if get("TG_API_ID") else "tdesktop")),
         tg_price_channel=get("TG_PRICE_CHANNEL"),
+        backup_copy_dir=get("BACKUP_COPY_DIR"),
+        backup_keep_days=int(get("BACKUP_KEEP_DAYS")) if get("BACKUP_KEEP_DAYS").isdigit() else 14,
     )
+
+
+# --------------------------------------------------------------------------
+# v2.9.1: off-server backup folder, channel roles (the running server)
+# --------------------------------------------------------------------------
+BACKUP_PASSPHRASE_MIN = 20
+
+
+def normalised_passphrase(text: str) -> str:
+    """Spaces and hyphens do not count (the same rule as the server's backup)."""
+    return "".join(ch for ch in str(text or "") if not ch.isspace() and ch != "-")
+
+
+def new_backup_passphrase() -> str:
+    """8 groups of 4 from 32 unambiguous capitals/digits = 160 bits (as the server)."""
+    import secrets
+
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return "-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(8))
+
+
+def test_backup_folder(folder: str) -> dict:
+    """Write, read back and delete a small test file with THIS Windows user."""
+    import secrets
+
+    raw = str(folder or "").strip()
+    if not raw:
+        return {"ok": False, "message_fa": "پوشه‌ای وارد نشده است."}
+    path = Path(raw)
+    if not path.is_absolute():
+        return {"ok": False, "message_fa": "مسیر کامل لازم است (مثل D:\\Backups یا \\\\PC\\Share)."}
+    probe = path / f".shopserver_test_{secrets.token_hex(4)}.tmp"
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe.write_bytes(b"ShopServer backup test")
+        ok = probe.read_bytes() == b"ShopServer backup test"
+    except OSError as exc:
+        return {"ok": False, "message_fa": ("دسترسی نوشتن نیست." if isinstance(exc, PermissionError)
+                                            else "پوشه پیدا یا ساخته نشد.")}
+    finally:
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return {"ok": ok, "message_fa": "با حساب شما: نوشتن و پاک کردن موفق بود." if ok
+            else "فایل آزمایشی درست خوانده نشد."}
+
+
+def local_server_client(port: int):
+    """A client of the server running on this computer (the server's own key is
+    passed per call; nothing is stored)."""
+    from .api_client import ShopApiClient
+
+    pem, _fingerprint = read_certificate()
+    return ShopApiClient(f"https://127.0.0.1:{int(port)}", server_cert_pem=pem, timeout=15)
 
 
 def server_installed_here() -> bool:

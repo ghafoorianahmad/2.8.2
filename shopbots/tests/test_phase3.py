@@ -164,6 +164,7 @@ def test_product_list_line_for_phones(env, bot_apis, shopapi):
 
 def test_owner_alerts_from_events(env, bot_apis, shopapi):
     async def scenario(engine, adapters, api):
+        engine.settings.admin_chat_order_notices = True   # v2.9.1: opt-in
         await engine.notify_customers_from_events()          # first run: position only
         shopapi.add_event("pricelist_held", 7)
         shopapi.add_event("price_inquiry", 1)

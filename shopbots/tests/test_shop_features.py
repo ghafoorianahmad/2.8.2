@@ -193,6 +193,7 @@ def test_full_order_notifies_admin_on_order_and_receipt(env, bot_apis, shopapi):
     tg = bot_apis["bale"]
 
     async def scenario(engine, adapters, api):
+        engine.settings.admin_chat_order_notices = True   # v2.9.1: opt-in
         await _order_one(engine)
         # admin hears about the new order immediately, with a status button
         notice = next(t for t in tg.texts(ADMIN_CHAT) if t.startswith(texts.NEW_ORDER_NOTICE.splitlines()[0].format(order_id=1)))

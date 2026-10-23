@@ -20,6 +20,9 @@ Staff can override in ShopAdmin (stored here, audited, an event each):
 * ``open``:    open now, until the next transition — a new list or the next
   closing time (13:30 / 20:30) — and can be closed again at any time.
 
+v2.9.1: the distributor's «فروش بسته» post in the price channel closes the same
+way (``close`` by ``channel``, event ``sales_closed_channel``) until the next list.
+
 The state is computed on every request from the active list and the override,
 so nothing goes stale when the server restarts.
 """
@@ -48,6 +51,9 @@ REASON_WEEKDAY = "weekday_closed"  # Friday
 REASON_NO_LIST = "no_list"
 REASON_LIST_EXPIRED = "list_not_updated"  # window passed / no list today / list too late
 REASON_DISABLED = "windows_disabled"      # SALES_WINDOWS_ENABLED=false: open unless closed
+REASON_CHANNEL_CLOSE = "channel_close"    # v2.9.1: «فروش بسته» in the price channel
+#: the actor of a close that came from the price channel
+CHANNEL_ACTOR = "channel"
 
 MESSAGES_FA = {
     REASON_LIST: "فروش گوشی باز است.",
@@ -58,6 +64,8 @@ MESSAGES_FA = {
     REASON_NO_LIST: "هنوز لیست قیمتی دریافت نشده؛ فروش گوشی بسته است.",
     REASON_LIST_EXPIRED: "لیست قیمت به‌روز نشده است؛ فروش گوشی بسته است.",
     REASON_DISABLED: "فروش گوشی باز است.",
+    REASON_CHANNEL_CLOSE: "پخش‌کننده فروش را بسته اعلام کرده است؛ فروش گوشی تا لیست قیمت بعدی "
+                          "بسته است.",
 }
 
 
@@ -208,7 +216,8 @@ def compute(db: OwnDB, settings: Settings, now: datetime | None = None) -> Sales
         if mode == "open":
             return SalesState(True, REASON_MANUAL_OPEN, MESSAGES_FA[REASON_MANUAL_OPEN],
                               until=override.get("until"), **base, **extra)
-        reason = REASON_HOLIDAY if mode == "holiday" else REASON_MANUAL_CLOSE
+        reason = REASON_HOLIDAY if mode == "holiday" else (
+            REASON_CHANNEL_CLOSE if override.get("by") == CHANNEL_ACTOR else REASON_MANUAL_CLOSE)
         return SalesState(False, reason, MESSAGES_FA[reason],
                           until=override.get("until"), **base, **extra)
 
@@ -262,3 +271,22 @@ def record_transition(db: OwnDB, settings: Settings, now: datetime | None = None
             db.add_event("sales_opened" if state.open else "sales_closed", state.list_id,
                          "system:sales")
     return state
+
+
+def close_by_channel(db: OwnDB, settings: Settings, source_ref: str = "",
+                     now: datetime | None = None) -> bool:
+    """v2.9.1: «فروش بسته» in the price channel: phone sales close until the next
+    list (the override ends with it). False when this list was closed so already."""
+    now = now or now_utc()
+    active = PriceListRepo(db).active_list()
+    list_id = int(active["id"]) if active else None
+    current = load_override(db)
+    if current is not None and current.get("mode") == "close"             and current.get("by") == CHANNEL_ACTOR and current.get("list_id") == list_id:
+        return False
+    record = {"mode": "close", "until": None, "by": CHANNEL_ACTOR, "at": _iso(now),
+              "list_id": list_id, "source_ref": str(source_ref or "")[:200]}
+    db.set_state(OVERRIDE_KEY, json.dumps(record), CHANNEL_ACTOR)
+    db.audit(CHANNEL_ACTOR, "sales_close", f"from {record['source_ref'] or '-'} list={list_id}")
+    db.add_event("sales_closed_channel", list_id, CHANNEL_ACTOR)
+    db.set_state(LAST_STATE_KEY, "0", CHANNEL_ACTOR)
+    return True

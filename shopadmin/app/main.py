@@ -307,15 +307,12 @@ class ShopAdminApp(QObject):
             principal=principal,
         )
         self.context.restart_app = self.restart_application
+        self.context.apply_look = self.apply_look_live
         self._start_notifications()
         if self.notifier is not None:
             self.notifier.user_key = principal.username
         self.context.notifier = self.notifier
-        self.main_window = MainWindow(self.context)
-        self.main_window.attach_server_monitor(self.server_monitor_for_window())
-        self.main_window.logout_requested.connect(self.logout)
-        self.main_window.session_expired.connect(self._lock)
-        self.main_window.close_requested.connect(self._on_main_close)
+        self.main_window = self._new_main_window()
         if hidden and self.notifier is not None and self.notifier.tray is not None:
             log.info("session started hidden in the tray for role=%s", principal.role)
             return
@@ -511,7 +508,7 @@ class ShopAdminApp(QObject):
             return
         log.info("server session ended; returning to the login window")
         self._close_session(end_server_session=False)
-        self.auth.forget_remembered()
+        self.auth.forget_session()      # v2.9.1: the remembered user / password stay
         self.show_login(MSG_SESSION_EXPIRED)
 
     def _close_session(self, *, end_server_session: bool) -> None:
@@ -549,6 +546,41 @@ class ShopAdminApp(QObject):
         if self.main_window is not None:
             self.main_window.allow_close = True
         self.app.quit()
+
+    def _new_main_window(self) -> MainWindow:
+        window = MainWindow(self.context)
+        window.attach_server_monitor(self.server_monitor_for_window())
+        window.logout_requested.connect(self.logout)
+        window.session_expired.connect(self._lock)
+        window.close_requested.connect(self._on_main_close)
+        return window
+
+    def apply_look_live(self) -> None:
+        """v2.9.1: a new look (palette, light / dark, «جلوه‌ها») is applied at once: the
+        theme is set again and the main window is rebuilt where it was, on the same
+        page (its colours are read when widgets are made)."""
+        from .ui.appearance import saved_look
+
+        palette, mode, effects = saved_look(self.store)
+        theme.apply_theme(self.app, mode, palette=palette, effects=effects)
+        old = self.main_window
+        if old is None or self.context is None:
+            return
+        key = old.current_key()
+        geometry = old.saveGeometry()
+        maximized, visible = old.isMaximized(), old.isVisible()
+        self.main_window = self._new_main_window()
+        self.main_window.restoreGeometry(geometry)
+        if key:
+            self.main_window.navigate(key)
+        old.allow_close = True
+        old.hide()
+        old.deleteLater()
+        if visible:
+            self.main_window.showMaximized() if maximized else self.main_window.show()
+            self.main_window.reset_activity()
+            QTimer.singleShot(50, self.main_window.check_server)
+        log.info("look applied without a restart (%s, %s, %s)", palette, mode, effects)
 
     def restart_application(self) -> None:
         """v2.9.0: open the program again (a new look is applied at start). This

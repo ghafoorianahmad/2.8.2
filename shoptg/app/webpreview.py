@@ -14,26 +14,43 @@ from typing import Callable
 
 import httpx
 
+from .proxylinks import extract_all
+
 PREVIEW_URL = "https://t.me/s/{channel}"
 MAX_BYTES = 3 * 1024 * 1024
 #: href / text forms of proxy links inside the page (HTML-escaped "&amp;")
-_HREF = re.compile(r"""(?:tg://proxy\?|https?://(?:www\.)?(?:t|telegram)\.me/proxy\?)[^"'<>\s]+""",
-                   re.IGNORECASE)
+_HREF = re.compile(r"""(?:tg://(?:web)?proxy/?\?|https?://(?:www\.)?(?:t|telegram)\.(?:me|dog)/"""
+                   r"""(?:web)?proxy/?\?)[^"'<>\s]+""", re.IGNORECASE)
 
 
 class PreviewError(Exception):
     """The preview page could not be read (message holds no secrets)."""
 
 
+#: every post of a real preview page sits in one of these (a filter page has none)
+POST_MARKER = "tgme_widget_message"
+_POST_SPLIT = re.compile(r'<div class="tgme_widget_message_wrap', re.IGNORECASE)
+_TAG = re.compile(r"<[^>]+>")
+_BREAK = re.compile(r"<br\s*/?>", re.IGNORECASE)
+
+
+def _post_texts(chunk: str) -> list[str]:
+    """The hrefs (buttons, links) and the plain text of one post."""
+    hrefs = [html.unescape(m.group(0)) for m in _HREF.finditer(chunk)]
+    text = html.unescape(_TAG.sub("", _BREAK.sub(chr(10), chunk)))
+    return hrefs + [text]
+
+
 def links_in_page(page: str) -> list[str]:
-    """Every proxy link in the page, newest post first, without duplicates."""
+    """Every proxy link in the page (buttons, links and Server/Port/Secret text;
+    v2.9.1: canonical ``tg://proxy`` links), newest post first, no duplicates."""
+    posts = _POST_SPLIT.split(page or "")
     found: list[str] = []
-    for match in _HREF.finditer(page or ""):
-        link = html.unescape(match.group(0)).rstrip(".,;")
-        if link not in found:
-            found.append(link)
-    # the page lists posts oldest first: the newest links are the last ones
-    found.reverse()
+    # the page lists posts oldest first: the newest links come from the last posts
+    for chunk in reversed(posts):
+        for link in extract_all(_post_texts(chunk)):
+            if link not in found:
+                found.append(link)
     return found
 
 
@@ -54,4 +71,7 @@ async def fetch_links(channel: str, *,
         raise PreviewError(f"preview answered {resp.status_code}")
     if len(resp.content) > MAX_BYTES:
         raise PreviewError("preview page too large")
+    if POST_MARKER not in resp.text:
+        # v2.9.1: a filter / block page answers 200 too: say so instead of "0 links"
+        raise PreviewError("not the channel's preview page (filtered?)")
     return links_in_page(resp.text)

@@ -100,6 +100,16 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 - **Proxy pool**: daily (hourly while fewer than `TG_PROXY_POOL_SIZE`=5 work) links of `@ProxyMTProto` (with the account; without login / proxy from the public web preview `t.me/s/…`); links the server never saw are tested with an anonymous client until pool_size + 2 work (≤ 40 tests); working ones join (probation), failed ones are kept as retired (never retested); at most 30 usable proxies. Rotation on failure is immediate; manual proxies (ShopAdmin «سرور فروشگاه» › «افزودن پراکسی دستی», or `TG_PROXY` in «تنظیمات سرور») are tried when the pool is empty (first start). Status (reader, last list, pool counts, last collection) on «سرور فروشگاه».
 - **Look**: ShopAdmin palettes اقیانوس / شفق / زمرد × روشن / تیره / مطابق ویندوز × «جلوه‌ها» خودکار / کامل / ساده, per computer, in «اعلان‌ها و ظاهر» for every user; WCAG AA (`contrast_audit.py --all`) and 0 cut texts (`text_fit_audit.py`) in every look.
 
+## 7d. v2.9.1 (decision 2026-10-23; owner's list after the 2.9.0 test)
+- **Price channel**: always the newest list post that exists (edits / replaced files / deleted posts); read at least every 20 min in sales hours. Text posts after the list: «اصلاحیه» lines (model, storage-RAM, optional note, CASH price, PDF units, no color) apply to all colors of the model until the next list, marked «اصلاحیه»; unmatched lines alert the admin. «فروش بسته» (and similar) closes phone sales until the next list + alert.
+- **روال of a correction** = cash + the model's learned «روال − نقد» (updated by every list); without history the typical difference of the same brand at a similar price, shown as «روال تخمینی».
+- **Price guard**: a price change of more than 10 % on a model (list or correction) is not applied automatically; the previous price is sold until a manager approves (per row; replaces the whole-list hold for big changes).
+- **Orders / carts**: placed orders keep their price; open carts are re-priced at checkout and the customer confirms again.
+- **Telegram channels**: every joined channel is listed in «تنظیمات سرور › تلگرام» with a role (price list, proxies, accessories, used phones, ignore); a new one is announced in ShopAdmin; only the first two roles work now. Proxy links in every format (text, entities, buttons; tg:// / t.me/proxy / t.me/webproxy).
+- **Bale admin chat**: only errors and problems (reader down, list failed, suspicious price, …); order notices only if `ADMIN_CHAT_ORDER_NOTICES=true`.
+- **ShopAdmin**: «مرا به خاطر بسپار» keeps the last user's password (Windows DPAPI) so after «خروج» only «ورود» is needed; the eye shows only a typed password; look changes apply at once.
+- **Backup**: an encrypted copy of the nightly backup in a configurable folder (share), last ~14 kept, «آزمایش» button; copying them to the management PC is the owner's own scheduled task (robocopy), not part of the app.
+
 ## 8. Alerts to the owner
 - Bale message to the owner's chat (ChatId in .env) on every new order and pending customer.
 - Windows tray app: detects when the Sazeh Hesab program starts (process watch) → "X new orders, Y customers awaiting approval" + link to shopadmin.

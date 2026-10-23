@@ -13,7 +13,7 @@ from .. import control, deps, monitor, sql_errors
 from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
-from ..security import Identity, require_permission
+from ..security import Identity, get_identity, require_permission
 from ..staff import P_SERVER_MANAGE, P_SERVER_VIEW
 from ..util import now_utc
 
@@ -111,8 +111,8 @@ def _tg_status(db: OwnDB) -> dict | None:
             # v2.9.0
             "api_preset", "price_channel", "pool_size")
     out = {key: value.get(key) for key in keep}
-    for nested, fields in (("price", ("checked_at", "ref", "outcome", "at")),
-                           ("collect", ("at", "found", "tested", "added", "via"))):
+    for nested, fields in (("price", ("checked_at", "ref", "outcome", "at", "channel")),
+                           ("collect", ("at", "found", "tested", "added", "via", "error"))):
         raw = value.get(nested)
         out[nested] = {k: raw.get(k) for k in fields} if isinstance(raw, dict) else {}
     return out
@@ -171,3 +171,58 @@ def restart(db: OwnDB = Depends(deps.get_db), who: Identity = CAN_MANAGE) -> dic
     # by its supervisor with the current settings.
     threading.Timer(1.0, hook).start()
     return {"ok": True}
+
+
+# ---- v2.9.1: off-server backup folder ---------------------------------------------------
+class BackupFolderIn(BaseModel):
+    folder: str
+
+
+def _can_test_backup(identity: Identity = Depends(get_identity)) -> Identity:
+    """«تنظیمات سرور» on the server (service key) or a manager."""
+    if identity.kind == "service" or (not identity.must_change_password
+                                      and identity.can(P_SERVER_MANAGE)):
+        return identity
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this account")
+
+
+def check_backup_folder(folder: str) -> dict:
+    """Write, read back and delete a small file in ``folder`` as THIS process (the
+    service account NT SERVICE/ShopServer on the server: a network share must
+    allow it). Never lists or touches anything else there."""
+    import os
+    import secrets
+    from pathlib import Path
+
+    raw = str(folder or "").strip()
+    if not raw:
+        return {"ok": False, "error": "empty", "message_fa": "پوشه‌ای وارد نشده است."}
+    path = Path(raw)
+    if not path.is_absolute():
+        return {"ok": False, "error": "relative",
+                "message_fa": r"مسیر کامل لازم است (مثل D:\Backups یا \\PC\Share)."}
+    probe = path / f".shopserver_test_{secrets.token_hex(4)}.tmp"
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe.write_bytes(b"ShopServer backup test")
+        ok = probe.read_bytes() == b"ShopServer backup test"
+    except OSError as exc:
+        reason = type(exc).__name__
+        message = ("دسترسی نوشتن نیست؛ برای پوشهٔ اشتراکی به رایانهٔ سرور (یا Everyone) اجازهٔ "
+                   "نوشتن بدهید." if isinstance(exc, PermissionError) else
+                   "پوشه پیدا یا ساخته نشد (نشانی شبکه، روشن بودن رایانهٔ مقصد).")
+        return {"ok": False, "error": reason, "message_fa": message}
+    finally:
+        try:
+            if probe.exists():
+                os.remove(probe)
+        except OSError:
+            pass
+    return {"ok": bool(ok), "error": None if ok else "readback",
+            "message_fa": "نوشتن، خواندن و پاک کردن فایل آزمایشی با حساب سرویس سرور موفق بود."
+            if ok else "فایل آزمایشی درست خوانده نشد."}
+
+
+@router.post("/backup-test")
+def backup_test(payload: BackupFolderIn, _: Identity = Depends(_can_test_backup)) -> dict:
+    return check_backup_folder(payload.folder)

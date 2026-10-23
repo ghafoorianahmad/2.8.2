@@ -3,7 +3,8 @@
 Option cards like the equipment control panel's theme cards: each palette shows
 its side-bar gradient and accent, so the choice is visible before it is made.
 The look is stored in this computer's local settings (``theme_palette``,
-``theme_mode``, ``theme_effects``) and applied when the program starts.
+``theme_mode``, ``theme_effects``); v2.9.1: it is applied at once (the main
+window is rebuilt on the same page), no restart.
 """
 from __future__ import annotations
 
@@ -157,8 +158,8 @@ class AppearancePicker(QWidget):
             group.buttonToggled.connect(lambda *_: self.changed.emit())
             root.addLayout(grid)
         self.note = widgets.label(
-            "ظاهر تازه پس از باز شدن دوبارهٔ برنامه نشان داده می‌شود. انتخاب فقط روی همین "
-            "رایانه ذخیره می‌شود.", name="Muted", wrap=True)
+            "ظاهر تازه با «ذخیره» همان لحظه اعمال می‌شود. انتخاب فقط روی همین رایانه ذخیره "
+            "می‌شود.", name="Muted", wrap=True)
         root.addWidget(self.note)
 
     def value(self, key: str) -> str:
@@ -186,7 +187,14 @@ class AppearancePicker(QWidget):
 
 
 def offer_restart(parent: QWidget, context) -> None:
-    """After a new look was saved: open the program again now, or later."""
+    """After a new look was saved: v2.9.1 applies it at once (after the dialog that
+    saved it has closed); only without the live path, open the program again."""
+    apply_now = getattr(context, "apply_look", None)
+    if apply_now is not None:
+        from PySide6.QtCore import QTimer
+
+        QTimer.singleShot(0, apply_now)
+        return
     restart = getattr(context, "restart_app", None)
     if restart is None:
         widgets.info(parent, "ظاهر برنامه", "ذخیره شد؛ برنامه را یک بار ببندید و دوباره باز کنید.")

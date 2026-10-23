@@ -18,10 +18,10 @@ class FakeFile:
 
 def fake_message(mid: int, *, text: str = "", pdf: bytes | None = None, image: bool = False,
                  urls: list[str] | None = None, button_urls: list[str] | None = None,
-                 name: str = "list.pdf"):
+                 name: str = "list.pdf", edit_date: datetime | None = None):
     msg = SimpleNamespace(id=mid, date=datetime(2026, 10, 12, 8, mid % 60, tzinfo=timezone.utc),
                           message=text, entities=None, reply_markup=None, document=None, file=None,
-                          payload=None)
+                          payload=None, edit_date=edit_date)
     if urls:
         msg.entities = [SimpleNamespace(url=u) for u in urls]
     if button_urls:
@@ -51,6 +51,8 @@ class FakeTelegram:
         self.calls: list[str] = []
         self.code = "12345"
         self.password = ""
+        #: v2.9.1: joined channels (iter_dialogs)
+        self.dialogs: list = []
 
     def factory(self, session, api_id, api_hash, **kwargs):
         client = FakeClient(self, session, api_id, api_hash, kwargs)
@@ -123,6 +125,11 @@ class FakeClient:
         for m in msgs[:limit]:
             yield m
 
+    async def iter_dialogs(self, limit=None):
+        assert self.connected
+        for dialog in self.tg.dialogs[:limit]:
+            yield dialog
+
     async def download_media(self, message, file=None):
         assert file is bytes
         self.tg.calls.append(f"download:{message.id}")
@@ -142,6 +149,10 @@ class FakeShopApi:
     known: set[str] = field(default_factory=set)
     down: bool = False
     keys_seen: set[str] = field(default_factory=set)
+    #: v2.9.1: text posts of the price channel, joined channels and their roles
+    notes: list[dict] = field(default_factory=list)
+    channels: list[dict] = field(default_factory=list)
+    roles: list[dict] = field(default_factory=list)
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -176,6 +187,14 @@ class FakeShopApi:
             self.pricelists.append(body)
             return httpx.Response(200, json={"outcome": "imported", "list_id": len(self.pricelists),
                                              "reasons": []})
+        if path == "/worker/pricelist-notes":
+            self.notes.append(body)
+            return httpx.Response(200, json={"kind": "ignored"})
+        if path == "/worker/telegram/channels":
+            self.channels = body["channels"]
+            return httpx.Response(200, json={"known": len(self.channels), "new": 0})
+        if path == "/worker/telegram/roles":
+            return httpx.Response(200, json={"channels": self.roles})
         if path == "/worker/alerts":
             self.alerts.append(body["kind"])
             return httpx.Response(200, json={"sent": True})

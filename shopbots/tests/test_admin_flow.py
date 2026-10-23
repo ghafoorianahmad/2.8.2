@@ -14,6 +14,7 @@ def test_sweep_announces_pending_user_once(env, bot_apis, shopapi):
     shopapi.person_match = {"code": 7001, "masked_name": "ع********"}
 
     async def scenario(engine, adapters, api):
+        engine.settings.admin_chat_order_notices = True   # v2.9.1: opt-in
         first = await engine.admin_sweep()
         assert first == {"users": 1, "orders": 0, "notified": 0}
 
@@ -83,6 +84,7 @@ def test_sweep_announces_receipt_with_photo_and_admin_approves(env, bot_apis, sh
     shopapi.add_user("bale", CUSTOMER_CHAT, status="approved", person_code=7001)
 
     async def scenario(engine, adapters, api):
+        engine.settings.admin_chat_order_notices = True   # v2.9.1: opt-in
         order = await api.create_order("bale", CUSTOMER_CHAT, [{"kala_code": 101, "qty": 2}])
         await api.upload_receipt(order["id"], "RECEIPT-FILE", "bale", CUSTOMER_CHAT)
         engine.store.save_receipt(order["id"], "bale", CUSTOMER_CHAT, "RECEIPT-FILE")

@@ -410,6 +410,7 @@ def test_known_customer_is_approved_at_once_by_the_r4_match(tg, shopapi):
 
 def test_pending_registration_alerts_the_owner_on_bale_not_telegram(tg, shopapi):
     async def scenario(c):
+        c.engine.settings.admin_chat_order_notices = True   # v2.9.1: opt-in
         await c.say(text="/start")
         await c.say(contact=contact())
         shopapi.add_event("customer_registered", shopapi.users[("telegram", CUSTOMER_CHAT)]["id"])

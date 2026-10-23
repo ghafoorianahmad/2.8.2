@@ -75,12 +75,33 @@ class WorkerApi:
         result = await self._call("POST", "/worker/proxies/unknown", {"links": links})
         return list((result or {}).get("unknown") or [])
 
-    async def post_pricelist(self, data: bytes, *, source_ref: str, posted_at: str | None) -> dict:
-        return await self._call("POST", "/worker/pricelists", {
+    async def post_pricelist(self, data: bytes, *, source_ref: str, posted_at: str | None,
+                             latest: bool = False) -> dict:
+        """``latest`` (v2.9.1): this is the newest list post that still exists in the
+        channel (an edited post, or the one left after the newest was deleted)."""
+        body = {
             "data_b64": base64.b64encode(data).decode("ascii"),
             "source_ref": source_ref[:200],
             "posted_at": posted_at,
+        }
+        if latest:
+            body["latest"] = True
+        return await self._call("POST", "/worker/pricelists", body)
+
+    async def post_note(self, text: str, *, source_ref: str, posted_at: str | None) -> dict:
+        """v2.9.1: a text post of the price channel after the list (a correction
+        «اصلاحیه», «فروش بسته», …); shopapi decides what it is."""
+        return await self._call("POST", "/worker/pricelist-notes", {
+            "text": text[:4000], "source_ref": source_ref[:200], "posted_at": posted_at,
         })
+
+    async def sync_channels(self, channels: list[dict]) -> dict:
+        """v2.9.1: the channels the account has joined -> their roles."""
+        return await self._call("POST", "/worker/telegram/channels", {"channels": channels})
+
+    async def channel_roles(self) -> dict:
+        """v2.9.1: {"pricelist": [ref], "proxy": [ref, ...]} chosen in «تنظیمات سرور»."""
+        return await self._call("GET", "/worker/telegram/roles") or {}
 
     async def alert(self, kind: str) -> dict:
         return await self._call("POST", "/worker/alerts", {"kind": kind})

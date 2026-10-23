@@ -203,6 +203,19 @@ class Store:
             )
             self._conn.commit()
 
+    def cart_set_price(
+        self, platform: str, chat_id: str | int, kala_code: int, unit_price: float,
+        variant_id: int = 0,
+    ) -> None:
+        """v2.9.1: the price shopapi gives now (checked at checkout)."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE carts SET unit_price=? WHERE platform=? AND chat_id=? AND kala_code=? "
+                "AND variant_id=?",
+                (float(unit_price), platform, str(chat_id), int(kala_code), int(variant_id or 0)),
+            )
+            self._conn.commit()
+
     def cart_remove(
         self, platform: str, chat_id: str | int, kala_code: int, variant_id: int = 0
     ) -> None:

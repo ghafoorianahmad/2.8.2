@@ -39,6 +39,33 @@ class TgMessage:
     file_size: int = 0
     file_name: str = ""
     raw: Any = field(default=None, repr=False)
+    #: v2.9.1: when the post was last edited (a list PDF may be replaced in place)
+    edit_date: datetime | None = None
+
+    @property
+    def version(self) -> str:
+        """Changes when the post is edited (or its file replaced)."""
+        stamp = self.edit_date.isoformat() if self.edit_date else ""
+        return f"{self.id}:{stamp}:{self.file_size}"
+
+    @property
+    def published(self) -> datetime | None:
+        """The post time, or its last edit (an edited list is the newer list)."""
+        return self.edit_date or self.date
+
+
+@dataclass
+class TgChannel:
+    """v2.9.1: a channel (or group) the account has joined."""
+    id: int
+    username: str = ""
+    title: str = ""
+    broadcast: bool = True
+
+    @property
+    def ref(self) -> str:
+        """What the reader asks Telegram for: the @name, else the numeric id."""
+        return self.username or str(self.id)
 
 
 def _default_client_factory(session: str, api_id: int, api_hash: str, **kwargs):
@@ -69,7 +96,18 @@ def to_message(msg: Any) -> TgMessage:
         size = int(getattr(file, "size", 0) or 0)
         is_pdf = mime == "application/pdf" or name.lower().endswith(".pdf")
     return TgMessage(id=int(msg.id), date=getattr(msg, "date", None), text=text, urls=urls,
-                     is_pdf=is_pdf, file_size=size, file_name=name, raw=msg)
+                     is_pdf=is_pdf, file_size=size, file_name=name, raw=msg,
+                     edit_date=getattr(msg, "edit_date", None))
+
+
+def channel_target(ref: str):
+    """A channel @name as is; a numeric id as a channel peer (known from the dialogs)."""
+    value = str(ref or "").strip()
+    if value.lstrip("-").isdigit():
+        from telethon.tl.types import PeerChannel
+
+        return PeerChannel(abs(int(value)))
+    return value
 
 
 class TelegramGateway:
@@ -153,11 +191,31 @@ class TelegramGateway:
         if self._client is None:
             raise ConnectionError("not connected")
 
+        target = channel_target(channel)
+
         async def collect():
             return [to_message(m) async for m in
-                    self._client.iter_messages(channel, min_id=min_id, limit=limit)]
+                    self._client.iter_messages(target, min_id=min_id, limit=limit)]
         out = await asyncio.wait_for(collect(), self._timeout * 3)
         return sorted(out, key=lambda m: m.id)
+
+    async def channels(self, limit: int = 300) -> list[TgChannel]:
+        """v2.9.1: channels and groups the account has joined (read only: the
+        dialog list; nothing is opened, read or marked)."""
+        if self._client is None:
+            raise ConnectionError("not connected")
+
+        async def collect():
+            out = []
+            async for dialog in self._client.iter_dialogs(limit=limit):
+                if not getattr(dialog, "is_channel", False):
+                    continue
+                entity = dialog.entity
+                out.append(TgChannel(id=int(entity.id), username=getattr(entity, "username", None) or "",
+                                     title=str(getattr(dialog, "name", "") or "")[:120],
+                                     broadcast=bool(getattr(entity, "broadcast", False))))
+            return out
+        return await asyncio.wait_for(collect(), self._timeout * 3)
 
     async def download(self, message: TgMessage, max_bytes: int) -> bytes:
         if self._client is None:

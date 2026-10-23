@@ -166,12 +166,19 @@ OWNER_EVENT_TEXTS = {
     "telegram_unreachable": "TG_UNREACHABLE_NOTICE",
     # v2.9.0: a price-list PDF of the channel could not be downloaded
     "telegram_pricelist_error": "TG_PRICELIST_ERROR_NOTICE",
+    # v2.9.1: a suspicious price (more than 10 %) waits for a manager; correction
+    # lines that match no model; the distributor closed sales in the channel
+    "price_held": "PRICE_HELD_NOTICE",
+    "price_correction_unmatched": "PRICE_CORRECTION_UNMATCHED_NOTICE",
+    "sales_closed_channel": "SALES_CLOSED_CHANNEL_NOTICE",
     "price_inquiry": "INQUIRY_NOTICE",
     # v2.5.0: never deleted in the accounting DB; the owner decides there
     "accounting_duplicate_order": "DUPLICATE_ORDER_NOTICE",
     "order_timeout_written": "TIMEOUT_WRITTEN_NOTICE",
     # v2.6.1: item requests are announced ONLY inside ShopAdmin (no admin chat).
 }
+#: v2.9.1: owner notices that are not problems (only with ADMIN_CHAT_ORDER_NOTICES)
+OWNER_INFO_KINDS = frozenset({"price_inquiry"})
 #: v2.6.1: a staff reply to an item request, delivered here to the customer.
 ITEM_REQUEST_MESSAGE_EVENT = "item_request_message"
 #: v2.8.0: staff confirmed the stock of a «درخواست خرید»: the customer pays now.
@@ -1628,6 +1635,15 @@ class BotEngine:
         if result.empty_cart:
             await self._send_text(adapter, chat_id, texts.CART_EMPTY)
             return
+        if result.price_changes:
+            # v2.9.1: a new price list since the items were added: confirm again
+            currency = texts.SHOP.get("currency", "ریال")
+            lines = "\n".join(texts.CART_PRICE_CHANGED_LINE.format(
+                name=name, old=fmt_num(old), new=fmt_num(new), currency=currency)
+                for name, old, new in result.price_changes)
+            await self._send_text(adapter, chat_id, texts.CART_PRICES_CHANGED.format(items=lines))
+            await self._show_cart(adapter, platform, chat_id)
+            return
         order = result.order
         if not order:
             await self._send_text(adapter, chat_id, texts.SERVICE_UNAVAILABLE)
@@ -2598,6 +2614,8 @@ class BotEngine:
                 await self._send_text(adapter, chat_id, body, markup)
 
     async def _announce_user(self, user: dict) -> None:
+        if not self.settings.admin_chat_order_notices:
+            return            # v2.9.1: ShopAdmin only (the admin chat = problems)
         user_id = user.get("id")
         phone = str(user.get("phone") or "")
         body = texts.NEW_USER_NOTICE.format(
@@ -2677,6 +2695,8 @@ class BotEngine:
         self.store.mark_announced(marker, key, "", "")
         if not self.settings.admin_targets(tuple(self.adapters.keys())):
             return False
+        if kind in OWNER_INFO_KINDS and not self.settings.admin_chat_order_notices:
+            return False          # v2.9.1: the admin chat is for problems only
         template = getattr(texts, OWNER_EVENT_TEXTS[kind])
         if kind == "price_inquiry":
             try:
@@ -2836,6 +2856,8 @@ class BotEngine:
         return "\n".join(f"• {it.get('name')} × {fmt_num(it.get('qty'))}" for it in items) or "—"
 
     async def _announce_new_order(self, order: dict) -> None:
+        if not self.settings.admin_chat_order_notices:
+            return            # v2.9.1: ShopAdmin only (the admin chat = problems)
         order_id = order.get("id")
         body = texts.NEW_ORDER_NOTICE.format(
             order_id=order_id, total=fmt_num(order.get("total")), items=self._items_text(order)
@@ -2843,6 +2865,8 @@ class BotEngine:
         await self._broadcast_admin(body, [[(texts.BTN_ORDER_STATUS, f"adst:{order_id}")]])
 
     async def _announce_order(self, order: dict) -> None:
+        if not self.settings.admin_chat_order_notices:
+            return            # v2.9.1: ShopAdmin only (the admin chat = problems)
         order_id = order.get("id")
         body = texts.NEW_RECEIPT_NOTICE.format(
             order_id=order_id, total=fmt_num(order.get("total")), items=self._items_text(order)

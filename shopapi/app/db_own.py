@@ -161,6 +161,31 @@ CREATE TABLE IF NOT EXISTS price_mappings (
 );
 CREATE INDEX IF NOT EXISTS idx_mappings_kala ON price_mappings(kala_code);
 
+-- v2.9.1: the learned «روال − نقد» difference of each model (PDF units), updated
+-- with every imported list; used to price a correction («اصلاحیه») that gives
+-- only the cash price.
+CREATE TABLE IF NOT EXISTS price_raval_diffs (
+    model_key TEXT PRIMARY KEY,
+    section TEXT NOT NULL DEFAULT '',
+    diff INTEGER NOT NULL,
+    naghd INTEGER,
+    list_id INTEGER,
+    updated_at TEXT NOT NULL
+);
+
+-- v2.9.1: text posts of the price channel (corrections, «فروش بسته», …) and what
+-- was done with them.
+CREATE TABLE IF NOT EXISTS price_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_id INTEGER,
+    kind TEXT NOT NULL,
+    source_ref TEXT NOT NULL DEFAULT '',
+    posted_at TEXT,
+    text TEXT NOT NULL DEFAULT '',
+    result TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
 -- v2.6.2: rows whose automatic mapping staff undid: never matched automatically again.
 CREATE TABLE IF NOT EXISTS price_auto_rejects (
     row_key TEXT PRIMARY KEY,
@@ -382,6 +407,20 @@ MIGRATIONS = (
     # v2.8.2: payment details typed by staff for each order (JSON) and when sent
     ("orders", "payment_info", "TEXT"),
     ("orders", "payment_info_at", "TEXT"),
+    # v2.9.1: a row's price may come from a correction («اصلاحیه») or be held for
+    # approval (price guard). naghd / raval / price_rial are always what is sold;
+    # orig_* = the PDF values, pending_* = a new price waiting for a manager.
+    ("price_list_rows", "price_flag", "TEXT NOT NULL DEFAULT ''"),  # '' | correction | held
+    ("price_list_rows", "flag_note", "TEXT NOT NULL DEFAULT ''"),
+    ("price_list_rows", "raval_estimated", "INTEGER NOT NULL DEFAULT 0"),
+    ("price_list_rows", "orig_naghd", "INTEGER"),
+    ("price_list_rows", "orig_raval", "INTEGER"),
+    ("price_list_rows", "orig_price_rial", "INTEGER"),
+    ("price_list_rows", "pending_naghd", "INTEGER"),
+    ("price_list_rows", "pending_raval", "INTEGER"),
+    ("price_list_rows", "pending_price_rial", "INTEGER"),
+    ("price_list_rows", "pending_estimated", "INTEGER NOT NULL DEFAULT 0"),
+    ("price_list_rows", "pending_source", "TEXT NOT NULL DEFAULT ''"),     # list | correction
 )
 
 #: Item request kinds (v2.6.1).

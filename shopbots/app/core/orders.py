@@ -33,6 +33,9 @@ class ReceiptOutcome(enum.Enum):
 class CheckoutResult:
     order: dict | None = None
     empty_cart: bool = False
+    #: v2.9.1: (name, old price, new price) of cart lines whose price changed since
+    #: they were added; the cart now holds the new prices and NO order was placed
+    price_changes: list | None = None
 
 
 @dataclass
@@ -98,12 +101,42 @@ class OrderService:
         if not items:
             return CheckoutResult(empty_cart=True)
         payload = self.cart.order_payload(items)
+        changes = await self._price_changes(platform, chat_id, items, payload)
+        if changes:
+            return CheckoutResult(price_changes=changes)
         key = self._checkout_key(platform, chat_id, payload)
         order = await self.api.create_order(platform, chat_id, payload, idempotency_key=key)
         if order:
             self.cart.clear(platform, chat_id)
             self.store.set_value(f"checkout_key:{platform}:{chat_id}", "")
         return CheckoutResult(order=order or None)
+
+    async def _price_changes(self, platform: str, chat_id: str, items: list[dict],
+                             payload: list[dict]) -> list[tuple[str, float, float]]:
+        """v2.9.1: open carts are re-checked with today's prices before the order is
+        placed (placed orders keep theirs). shopapi prices the order (``?check``);
+        any line that changed is updated in the cart and the customer confirms again."""
+        try:
+            checked = await self.api.check_order(platform, chat_id, payload)
+        except ShopApiRejected:
+            raise
+        except Exception:  # noqa: BLE001 - shopapi down: the real submit reports it
+            return []
+        lines = (checked or {}).get("items") if isinstance(checked, dict) else None
+        if not lines:
+            return []
+        now = {(int(it.get("kala_code") or 0), int(it.get("variant_id") or 0)):
+               float(it.get("unit_price") or 0) for it in lines if isinstance(it, dict)}
+        changes = []
+        for item in items:
+            key = (int(item["kala_code"]), int(item.get("variant_id") or 0))
+            new = now.get(key)
+            old = float(item.get("unit_price") or 0)
+            if new is None or new <= 0 or abs(new - old) < 0.5:
+                continue
+            self.store.cart_set_price(platform, chat_id, key[0], new, key[1])
+            changes.append((str(item.get("name") or key[0]), old, new))
+        return changes
 
     def _checkout_key(self, platform: str, chat_id: str, payload: list[dict]) -> str:
         """One key per checkout attempt: a retry of the same cart (timeout, double tap)

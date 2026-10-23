@@ -150,11 +150,36 @@ class AuthService:
                            must_change_password=bool(user.get("must_change_password")))
 
     def logout(self) -> None:
-        """End the session on the server and forget any saved login here."""
-        self.forget_remembered()
+        """End the session on the server. v2.9.1: the remembered user and password
+        stay, so «ورود» is enough next time (the session token is forgotten)."""
+        self.forget_session()
         self.api.logout()
 
     # ---- remember me (server session token, never the password) ---------------
+    def remember_password(self, username: str, password: str) -> bool:
+        """v2.9.1: keep the password of the last user (Windows DPAPI)."""
+        from .credentials import save_password
+
+        return save_password(str(username), str(password))
+
+    def remembered_password(self, username: str) -> Optional[str]:
+        from .credentials import load_password
+
+        return load_password(str(username))
+
+    def forget_password(self) -> None:
+        from .credentials import clear_password
+
+        clear_password()
+
+    def forget_session(self) -> None:
+        """Only the saved session token (the remembered user and password stay)."""
+        from .credentials import clear_token
+
+        username = self.remembered_username()
+        if username:
+            clear_token(username)
+
     def remember_user(self, username: str) -> str:
         """Keep the current session token for automatic sign-in next time.
 
@@ -193,14 +218,13 @@ class AuthService:
             return None
         token = load_token(username)
         if not token:
-            self.forget_remembered()
             return None
         self.api.set_token(token)
         try:
             me = self.api.me()
         except ApiAuthError:
             log.info("saved session was rejected by the server; forgetting it")
-            self.forget_remembered()
+            self.forget_session()
             return None
         except ApiError as exc:
             log.info("auto login not possible right now (%s)", exc.kind)
@@ -215,11 +239,13 @@ class AuthService:
                            must_change_password=bool(user.get("must_change_password")))
 
     def forget_remembered(self) -> None:
-        from .credentials import clear_token
+        """Forget everything saved here: session, user and (v2.9.1) password."""
+        from .credentials import clear_password, clear_token
 
         username = self.remembered_username()
         if username:
             clear_token(username)
+        clear_password()
         self.store.clear_remembered_user()
 
     # ---- own password ----------------------------------------------------

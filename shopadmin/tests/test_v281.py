@@ -80,7 +80,8 @@ def test_current_config_never_returns_secrets(server_folder):
     assert current.allowed_databases == ["hesab5 t", "hesab5"]
     assert current.write_databases == ["hesab5 t"]
     assert current.secrets_set == {"BALE_TOKEN": True, "TELEGRAM_BOT_TOKEN": False,
-                                   "TG_API_ID": True, "TG_API_HASH": False, "TG_PROXY": False}
+                                   "TG_API_ID": True, "TG_API_HASH": False, "TG_PROXY": False,
+                                   "BACKUP_PASSPHRASE": False}
     assert "S3cret" not in repr(current) and "abcdefgh" not in repr(current)
 
 

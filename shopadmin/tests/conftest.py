@@ -719,6 +719,18 @@ class FakeShopApi:
             return reply(200, {"outcome": self.upload_outcome, "list_id": 9, "list_date": "1405/07/20",
                                "row_count": 195, "reasons": ["تغییر قیمت ۲۰٪"],
                                "auto_mapped": getattr(self, "upload_auto", 0)})
+        # ---- v2.9.1: channel posts, held prices ----
+        if path == "/admin/pricelists/notes":
+            return reply(200, list(getattr(self, "price_notes", [])))
+        if path in ("/admin/pricelists/rows/approve", "/admin/pricelists/rows/reject"):
+            row = next((r for r in self.price_rows if r["row_key"] == body["row_key"]), None)
+            if row is None or row.get("pending_price_rial") is None:
+                return detail(409, "No price waits for approval on this row")
+            if path.endswith("approve"):
+                row["price_rial"] = row["pending_price_rial"]
+            row["pending_price_rial"] = None
+            self.row_decisions = getattr(self, "row_decisions", []) + [(parts[-1], body["row_key"])]
+            return reply(200, row)
         if path == "/admin/pricelists/rows":
             plist = self.pricelists[-1] if self.pricelists else None
             rows = list(self.price_rows)

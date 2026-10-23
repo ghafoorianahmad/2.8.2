@@ -99,7 +99,8 @@ def test_server_revoked_session_is_forgotten(session, fake_api):
     fake_api.tokens.clear()  # expired / password changed / role changed
     assert auth.try_auto_login() is None
     assert load_token("owner") is None
-    assert store.get_remembered_user() is None
+    # v2.9.1: the user (and a remembered password) stay for the login window
+    assert store.get_remembered_user()["username"] == "owner"
 
 
 def test_disabled_account_cannot_auto_login(session, fake_api):
@@ -126,7 +127,7 @@ def test_logout_revokes_the_saved_login_and_the_server_session(session, fake_api
     token = auth.api.token
     auth.logout()
     assert load_token("owner") is None
-    assert store.get_remembered_user() is None
+    assert store.get_remembered_user()["username"] == "owner"     # v2.9.1: «ورود» is enough
     assert token not in fake_api.tokens
     assert auth.try_auto_login() is None
 
@@ -143,7 +144,7 @@ def test_deleted_token_falls_back_to_the_login_window(session):
     auth.remember_user("owner")
     clear_token("owner")  # e.g. the user cleared Credential Manager
     assert auth.try_auto_login() is None
-    assert store.get_remembered_user() is None
+    assert store.get_remembered_user()["username"] == "owner"     # v2.9.1
 
 
 def test_remember_without_a_session_stores_nothing(auth):

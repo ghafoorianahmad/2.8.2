@@ -207,6 +207,7 @@ def test_closed_sales_refuse_phones_only(client, reader, db, win):
 def test_accessories_are_orderable_without_any_price_list(client, reader, db, win):
     seed_products(reader)
     register_and_approve(client)
+    win.sales_closed_weekdays = ()          # v2.9.1: also on a Friday (no weekday rule)
     state = client.get("/shop/state", headers=h("bot")).json()
     assert state["reason"] == sales.REASON_NO_LIST and state["closed"] is True
     assert order_req(client).status_code == 201

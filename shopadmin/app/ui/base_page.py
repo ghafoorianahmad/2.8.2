@@ -3,12 +3,16 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from . import theme, widgets
 from .async_utils import AutoRefresh, run_async
 from .context import AppContext
+
+
+#: v2.9.1: a refresh postponed while the user types is tried again after this long
+PENDING_RETRY_MS = 4000
 
 
 class BasePage(QWidget):
@@ -145,10 +149,20 @@ class BasePage(QWidget):
         is editing (the next tick tries again). True = reloaded now."""
         if self.is_editing():
             self._refresh_pending = True
+            # v2.9.1: a page without its own timer tries again by itself (a
+            # postponed refresh used to wait for a manual «به‌روزرسانی»)
+            if not getattr(self, "_retry_scheduled", False):
+                self._retry_scheduled = True
+                QTimer.singleShot(PENDING_RETRY_MS, self._retry_pending)
             return False
         self._refresh_pending = False
         self.load()
         return True
+
+    def _retry_pending(self) -> None:
+        self._retry_scheduled = False
+        if getattr(self, "_refresh_pending", False) and self.isVisible():
+            self.soft_refresh()
 
     def _on_connection_changed(self, ok: bool) -> None:
         if ok and self.isVisible() and not self._busy:

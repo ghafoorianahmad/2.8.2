@@ -34,6 +34,7 @@ from ...permissions import PRICELIST_MANAGE, PROXIES_MANAGE
 from .. import theme, widgets
 from ..base_page import BasePage
 
+NOTE_HEADERS = ("زمان", "نوع", "نتیجه", "متن پیام")
 ROW_HEADERS = ("بخش", "مدل", "نوع", "رنگ", "نقد", "روال", "قیمت مشتری (ریال)", "وضعیت", "کالا")
 LIST_HEADERS = ("شماره", "تاریخ لیست", "منبع", "وضعیت", "ردیف‌ها", "زمان دریافت", "توضیح")
 PROXY_HEADERS = ("میزبان", "پورت", "نوع", "وضعیت", "پایداری", "روز خوب / بررسی", "آخرین اتصال موفق",
@@ -42,6 +43,9 @@ PROXY_HEADERS = ("میزبان", "پورت", "نوع", "وضعیت", "پایدا
 FILTERS = (
     ("unmapped", "نگاشت‌نشده"),
     ("auto", "خودکار (بازبینی)"),
+    # v2.9.1: price guard (more than 10 %) and corrections of the channel
+    ("held", "قیمت منتظر تأیید"),
+    ("corrected", "اصلاحیه"),
     ("mapped", "نگاشت‌شده"),
     ("ignored", "نادیده"),
     ("all", "همهٔ ردیف‌ها"),
@@ -78,15 +82,68 @@ def row_state(row: dict) -> str:
 
 ROW_STATE_FA = {"mapped": "نگاشت‌شده", "ignored": "نادیده", "unmapped": "نگاشت‌نشده",
                 "auto_mapped": "نگاشت خودکار", "auto_ignored": "نادیدهٔ خودکار"}
-ROW_STATE_COLOR = {"mapped": theme.SUCCESS_DARK, "ignored": theme.TEXT_MUTED,
-                   "unmapped": theme.WARNING_TEXT, "auto_mapped": theme.PRIMARY,
-                   "auto_ignored": theme.PRIMARY}
+#: theme token per state (read when drawn: the look can change while running, v2.9.1)
+ROW_STATE_TOKEN = {"mapped": "SUCCESS_DARK", "ignored": "TEXT_MUTED", "unmapped": "WARNING_TEXT",
+                   "auto_mapped": "PRIMARY", "auto_ignored": "PRIMARY"}
+
+
+def row_state_color(state: str) -> str:
+    return getattr(theme, ROW_STATE_TOKEN[state])
 AUTO_REASON_FA = {"same_row": "همان ردیف با املای دیگر",
                   "same_model": "رنگ یا پارت تازهٔ همین مدل"}
 
 
 def row_state_fa(row: dict) -> str:
     return ROW_STATE_FA[row_state(row)]
+
+
+# ---- v2.9.1: corrections and the price guard ------------------------------------------
+NOTE_KIND_FA = {"correction": "اصلاحیه", "sales_closed": "فروش بسته", "ignored": "نادیده"}
+
+
+def price_text(row: dict) -> tuple[str, str | None, str]:
+    """(text, colour, tooltip) of the customer-price cell: «اصلاحیه», a new price
+    waiting for a manager, or the plain price."""
+    price = row.get("price_rial")
+    text = format_money(price) if price else "ناموجود"
+    color = None if price else theme.DANGER
+    tip = ""
+    if row.get("price_flag") == "correction":
+        text += "  (اصلاحیه)"
+        color = theme.PRIMARY
+        tip = f"اصلاحیهٔ کانال: {row.get('flag_note') or ''}"
+        if row.get("orig_price_rial"):
+            tip += f"\nقیمت PDF: {format_money(row['orig_price_rial'])}"
+    pending = row.get("pending_price_rial")
+    if pending is not None:
+        text += f"  ← منتظر تأیید: {format_money(pending)}"
+        color = theme.WARNING_TEXT
+        source = "اصلاحیه" if row.get("pending_source") == "correction" else "لیست تازه"
+        tip = (f"قیمت تازه ({source}) بیش از ۱۰٪ با قیمت فعلی فرق دارد و خودکار اعمال نشد. "
+               "تا تأیید، قیمت فعلی فروخته می‌شود.")
+    return text, color, tip
+
+
+def raval_text(row: dict) -> str:
+    text = pdf_price(row.get("raval"))
+    if row.get("raval_estimated") and row.get("raval"):
+        text += " (روال تخمینی)"
+    return text
+
+
+def note_summary(note: dict) -> str:
+    result = note.get("result") or {}
+    kind = note.get("kind")
+    if kind == "correction":
+        parts = [f"{to_persian_digits(result.get('applied') or 0)} ردیف اعمال شد"]
+        if result.get("held"):
+            parts.append(f"{to_persian_digits(result['held'])} منتظر تأیید")
+        if result.get("unmatched"):
+            parts.append(f"جور نشد: {'، '.join(result['unmatched'])}")
+        return "؛ ".join(parts)
+    if kind == "sales_closed":
+        return "فروش گوشی تا لیست بعدی بسته شد"
+    return "—"
 
 
 def dropped_pdf(urls) -> Optional[str]:
@@ -146,6 +203,7 @@ class PriceListPage(BasePage):
         self.tabs.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.tabs.addTab(self._build_rows_tab(), "ردیف‌ها و نگاشت")
         self.tabs.addTab(self._build_lists_tab(), "لیست‌های دریافتی")
+        self.tabs.addTab(self._build_notes_tab(), "پیام‌های کانال")
         if self.can_proxies:
             self.tabs.addTab(self._build_proxies_tab(), "پراکسی‌های تلگرام")
         self.tabs.currentChanged.connect(lambda _i: self.load())
@@ -205,8 +263,17 @@ class PriceListPage(BasePage):
         self.auto_button = widgets.button(
             "تطبیق خودکار", icon_name="refresh", on_click=self._run_auto,
             tooltip="ردیف‌های نگاشت‌نشده را با تصمیم‌های قبلی تطبیق بده.")
+        # v2.9.1: a price that moved more than 10 % waits for a manager
+        self.approve_price_button = widgets.button(
+            "تأیید قیمت تازه", icon_name="check", variant="success",
+            on_click=lambda: self._decide_prices(True),
+            tooltip="قیمت تازهٔ ردیف‌های «منتظر تأیید» انتخاب‌شده از همین حالا فروخته می‌شود.")
+        self.reject_price_button = widgets.button(
+            "رد قیمت تازه", icon_name="close", on_click=lambda: self._decide_prices(False),
+            tooltip="قیمت قبلی می‌ماند.")
         for b in (self.map_button, self.ignore_button, self.clear_button,
-                  self.confirm_auto_button, self.undo_auto_button, self.auto_button):
+                  self.confirm_auto_button, self.undo_auto_button, self.auto_button,
+                  self.approve_price_button, self.reject_price_button):
             b.setEnabled(self.can_manage)
             actions.addWidget(b)
         panel.body.addWidget(actions_holder)
@@ -237,6 +304,26 @@ class PriceListPage(BasePage):
             actions.addWidget(b)
         actions.addStretch(1)
         panel.body.addLayout(actions)
+        layout.addWidget(panel, 1)
+        return tab
+
+    def _build_notes_tab(self) -> QWidget:
+        """v2.9.1: the price channel's text posts after the list and what was done."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 12, 0, 0)
+        layout.addWidget(widgets.label(
+            "«اصلاحیه» (مدل، حافظه-رم، توضیح، قیمت نقد) روی همهٔ رنگ‌های همان مدل تا لیست بعدی "
+            "اعمال می‌شود؛ «روال» با فاصلهٔ همیشگی روال و نقد همان مدل حساب می‌شود (بدون سابقه: "
+            "«روال تخمینی»). پیام «فروش بسته» فروش گوشی را تا لیست بعدی می‌بندد.",
+            name="Muted", wrap=True))
+        panel = widgets.Panel()
+        self.notes_table = widgets.DataTable(NOTE_HEADERS, key="price_notes", fit_width=True,
+                                             stretch_column=3)
+        self.notes_table.set_empty_state("پیامی از کانال نیامده",
+                                         "اصلاحیه‌ها و «فروش بسته» اینجا دیده می‌شوند.", "file")
+        self.notes_table.setMinimumHeight(300)
+        panel.body.addWidget(self.notes_table, 1)
         layout.addWidget(panel, 1)
         return tab
 
@@ -282,8 +369,40 @@ class PriceListPage(BasePage):
             self._load_rows()
         elif index == 1:
             self._load_lists()
+        elif index == 2:
+            self._load_notes()
         else:
             self._load_proxies()
+
+    def set_filter(self, key: str) -> None:
+        """A notification opens the page on a filter (v2.9.1: «held»)."""
+        index = self.filter_combo.findData(key)
+        if index >= 0:
+            self.tabs.setCurrentIndex(0)
+            self.filter_combo.setCurrentIndex(index)
+
+    def _load_notes(self) -> None:
+        self.notes_table.set_busy(True)
+        self.run(lambda: self.context.api.pricelist_notes(),
+                 on_success=self._on_notes, on_error=self._table_error(self.notes_table))
+
+    def _on_notes(self, items: list) -> None:
+        table = self.notes_table
+        table.set_busy(False)
+        table.setRowCount(0)
+        for note in items or []:
+            i = table.rowCount()
+            table.insertRow(i)
+            table.set_cell(i, 0, format_shamsi(note.get("posted_at") or note.get("created_at")))
+            kind = str(note.get("kind") or "")
+            unmatched = bool((note.get("result") or {}).get("unmatched"))
+            table.set_cell(i, 1, NOTE_KIND_FA.get(kind, kind), bold=True,
+                           color=theme.WARNING_TEXT if unmatched or kind == "sales_closed"
+                           else None)
+            table.set_cell(i, 2, note_summary(note))
+            text = " / ".join(str(note.get("text") or "").split("\n"))
+            table.set_cell(i, 3, text[:160], tooltip=str(note.get("text") or ""))
+        table._refresh_states()
 
     def _load_rows(self) -> None:
         self.rows_table.set_busy(True)
@@ -374,12 +493,12 @@ class PriceListPage(BasePage):
                     color = f"{color} ← {row['color_label']}"
                 table.set_cell(i, 3, color)
                 table.set_cell(i, 4, pdf_price(row.get("naghd")))
-                table.set_cell(i, 5, pdf_price(row.get("raval")))
-                price = row.get("price_rial")
-                table.set_cell(i, 6, format_money(price) if price else "ناموجود",
-                               color=None if price else theme.DANGER)
+                table.set_cell(i, 5, raval_text(row))
+                text, cell_color, tip = price_text(row)
+                table.set_cell(i, 6, text, color=cell_color, tooltip=tip,
+                               bold=row.get("pending_price_rial") is not None)
                 state = row_state(row)
-                table.set_cell(i, 7, row_state_fa(row), bold=True, color=ROW_STATE_COLOR[state],
+                table.set_cell(i, 7, row_state_fa(row), bold=True, color=row_state_color(state),
                                tooltip=AUTO_REASON_FA.get(str(row.get("auto_reason") or ""), ""))
                 table.set_cell(i, 8, to_persian_digits(row["kala_code"])
                                if row.get("kala_code") else "—")
@@ -482,6 +601,27 @@ class PriceListPage(BasePage):
 
         self.run(work, on_success=lambda _r: (self.notify_success("نگاشت حذف شد."),
                                               self._load_rows()))
+
+    # ---- v2.9.1: the price guard ------------------------------------------------
+    def _decide_prices(self, approve: bool) -> None:
+        rows = [r for r in self._selected_rows() if r.get("pending_price_rial") is not None]
+        if not rows:
+            self.notify_warning("ردیف «منتظر تأیید» انتخاب نشده است (نمایش: «قیمت منتظر تأیید»).")
+            return
+        if approve and not widgets.confirm(
+                self, "تأیید قیمت تازه",
+                f"قیمت تازهٔ {to_persian_digits(len(rows))} ردیف از همین حالا به مشتری نمایش داده و "
+                "فروخته شود؟", confirm_text="تأیید"):
+            return
+        keys = [r["row_key"] for r in rows]
+        call = self.context.api.approve_row_price if approve else self.context.api.reject_row_price
+
+        def work():
+            for key in keys:
+                call(key)
+
+        self.run(work, on_success=lambda _r: (self.notify_success(
+            "قیمت تازه تأیید شد." if approve else "قیمت قبلی ماند."), self._load_rows()))
 
     # ---- v2.6.2: automatic mappings ------------------------------------------
     def _auto_rows(self) -> list[dict]:

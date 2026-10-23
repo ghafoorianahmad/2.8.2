@@ -180,6 +180,9 @@ class Settings:
     pricelist_cash_surcharge_rial: int = 5_000_000
     #: A mapped price moving more than this (percent) holds the new list.
     pricelist_max_change_pct: float = 15.0
+    #: v2.9.1 price guard: a mapped row (list or correction) moving more than this
+    #: (percent) keeps its previous price until a manager approves the new one.
+    price_guard_pct: float = 10.0
     #: Phone prices older than this are not sold (inquiry only); 0 = no limit.
     pricelist_max_age_hours: int = 72
     pricelist_max_bytes: int = 10 * 1024 * 1024
@@ -265,6 +268,7 @@ class Settings:
             pricelist_unit_rial=_env_int("PRICELIST_UNIT_RIAL", 10_000),
             pricelist_cash_surcharge_rial=_env_int("PRICELIST_CASH_SURCHARGE_RIAL", 5_000_000),
             pricelist_max_change_pct=float(_env("PRICELIST_MAX_CHANGE_PCT", "15") or 15),
+            price_guard_pct=float(_env("PRICE_GUARD_PCT", "10") or 10),
             pricelist_max_age_hours=_env_int("PRICELIST_MAX_AGE_HOURS", 72),
             pricelist_max_bytes=_env_int("PRICELIST_MAX_BYTES", 10 * 1024 * 1024),
             pricelists_dir=_env("PRICELISTS_DIR", ""),

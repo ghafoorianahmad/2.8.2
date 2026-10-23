@@ -98,6 +98,10 @@ BADGE_KINDS = {
 }
 
 
+#: v2.9.1: pages that show the price list / the sales state
+PRICE_PAGES = ("pricelist", "dashboard")
+
+
 class MainWindow(QMainWindow):
     logout_requested = Signal()
     session_expired = Signal()
@@ -639,8 +643,17 @@ class MainWindow(QMainWindow):
 
     def _on_server_events(self, events: list) -> None:
         """Something happened on the server: refresh what is on screen now."""
+        from ..notifications import PRICE_EVENT_KINDS
+
         page = self.current_page()
         key = self._current_key
+        # v2.9.1: a new list / correction / sales change: the price list and the
+        # dashboard reload when they are shown next (also from the tray)
+        if any(str(e.get("kind") or "") in PRICE_EVENT_KINDS for e in events):
+            for stale_key in PRICE_PAGES:
+                stale = self._pages.get(stale_key)
+                if stale is not None and (stale_key != key or not self.isVisible()):
+                    stale._loaded_once = False
         if key in BADGE_KINDS and self.isVisible() and self.isActiveWindow():
             self.context.mark_seen(*BADGE_KINDS[key])
         if page is not None and self.isVisible()                 and getattr(page, "refresh_on_server_events", True):
@@ -753,6 +766,17 @@ class MainWindow(QMainWindow):
         self.context.apply_system_info(info)
         # Keep the server indicator honest (quietly: no dialog on a blip).
         self.check_server(report=False)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        # v2.9.1: back from the tray: a page that went stale meanwhile reloads now
+        page = self.current_page()
+        if page is not None and getattr(page, "_loaded_once", True) is False \
+                and hasattr(page, "ensure_loaded"):
+            page.ensure_loaded()
+
+    def current_key(self) -> str:
+        return self._current_key
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if not self.allow_close:

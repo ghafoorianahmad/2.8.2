@@ -35,6 +35,8 @@ class AppContext(QObject):
     payment_info_due: frozenset = field(default_factory=frozenset)
     #: v2.9.0: closes and reopens the program (a new look); None in tests
     restart_app: Optional[object] = None
+    #: v2.9.1: apply the saved look now (palette, light / dark, effects) without a restart
+    apply_look: Optional[object] = None
 
     # emitted when the shopapi connection state changes (green/red dot)
     connection_changed = Signal(bool)

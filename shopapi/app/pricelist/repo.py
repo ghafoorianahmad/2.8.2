@@ -119,13 +119,20 @@ class PriceListRepo:
         with self.db._lock:
             return self.db._fetchall(
                 "SELECT r.row_key, r.block, r.section, r.description, r.kind, r.color, "
-                "r.naghd, r.raval, r.price_rial, m.id AS mapping_id, m.action, m.kala_code, "
+                "r.naghd, r.raval, r.price_rial, r.price_flag, r.flag_note, r.raval_estimated, "
+                "r.orig_naghd, r.orig_raval, r.orig_price_rial, r.pending_naghd, r.pending_raval, "
+                "r.pending_price_rial, r.pending_estimated, r.pending_source, "
+                "m.id AS mapping_id, m.action, m.kala_code, "
                 "m.color_label, COALESCE(m.auto, 0) AS auto, COALESCE(m.auto_reason, '') "
                 "AS auto_reason FROM price_list_rows r "
                 "LEFT JOIN price_mappings m ON m.row_key = r.row_key "
                 "WHERE r.list_id=? ORDER BY r.block, r.rowid",
                 (int(list_id),),
             )
+
+    def held_rows(self, list_id: int) -> list[dict]:
+        """v2.9.1: rows whose new price waits for a manager (price guard)."""
+        return [r for r in self.rows(list_id) if r.get("pending_price_rial") is not None]
 
     def rows_by_key(self, list_id: int) -> dict[str, dict]:
         return {r["row_key"]: r for r in self.rows(list_id)}

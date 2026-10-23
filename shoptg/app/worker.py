@@ -30,9 +30,9 @@ from typing import Callable
 from . import secure_store
 from .config import Settings
 from .gateway import NotAuthorized, TelegramGateway, TgMessage
-from tgproxy import ProxyLink, extract_links, from_pool, parse_proxy_link
+from tgproxy import ProxyLink, from_pool, parse_proxy_link
 from .shopapi import ApiError, WorkerApi
-from . import webpreview
+from . import proxylinks, webpreview
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +40,18 @@ K_PRICE_LAST_ID = "tg_price_last_id"
 K_COLLECTED_AT = "tg_proxy_collected_at"
 K_PROXY_LAST_IDS = "tg_proxy_last_ids"
 K_STATUS = "tg_status"
+#: v2.9.1: version (id, edit time, size) of the newest list post that was sent
+K_PRICE_VERSION = "tg_price_version"
+#: v2.9.1: text posts after the list already sent ({channel:id: version})
+K_PRICE_NOTES = "tg_price_notes"
+
+ROLE_PRICELIST = "pricelist"
+ROLE_PROXY = "proxy"
+#: how long the channel roles are cached; the joined channels are listed this often
+ROLES_TTL = 5 * 60
+CHANNELS_INTERVAL_SEC = 6 * 3600
+#: during sales hours (Tehran 07:00-21:00) the price channel is read at least this often
+SALES_HOURS_MAX_INTERVAL = 20 * 60
 
 #: Extra working proxies kept beyond TG_PROXY_POOL_SIZE (a failure must not empty it).
 POOL_SPARE = 2
@@ -47,6 +59,8 @@ POOL_SPARE = 2
 REFILL_AFTER = timedelta(hours=1)
 #: How often the collection is considered (it decides itself whether it is due).
 COLLECT_CHECK_SEC = 30 * 60
+#: v2.9.1: the newest posts of a proxy channel read at each collection
+PROXY_SCAN = 100
 #: Consecutive download failures of a price-list PDF before the owner is alerted.
 PRICE_FAIL_ALERT = 3
 ALERT_PRICELIST = "telegram_pricelist_error"
@@ -61,6 +75,10 @@ def flood_seconds(exc: BaseException) -> int:
         except (TypeError, ValueError):
             return 60
     return 0
+
+
+#: Iran has no daylight saving time since 2022
+TEHRAN = timezone(timedelta(hours=3, minutes=30), "Asia/Tehran")
 
 
 def utcnow() -> datetime:
@@ -85,7 +103,10 @@ class Worker:
         self._down_since: float | None = None
         self._login_missing = False
         self._probe_offset = 0
-        self._next = {"health": 0.0, "price": 0.0, "collect": 0.0, "probe": 0.0}
+        self._next = {"health": 0.0, "price": 0.0, "collect": 0.0, "probe": 0.0,
+                      "channels": 0.0}
+        self._roles: list[dict] | None = None
+        self._roles_at = 0.0
         self._paused_until = 0.0
         self._price_failures = 0
         self.last_error = ""
@@ -213,30 +234,118 @@ class Worker:
         log.info("probed %d proxies: %d ok", len(results), sum(r["ok"] for r in results))
         await self._report(results)
 
+    # ---- channels and roles (v2.9.1) -------------------------------------------------
+    async def roles(self) -> list[dict]:
+        """[{ref, role}] chosen in «تنظیمات سرور ← تلگرام» (cached a few minutes)."""
+        now = self._clock()
+        if self._roles is not None and now - self._roles_at < ROLES_TTL:
+            return self._roles
+        try:
+            data = await self.api.channel_roles()
+            items = data.get("channels") if isinstance(data, dict) else None
+            self._roles = [{"ref": str(i.get("ref") or ""), "role": str(i.get("role") or "")}
+                           for i in items or [] if isinstance(i, dict) and i.get("ref")]
+            self._roles_at = now
+        except ApiError as exc:
+            log.debug("channel roles unavailable: %s", exc)
+            if self._roles is None:
+                return []
+        return self._roles
+
+    @staticmethod
+    def _role_of(roles: list[dict], ref: str) -> str | None:
+        for item in roles:
+            if item["ref"].lower() == ref.lower():
+                return item["role"]
+        return None
+
+    async def price_channel(self) -> str:
+        """The channel with the «لیست قیمت» role, else TG_PRICE_CHANNEL (unless the
+        admin gave that one another role)."""
+        roles = await self.roles()
+        chosen = [i["ref"] for i in roles if i["role"] == ROLE_PRICELIST]
+        if chosen:
+            return chosen[0]
+        if self._role_of(roles, self.s.price_channel) in (None, "", ROLE_PRICELIST):
+            return self.s.price_channel
+        return ""
+
+    async def proxy_channels(self) -> list[str]:
+        """Channels with the «پراکسی» role, plus TG_PROXY_CHANNELS not given another role."""
+        roles = await self.roles()
+        out = [i["ref"] for i in roles if i["role"] == ROLE_PROXY]
+        for channel in self.s.proxy_channels:
+            if self._role_of(roles, channel) in (None, "", ROLE_PROXY) and \
+                    channel.lower() not in {c.lower() for c in out}:
+                out.append(channel)
+        return out
+
+    async def channels_tick(self) -> int:
+        """Report the joined channels to shopapi (it alerts the admin about new ones)."""
+        found = await self.tg.channels()
+        await self.api.sync_channels([{"id": c.id, "username": c.username, "title": c.title,
+                                       "broadcast": c.broadcast} for c in found])
+        self._roles = None                 # a new channel may have a role now
+        return len(found)
+
     # ---- price channel ------------------------------------------------------------
     async def price_tick(self) -> int:
-        """Send new PDFs to shopapi; returns how many were sent."""
+        """v2.9.1: read the newest posts of the price channel every time (not only
+        those after a cursor): the newest list PDF that still exists is sent again
+        when it changed (an edited post, a replaced file, or a deleted newest post),
+        and the text posts after it (corrections, «فروش بسته») go to shopapi once
+        per version. Returns how many lists were sent."""
         self.price_info["checked_at"] = self._now().isoformat(timespec="seconds")
+        channel = await self.price_channel()
+        self.price_info["channel"] = channel
+        if not channel:
+            return 0
         state = await self.api.get_state()
-        cursor = int(state.get(K_PRICE_LAST_ID) or 0)
-        channel = self.s.price_channel
-        first_run = cursor == 0
-        messages = await self.tg.messages(channel, min_id=cursor,
-                                          limit=self.s.first_run_scan if first_run else 100)
+        messages = await self.tg.messages(channel, min_id=0, limit=self.s.first_run_scan)
         pdfs = [m for m in messages if m.is_pdf]
-        if first_run:
-            pdfs = pdfs[-1:]
         sent = 0
-        for msg in pdfs:
-            if not await self._send_pdf(channel, msg):
-                return sent           # shopapi down: retry from here next time
-            sent += 1
-            cursor = max(cursor, msg.id)
-            await self.api.put_state(K_PRICE_LAST_ID, str(cursor))
-        newest = max((m.id for m in messages), default=cursor)
-        if newest > cursor:
-            await self.api.put_state(K_PRICE_LAST_ID, str(newest))
+        after = 0
+        if pdfs:
+            newest = max(pdfs, key=lambda m: m.id)
+            after = newest.id
+            version = f"{channel}:{newest.version}"
+            if version != (state.get(K_PRICE_VERSION) or ""):
+                if not await self._send_pdf(channel, newest):
+                    return 0             # shopapi down: retry next time
+                await self.api.put_state(K_PRICE_VERSION, version)
+                sent = 1
+            if newest.id > int(state.get(K_PRICE_LAST_ID) or 0):
+                await self.api.put_state(K_PRICE_LAST_ID, str(newest.id))
+        await self._send_notes(channel, [m for m in messages if not m.is_pdf and m.id > after
+                                         and (m.text or "").strip()], state)
         return sent
+
+    async def _send_notes(self, channel: str, notes: list[TgMessage], state: dict) -> None:
+        try:
+            done = json.loads(state.get(K_PRICE_NOTES) or "{}")
+            if not isinstance(done, dict):
+                done = {}
+        except ValueError:
+            done = {}
+        changed = False
+        for msg in notes:
+            key = f"{channel}:{msg.id}"
+            if done.get(key) == msg.version:
+                continue
+            ref = f"t.me/{channel}/{msg.id}"
+            posted = msg.published.isoformat() if msg.published else None
+            try:
+                result = await self.api.post_note(msg.text, source_ref=ref, posted_at=posted)
+            except ApiError as exc:
+                log.warning("price channel post %s not delivered: %s", ref, exc)
+                break
+            log.info("price channel post %s -> %s", ref, (result or {}).get("kind"))
+            done[key] = msg.version
+            changed = True
+        if changed:
+            keep = {f"{channel}:{m.id}" for m in notes}
+            done = {k: v for k, v in done.items() if k in keep or not k.startswith(channel + ":")}
+            await self.api.put_json_state(K_PRICE_NOTES, dict(list(done.items())[-60:]))
 
     async def _send_pdf(self, channel: str, msg: TgMessage) -> bool:
         ref = f"t.me/{channel}/{msg.id}"
@@ -264,9 +373,10 @@ class Worker:
             self._price_result(ref, "not_pdf")
             await self._alert(ALERT_PRICELIST)
             return True
-        posted = msg.date.isoformat() if msg.date else None
+        posted = msg.published.isoformat() if msg.published else None
         try:
-            result = await self.api.post_pricelist(data, source_ref=ref, posted_at=posted)
+            result = await self.api.post_pricelist(data, source_ref=ref, posted_at=posted,
+                                                   latest=True)
         except ApiError as exc:
             log.warning("price list %s not delivered: %s", ref, exc)
             return False
@@ -282,8 +392,6 @@ class Worker:
     # ---- proxy channels -------------------------------------------------------------
     def collect_due(self, collected_at: str, healthy: int | None = None) -> bool:
         """Daily (TG_PROXY_COLLECT_HOURS), or hourly while the pool is short."""
-        if not self.s.proxy_channels:
-            return False
         try:
             last = datetime.fromisoformat(collected_at)
         except ValueError:
@@ -301,35 +409,45 @@ class Worker:
             return 0
         return sum(1 for p in pool if p.get("last_ok_at") and not p.get("failing_now"))
 
-    async def _channel_links(self, channel: str, last_ids: dict) -> tuple[list[str], str]:
+    async def _channel_links(self, channel: str, last_ids: dict,
+                             errors: list[str] | None = None) -> tuple[list[str], str]:
         """Proxy links of one channel, newest first: with the account when it is
-        connected, else (or when that fails) from the public web preview."""
+        connected, else (or when that fails / finds none) from the public web preview.
+        v2.9.1: always the newest PROXY_SCAN posts (links the server already knows
+        are not tested again), from the text, the link entities and the buttons, in
+        every format (``proxylinks``)."""
+        errors = errors if errors is not None else []
         if self.tg.connected:
-            since = int(last_ids.get(channel) or 0)
             try:
-                messages = await self.tg.messages(channel, min_id=since,
-                                                  limit=200 if since else 100)
+                messages = await self.tg.messages(channel, min_id=0, limit=PROXY_SCAN)
             except Exception as exc:  # noqa: BLE001 - one bad channel must not stop the rest
                 if flood_seconds(exc):
                     raise
                 log.warning("proxy channel %s unreadable (%s)", channel, type(exc).__name__)
+                errors.append(f"{channel}: {type(exc).__name__}")
             else:
                 if messages:
                     last_ids[channel] = max(m.id for m in messages)
                 newest = list(reversed(messages))
-                return extract_links([m.text for m in newest] +
-                                     [u for m in newest for u in m.urls]), "account"
+                links = proxylinks.extract_all([t for m in newest for t in [m.text, *m.urls]])
+                if links:
+                    return links, "account"
+                log.info("proxy channel %s: %d posts read, no proxy link in them", channel,
+                         len(messages))
+                errors.append(f"{channel}: {len(messages)} posts, no links")
         if self.s.web_preview:
             try:
                 return await webpreview.fetch_links(channel), "web"
             except webpreview.PreviewError as exc:
                 log.info("web preview of %s: %s", channel, exc)
+                errors.append(f"{channel} web: {exc}")
         return [], ""
 
     async def collect_tick(self, *, force: bool = False) -> int:
         """New proxy links -> tested -> the working ones into the pool. Returns how
         many working proxies were added."""
-        if not self.s.proxy_channels:
+        channels = await self.proxy_channels()
+        if not channels:
             return 0
         state = await self.api.get_state()
         healthy = await self.healthy_count()
@@ -343,8 +461,9 @@ class Worker:
             last_ids = {}
         found: list[tuple[str, str]] = []
         ways: list[str] = []
-        for channel in self.s.proxy_channels:
-            links, way = await self._channel_links(channel, last_ids)
+        errors: list[str] = []
+        for channel in channels:
+            links, way = await self._channel_links(channel, last_ids, errors)
             if way:
                 ways.append(way)
             seen = {raw for raw, _ in found}
@@ -354,7 +473,8 @@ class Worker:
         await self.api.put_json_state(K_PROXY_LAST_IDS, last_ids)
         await self.api.put_state(K_COLLECTED_AT, self._now().isoformat(timespec="seconds"))
         self.collect_info = {"at": self._now().isoformat(timespec="seconds"), "found": len(found),
-                             "tested": tested, "added": added, "via": ",".join(ways)}
+                             "tested": tested, "added": added, "via": ",".join(ways),
+                             "error": "; ".join(errors)[:300] if not found else ""}
         if added and not self.tg.connected:
             self._next["health"] = 0.0          # a new proxy may get us connected now
         return added
@@ -407,7 +527,7 @@ class Worker:
             "at": self._now().isoformat(timespec="seconds"),
             # v2.9.0 (no secrets: which key kind, the channel, counts and times)
             "api_preset": self.s.api_preset,
-            "price_channel": self.s.price_channel,
+            "price_channel": self.price_info.get("channel") or self.s.price_channel,
             "pool_size": self.s.pool_size,
             "price": dict(self.price_info),
             "collect": dict(self.collect_info),
@@ -435,7 +555,8 @@ class Worker:
             # Retry sooner than the health interval while down, but not in a tight loop.
             self._next["health"] = min(self._next["health"], now + 60)
         for name, interval, job, needs_connection in (
-            ("price", self.s.price_interval_sec, self.price_tick, True),
+            ("channels", CHANNELS_INTERVAL_SEC, self.channels_tick, True),
+            ("price", self.price_interval(), self.price_tick, True),
             # v2.9.0: also without a connection (web preview + anonymous tests)
             ("collect", COLLECT_CHECK_SEC, self.collect_tick, False),
             ("probe", self.s.probe_interval_sec, self.probe_tick, True),
@@ -456,6 +577,13 @@ class Worker:
                     self._next["health"] = 0.0      # check the connection now
             if name in ("price", "collect"):
                 await self.publish_status()
+
+    def price_interval(self) -> int:
+        """TG_PRICE_INTERVAL_MIN, at most every 20 minutes during sales hours."""
+        local = self._now().astimezone(TEHRAN)
+        if 7 <= local.hour < 21:
+            return min(self.s.price_interval_sec, SALES_HOURS_MAX_INTERVAL)
+        return self.s.price_interval_sec
 
     def _flood(self, exc: BaseException, now: float) -> bool:
         """A FloodWait: pause every job for as long as Telegram asks."""

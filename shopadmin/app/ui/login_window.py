@@ -101,6 +101,16 @@ class LoginWindow(QWidget):
         self.password_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.password_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.password_input.setMinimumHeight(42)
+        # v2.9.1: the eye shows what is being typed (never a saved password)
+        self._eye_shown = False
+        self.eye_action = self.password_input.addAction(
+            theme.icon("eye", 18, theme.TEXT_MUTED), QLineEdit.ActionPosition.TrailingPosition)
+        self.eye_action.setToolTip("نمایش گذرواژه")
+        self.eye_action.triggered.connect(self._toggle_eye)
+        self._saved_password = False
+        self._saved_value = ""
+        self.password_input.textEdited.connect(self._password_typed)
+        self.username_input.textEdited.connect(self._username_typed)
         card_layout.addWidget(self.password_input)
 
         self.remember_check = QCheckBox("مرا به خاطر بسپار")
@@ -154,6 +164,41 @@ class LoginWindow(QWidget):
         self.password_input.returnPressed.connect(self._submit)
         self._attempts = 0
         QTimer.singleShot(0, self._prefill_remembered_username)
+
+    # ------------------------------------------------------------------ v2.9.1: eye / saved
+    def _toggle_eye(self) -> None:
+        if self._saved_password:
+            return
+        self._set_eye(not self._eye_shown)
+
+    def _set_eye(self, shown: bool) -> None:
+        self._eye_shown = shown
+        self.password_input.setEchoMode(QLineEdit.EchoMode.Normal if shown
+                                        else QLineEdit.EchoMode.Password)
+        self.eye_action.setIcon(theme.icon("eye_off" if shown else "eye", 18, theme.TEXT_MUTED))
+        self.eye_action.setToolTip("پنهان کردن گذرواژه" if shown else "نمایش گذرواژه")
+
+    def _use_saved_password(self, password: str) -> None:
+        self._set_eye(False)
+        self.password_input.setText(password)
+        self._saved_value = password
+        self._saved_password = True
+        self.eye_action.setEnabled(False)
+        self.eye_action.setToolTip("گذرواژهٔ ذخیره‌شده نمایش داده نمی‌شود")
+
+    def _password_typed(self, text: str) -> None:
+        if self._saved_password:
+            # typing over a saved password: only what was typed now stays
+            saved, self._saved_value = self._saved_value, ""
+            self.password_input.setText(text[len(saved):] if text.startswith(saved) else "")
+            self._saved_password = False
+            self.eye_action.setEnabled(True)
+            self.eye_action.setToolTip("نمایش گذرواژه")
+
+    def _username_typed(self, _text: str) -> None:
+        if self._saved_password:
+            self.password_input.clear()
+            self._password_typed("")
 
     # ------------------------------------------------------------------ forgot
     def _forgot_password(self) -> None:
@@ -224,6 +269,17 @@ class LoginWindow(QWidget):
             return
         self.username_input.setText(username)
         self.remember_check.setChecked(True)
+        password = None
+        try:
+            password = self.auth.remembered_password(username)
+        except Exception:  # noqa: BLE001 - a broken file: type the password
+            password = None
+        if password:
+            self._use_saved_password(password)
+            self.saved_label.setText(f"آخرین کاربر این دستگاه: «{username}». «ورود» را بزنید.")
+            self.saved_box.setVisible(True)
+            self.login_button.setFocus()
+            return
         self.saved_label.setText(
             f"آخرین کاربر این دستگاه: «{username}». گذرواژه را وارد کنید."
         )
@@ -267,8 +323,15 @@ class LoginWindow(QWidget):
         def ok(result) -> None:
             self._on_success(result)
 
+        used_saved = self._saved_password
+
         def fail(message: str, _kind: str) -> None:
             self._attempts += 1
+            if used_saved and _kind == "auth_error" and "گذرواژه نادرست" in message:
+                # the password was changed elsewhere: forget the saved one
+                self.auth.forget_password()
+                self.password_input.clear()
+                self._password_typed("")
             detail = ""
             if _kind == "auth_error" and self._attempts >= 2 and "قفل" not in message                     and "گذرواژه نادرست" in message:
                 remaining = max(0, MAX_FAILED_ATTEMPTS - self._attempts)
@@ -288,7 +351,11 @@ class LoginWindow(QWidget):
         self.store.set_setting("remember_me", remember)
         principal = result.principal
 
+        password = self.password_input.text()
         if remember:
+            # v2.9.1: the password too (Windows DPAPI, this Windows user only)
+            if not self.auth.remember_password(principal.username, password):
+                self.auth.forget_password()
             backend = self.auth.remember_user(principal.username)
             if backend == "keyring":
                 log.info("remember-me enabled (OS keyring)")
@@ -302,11 +369,17 @@ class LoginWindow(QWidget):
             self.auth.forget_remembered()
 
         self.password_input.clear()
+        self._saved_password = False
+        self.eye_action.setEnabled(True)
+        self._set_eye(False)
         self.logged_in.emit(result)
 
     def reset(self) -> None:
         """Called after a logout so the form is clean."""
         self.password_input.clear()
+        self._saved_password = False
+        self.eye_action.setEnabled(True)
+        self._set_eye(False)
         self.error_label.setVisible(False)
         self.remember_check.setChecked(bool(self.store.get_setting("remember_me", False)))
         self.username_input.setFocus()
