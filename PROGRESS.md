@@ -21,7 +21,7 @@ Owner's list after testing 2.9.0 on this PC (reader connected, Abrishami PDF imp
 13. **Bale admin chat = problems only**: new orders / receipts / customers / price inquiries only with `ADMIN_CHAT_ORDER_NOTICES=true` (default off); new: suspicious price, unmatched correction, sales closed by the channel.
 14. **Off-server backup**: «تنظیمات سرور › شبکه و پشتیبان»: folder (`BACKUP_COPY_DIR`, share allowed), passphrase (`BACKUP_PASSPHRASE`, ≥ 20, «ساخت عبارت تازه»), copies kept (`BACKUP_KEEP_DAYS`, 14), «آزمایش» = write / read / delete with the admin's account AND with the service account (`POST /admin/server/backup-test`).
 
-Tests (Windows, fakes): shopapi **488**, shopbots **279**, shoptg **75**, shopsystem **55**, shopadmin **619** — all passing. Not tried on the installed server, real channels or a real share.
+Tests (Windows, fakes): shopapi **492**, shopbots **279**, shoptg **75**, shopsystem **55**, shopadmin **619** — all passing. Not tried on the installed server, real channels or a real share.
 
 ## v2.9.0 — new look (3 palettes × light/dark/system × effects), payment-form cursor, automatic Telegram reader + proxy pool (2026-10-21, same branch) — DONE in code; installed build UNVERIFIED
 
