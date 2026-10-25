@@ -135,9 +135,9 @@ def _pool_status(db: OwnDB) -> dict:
 
     worker = _tg_status(db) or {}
     try:
-        target = int(worker.get("pool_size") or 5)
+        target = int(worker.get("pool_size") or 10)
     except (TypeError, ValueError):
-        target = 5
+        target = 10
     return pool_summary(ProxyPool(db), target)
 
 

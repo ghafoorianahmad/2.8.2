@@ -1168,6 +1168,41 @@ def check_db() -> int:
     return EXIT_OK
 
 
+def grant_db() -> int:
+    """v2.9.3 «دادن دسترسی به این دیتابیس» (server setup): with the setup's own
+    administrator Windows sign-in, give the shop's SQL login (or the service
+    account) exactly what grant_shop_app.ps1 gives on the saved database, then
+    try the shop's own connection again; print JSON (never the password)."""
+    if not load_env_file():
+        _emit({"ok": False, "error": "no .env"})
+        return EXIT_NO_CONFIG
+    normalise_configuration_for_db()
+    from shopapi_app.config import Settings
+    from shopapi_app.grant_access import GrantError, grant_shop_app
+
+    settings = Settings.from_env()
+    try:
+        result = grant_shop_app(settings)
+    except GrantError as exc:
+        _emit({"ok": False, "error": "GrantError", "message_fa": exc.message_fa,
+               "message": exc.detail[:300]})
+        return 1
+    try:
+        from shopapi_app.accounting_reader import AccountingReader
+
+        reader = AccountingReader(settings)
+        reader.ping()
+        result["check_ok"] = True
+        result["groups"] = len(reader.list_groups())
+    except Exception as exc:  # noqa: BLE001 - reported to the setup screen
+        from shopapi_app.sql_errors import describe
+
+        result["check_ok"] = False
+        result["check_message_fa"] = describe(exc).message_fa
+    _emit(result)
+    return EXIT_OK
+
+
 def normalise_configuration_for_db() -> None:
     for friendly, internal in ALIASES.items():
         value = os.environ.get(friendly, "").strip()
@@ -1183,10 +1218,12 @@ def main(argv: list[str] | None = None) -> int:
     configure_paths(resolve_data_dir(args))
 
     init_json = _arg_value(args, "--init-config")
-    if init_json or "--check-db" in args:
+    if init_json or "--check-db" in args or "--grant-db" in args:
         # Setup helpers must always answer with JSON, even on failure, so the
         # wizard can show the real reason instead of "unreadable response".
         try:
+            if "--grant-db" in args:
+                return grant_db()
             return init_config(Path(init_json)) if init_json else check_db()
         except Exception as exc:  # noqa: BLE001 - reported to the setup screen
             text = str(exc).splitlines()[0][:300] if str(exc) else ""

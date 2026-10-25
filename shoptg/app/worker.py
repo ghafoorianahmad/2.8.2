@@ -4,7 +4,8 @@
   go to ``/worker/pricelists`` (shopapi decides duplicate / older / held); the
   cursor moves past images and text posts too. First run: newest PDF only;
 * proxy channels (default @ProxyMTProto) every ``TG_PROXY_COLLECT_HOURS`` (24),
-  and hourly while fewer than ``TG_PROXY_POOL_SIZE`` (5) proxies work: links read
+  and hourly while fewer than ``TG_PROXY_POOL_SIZE`` (10) fast proxies work (v2.9.3:
+  dead collected ones are retired by shopapi at once, so the pool refills): links read
   with the account, or from the public web preview (t.me/s/...) when not logged
   in / no proxy works; links the server never saw are tested with an anonymous
   client and only the working ones join the pool (v2.9.0);
@@ -60,6 +61,8 @@ SALES_HOURS_MAX_INTERVAL = 20 * 60
 
 #: Extra working proxies kept beyond TG_PROXY_POOL_SIZE (a failure must not empty it).
 POOL_SPARE = 2
+#: v2.9.3: slower than this (ms) does not count as healthy (shopapi ranks it last)
+SLOW_MS = 5000
 #: While fewer than pool_size proxies work, collect again after this long.
 REFILL_AFTER = timedelta(hours=1)
 #: How often the collection is considered (it decides itself whether it is due).
@@ -418,12 +421,14 @@ class Worker:
         return short and elapsed >= (START_REFILL_AFTER if first else REFILL_AFTER)
 
     async def healthy_count(self) -> int:
-        """Usable proxies that worked at their last check."""
+        """Usable proxies that worked at their last check. v2.9.3: a slow one
+        (over SLOW_MS) does not count, so faster ones are looked for."""
         try:
             pool = await self.api.proxies()
         except ApiError:
             return 0
-        return sum(1 for p in pool if p.get("last_ok_at") and not p.get("failing_now"))
+        return sum(1 for p in pool if p.get("last_ok_at") and not p.get("failing_now")
+                   and int(p.get("last_latency_ms") or 0) <= SLOW_MS)
 
     async def _channel_links(self, channel: str, last_ids: dict,
                              errors: list[str] | None = None) -> tuple[list[str], str]:

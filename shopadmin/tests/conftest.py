@@ -108,6 +108,10 @@ class FakeShopApi:
         self.catalog_items: list[dict] = []
         self.catalog_imports: list[list] = []
         self.catalog_checks = 0
+        # ---- v2.9.3: the live site read by the server ----
+        self.site_models: list[dict] = []
+        self.site_reads = 0
+        self.site_read: dict | None = None
         self.catalog_last_check: dict | None = None
         # ---- v2.4.0: forgot password ----
         self.pw_requests: dict[int, dict] = {}
@@ -577,6 +581,7 @@ class FakeShopApi:
                 return detail(409, f"Order in status {order['status']}; cannot be cancelled")
             order["status"] = "cancelled"
             order["cancel_reason"] = "staff"
+            order["cancel_note"] = str((body or {}).get("reason") or "")
             return reply(200, order)
 
         if path.startswith("/admin/orders/") and path.endswith("/reject-payment"):
@@ -839,9 +844,35 @@ class FakeShopApi:
             counts = {k: sum(1 for m in models if m["status"] == k)
                       for k in ("unmapped", "ok", "review")}
             counts["drifted"] = sum(1 for m in models if m["drifted_count"])
+            counts["suggested"] = sum(1 for m in models
+                                      if m.get("suggestions") and not m["item_count"])
             counts["all"] = len(models)
             return reply(200, {"models": models, "counts": counts,
-                               "last_check": self.catalog_last_check})
+                               "last_check": self.catalog_last_check,
+                               "last_site_read": self.site_read})
+        if path == "/admin/catalog-models/read-site":
+            # v2.9.3: the server reads the live site (here: the models of site_models)
+            self.site_reads += 1
+            added = 0
+            for m in self.site_models:
+                if not any(x["slug"] == m["slug"] for x in self.catalog_models):
+                    self.add_catalog_model(m["slug"], m["name"], m.get("brand", ""))
+                    added += 1
+            self.site_read = {"at": TS, "ok": True, "found": len(self.site_models),
+                              "added": added, "updated": 0,
+                              "mapping": {"phones": len(self.site_models), "phones_mapped": 0,
+                                          "accessories": 0, "accessories_mapped": 0}}
+            return reply(200, self.site_read)
+        if len(parts) == 5 and parts[3] == "suggestion":
+            model = next((m for m in self.catalog_models if m["id"] == int(parts[2])), None)
+            if model is None:
+                return detail(404, "Model not found")
+            if parts[4] == "accept":
+                for s in model.get("suggestions") or []:
+                    if s["kala_code"] in (body or {}).get("kala_codes", []):
+                        self.add_catalog_item(model["id"], s["kala_code"], s["name"])
+            model["suggestions"] = []
+            return reply(200, self._catalog_detail(model))
         if path == "/admin/catalog-models/import":
             self.catalog_imports.append(body["models"])
             added = 0

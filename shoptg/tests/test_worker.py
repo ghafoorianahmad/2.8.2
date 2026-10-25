@@ -377,8 +377,8 @@ def test_collection_due_daily_and_hourly_while_short(env, settings):
     now = datetime(2026, 10, 12, tzinfo=timezone.utc)
     worker._now = lambda: now
     assert worker.collect_due("")
-    assert not worker.collect_due((now - timedelta(hours=23)).isoformat(), healthy=5)
-    assert worker.collect_due((now - timedelta(hours=24)).isoformat(), healthy=5)
+    assert not worker.collect_due((now - timedelta(hours=23)).isoformat(), healthy=10)
+    assert worker.collect_due((now - timedelta(hours=24)).isoformat(), healthy=10)
     assert worker.collect_due((now - timedelta(minutes=61)).isoformat(), healthy=2)
     assert not worker.collect_due((now - timedelta(minutes=30)).isoformat(), healthy=2)
     settings.proxy_channels = []
@@ -446,7 +446,7 @@ def test_step_runs_due_jobs_and_publishes_status(env):
     status = json.loads(shop.state["tg_status"])
     assert status["connected"] and status["proxy"] == "a.example:443 (dd)"
     assert "secret" not in shop.state["tg_status"]
-    assert status["price"]["ref"].endswith("/3") and status["pool_size"] == 5
+    assert status["price"]["ref"].endswith("/3") and status["pool_size"] == 10
     assert "h" * 32 not in shop.state["tg_status"]
     # 10 minutes later: health is due again, price is not
     clock.t += 600

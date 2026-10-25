@@ -22,6 +22,7 @@ from ..auth import MIN_PASSWORD_LENGTH, AuthService
 from ..persian import to_persian_digits
 from . import theme, widgets
 from .async_utils import run_async
+from .rtl import mark_ltr
 
 POLL_MS = 5000
 PAGE_ASK, PAGE_WAIT, PAGE_NEW, PAGE_END = range(4)
@@ -58,7 +59,7 @@ class ForgotPasswordDialog(widgets.ResponsiveDialog):
             "نام کاربری خود را وارد کنید. درخواست شما برای مدیر فروشگاه فرستاده می‌شود؛ "
             "پس از تأیید او می‌توانید گذرواژهٔ جدید بگذارید.", name="Muted", wrap=True))
         self.username_input = QLineEdit(self.username)
-        self.username_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.username_input)
         self.username_input.setPlaceholderText("نام کاربری")
         self.username_input.setMinimumHeight(40)
         self.username_input.returnPressed.connect(self._send_request)
@@ -206,7 +207,7 @@ class ForgotPasswordDialog(widgets.ResponsiveDialog):
 def _password_edit(placeholder: str) -> QLineEdit:
     edit = QLineEdit()
     edit.setEchoMode(QLineEdit.EchoMode.Password)
-    edit.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+    mark_ltr(edit)
     edit.setPlaceholderText(placeholder)
     edit.setMinimumHeight(40)
     return edit

@@ -28,7 +28,7 @@ from ...persian import format_shamsi, to_english_digits, to_persian_digits
 from ...server_settings import SETTINGS_FA, local_problem, translate_field_errors
 from .. import theme, widgets
 from ..base_page import BasePage
-from ..rtl import RIGHT
+from ..rtl import RIGHT, mark_ltr
 
 PLATFORM_FA = {"bale": "بله", "telegram": "تلگرام"}
 
@@ -166,11 +166,11 @@ class ServerPage(BasePage):
         panel.body.addWidget(widgets.label("اثرانگشت امنیتی سرور (برای تأیید روی رایانه‌های کارکنان)",
                                            bold=True))
         self.fingerprint_short = widgets.label("—", size=14, bold=True)
-        self.fingerprint_short.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.fingerprint_short)
         self.fingerprint_short.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         panel.body.addWidget(self.fingerprint_short)
         self.fingerprint_full = widgets.label("", name="Faint", wrap=True)
-        self.fingerprint_full.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.fingerprint_full)
         self.fingerprint_full.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         panel.body.addWidget(self.fingerprint_full)
 
@@ -233,7 +233,9 @@ class ServerPage(BasePage):
         # v2.9.1: every column as wide as its content (the host was cut with «…»),
         # «منبع» takes the rest; never a horizontal scroll bar
         self.proxy_table = widgets.DataTable(SERVER_PROXY_HEADERS, key="server_proxies",
-                                             fit_width=True, stretch_column=5)
+                                             fit_width=True, stretch_column=0)
+        # v2.9.3: the full address, wrapped when it is long («ving.mozitop…» was cut)
+        widgets.wrap_rows(self.proxy_table, 0)
         self.proxy_table.set_empty_state("هنوز پراکسی‌ای در استخر نیست",
                                          "یک پراکسی دستی اضافه کنید تا خواننده بتواند شروع کند.",
                                          "wifi")
@@ -276,7 +278,7 @@ class ServerPage(BasePage):
         table = self.proxy_table
         table.set_busy(False)
         table.setRowCount(0)
-        active = [p for p in proxies or [] if p.get("state") in ("main", "probation")][:15]
+        active = [p for p in proxies or [] if p.get("state") in ("main", "probation")][:30]
         for p in active:
             row = table.rowCount()
             table.insertRow(row)
@@ -285,12 +287,17 @@ class ServerPage(BasePage):
             table.set_cell(row, 2, PROXY_STATE_FA.get(p.get("state"), str(p.get("state") or "")))
             failing = bool(p.get("failing_now"))
             checked = bool(p.get("last_ok_at") or p.get("last_fail_at"))
-            table.set_cell(row, 3, "قطع" if failing else ("سالم" if checked else "آزموده نشده"),
-                           color=theme.DANGER if failing else
+            slow = bool(p.get("slow")) and not failing
+            table.set_cell(row, 3, proxy_now_fa(failing, checked, slow),
+                           color=theme.DANGER if failing else theme.WARNING_TEXT if slow else
                            (theme.SUCCESS_DARK if checked else theme.TEXT_MUTED))
             latency = p.get("last_latency_ms")
             table.set_cell(row, 4, f"{to_persian_digits(latency)} میلی‌ثانیه" if latency else "—")
-            table.set_cell(row, 5, proxy_source_fa(p.get("source")))
+            source = proxy_source_fa(p.get("source"))
+            if p.get("source") == "manual":
+                source += " (هرگز خودکار حذف نمی‌شود)"
+            table.set_cell(row, 5, source)
+        table.resizeRowsToContents()
         self.proxy_hint.setVisible(False)
         # v2.9.2: set_busy(False) showed «هنوز پراکسی‌ای در استخر نیست» over the rows
         # added after it (the header said «۳ پراکسی سالم»)
@@ -448,7 +455,7 @@ class ServerPage(BasePage):
             if info.get("secret"):
                 field = QLineEdit()
                 field.setEchoMode(QLineEdit.EchoMode.Password)
-                field.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+                mark_ltr(field)
                 field.setPlaceholderText("تنظیم شده — برای تغییر، مقدار جدید را وارد کنید"
                                          if info.get("set") else "تنظیم نشده")
             elif kind == "bool":
@@ -457,7 +464,7 @@ class ServerPage(BasePage):
             else:
                 field = QLineEdit(str(info.get("value") or ""))
                 if kind == "int" or key in ("ADMIN_CHAT_IDS", "STOCK_WAREHOUSES"):
-                    field.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+                    mark_ltr(field)
             if hint:
                 field.setToolTip(hint)
             self._inputs[key] = field
@@ -521,7 +528,7 @@ class ServerPage(BasePage):
         panel = widgets.Panel("گزارش سرور (app.log)")
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.log_view)
         font = QFont("Consolas")
         font.setStyleHint(QFont.StyleHint.Monospace)
         font.setPointSize(9)
@@ -579,6 +586,15 @@ PRICE_OUTCOME_FA = {
 }
 
 
+def proxy_now_fa(failing: bool, checked: bool, slow: bool = False) -> str:
+    """v2.9.3: the «الان» column: a slow proxy (over ~5 s) is used last."""
+    if failing:
+        return "قطع"
+    if not checked:
+        return "آزموده نشده"
+    return "سالم ولی کند (آخر از همه)" if slow else "سالم"
+
+
 def proxy_source_fa(source) -> str:
     text = str(source or "")
     if text == "manual":
@@ -615,7 +631,7 @@ def telegram_details(worker: dict | None, pool: dict | None) -> dict[str, tuple[
         out["price"] = (f"@{channel} — هنوز بررسی نشده" if channel else "هنوز بررسی نشده", None)
     pool = pool or {}
     if pool:
-        target = int(pool.get("target") or 5)
+        target = int(pool.get("target") or 10)
         working = int(pool.get("working") or 0)
         text = (f"{to_persian_digits(working)} پراکسی سالم از {to_persian_digits(target)} "
                 f"(در استخر: {to_persian_digits(pool.get('active') or 0)}، "

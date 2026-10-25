@@ -169,15 +169,18 @@ def test_everyone_chooses_the_look_in_notifications_and_appearance(ui_context, k
                                                                      monkeypatch):
     from app.ui.main_window import NotificationDialog
 
-    asked = []
-    monkeypatch.setattr(widgets, "confirm", lambda *a, **k: asked.append(a[1]) or False)
+    from app.ui import appearance
+
+    applied = []
+    monkeypatch.setattr(appearance.QTimer, "singleShot", lambda _ms, fn: fn())
     context = make_context_with_role(ui_context, ROLE_OPERATOR)
-    context.restart_app = lambda: None
+    context.apply_look = lambda: applied.append(True)
     dialog = NotificationDialog(context)
     dialog.appearance.select(palette="emerald", effects="full")
     dialog.save()
     assert ui_context.store.get_setting("theme_palette") == "emerald"
-    assert asked == ["ظاهر برنامه"]
+    # v2.9.3: applied at once (no «باز کردن دوباره» question)
+    assert applied == [True]
 
 
 def test_option_cards_keep_one_weight_when_checked():
@@ -261,7 +264,7 @@ def test_server_page_shows_the_reader_and_the_pool(ui_context, admin_qapp, fake_
             break
     assert page.proxy_table.rowCount() == 2                    # retired ones are not listed
     texts = [page.proxy_table.item(0, c).text() for c in range(6)]
-    assert texts[0] == "1.2.3.4:443" and texts[5] == "دستی"
+    assert texts[0] == "1.2.3.4:443" and texts[5].startswith("دستی")
     assert page.proxy_table.item(1, 5).text() == "کانال @ProxyMTProto"
     reader = page.tg_labels["reader"].text()
     assert "Telegram Desktop" in reader

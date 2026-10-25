@@ -42,6 +42,23 @@ PURPOSE_OFFER = "offer"
 OFFER_GONE_DETAIL = "The offer is no longer open"
 #: The offer as it shows in the request's message history (the bot builds its own text).
 OFFER_TEXT = "قیمت پیشنهادی: {price} ریال (جمع {total} ریال) — منتظر «تأیید و خرید» مشتری"
+#: v2.9.3: one item (the usual case): no «جمع»
+OFFER_TEXT_ONE = "قیمت پیشنهادی: {price} ریال — منتظر «تأیید و خرید» مشتری"
+
+
+def clean_note(note: str | None) -> str:
+    """Staff's message: the lines kept, extra spaces and empty lines dropped."""
+    lines = (" ".join(line.split()) for line in str(note or "").splitlines())
+    return "\n".join(line for line in lines if line)[:1000]
+
+
+def offer_text(price: int, qty: float, note: str = "") -> str:
+    """The line in ShopAdmin's message history for a price offer (+ staff's note)."""
+    if qty > 1:
+        text = OFFER_TEXT.format(price=f"{price:,}", total=f"{round_half_up(qty * price):,}")
+    else:
+        text = OFFER_TEXT_ONE.format(price=f"{price:,}")
+    return f"{text}\nپیام همراه: {note}" if note else text
 #: What the customer is told when staff mark the request «ناموجود».
 UNAVAILABLE_TEXT = ("با پوزش، «{product}» در حال حاضر موجود نیست. به‌محض موجود شدن "
                     "می‌توانید دوباره درخواست بدهید. از صبر و همراهی شما سپاسگزاریم.")
@@ -147,10 +164,12 @@ def _product_and_price(db: OwnDB, reader: AccountingReader, settings: Settings, 
 
 
 def offer_price(db: OwnDB, reader: AccountingReader, settings: Settings, who: Identity,
-                request: dict, kala_code: int | None, price_rial: int | None) -> dict:
+                request: dict, kala_code: int | None, price_rial: int | None,
+                note: str = "") -> dict:
     """v2.9.2 «تأیید موجودی» (list price) or a price typed by staff: the customer
     gets it in the bot with «تأیید و خرید» / «نمی‌خواهم»; nothing is ordered yet.
-    Offering again replaces the earlier price. Returns the request."""
+    Offering again replaces the earlier price. Returns the request.
+    v2.9.3: ``note`` (what staff typed in «پیام به مشتری») goes in the same message."""
     if request.get("kind") not in OFFER_KINDS:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Not a purchase request")
     ownership.ensure_request_editable(request)
@@ -171,9 +190,10 @@ def offer_price(db: OwnDB, reader: AccountingReader, settings: Settings, who: Id
     if not str(request.get("product_name") or "").strip():
         updates["product_name"] = str(product.get("name") or "")
     row = db.update_item_request(int(request["id"]), **updates)
-    text = OFFER_TEXT.format(price=f"{price:,}", total=f"{round_half_up(qty * price):,}")
+    note = clean_note(note)
+    text = offer_text(price, qty, note)
     message = db.add_item_request_message(int(request["id"]), text, who.actor,
-                                          purpose=PURPOSE_OFFER)
+                                          purpose=PURPOSE_OFFER, note=note)
     ownership.log(db, who, ownership.A_PRICE_OFFER, "request", request, detail=f"price={price}")
     db.audit(who.actor, "purchase_offer", f"request id={request['id']} price={price}")
     db.add_event("item_request_message", message["id"], who.actor)

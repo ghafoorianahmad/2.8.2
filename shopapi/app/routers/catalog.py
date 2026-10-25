@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 
 from .. import catalog_models as cm
-from .. import deps, fuzzy
+from .. import deps, fuzzy, site_catalog
 from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
@@ -116,8 +116,52 @@ def list_models(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_VIEW) -> dic
     counts = {key: sum(1 for m in models if m["status"] == key)
               for key in ("unmapped", "ok", "review")}
     counts["drifted"] = sum(1 for m in models if m["drifted_count"])
+    counts["suggested"] = sum(1 for m in models if m.get("suggestions") and not m["item_count"])
     counts["all"] = len(models)
-    return {"models": models, "counts": counts, "last_check": cm.last_summary(db)}
+    return {"models": models, "counts": counts, "last_check": cm.last_summary(db),
+            "last_site_read": site_catalog.last_read(db)}
+
+
+@router.post("/admin/catalog-models/read-site")
+def read_site_now(db: OwnDB = Depends(deps.get_db),
+                  reader: AccountingReader = Depends(deps.get_reader),
+                  settings: Settings = Depends(deps.get_settings),
+                  who: Identity = CAN_CATALOG) -> dict:
+    """v2.9.3 «خواندن از سایت اکنون»: the live site's models, mapped automatically
+    (sure matches at once, uncertain ones as suggestions)."""
+    try:
+        return site_catalog.read_site(db, reader, settings, actor=who.actor)
+    except RuntimeError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Site not read: {exc}") from None
+
+
+class SuggestionAnswerIn(BaseModel):
+    kala_codes: list[int] = Field(default_factory=list, max_length=50)
+
+
+@router.post("/admin/catalog-models/{model_id}/suggestion/accept")
+def accept_suggestion(model_id: int, payload: SuggestionAnswerIn,
+                      db: OwnDB = Depends(deps.get_db),
+                      reader: AccountingReader = Depends(deps.get_reader),
+                      settings: Settings = Depends(deps.get_settings),
+                      who: Identity = CAN_CATALOG) -> dict:
+    """A manager accepts automatic suggestions of a model (the chosen products)."""
+    repo = cm.CatalogModelRepo(db)
+    _model_or_404(repo, model_id)
+    added = site_catalog.accept_suggestion(db, reader, settings, model_id, payload.kala_codes,
+                                           who.actor)
+    db.audit(who.actor, "catalog_suggestion_accept", f"model id={model_id} added={added}")
+    return _detail(repo, model_id)
+
+
+@router.post("/admin/catalog-models/{model_id}/suggestion/dismiss")
+def dismiss_suggestion(model_id: int, db: OwnDB = Depends(deps.get_db),
+                       who: Identity = CAN_CATALOG) -> dict:
+    repo = cm.CatalogModelRepo(db)
+    _model_or_404(repo, model_id)
+    site_catalog.dismiss_suggestion(db, model_id)
+    db.audit(who.actor, "catalog_suggestion_dismiss", f"model id={model_id}")
+    return _detail(repo, model_id)
 
 
 @router.post("/admin/catalog-models/import")

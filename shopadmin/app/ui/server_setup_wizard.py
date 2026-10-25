@@ -45,7 +45,7 @@ from ..logging_setup import get_logger
 from ..persian import to_english_digits, to_persian_digits
 from . import theme, widgets
 from .async_utils import run_async
-from .rtl import RIGHT
+from .rtl import RIGHT, mark_ltr
 
 log = get_logger("server_setup_ui")
 
@@ -85,7 +85,7 @@ def _line(placeholder: str = "", *, ltr: bool = True, password: bool = False) ->
     field.setPlaceholderText(placeholder)
     field.setMinimumHeight(38)
     if ltr:
-        field.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(field)
     if password:
         field.setEchoMode(QLineEdit.EchoMode.Password)
     return field
@@ -180,7 +180,7 @@ class DatabaseAccessList(QWidget):
         check = QCheckBox("ثبت واقعی در حسابداری")
         check.setChecked(writing)
         check.toggled.connect(lambda on, c=check, n=name: self._toggled(n, c, on))
-        remove = widgets.button("حذف از فهرست", icon_name="trash", variant="ghost",
+        remove = widgets.button("حذف از فهرست", icon_name="trash",
                                 on_click=lambda n=name: self._remove(n))
         self._rows.append((name, check, remove))
 
@@ -215,7 +215,7 @@ class DatabaseAccessList(QWidget):
                 item.widget().setParent(None)
         for index, (name, check, remove) in enumerate(self._rows):
             label = widgets.label(name, bold=True)
-            label.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+            mark_ltr(label)
             self.grid.addWidget(label, index, 0)
             self.grid.addWidget(check, index, 1)
             self.grid.addWidget(remove, index, 2)
@@ -378,6 +378,15 @@ class ServerSetupWizard(QWidget):
         self.db_test_button = widgets.button("ذخیره و آزمایش اتصال", icon_name="wifi",
                                              variant="primary", on_click=self._test_database)
         row.addWidget(self.db_test_button)
+        # v2.9.3: when the shop's sign-in may not open the chosen database (e.g. after
+        # switching to «hesab5»), what grant_shop_app.ps1 does, with this program's
+        # administrator Windows sign-in
+        self.grant_button = widgets.button(
+            "دادن دسترسی به این دیتابیس", icon_name="key", on_click=self._grant_access,
+            tooltip="با حساب مدیر ویندوز همین برنامه، همان دسترسی محدود grant_shop_app.ps1 "
+                    "(نقش shop_app) به کاربر فروشگاه روی این پایگاه‌داده داده می‌شود")
+        self.grant_button.setVisible(False)
+        row.addWidget(self.grant_button)
         row.addStretch(1)
         panel.body.addLayout(row)
         self.db_result = widgets.label("", wrap=True)
@@ -409,7 +418,7 @@ class ServerSetupWizard(QWidget):
         self.port = QSpinBox()
         self.port.setRange(1024, 65535)
         self.port.setValue(setup.existing_config_port() or setup.DEFAULT_PORT)
-        self.port.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.port)
         form.addRow(widgets.label("درگاه (Port):"), self.port)
         panel.body.addLayout(form)
         addresses = setup.lan_addresses()
@@ -764,13 +773,13 @@ class ServerSetupWizard(QWidget):
         final.addWidget(widgets.label("سرور آماده است. روی رایانهٔ هر کارمند «مدیریت فروشگاه» را "
                                       "نصب کنید و این نشانی را وارد کنید:", wrap=True))
         self.final_address = widgets.label("", size=13, bold=True)
-        self.final_address.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.final_address)
         self.final_address.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         final.addWidget(self.final_address)
         final.addWidget(widgets.label("اثرانگشت امنیتی که باید روی رایانهٔ کارمند همین باشد:",
                                       wrap=True))
         self.final_fingerprint = widgets.label("", size=15, bold=True)
-        self.final_fingerprint.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.final_fingerprint)
         self.final_fingerprint.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         final.addWidget(self.final_fingerprint)
         self.final_box.setVisible(False)
@@ -996,12 +1005,48 @@ class ServerSetupWizard(QWidget):
             self._db_message(f"اتصال برقرار شد ({to_persian_digits(result.get('groups', 0))} گروه کالا).",
                              True)
 
-        def fail(message: str, _kind: str) -> None:
+        def fail(message: str, kind: str) -> None:
             self._db_ok = False
             self._db_message(message, False)
+            # v2.9.3: no access to this database -> «دادن دسترسی به این دیتابیس»
+            self.grant_button.setVisible(kind == setup.DatabaseAccessError.kind)
 
+        self.grant_button.setVisible(False)
         run_async(work, on_success=ok, on_error=fail,
                   on_done=lambda: self.db_test_button.setEnabled(True))
+
+    def shop_login_name(self) -> str:
+        return ("NT SERVICE\\ShopServer" if self.auth_windows.isChecked()
+                else self.db_user.text().strip())
+
+    def _grant_access(self) -> None:
+        database = self.db_name.text().strip()
+        login = self.shop_login_name()
+        if not widgets.confirm(
+                self, "دادن دسترسی به این دیتابیس",
+                f"با حساب مدیر ویندوز همین برنامه، به «{login}» روی «{database}» همان دسترسی "
+                "محدودی داده می‌شود که grant_shop_app.ps1 می‌دهد (نقش shop_app: خواندن کالا و "
+                "موجودی، ثبت سفارش و مشتری؛ بدون حذف و بدون دیدن تنظیمات). اگر کاربر وجود "
+                "نداشته باشد ساخته می‌شود. حساب ویندوز شما باید در SQL Server «sysadmin» باشد.\n"
+                "ادامه می‌دهید؟", confirm_text="بله، دسترسی بده", kind="warning"):
+            return
+        self.grant_button.setEnabled(False)
+        self.db_test_button.setEnabled(False)
+        self._db_message("در حال دادن دسترسی…", None)
+
+        def ok(result: dict) -> None:
+            self._db_ok = bool(result.get("check_ok"))
+            self._db_message(setup.grant_result_text(result), self._db_ok)
+            self.grant_button.setVisible(not self._db_ok)
+
+        def fail(message: str, _kind: str) -> None:
+            self._db_message("دسترسی داده نشد: " + message, False)
+
+        def done() -> None:
+            self.grant_button.setEnabled(True)
+            self.db_test_button.setEnabled(True)
+
+        run_async(setup.grant_database_access, on_success=ok, on_error=fail, on_done=done)
 
     def _db_message(self, text: str, ok: bool | None) -> None:
         color = theme.SUCCESS_DARK if ok else theme.DANGER if ok is False else theme.TEXT_MUTED

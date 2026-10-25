@@ -22,7 +22,7 @@ from ..persian import to_english_digits, to_persian_digits
 from ..store import Store
 from . import theme, widgets
 from .async_utils import run_async
-from .rtl import RIGHT
+from .rtl import RIGHT, mark_ltr
 
 log = get_logger("login")
 
@@ -89,7 +89,7 @@ class LoginWindow(QWidget):
         card_layout.addWidget(widgets.label("نام کاربری"))
         self.username_input = QLineEdit()
         self.username_input.setPlaceholderText("نام کاربری خود را وارد کنید")
-        self.username_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.username_input)
         self.username_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.username_input.setMinimumHeight(42)
         card_layout.addWidget(self.username_input)
@@ -98,7 +98,7 @@ class LoginWindow(QWidget):
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.setPlaceholderText("گذرواژه")
-        self.password_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.password_input)
         self.password_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.password_input.setMinimumHeight(42)
         # v2.9.1: the eye shows what is being typed (never a saved password)
@@ -130,7 +130,7 @@ class LoginWindow(QWidget):
 
         # ---- last user hint (informational only) ------------------------
         self.forgot_button = widgets.button(
-            "فراموشی گذرواژه", variant="ghost", on_click=self._forgot_password,
+            "فراموشی گذرواژه", on_click=self._forgot_password,
             tooltip="درخواست تعیین گذرواژهٔ جدید از مدیر فروشگاه")
         card_layout.addWidget(self.forgot_button)
 

@@ -37,7 +37,7 @@ from ...statuses import role_fa
 from .. import theme, widgets
 from ..async_utils import run_async
 from ..base_page import BasePage
-from ..rtl import RIGHT
+from ..rtl import RIGHT, mark_ltr
 
 log = get_logger("settings")
 
@@ -86,8 +86,7 @@ class SettingsPage(BasePage):
 
         self.base_url_input = QLineEdit()
         self.base_url_input.setPlaceholderText("http://192.168.1.10:8000")
-        self.base_url_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-
+        mark_ltr(self.base_url_input)
         form = QFormLayout()
         form.setLabelAlignment(RIGHT)
         form.setHorizontalSpacing(18)
@@ -142,14 +141,13 @@ class SettingsPage(BasePage):
         self.refresh_spin = QSpinBox()
         self.refresh_spin.setRange(0, 3600)
         self.refresh_spin.setSuffix(" ثانیه")
-        self.refresh_spin.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.refresh_spin)
         self.refresh_spin.setSpecialValueText("خاموش")
 
         self.timeout_spin = QSpinBox()
         self.timeout_spin.setRange(1, 480)
         self.timeout_spin.setSuffix(" دقیقه")
-        self.timeout_spin.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-
+        mark_ltr(self.timeout_spin)
         form.addRow(widgets.label("به‌روزرسانی خودکار:"), self.refresh_spin)
         form.addRow(widgets.label("پایان خودکار نشست:"), self.timeout_spin)
         panel.body.addLayout(form)
@@ -179,23 +177,10 @@ class SettingsPage(BasePage):
         from ..appearance import AppearancePicker
 
         panel = widgets.Panel("ظاهر برنامه (همین رایانه)")
-        self.appearance = AppearancePicker(self.context.store)
+        # v2.9.3: a click applies and saves at once (no «ذخیره», no restart)
+        self.appearance = AppearancePicker(self.context.store, context=self.context)
         panel.body.addWidget(self.appearance)
-        row = QHBoxLayout()
-        row.addStretch(1)
-        save = widgets.button("ذخیره", icon_name="save", variant="primary",
-                              on_click=self._save_appearance)
-        row.addWidget(save)
-        panel.body.addLayout(row)
         return panel
-
-    def _save_appearance(self) -> None:
-        from ..appearance import offer_restart
-
-        if self.appearance.save():
-            offer_restart(self, self.context)
-        else:
-            self.notify_success("ذخیره شد.")
 
     def _build_notifications_panel(self) -> QWidget:
         panel = widgets.Panel("اعلان‌ها (همین رایانه)")
@@ -216,7 +201,7 @@ class SettingsPage(BasePage):
         self.poll_spin = QSpinBox()
         self.poll_spin.setRange(2, 600)
         self.poll_spin.setSuffix(" ثانیه")
-        self.poll_spin.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.poll_spin)
         form.addRow(widgets.label("بررسی موارد جدید هر:"), self.poll_spin)
         panel.body.addLayout(form)
 
@@ -542,7 +527,7 @@ def _password_field(placeholder: str) -> QLineEdit:
     field = QLineEdit()
     field.setEchoMode(QLineEdit.EchoMode.Password)
     field.setPlaceholderText(placeholder)
-    field.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+    mark_ltr(field)
     return field
 
 

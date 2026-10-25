@@ -33,7 +33,7 @@ ORDER_STATUS_FA = {
     ORDER_APPROVED: "تأییدشده",
     ORDER_REJECTED: "ردشده",
     ORDER_WRITTEN: "ثبت‌شده در حسابداری",
-    ORDER_CANCELLED: "لغو‌شده",
+    ORDER_CANCELLED: "لغوشده",
     ORDER_EXPIRED: "منقضی",
 }
 

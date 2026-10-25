@@ -122,7 +122,8 @@ class Settings:
     #: v2.9.0: the proxy channel is read every day (was weekly)
     proxy_collect_hours: int = 24
     #: working proxies the pool should hold; new links are tested until it does
-    pool_size: int = 5
+    #: (v2.9.3: 10; with 5 a pool of 7 working tested none of 55 new links)
+    pool_size: int = 10
     #: at most this many new links are tested per collection (anonymous clients)
     proxy_test_max: int = 40
     #: read the channel's public web preview (t.me/s/...) when not logged in / no proxy
@@ -205,7 +206,7 @@ class Settings:
             worker_api_key=_env("WORKER_API_KEY"),
             price_interval_sec=max(300, _env_int("TG_PRICE_INTERVAL_MIN", 10) * 60),
             proxy_collect_hours=max(1, collect_hours),
-            pool_size=min(50, max(1, _env_int("TG_PROXY_POOL_SIZE", 5))),
+            pool_size=min(50, max(1, _env_int("TG_PROXY_POOL_SIZE", 10))),
             proxy_test_max=min(200, max(1, _env_int("TG_PROXY_TEST_MAX", 40))),
             web_preview=_env("TG_PROXY_WEB_PREVIEW", "true").lower() in ("1", "true", "yes", "on"),
             log_file=_env("TG_LOG_FILE"),

@@ -4,6 +4,7 @@ Renders every page (as «مدیر» and as «کاربر فروش», at two windo
 the main dialogs against a fake shopapi, then checks every visible widget that
 shows one line of text: its width must be at least what its text needs.
 v2.9.0: in every look (3 palettes × light / dark / follow Windows).
+v2.9.3: every screen of ``audit_screens`` (all dialogs, sign-in, wizards).
 Exits with 1 and a list when something is cut.
 
     python scripts/text_fit_audit.py            (every look)
@@ -14,7 +15,6 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-from dataclasses import replace
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -22,13 +22,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from PySide6.QtWidgets import (QAbstractButton, QApplication, QCheckBox, QHeaderView,  # noqa: E402
-                               QLabel, QPushButton, QRadioButton, QTableWidget, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QLabel, QPushButton, QRadioButton,  # noqa: E402
+                               QTableWidget, QWidget)
 
-import render_screens as rs  # noqa: E402
-from app import permissions as perms  # noqa: E402
-from app.statuses import ROLE_OPERATOR  # noqa: E402
-from app.ui import theme  # noqa: E402
+import audit_screens as screens  # noqa: E402
 
 SLACK = 2
 
@@ -65,6 +62,12 @@ def problems_in(root: QWidget, where: str) -> list[str]:
         if not widget.isVisibleTo(root) or widget.width() <= 0:
             continue
         name = f"{where} › {type(widget).__name__}"
+        if type(widget).__name__ == "_FitScrollArea" and widget.horizontalScrollBar().isVisible():
+            # v2.9.3: a dialog whose content is wider than the dialog (a side scroll
+            # bar hides the left part: the order dialog's quantity / price columns)
+            out.append(f"{where}: content {widget.widget().minimumSizeHint().width()}px wider "
+                       f"than the dialog ({widget.viewport().width()}px)")
+            continue
         if isinstance(widget, QLabel):
             if widget.wordWrap() or not widget.text() or widget.pixmap() is not None and \
                     not widget.pixmap().isNull():
@@ -93,89 +96,22 @@ def problems_in(root: QWidget, where: str) -> list[str]:
     return out
 
 
-#: v2.9.0: every look (palette × light / dark / follow Windows); «جلوه‌ها» alternate
-#: (shadows and gradients never change a widget's size, but both are exercised).
-LOOKS = [(palette, mode, "full" if index % 2 == 0 else "simple")
-         for index, (palette, mode) in enumerate(
-             (p, m) for p in theme.PALETTE_NAMES for m in theme.THEME_MODES)]
-
-
 def audit_look(app, tmp: Path, look: tuple[str, str, str]) -> list[str]:
-    palette, mode, effects = look
-    theme.apply_theme(app, mode, palette=palette, effects=effects)
-    tag = f"[{palette}/{mode}/{effects}]"
-    from app.ui.main_window import NAV_ITEMS, MainWindow
-
+    """v2.9.3: every screen of ``audit_screens`` (every page for both roles and
+    widths, every dialog, the sign-in window and the setup wizards)."""
+    tag = screens.apply_look(app, look)
     found: list[str] = []
-    context, store, fake = rs.build_context(tmp)
-    sales_perms = perms.client_permissions(sorted(perms.SALES_SERVER_PERMISSIONS))
-    for role in ("manager", "sales"):
-        if role == "sales":
-            context.principal = replace(context.principal, role=ROLE_OPERATOR,
-                                        permissions=sales_perms)
-        for width, height in ((1360, 840), (1000, 700)):
-            window = MainWindow(context)
-            window.resize(width, height)
-            window.show()
-            rs.settle(app, 10)
-            found += problems_in(window, f"{tag} {role} {width} top/sidebar")
-            for key, _text, _icon, _perm in NAV_ITEMS:
-                if key not in window._pages:
-                    continue
-                window.navigate(key)
-                rs.settle(app, 10)
-                found += problems_in(window._pages[key], f"{tag} {role} {width} {key}")
-            window.close()
-            window.deleteLater()            # the next look restyles only live widgets
-    # ---- dialogs -------------------------------------------------------------
-    context.principal = replace(context.principal, role="super_admin", permissions=None)
-    from app.ui import widgets
-    from app.ui.main_window import NotificationDialog
-    from app.ui.pages.item_requests import ItemRequestDialog
-    from app.ui.pages.orders import OrderDetailDialog, PaymentInfoDialog, ShipDialog
-    from app.ui.pages.users import UserFormDialog
-
-    dialogs = []
-    orders = [o for o in getattr(fake, "orders", []) if isinstance(o, dict)]
-    for order in orders[:3]:
-        dialogs.append((f"order {order.get('id')}", OrderDetailDialog(context, order)))
-    if orders:
-        dialogs.append(("payment", PaymentInfoDialog(None, context, orders[0])))
-    dialogs.append(("ship", ShipDialog(None, "۱۲")))
-    dialogs.append(("user form", UserFormDialog(context, None)))
-    # v2.9.0: «اعلان‌ها و ظاهر» (option cards) and the Telegram login (server only)
-    dialogs.append(("notifications and look", NotificationDialog(context)))
-    try:
-        from app.ui.telegram_login import TelegramLoginDialog
-    except ImportError:
-        TelegramLoginDialog = None
-    if TelegramLoginDialog is not None:
-        login = TelegramLoginDialog(None)
-        dialogs.append(("telegram login", login))
-        for step in (login.STEP_CODE, login.STEP_PASSWORD, login.STEP_DONE):
-            other = TelegramLoginDialog(None)
-            other._go(step)
-            dialogs.append((f"telegram login step {step}", other))
-    for request in list(getattr(fake, "item_requests", []))[:2]:
-        dialogs.append((f"request {request.get('id')}", ItemRequestDialog(context, request)))
-    for name, dialog in dialogs:
-        widgets.make_responsive(dialog)
-        dialog.show()
-        rs.settle(app, 10)
-        found += problems_in(dialog, f"{tag} dialog {name}")
-        dialog.close()
-        dialog.deleteLater()
-    from PySide6.QtCore import QCoreApplication, QEvent
-
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    store.close()
+    for where, widget in screens.iter_screens(app, tmp, tag=tag):
+        found += problems_in(widget, where)
+    found += screens.BUILD_PROBLEMS
+    screens.BUILD_PROBLEMS.clear()
     return found
 
 
 def main() -> int:
     """``--all`` (default): every look; ``--quick``: the default look only."""
-    app = QApplication.instance() or QApplication(sys.argv)
-    looks = [("ocean", "light", "full")] if "--quick" in sys.argv else LOOKS
+    app = screens.app_instance()
+    looks = screens.looks_from_argv(sys.argv)
     found: list[str] = []
     for look in looks:
         with tempfile.TemporaryDirectory() as tmp:

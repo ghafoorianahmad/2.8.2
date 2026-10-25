@@ -109,7 +109,8 @@ class _Worker(QRunnable):
         except SetupError as exc:
             if exc.detail:
                 log.warning("server setup step failed: %s", exc.detail)
-            self.signals.failed.emit(exc.message, "setup")
+            # v2.9.3: a step may say what kind of failure it was («db_access»)
+            self.signals.failed.emit(exc.message, getattr(exc, "kind", "") or "setup")
         except Exception as exc:  # noqa: BLE001 - never let a thread die silently
             log.exception("background task failed: %s", type(exc).__name__)
             self.signals.failed.emit(MSG_UNEXPECTED, "unexpected")

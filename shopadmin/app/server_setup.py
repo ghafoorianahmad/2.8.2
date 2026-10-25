@@ -239,6 +239,21 @@ def write_config(db: DatabaseConfig, *, port: int, extra: dict | None = None) ->
     return answer
 
 
+#: v2.9.3: after these database errors the setup offers «دادن دسترسی به این دیتابیس»
+#: (same list as shopapi's grant_access.ACCESS_ERRORS)
+ACCESS_ERROR_CODES = frozenset({"4060", "916", "229", "230", "18456", "4064"})
+
+
+class DatabaseAccessError(SetupError):
+    """The shop's SQL sign-in may not open the chosen database (``code``)."""
+
+    kind = "db_access"
+
+    def __init__(self, message: str, detail: str = "", code: str = "") -> None:
+        super().__init__(message, detail)
+        self.code = code
+
+
 def check_database() -> dict:
     answer = run_server_tool(["--check-db"], timeout=90)
     if not answer.get("ok"):
@@ -246,11 +261,46 @@ def check_database() -> dict:
         reason = answer.get("message_fa") or (
             "اتصال به پایگاه‌دادهٔ حسابداری برقرار نشد. نام سرور، نام پایگاه‌داده و "
             "روش ورود را بررسی کنید.")
-        if str(answer.get("error_code")) in ("4060", "229", "230"):
-            reason += (" اگر نام درست است، کاربر SQL به این پایگاه‌داده دسترسی ندارد: "
-                       "grant_shop_app.ps1 را برای همین پایگاه‌داده اجرا کنید.")
+        code = str(answer.get("error_code") or "")
+        if code in ACCESS_ERROR_CODES:
+            reason += (" اگر نام درست است، کاربر فروشگاه به این پایگاه‌داده دسترسی ندارد: "
+                       "دکمهٔ «دادن دسترسی به این دیتابیس» را بزنید.")
+            raise DatabaseAccessError(reason, answer.get("message") or answer.get("error", ""),
+                                      code)
         raise SetupError(reason, answer.get("message") or answer.get("error", ""))
     return answer
+
+
+GRANT_STEP_FA = {"login_created": "کاربر ورود (login) ساخته شد",
+                 "user_ready": "کاربر پایگاه‌داده آماده است",
+                 "role_granted": "نقش shop_app با دسترسی‌های محدود داده شد"}
+
+
+def grant_database_access() -> dict:
+    """v2.9.3: ShopSystem ``--grant-db``: with THIS program's (administrator)
+    Windows sign-in, what grant_shop_app.ps1 gives, on the saved database and
+    for the saved SQL login (or NT SERVICE\\ShopServer). Returns the result
+    (``check_ok``: the shop's own connection works now)."""
+    answer = run_server_tool(["--grant-db"], timeout=120)
+    if not answer.get("ok"):
+        raise SetupError(answer.get("message_fa") or "دادن دسترسی انجام نشد.",
+                         answer.get("message") or answer.get("error", ""))
+    return answer
+
+
+def grant_result_text(answer: dict) -> str:
+    """The result in plain Persian (no password, no secret)."""
+    lines = [f"دسترسی «{answer.get('login')}» به «{answer.get('database')}» داده شد:"]
+    lines += [f"✔ {GRANT_STEP_FA.get(step, step)}" for step in answer.get("steps") or []]
+    if answer.get("note") == "db_owner":
+        lines.append("ℹ این کاربر در این پایگاه‌داده db_owner است و همهٔ دسترسی‌ها را دارد؛ "
+                     "برای سرور اصلی بهتر است فقط نقش محدود shop_app داشته باشد.")
+    if answer.get("check_ok"):
+        lines.append("✔ اتصال فروشگاه با همین تنظیمات برقرار شد.")
+    elif "check_ok" in answer:
+        lines.append("✖ اتصال فروشگاه هنوز برقرار نیست: " +
+                     str(answer.get("check_message_fa") or ""))
+    return "\n".join(lines)
 
 
 def odbc_driver_installed(driver: str = "ODBC Driver 17 for SQL Server") -> bool:

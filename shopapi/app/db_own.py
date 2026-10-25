@@ -426,6 +426,15 @@ MIGRATIONS = (
     ("item_requests", "offer_price_rial", "INTEGER"),
     ("item_requests", "offered_at", "TEXT"),
     ("item_request_messages", "purpose", "TEXT NOT NULL DEFAULT ''"),     # '' | offer
+    # v2.9.3: what staff wrote in «پیام به مشتری» goes inside the price message;
+    # the short reason of a staff cancel goes to the customer
+    ("item_request_messages", "note", "TEXT NOT NULL DEFAULT ''"),
+    ("orders", "cancel_note", "TEXT NOT NULL DEFAULT ''"),
+    # v2.9.3: site models read from the live site: automatic suggestions waiting
+    # for a manager (JSON), where a model came from and whether it is a phone
+    ("catalog_models", "auto_suggest", "TEXT NOT NULL DEFAULT ''"),
+    ("catalog_models", "source", "TEXT NOT NULL DEFAULT ''"),
+    ("catalog_models", "kind", "TEXT NOT NULL DEFAULT 'phone'"),
 )
 
 #: Item request kinds (v2.6.1).
@@ -847,14 +856,16 @@ class OwnDB:
             self._commit()
         return self.get_order(order_id)
 
-    def cancel_order_any(self, order_id: int, reason: str, statuses: tuple[str, ...]) -> bool:
-        """v2.7.0: staff cancel (awaiting payment or with a receipt). Local only."""
+    def cancel_order_any(self, order_id: int, reason: str, statuses: tuple[str, ...],
+                         note: str = "") -> bool:
+        """v2.7.0: staff cancel (awaiting payment or with a receipt). Local only.
+        v2.9.3: ``note`` = the short reason staff gave (told to the customer)."""
         with self._lock:
             marks = ",".join("?" for _ in statuses)
             cur = self._conn.execute(
-                "UPDATE orders SET status='cancelled', cancel_reason=?, updated_at=? "
-                f"WHERE id=? AND status IN ({marks})",
-                (reason, now_iso(), order_id, *statuses),
+                "UPDATE orders SET status='cancelled', cancel_reason=?, cancel_note=?, "
+                f"updated_at=? WHERE id=? AND status IN ({marks})",
+                (reason, note, now_iso(), order_id, *statuses),
             )
             self._commit()
             return cur.rowcount == 1
@@ -961,12 +972,12 @@ class OwnDB:
 
     # ---- staff replies to item requests (v2.6.1) ----
     def add_item_request_message(self, request_id: int, text: str, actor: str,
-                                 purpose: str = "") -> dict:
+                                 purpose: str = "", note: str = "") -> dict:
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO item_request_messages (request_id, text, created_at, created_by, "
-                "purpose) VALUES (?,?,?,?,?)",
-                (request_id, text, now_iso(), actor, purpose),
+                "purpose, note) VALUES (?,?,?,?,?,?)",
+                (request_id, text, now_iso(), actor, purpose, note),
             )
             self._commit()
             return self.get_item_request_message(cur.lastrowid)

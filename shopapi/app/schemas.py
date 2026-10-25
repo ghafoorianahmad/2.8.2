@@ -114,6 +114,8 @@ class OrderOut(BaseModel):
     accounting_db: Optional[str] = None
     #: Why a cancelled order was cancelled ('receipt_timeout').
     cancel_reason: Optional[str] = None
+    #: v2.9.3: the short reason staff gave when they cancelled it (sent to the customer)
+    cancel_note: Optional[str] = None
     created_at: str
     items: list[OrderItemOut]
     payment_instructions: Optional[str] = None
@@ -415,9 +417,16 @@ class AssignIn(BaseModel):
 
 
 class StockConfirmIn(BaseModel):
-    """«تأیید موجودی»: map the row if it is not mapped yet, optionally a new price."""
+    """«تأیید موجودی»: map the row if it is not mapped yet, optionally a new price.
+    v2.9.3: ``note`` = what staff wrote in «پیام به مشتری» (shown under the price)."""
     kala_code: Optional[int] = Field(default=None, gt=0)
     price_rial: Optional[int] = Field(default=None, gt=0, le=100_000_000_000)
+    note: str = Field(default="", max_length=1000)
+
+
+class OrderCancelIn(BaseModel):
+    """v2.9.3: staff cancel an order, optionally with a short reason for the customer."""
+    reason: str = Field(default="", max_length=200)
 
 
 class ItemRequestOut(BaseModel):
@@ -492,6 +501,8 @@ class ItemRequestMessageOut(BaseModel):
     created_by: str = ""
     sent_at: Optional[str] = None
     purpose: str = ""
+    #: v2.9.3: staff's own words inside the price message (purpose ``offer``)
+    note: str = ""
 
 
 class ItemRequestMessageDelivery(ItemRequestMessageOut):

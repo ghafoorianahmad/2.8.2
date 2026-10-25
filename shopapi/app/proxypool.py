@@ -17,6 +17,16 @@ Rules:
 * a day on which *no* proxy worked is our own outage (internet down, Telegram
   blocked harder): it never counts against a proxy;
 * nothing is deleted automatically: retired proxies stay in the table.
+
+v2.9.3:
+* a proxy that answers slower than ``SLOW_MS`` (≈5 s) goes after every faster
+  one, and a proxy failing right now after every working one (tier comes next);
+* a *collected* proxy that is dead (failing now and no success for
+  ``DEAD_AFTER``, or never worked within ``NEW_DEAD_AFTER`` of being added) is
+  retired at once while other proxies work (so it is not our own outage); the
+  reader then collects again to refill the pool (target ``TG_PROXY_POOL_SIZE``,
+  now 10);
+* a **manual** proxy is never retired automatically: its status is only shown.
 """
 from __future__ import annotations
 
@@ -42,6 +52,16 @@ MIN_MAIN_KEEP = 3
 ALL_DEAD_AFTER = timedelta(minutes=10)
 ALERT_REPEAT = timedelta(hours=6)
 ALERT_STATE_KEY = "proxies_dead_alert_at"
+
+#: v2.9.3: slower than this (ms) = ranked after every faster proxy
+SLOW_MS = 5000
+#: v2.9.3: a collected proxy failing now with no success for this long is retired
+DEAD_AFTER = timedelta(hours=3)
+#: v2.9.3: a collected proxy that never worked this long after it was added
+NEW_DEAD_AFTER = timedelta(hours=1)
+#: v2.9.3: "the internet works": some proxy worked this recently
+NETWORK_UP_WINDOW = timedelta(minutes=30)
+MANUAL_SOURCE = "manual"
 
 ACTIVE_STATES = ("main", "probation")
 #: v2.9.0: the worker tests new links before adding them; never more usable
@@ -286,8 +306,15 @@ class ProxyPool:
                 p["last_fail_at"] and (not p["last_ok_at"] or p["last_fail_at"] > p["last_ok_at"])
             )
         tier = {"main": 0, "probation": 1, "disabled": 2, "retired": 3}
+        for p in proxies:
+            latency = p.get("last_latency_ms")
+            p["slow"] = bool(latency is not None and int(latency) > SLOW_MS)
+        # v2.9.3: usable first; among them working before failing, fast before slow
+        # (> SLOW_MS), then main before probation, stability, and the faster one
         proxies.sort(key=lambda p: (
-            tier.get(p["state"], 9), p["failing_now"], -p["stability"], -p["good_days"], p["id"],
+            p["state"] not in ACTIVE_STATES, p["failing_now"], p["slow"],
+            tier.get(p["state"], 9), -p["stability"], -p["good_days"],
+            int(p.get("last_latency_ms") or 10 ** 6), p["id"],
         ))
         return proxies
 
@@ -296,12 +323,41 @@ class ProxyPool:
         return [p for p in self.list_all() if p["state"] in ACTIVE_STATES]
 
     # ---- policy ----------------------------------------------------------------
+    def _network_up(self, proxies: list[dict]) -> bool:
+        """Some proxy worked within NETWORK_UP_WINDOW (else: our own outage)."""
+        since = (self.clock() - NETWORK_UP_WINDOW).isoformat(timespec="seconds")
+        return any(p.get("last_ok_at") and p["last_ok_at"] >= since for p in proxies)
+
+    def is_dead(self, proxy: dict) -> bool:
+        """v2.9.3: a collected proxy that stopped working (see DEAD_AFTER)."""
+        if proxy.get("source") == MANUAL_SOURCE or proxy["state"] not in ACTIVE_STATES \
+                or not proxy.get("failing_now"):
+            return False
+        now = self.clock()
+        if proxy.get("last_ok_at"):
+            return proxy["last_ok_at"] < (now - DEAD_AFTER).isoformat(timespec="seconds")
+        return str(proxy.get("added_at") or "") < (now - NEW_DEAD_AFTER).isoformat(
+            timespec="seconds")
+
     def evaluate(self) -> list[tuple[int, str]]:
-        """Apply promotion / retirement. Returns [(proxy_id, new_state)]."""
+        """Apply promotion / retirement. Returns [(proxy_id, new_state)].
+        v2.9.3: dead collected proxies are retired at once (while the network works);
+        manual proxies are never retired automatically."""
         proxies = self.list_all()
         changes: list[tuple[int, str]] = []
-        main_count = sum(1 for p in proxies if p["state"] == "main")
+        main_count = sum(1 for p in proxies if p["state"] == "main"
+                         and p.get("source") != MANUAL_SOURCE)
+        dead: set[int] = set()
+        if self._network_up(proxies):
+            for p in proxies:
+                if self.is_dead(p):
+                    dead.add(p["id"])
+                    changes.append((p["id"], "retired"))
+                    if p["state"] == "main":
+                        main_count -= 1
         for p in proxies:
+            if p["id"] in dead or p.get("source") == MANUAL_SOURCE:
+                continue
             if p["state"] == "probation":
                 if (p["good_days"] >= PROMOTE_GOOD_DAYS
                         and p["stability"] >= PROMOTE_MIN_STABILITY and p["bad_streak"] == 0):
@@ -310,7 +366,8 @@ class ProxyPool:
                 elif p["bad_streak"] >= PROBATION_DROP_BAD_DAYS:
                     changes.append((p["id"], "retired"))
         # Worst main proxies first, never below MIN_MAIN_KEEP.
-        for p in sorted((p for p in proxies if p["state"] == "main"),
+        for p in sorted((p for p in proxies if p["state"] == "main" and p["id"] not in dead
+                         and p.get("source") != MANUAL_SOURCE),
                         key=lambda p: (-p["bad_streak"], p["stability"])):
             if p["bad_streak"] >= RETIRE_BAD_DAYS and main_count > MIN_MAIN_KEEP:
                 changes.append((p["id"], "retired"))
@@ -359,6 +416,8 @@ def pool_summary(pool: "ProxyPool", target: int | None = None) -> dict:
         "main": sum(1 for p in active if p["state"] == "main"),
         "probation": sum(1 for p in active if p["state"] == "probation"),
         "manual": sum(1 for p in active if p.get("source") == "manual"),
+        # v2.9.3: working, but slower than SLOW_MS (used last)
+        "slow": sum(1 for p in working if p.get("slow")),
         "retired": sum(1 for p in proxies if p["state"] == "retired"),
         "disabled": sum(1 for p in proxies if p["state"] == "disabled"),
         "all_failing": bool(active) and not working,

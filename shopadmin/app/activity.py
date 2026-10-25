@@ -66,6 +66,18 @@ def sentence(entry: dict, *, with_actor: bool = True) -> str:
     return f"{actor_fa(entry)} {text}" if with_actor else text
 
 
+def timeline_lines(entries: list[dict]) -> list[tuple[str, str]]:
+    """v2.9.3: one (time, sentence) per action, oldest first, for the list in the
+    order / request dialog; every sentence names who did it."""
+    from .persian import format_datetime_shamsi
+
+    out = []
+    for entry in entries:
+        stamp = entry.get("ts") or entry.get("at") or ""
+        out.append((format_datetime_shamsi(stamp) if stamp else "—", sentence(entry)))
+    return out
+
+
 def timeline_text(entries: list[dict]) -> str:
     """«احمد رسید را تأیید کرد ← به علی ارجاع داد ← علی ارسال کرد»: the actor is
     named once while the same person keeps acting."""

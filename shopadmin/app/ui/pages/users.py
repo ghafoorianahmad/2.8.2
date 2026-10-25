@@ -34,7 +34,7 @@ from ...statuses import ALL_ROLES, ROLE_DESCRIPTION_FA, ROLE_SUPER_ADMIN, role_f
 from .. import theme, widgets
 from ..async_utils import run_async
 from ..base_page import BasePage
-from ..rtl import RIGHT
+from ..rtl import RIGHT, mark_ltr
 
 HEADERS = ("نام کاربری", "نام و نام خانوادگی", "نقش", "وضعیت", "آخرین ورود", "تاریخ ایجاد", "عملیات")
 
@@ -428,7 +428,7 @@ class UserFormDialog(widgets.ResponsiveDialog):
         form.setVerticalSpacing(12)
 
         self.username_input = QLineEdit()
-        self.username_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.username_input)
         self.username_input.setPlaceholderText("مثلاً: operator1")
         self.full_name_input = QLineEdit()
         self.full_name_input.setPlaceholderText("مثلاً: علی رضایی")
@@ -456,13 +456,12 @@ class UserFormDialog(widgets.ResponsiveDialog):
 
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.password_input)
         self.password_input.setPlaceholderText(
             f"حداقل {to_persian_digits(MIN_PASSWORD_LENGTH)} نویسه، حرف و عدد")
         self.confirm_input = QLineEdit()
         self.confirm_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.confirm_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-
+        mark_ltr(self.confirm_input)
         if not self.editing:
             form.addRow(widgets.label("گذرواژه:"), self.password_input)
             form.addRow(widgets.label("تکرار گذرواژه:"), self.confirm_input)
@@ -510,7 +509,7 @@ class UserFormDialog(widgets.ResponsiveDialog):
                 perms_grid.addWidget(check, row, column, Qt.AlignmentFlag.AlignCenter)
         perms_grid.setColumnStretch(0, 1)
         perms_panel.body.addWidget(perms_holder)
-        reset = widgets.button("برگرداندن به دسترسی‌های نقش", variant="ghost",
+        reset = widgets.button("برگرداندن به دسترسی‌های نقش",
                                on_click=self.reset_permissions)
         perms_panel.body.addWidget(reset)
         root.addWidget(perms_panel)
@@ -655,10 +654,10 @@ class ResetPasswordDialog(widgets.ResponsiveDialog):
         form.setVerticalSpacing(12)
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.password_input)
         self.confirm_input = QLineEdit()
         self.confirm_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.confirm_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.confirm_input)
         form.addRow(widgets.label("گذرواژهٔ جدید:"), self.password_input)
         form.addRow(widgets.label("تکرار گذرواژه:"), self.confirm_input)
         root.addLayout(form)

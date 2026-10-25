@@ -93,7 +93,7 @@ def test_server_status_shows_the_pool_and_reader_without_secrets(client, db, wor
     body = client.get("/admin/server/status", headers=bearer(owner)).json()
     assert body["proxy_pool"] == {
         "target": 5, "working": 1, "active": 2, "main": 1, "probation": 1, "manual": 1,
-        "retired": 1, "disabled": 0, "all_failing": False}
+        "retired": 1, "disabled": 0, "all_failing": False, "slow": 0}
     tg = body["telegram_worker"]
     assert tg["api_preset"] == "tdesktop" and tg["price"]["ref"] == "t.me/x/5"
     assert tg["collect"]["added"] == 4

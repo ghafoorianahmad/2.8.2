@@ -64,7 +64,7 @@ def test_proxy_pool_defaults(monkeypatch):
     _clear(monkeypatch)
     s = Settings.from_env(load_file=False)
     assert s.proxy_channels == ["ProxyMTProto"]
-    assert s.proxy_collect_hours == 24 and s.pool_size == 5 and s.web_preview
+    assert s.proxy_collect_hours == 24 and s.pool_size == 10 and s.web_preview
     monkeypatch.setenv("TG_PROXY_CHANNELS", "none")
     assert Settings.from_env(load_file=False).proxy_channels == []
     monkeypatch.setenv("TG_PROXY_COLLECT_DAYS", "7")       # the old setting still works

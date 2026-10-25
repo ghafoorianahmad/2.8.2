@@ -8,6 +8,7 @@ from ..auth import MIN_PASSWORD_LENGTH, AuthService
 from ..persian import to_persian_digits
 from . import theme, widgets
 from .async_utils import run_async
+from .rtl import mark_ltr
 
 
 class ForcedPasswordChangeDialog(widgets.ResponsiveDialog):
@@ -59,7 +60,7 @@ class ForcedPasswordChangeDialog(widgets.ResponsiveDialog):
         field = QLineEdit()
         field.setEchoMode(QLineEdit.EchoMode.Password)
         field.setPlaceholderText(placeholder)
-        field.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(field)
         field.setMinimumHeight(40)
         return field
 

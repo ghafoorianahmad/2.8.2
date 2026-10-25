@@ -74,7 +74,9 @@ class CatalogModelRepo:
     """Tables ``catalog_models`` / ``catalog_model_items`` (under ``db._lock``)."""
 
     _MODEL_COLS = ("m.id, m.slug, m.name, m.brand, m.aliases, m.hidden, m.hidden_reason, "
-                   "m.hidden_at, m.created_at, m.updated_at, m.updated_by")
+                   "m.hidden_at, m.created_at, m.updated_at, m.updated_by, "
+                   # v2.9.3: from the live site; phone / accessory; waiting suggestions
+                   "m.source, m.kind, m.auto_suggest")
     _COUNTS = ("(SELECT COUNT(*) FROM catalog_model_items i WHERE i.model_id=m.id) AS item_count, "
                "(SELECT COUNT(*) FROM catalog_model_items i WHERE i.model_id=m.id "
                "AND i.state='drifted') AS drifted_count, "
@@ -90,6 +92,11 @@ class CatalogModelRepo:
             return None
         model["hidden"] = bool(model["hidden"])
         model["status"] = _status(model)
+        try:
+            suggest = json.loads(model.get("auto_suggest") or "[]")
+        except ValueError:
+            suggest = []
+        model["suggestions"] = suggest if isinstance(suggest, list) else []
         return model
 
     # ---- models ---------------------------------------------------------------

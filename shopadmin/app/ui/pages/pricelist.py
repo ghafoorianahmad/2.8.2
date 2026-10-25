@@ -33,6 +33,7 @@ from ...persian import format_int, format_money, format_shamsi, to_persian_digit
 from ...permissions import PRICELIST_MANAGE, PROXIES_MANAGE
 from .. import theme, widgets
 from ..base_page import BasePage
+from ..rtl import mark_ltr
 
 NOTE_HEADERS = ("زمان", "نوع", "نتیجه", "متن پیام")
 ROW_HEADERS = ("بخش", "مدل", "نوع", "رنگ", "نقد", "روال", "قیمت مشتری (ریال)", "وضعیت", "کالا")
@@ -836,7 +837,7 @@ class MapRowDialog(widgets.ResponsiveDialog):
         code_row.addWidget(widgets.label("کد کالا:"))
         self.code_input = QSpinBox()
         self.code_input.setRange(0, 2_000_000_000)
-        self.code_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.code_input)
         self.code_input.setSpecialValueText("—")
         self.code_input.setValue(self.kala_code)
         code_row.addWidget(self.code_input)
@@ -856,12 +857,10 @@ class MapRowDialog(widgets.ResponsiveDialog):
 
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
         root.addWidget(self.error_label)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(widgets.button("انصراف", on_click=self.reject))
-        buttons.addWidget(widgets.button("ذخیره", icon_name="check", variant="primary",
-                                         on_click=self._accept))
-        root.addLayout(buttons)
+        root.addLayout(widgets.footer(
+            widgets.button("ذخیره", icon_name="check", variant="primary",
+                           on_click=self._accept),
+            close=widgets.button("انصراف", on_click=self.reject)))
         self._load_suggestions()
 
     def _load_suggestions(self) -> None:
@@ -942,18 +941,16 @@ class AddProxyDialog(widgets.ResponsiveDialog):
         root.addWidget(widgets.label("لینک پراکسی MTProto (tg://proxy… یا https://t.me/proxy…):",
                                      wrap=True))
         self.input = QLineEdit()
-        self.input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.input)
         root.addWidget(self.input)
         self.main_check = QCheckBox("مستقیم در فهرست اصلی (پراکسی مطمئن؛ بدون دورهٔ آزمایشی)")
         root.addWidget(self.main_check)
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
         root.addWidget(self.error_label)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(widgets.button("انصراف", on_click=self.reject))
-        buttons.addWidget(widgets.button("افزودن", icon_name="plus", variant="primary",
-                                         on_click=self._accept))
-        root.addLayout(buttons)
+        root.addLayout(widgets.footer(
+            widgets.button("افزودن", icon_name="plus", variant="primary",
+                           on_click=self._accept),
+            close=widgets.button("انصراف", on_click=self.reject)))
 
     def _accept(self) -> None:
         text = self.input.text().strip()

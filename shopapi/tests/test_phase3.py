@@ -541,6 +541,9 @@ class Clock:
     def days(self, n):
         self.now += timedelta(days=n)
 
+    def hours(self, n):
+        self.now += timedelta(hours=n)
+
 
 def _pool(db):
     clock = Clock()
@@ -563,24 +566,50 @@ def test_probation_is_promoted_after_good_days(db):
     assert pool.evaluate() == [(pid, "main")]
 
 
-def test_probation_dropped_after_bad_days_main_kept_longer(db):
+def test_dead_collected_proxies_go_at_once_manual_ones_stay(db):
+    """v2.9.3: a collected proxy failing with no success for hours is retired at
+    once (the reader refills the pool); a manual one is never retired."""
     pool, clock = _pool(db)
-    mains = _add(pool, MIN_MAIN_KEEP + 1, "main")
-    [newbie] = [pool.add(ProxyLink("9.9.9.9", 443, SECRET), "test")[0]["id"]]
-    witness = mains[0]          # keeps working: the network is up
-    for day in range(5):
-        pool.record(witness, True)
-        for pid in mains[1:] + [newbie]:
-            pool.record(pid, False)
-        changes = dict(pool.evaluate())
-        if day == 2:
-            assert changes == {newbie: "retired"}       # probation: 3 bad days
-        elif day < 4:
-            assert changes == {}
+    collected = _add(pool, 3, "main")
+    manual = pool.add(ProxyLink("8.8.8.8", 443, SECRET), "manual", state="main")[0]["id"]
+    for pid in collected + [manual]:
+        pool.record(pid, True)
+    clock.hours(4)
+    pool.record(collected[0], True)            # the network works
+    for pid in collected[1:] + [manual]:
+        pool.record(pid, False)
+    changes = dict(pool.evaluate())
+    assert changes == {collected[1]: "retired", collected[2]: "retired"}
+    assert pool.get(manual)["state"] == "main"
+    for _ in range(10):                        # days of failures: still kept
         clock.days(1)
-    # main proxies after 5 bad days, but never below MIN_MAIN_KEEP
-    states = [pool.get(pid)["state"] for pid in mains]
-    assert states.count("main") == MIN_MAIN_KEEP and states.count("retired") == 1
+        pool.record(collected[0], True)
+        pool.record(manual, False)
+        assert manual not in dict(pool.evaluate())
+    assert pool.get(manual)["state"] == "main"
+
+
+def test_never_working_new_proxy_retired_after_an_hour(db):
+    pool, clock = _pool(db)
+    [good] = _add(pool, 1, "main")
+    [new] = [pool.add(ProxyLink("9.9.9.9", 443, SECRET), "channel:x")[0]["id"]]
+    pool.record(good, True)
+    pool.record(new, False)
+    assert pool.evaluate() == []               # just added: not yet
+    clock.hours(2)
+    pool.record(good, True)
+    pool.record(new, False)
+    assert dict(pool.evaluate()) == {new: "retired"}
+
+
+def test_slow_proxies_rank_last(db):
+    pool, _clock = _pool(db)
+    slow, fast = _add(pool, 2, "main")
+    pool.record(slow, True, 7000)
+    pool.record(fast, True, 300)
+    ranked = [p["id"] for p in pool.ranked()]
+    assert ranked == [fast, slow]
+    assert pool.get(slow) is not None
 
 
 def test_outage_days_do_not_count(db):

@@ -113,7 +113,7 @@ def test_order_dialog_timeline_copy_and_handover(ui_context, fake_api, admin_qap
     context = make_context_with_role(ui_context, ROLE_OPERATOR)
     dialog = OrderDetailDialog(context, order)
     _pump(admin_qapp)
-    assert dialog.timeline_label.text() == "شما کار را برداشت"
+    assert [text for _when, text in dialog.timeline_view.lines] == ["شما کار را برداشت"]
     dialog.copy_phone_button.click()
     assert QApplication.clipboard().text() == "09121234567"
     # the owner may hand it over; the colleague list holds names only
@@ -181,7 +181,7 @@ def test_purchase_request_row_and_stock_confirm(ui_context, fake_api, admin_qapp
     class Confirm:
         DialogCode = page_mod.QDialog.DialogCode
 
-        def __init__(self, *_a):
+        def __init__(self, *_a, **_k):
             self.kala_code, self.price = 600, 1_100_000_000
 
         def exec(self):
@@ -192,7 +192,8 @@ def test_purchase_request_row_and_stock_confirm(ui_context, fake_api, admin_qapp
     monkeypatch.setattr(page_mod.widgets, "info", lambda *a, **k: None)
     dialog.confirm_stock()
     _pump(admin_qapp)
-    assert fake_api.stock_confirms == [{"id": 31, "kala_code": 600, "price_rial": 1_100_000_000}]
+    assert fake_api.stock_confirms == [{"id": 31, "kala_code": 600, "price_rial": 1_100_000_000,
+                                        "note": ""}]
     # v2.9.2: the price is with the customer; it may be sent again until they answer
     assert dialog.item["outcome"] == "offered" and dialog.stock_button.isVisibleTo(dialog)
     assert dialog.stock_button.text() == "ارسال قیمت دوباره"

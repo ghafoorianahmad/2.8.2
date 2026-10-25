@@ -10,7 +10,7 @@
 
 Acts as the shop's Telegram **user** account (Telethon, MTProto), read-only:
 - every 10 min (`TG_PRICE_INTERVAL_MIN`): new PDFs of the distributor channel → `POST /worker/pricelists` (shopapi parses, checks, holds);
-- v2.9.0: daily (`TG_PROXY_COLLECT_HOURS`=24; hourly while fewer than `TG_PROXY_POOL_SIZE`=5 work) proxy links of `@ProxyMTProto` (`TG_PROXY_CHANNELS`; with the account, or the web preview `t.me/s/…` without one) → never-seen links (`/worker/proxies/unknown`) tested anonymously → `POST /worker/proxies/candidates` with `tested` / `failed`;
+- v2.9.0: daily (`TG_PROXY_COLLECT_HOURS`=24; hourly while fewer than `TG_PROXY_POOL_SIZE`=10 (v2.9.3; was 5) fast ones work) proxy links of `@ProxyMTProto` (`TG_PROXY_CHANNELS`; with the account, or the web preview `t.me/s/…` without one) → never-seen links (`/worker/proxies/unknown`) tested anonymously → `POST /worker/proxies/candidates` with `tested` / `failed`;
 - a FloodWait pauses every job for the time Telegram asks;
 - health check every 3 min with immediate failover through the shopapi proxy ranking (`/worker/proxies`), then `TG_PROXY`, then direct;
 - hourly probe of other proxies with an *anonymous* client (never the shop session: the same auth key from two IPs risks `AUTH_KEY_DUPLICATED`) → `/worker/proxies/report`;

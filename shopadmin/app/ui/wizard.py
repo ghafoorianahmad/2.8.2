@@ -26,6 +26,7 @@ from ..persian import to_persian_digits
 from ..store import Store
 from . import theme, widgets
 from .async_utils import run_async
+from .rtl import mark_ltr
 
 log = get_logger("wizard")
 
@@ -169,7 +170,7 @@ class SetupWizard(QWidget):
             self.store.get_setting("shopapi_base_url", "http://127.0.0.1:8000")
         )
         self.base_url_input.setPlaceholderText("http://127.0.0.1:8000")
-        self.base_url_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.base_url_input)
         self.base_url_input.setMinimumHeight(42)
         panel.body.addWidget(self.base_url_input)
 
@@ -199,12 +200,12 @@ class SetupWizard(QWidget):
             name="Muted", wrap=True,
         ))
         self.fingerprint_label = widgets.label("", size=14, bold=True)
-        self.fingerprint_label.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.fingerprint_label)
         self.fingerprint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.fingerprint_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         cert_layout.addWidget(self.fingerprint_label)
         self.fingerprint_full = widgets.label("", name="Faint", wrap=True)
-        self.fingerprint_full.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.fingerprint_full)
         self.fingerprint_full.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         cert_layout.addWidget(self.fingerprint_full)
         self.cert_confirm = QCheckBox("این اثرانگشت با اثرانگشت روی رایانهٔ سرور یکی است")
@@ -234,7 +235,7 @@ class SetupWizard(QWidget):
         panel.body.addWidget(widgets.label("کلید سرویس سرور (ADMIN_API_KEY)"))
         self.service_key_input = QLineEdit()
         self.service_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.service_key_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.service_key_input)
         self.service_key_input.setMinimumHeight(42)
         panel.body.addWidget(self.service_key_input)
 
@@ -247,7 +248,7 @@ class SetupWizard(QWidget):
         panel.body.addWidget(widgets.label("نام کاربری (انگلیسی، بدون فاصله)"))
         self.new_username_input = QLineEdit()
         self.new_username_input.setPlaceholderText("مثلاً: owner")
-        self.new_username_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.new_username_input)
         self.new_username_input.setMinimumHeight(42)
         panel.body.addWidget(self.new_username_input)
 
@@ -255,14 +256,14 @@ class SetupWizard(QWidget):
             f"گذرواژه (حداقل {to_persian_digits(MIN_PASSWORD_LENGTH)} نویسه، حرف و عدد)"))
         self.new_password_input = QLineEdit()
         self.new_password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.new_password_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.new_password_input)
         self.new_password_input.setMinimumHeight(42)
         panel.body.addWidget(self.new_password_input)
 
         panel.body.addWidget(widgets.label("تکرار گذرواژه"))
         self.confirm_password_input = QLineEdit()
         self.confirm_password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.confirm_password_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.confirm_password_input)
         self.confirm_password_input.setMinimumHeight(42)
         panel.body.addWidget(self.confirm_password_input)
 

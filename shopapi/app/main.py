@@ -14,7 +14,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from . import archive, catalog_models, control, deps, monitor, order_timeout, sql_errors, tracking
+from . import (archive, catalog_models, control, deps, monitor, order_timeout, site_catalog,
+               sql_errors, tracking)
 from .db_own import OwnDB
 from .routers import (
     admin, auth, catalog, pricelist, public, server_admin, shop_catalog, staff_admin,
@@ -59,6 +60,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(monitor.health_loop(settings, db_factory, reader_factory)),
         # Nightly check of the site model mapping (§9a): hide + Bale alert on loss.
         asyncio.create_task(catalog_models.nightly_loop(settings, db_factory, reader_factory)),
+        # v2.9.3: the live site's models once a month (+ mapping after a new price list)
+        asyncio.create_task(site_catalog.monthly_loop(settings, db_factory, reader_factory)),
         # Receipt deadline (30 min) -> local cancel; sales window transitions -> events.
         asyncio.create_task(order_timeout.order_timeout_loop(settings, db_factory)),
         # v2.8.0: Thursday 23:30 (Tehran) -> finished orders / requests to «بایگانی».

@@ -36,16 +36,27 @@ from PySide6.QtWidgets import (
 
 from ..persian import to_persian_digits
 from . import theme
-from .rtl import RIGHT, is_ltr_text
+from .rtl import RIGHT, fix_mixed, is_ltr_text
 
 # --------------------------------------------------------------------------
 # small building blocks
 # --------------------------------------------------------------------------
 
 
+class BidiLabel(QLabel):
+    """v2.9.3: a label whose Persian text may start with a Latin word («ahmad سفارش
+    را لغو کرد»): ``rtl.fix_mixed`` puts a right-to-left mark in front, so the words
+    never come out in the wrong order (scripts/rtl_audit.py)."""
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt naming
+        super().setText(fix_mixed(text) if self.textFormat() == Qt.TextFormat.PlainText or
+                        "<" not in str(text or "") else text)
+
+
 def label(text: str, *, name: str = "", size: int | None = None, bold: bool = False,
           color: str | None = None, wrap: bool = False) -> QLabel:
-    widget = QLabel(text)
+    widget = BidiLabel()
+    widget.setText(text)
     if name:
         widget.setObjectName(name)
     if size is not None or bold or color:
@@ -107,6 +118,25 @@ def button(text: str, *, icon_name: str = "", variant: str = "default",
     if on_click is not None:
         widget.clicked.connect(lambda: on_click())
     return widget
+
+
+#: v2.9.3: the variants that stand out (filled); everything else is secondary
+PROMINENT_VARIANTS = ("Primary", "Success", "Danger")
+
+
+def footer(*actions: QWidget, close: QWidget | None = None, spacing: int = 10) -> QHBoxLayout:
+    """v2.9.3: a dialog's bottom row, the same everywhere (scripts/button_audit.py):
+    the prominent actions first (on the right in right-to-left), then the other
+    actions, a gap, and «بستن» / «انصراف» last on the left."""
+    row = QHBoxLayout()
+    row.setSpacing(spacing)
+    prominent = [b for b in actions if b.objectName() in PROMINENT_VARIANTS]
+    for widget in prominent + [b for b in actions if b not in prominent]:
+        row.addWidget(widget)
+    row.addStretch(1)
+    if close is not None:
+        row.addWidget(close)
+    return row
 
 
 def _variant_icon_color(variant: str) -> str:
@@ -895,6 +925,94 @@ def show_full_headers(table, padding: int = 40) -> None:
             header.resizeSection(column, wanted)
     # stretched columns are sized by Qt: the minimum keeps every title whole
     header.setMinimumSectionSize(max(header.minimumSectionSize(), widest))
+
+
+def wrap_rows(table: QTableWidget, stretch_column: int) -> QTableWidget:
+    """v2.9.3: long cell text wraps onto more lines (never «…», never a side scroll
+    bar): ``stretch_column`` takes the room left, every row as tall as its text,
+    measured again whenever a column or the table changes width."""
+    header = table.horizontalHeader()
+    header.setStretchLastSection(False)
+    header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+    header.setSectionResizeMode(stretch_column, QHeaderView.ResizeMode.Stretch)
+    table.setWordWrap(True)
+    table.setTextElideMode(Qt.TextElideMode.ElideNone)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    table.setItemDelegate(BidiDelegate(table))
+    timer = QTimer(table)
+    timer.setSingleShot(True)
+    timer.setInterval(0)
+    timer.timeout.connect(table.resizeRowsToContents)
+    header.sectionResized.connect(lambda *_: timer.start())
+    header.geometriesChanged.connect(timer.start)
+    table.wrap_timer = timer
+    return table
+
+
+class TimelineView(QScrollArea):
+    """v2.9.3: «کارهای انجام‌شده» as a clean list: one line per action with its
+    time, wrapped, right-to-left, scrolling down (never sideways). The old single
+    label ran the actions together and was cut / overlapped in the order dialog."""
+
+    MAX_HEIGHT = 180
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("TimelineView")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setMaximumHeight(self.MAX_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        holder = QWidget()
+        holder.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self._rows = QVBoxLayout(holder)
+        self._rows.setContentsMargins(0, 0, 4, 0)
+        self._rows.setSpacing(6)
+        self.setWidget(holder)
+        self.lines: list[tuple[str, str]] = []
+        self.set_message("…")
+
+    def _clear(self) -> None:
+        while self._rows.count():
+            item = self._rows.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+
+    def set_message(self, text: str) -> None:
+        self._clear()
+        self.lines = []
+        self._rows.addWidget(label(text, name="Muted", wrap=True))
+        self._rows.addStretch(1)
+        self._fit()
+
+    def set_lines(self, lines: list[tuple[str, str]], empty: str = "") -> None:
+        if not lines:
+            self.set_message(empty or "هنوز کاری روی آن انجام نشده است.")
+            return
+        self._clear()
+        self.lines = list(lines)
+        for when, text in self.lines:
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            stamp = label(when, name="Muted")
+            stamp.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+            stamp.setAlignment(RIGHT | Qt.AlignmentFlag.AlignTop)
+            row.addWidget(stamp, 0, Qt.AlignmentFlag.AlignTop)
+            sentence = label(text, wrap=True)
+            sentence.setAlignment(RIGHT | Qt.AlignmentFlag.AlignTop)
+            sentence.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            row.addWidget(sentence, 1)
+            self._rows.addLayout(row)
+        self._rows.addStretch(1)
+        self._fit()
+
+    def _fit(self) -> None:
+        """As tall as the lines (up to MAX_HEIGHT; then it scrolls)."""
+        self.widget().adjustSize()
+        need = self.widget().sizeHint().height() + 4
+        self.setMinimumHeight(min(need, self.MAX_HEIGHT))
 
 
 class _CenteredOverlay(QWidget):

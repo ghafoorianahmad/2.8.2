@@ -316,7 +316,7 @@ class MainWindow(QMainWindow):
         self.server_label = widgets.label("", name="Muted")
         server_layout.addWidget(self.server_label)
         self.server_retry_button = widgets.button(
-            "تلاش دوباره", icon_name="refresh", variant="ghost",
+            "تلاش دوباره", icon_name="refresh",
             tooltip="بررسی دوبارهٔ اتصال به سرور فروشگاه",
             on_click=self.retry_server,
         )
@@ -466,7 +466,10 @@ class MainWindow(QMainWindow):
         self._refresh_header()
 
     def edit_own_notifications(self) -> None:
-        NotificationDialog(self.context, self).exec()
+        # v2.9.3: no parent: a new look rebuilds this window while the dialog stays open
+        dialog = NotificationDialog(self.context, None)
+        dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dialog.exec()
 
     def change_own_password(self) -> None:
         from .password_dialog import ChangeOwnPasswordDialog
@@ -815,34 +818,39 @@ class NotificationDialog(widgets.ResponsiveDialog):
         self.desktop_check.setChecked(user_setting(context.store, "notify_desktop", self.user))
         for check in (self.sound_check, self.desktop_check):
             root.addWidget(check)
+            # v2.9.3: saved at once, like the look (no «ذخیره»)
+            check.toggled.connect(lambda _on: self.save_notifications())
         # v2.8.1: the look is reachable for everyone (the «تنظیمات» page is for
         # managers only); v2.9.0: palette × light/dark × «جلوه‌ها», per computer
         root.addWidget(widgets.hline())
         root.addWidget(widgets.label("ظاهر برنامه (همین رایانه)", bold=True))
         from .appearance import AppearancePicker
 
-        self.appearance = AppearancePicker(context.store)
+        # v2.9.3: a click applies and saves the look at once, app-wide
+        self.appearance = AppearancePicker(context.store, context=context)
+        self.appearance.applied.connect(self._keep_on_top)
         root.addWidget(self.appearance)
-        row = QHBoxLayout()
-        row.addStretch(1)
-        row.addWidget(widgets.button("ذخیره", variant="primary", icon_name="check",
-                                     on_click=self.save))
-        row.addWidget(widgets.button("انصراف", on_click=self.reject))
-        root.addLayout(row)
+        root.addLayout(widgets.footer(close=widgets.button("بستن", on_click=self.accept)))
 
-    def save(self) -> None:
+    def save_notifications(self) -> None:
         from ..notifications import set_user_setting
 
         set_user_setting(self.context.store, "notify_sound", self.user,
                          self.sound_check.isChecked())
         set_user_setting(self.context.store, "notify_desktop", self.user,
                          self.desktop_check.isChecked())
-        changed = self.appearance.save()
-        self.accept()
-        if changed:
-            from .appearance import offer_restart
 
-            offer_restart(self.parentWidget() or self, self.context)
+    def save(self) -> None:
+        """Everything is saved as it is chosen; kept for callers: save and close."""
+        self.save_notifications()
+        self.appearance.apply_now()
+        self.accept()
+
+    def _keep_on_top(self) -> None:
+        """The main window was rebuilt behind this dialog: bring it to the front."""
+        from PySide6.QtCore import QTimer
+
+        QTimer.singleShot(60, lambda: (self.raise_(), self.activateWindow()))
 
 
 def theme_status_colors_for_role(role: str) -> tuple[str, str]:

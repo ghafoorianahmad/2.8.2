@@ -247,7 +247,7 @@ _STATUS_FA = {
     "approved": "تأییدشده",
     "rejected": "ردشده",
     "written": "ثبت‌شده در حسابداری",
-    "cancelled": "لغو‌شده",
+    "cancelled": "لغوشده",
     "expired": "منقضی",
     "pending": "در انتظار تأیید",
     "ok": "سالم",
@@ -677,9 +677,12 @@ class ShopApiClient:
             "courier_name": str(courier_name or "").strip()[:60],
             "courier_phone": str(courier_phone or "").strip()[:30]})
 
-    def cancel_order(self, order_id: int) -> dict:
-        """v2.7.0: cancel an order that is not confirmed yet (local only)."""
-        return self._request("POST", f"/admin/orders/{int(order_id)}/cancel") or {}
+    def cancel_order(self, order_id: int, reason: str = "") -> dict:
+        """v2.7.0: cancel an order that is not confirmed yet (local only). v2.9.3:
+        the customer is told in the bot, with the optional short ``reason``."""
+        return self._request("POST", f"/admin/orders/{int(order_id)}/cancel",
+                             json_body={"reason": " ".join(str(reason or "").split())[:200]}) \
+            or {}
 
     def receipt_image(self, order_id: int) -> Optional[bytes]:
         """``GET /admin/orders/{id}/receipt`` — the stored receipt image, or None."""
@@ -844,6 +847,19 @@ class ShopApiClient:
         return self._dict(self._request("POST", "/admin/catalog-models/import",
                                         json_body={"models": list(models)}))
 
+    def read_site_catalog(self) -> dict:
+        """v2.9.3 «خواندن از سایت اکنون»: the server reads the live site's models."""
+        return self._dict(self._request("POST", "/admin/catalog-models/read-site"))
+
+    def answer_catalog_suggestion(self, model_id: int, kala_codes: list[int] | None) -> dict:
+        """v2.9.3: accept the chosen suggested products, or (``None``) dismiss them."""
+        if kala_codes is None:
+            return self._dict(self._request(
+                "POST", f"/admin/catalog-models/{int(model_id)}/suggestion/dismiss"))
+        return self._dict(self._request(
+            "POST", f"/admin/catalog-models/{int(model_id)}/suggestion/accept",
+            json_body={"kala_codes": [int(c) for c in kala_codes]}))
+
     def check_catalog_models(self) -> dict:
         return self._dict(self._request("POST", "/admin/catalog-models/check"))
 
@@ -909,12 +925,14 @@ class ShopApiClient:
                              json_body={"staff_id": int(staff_id)}) or {}
 
     def confirm_purchase_stock(self, request_id: int, kala_code: int | None = None,
-                               price_rial: int | None = None) -> dict:
+                               price_rial: int | None = None, note: str = "") -> dict:
         """v2.9.2 «تأیید موجودی» (list price) or a typed price: the price goes to the
         customer, who confirms in the bot (the order is created then). Returns the
-        request."""
+        request. v2.9.3: ``note`` (what staff typed in «پیام به مشتری») goes in the
+        same message, under the price."""
         body = {"kala_code": int(kala_code) if kala_code else None,
-                "price_rial": int(price_rial) if price_rial else None}
+                "price_rial": int(price_rial) if price_rial else None,
+                "note": str(note or "").strip()[:1000]}
         return self._request("POST", f"/admin/item-requests/{int(request_id)}/offer",
                              json_body=body) or {}
 

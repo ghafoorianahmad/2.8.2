@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QHBoxLayout,
+    QHeaderView,
     QPlainTextEdit,
     QTableWidget,
     QTableWidgetItem,
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...activity import timeline_text
+from ...activity import timeline_lines
 from ...permissions import ORDERS_ASSIGN
 from ...persian import coerce_datetime, format_datetime_shamsi, format_money, \
     gregorian_to_jalali, to_english_digits, to_persian_digits
@@ -361,12 +362,18 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         self.history.setHorizontalHeaderLabels(("زمان", "فرستنده", "وضعیت", "متن"))
         self.history.verticalHeader().setVisible(False)
         self.history.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.history.horizontalHeader().setStretchLastSection(True)
-        self.history.setMaximumHeight(140)
+        # v2.9.3: a long message wraps onto more lines; never a side scroll bar
+        widgets.wrap_rows(self.history, 3)
+        header = self.history.horizontalHeader()
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(2, 140)           # «ارسال نشد: …» wraps here
+        self.history.setMinimumHeight(120)
+        self.history.setMaximumHeight(220)
         widgets.show_full_headers(self.history)
         msg_panel.body.addWidget(self.history)
         self.message_edit = QPlainTextEdit()
-        self.message_edit.setPlaceholderText("متن پیام به مشتری…")
+        self.message_edit.setPlaceholderText(
+            "متن پیام به مشتری… (با «تأیید موجودی / ارسال قیمت» زیر قیمت فرستاده می‌شود)")
         self.message_edit.setMaximumHeight(70)
         msg_panel.body.addWidget(self.message_edit)
         send_row = QHBoxLayout()
@@ -378,13 +385,12 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         msg_panel.body.addLayout(send_row)
         root.addWidget(msg_panel, 1)
 
-        # v2.8.0: what was done (names only for the manager)
-        self.timeline_label = widgets.label("…", wrap=True)
+        # v2.8.0: what was done (names only for the manager); v2.9.3: one line each
+        self.timeline_view = widgets.TimelineView()
         timeline_panel = widgets.Panel("کارهای انجام‌شده")
-        timeline_panel.body.addWidget(self.timeline_label)
+        timeline_panel.body.addWidget(self.timeline_view)
         root.addWidget(timeline_panel)
 
-        buttons = QHBoxLayout()
         # v2.9.2: the price (list price or typed) goes to the customer, who confirms it
         self.stock_button = widgets.button("تأیید موجودی / ارسال قیمت", variant="success",
                                            icon_name="check", on_click=self.confirm_stock)
@@ -394,17 +400,16 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
                                             on_click=self.assign)
         for b in (self.stock_button, self.unavailable_button):
             b.setProperty("big", True)
-            buttons.addWidget(b)
         self.seen_button = widgets.button("دیده شد", on_click=lambda: self.set_status("seen"))
         self.done_button = widgets.button("رسیدگی شد", variant="success",
                                           on_click=lambda: self.set_status("done"))
         self.reopen_button = widgets.button("باز کردن دوباره",
                                             on_click=lambda: self.set_status("new"))
-        for b in (self.done_button, self.seen_button, self.reopen_button, self.assign_button):
-            buttons.addWidget(b)
-        buttons.addStretch(1)
-        buttons.addWidget(widgets.button("بستن", variant="ghost", on_click=self.accept))
-        root.addLayout(buttons)
+        # v2.9.3: a tidy footer (prominent actions first, «بستن» last, a real button)
+        self.close_button = widgets.button("بستن", on_click=self.accept)
+        root.addLayout(widgets.footer(self.stock_button, self.unavailable_button,
+                                      self.done_button, self.seen_button, self.reopen_button,
+                                      self.assign_button, close=self.close_button))
 
         self._render_item()
         self.load_messages()
@@ -455,21 +460,23 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         request_id = int(self.item["id"])
         api = self.context.api
         if not hasattr(api, "item_request_timeline"):
-            self.timeline_label.setText("—")
+            self.timeline_view.set_message("—")
             return
         run_async(lambda: api.item_request_timeline(request_id),
-                  on_success=lambda rows: self.timeline_label.setText(
-                      timeline_text(list(rows or []))),
-                  on_error=lambda _m, _k: self.timeline_label.setText("—"))
+                  on_success=lambda rows: self.timeline_view.set_lines(
+                      timeline_lines(list(rows or []))),
+                  on_error=lambda _m, _k: self.timeline_view.set_message("—"))
 
     def confirm_stock(self) -> None:
-        dialog = StockConfirmDialog(self, self.item)
+        # v2.9.3: what is typed in «پیام به مشتری» goes in the same price message
+        note = self.message_edit.toPlainText().strip()
+        dialog = StockConfirmDialog(self, self.item, note=note)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         request_id = int(self.item["id"])
         code, price = dialog.kala_code, dialog.price
         self.stock_button.setEnabled(False)
-        run_async(lambda: self.context.api.confirm_purchase_stock(request_id, code, price),
+        run_async(lambda: self.context.api.confirm_purchase_stock(request_id, code, price, note),
                   on_success=self._stock_confirmed,
                   on_error=lambda m, _k: (self.stock_button.setEnabled(True),
                                           widgets.error(self, "قیمت فرستاده نشد", m)))
@@ -481,6 +488,7 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         if isinstance(row, dict) and row:
             self.item.update(row)
         self.changed = True
+        self.message_edit.clear()           # it went with the price
         self._render_item()
         self.load_messages()
         self.load_timeline()
@@ -559,7 +567,7 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
                         theme.DANGER if status == "failed" else
                         theme.SUCCESS if status == "sent" else theme.WARNING_TEXT))
                 self.history.setItem(row, column, cell)
-        self.history.resizeColumnsToContents()
+        self.history.resizeRowsToContents()
         self._report_delivery()
 
     def _report_delivery(self) -> None:
@@ -596,6 +604,26 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
                   on_success=self._sent, on_error=self._send_failed,
                   on_done=lambda: self.send_button.setEnabled(True))
 
+    def unsent_text(self) -> list[str]:
+        """v2.9.3: what would be lost when the dialog closes now."""
+        lost = []
+        if self.message_edit.isEnabled() and self.message_edit.toPlainText().strip():
+            lost.append("پیام به مشتری (فرستاده نشده)")
+        saved = str(self.item.get("admin_note") or "").strip()
+        if self.note_edit.isEnabled() and self.note_edit.toPlainText().strip() != saved:
+            lost.append("یادداشت همکاران (ذخیره نشده)")
+        return lost
+
+    def confirm_close(self) -> bool:
+        lost = self.unsent_text()
+        if not lost or not self.isVisible():
+            return True
+        return widgets.confirm(
+            self, "متن فرستاده نشده",
+            "این متن‌ها هنوز فرستاده یا ذخیره نشده‌اند و با بستن پنجره از بین می‌روند:\n• "
+            + "\n• ".join(lost) + "\nپنجره بسته شود؟",
+            confirm_text="بله، ببند", cancel_text="برگرد", kind="warning")
+
     def _sent(self, _row: object) -> None:
         self.message_edit.clear()
         self.changed = True
@@ -615,8 +643,19 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         self.load_messages()
 
     def done(self, result: int) -> None:  # noqa: D401 - QDialog override
+        # v2.9.3: «بستن», ✕ and Esc all ask before unsent text is thrown away
+        if not getattr(self, "_closing_checked", False) and not self.confirm_close():
+            return
+        self._closing_checked = True
         self._poll.stop()
         super().done(result)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if not getattr(self, "_closing_checked", False) and not self.confirm_close():
+            event.ignore()
+            return
+        self._closing_checked = True
+        super().closeEvent(event)
 
 
 class StockConfirmDialog(widgets.ResponsiveDialog):
@@ -625,7 +664,7 @@ class StockConfirmDialog(widgets.ResponsiveDialog):
     لیست») or one typed by staff when the item is here but has no price. The
     customer gets it in the bot and confirms; the order is created only then."""
 
-    def __init__(self, parent: QWidget | None, item: dict) -> None:
+    def __init__(self, parent: QWidget | None, item: dict, *, note: str = "") -> None:
         super().__init__(parent)
         from PySide6.QtWidgets import QLineEdit
 
@@ -663,21 +702,24 @@ class StockConfirmDialog(widgets.ResponsiveDialog):
                                             if self._list_price else "مثلاً ۵۲۵۰۰۰۰۰۰")
         self.price_input.setMinimumHeight(40)
         root.addWidget(self.price_input)
+        if note:
+            # v2.9.3: the message staff typed goes under the price, in the same message
+            root.addWidget(widgets.label("این پیام هم زیر قیمت برای مشتری فرستاده می‌شود:",
+                                         bold=True))
+            self.note_label = widgets.label(note, wrap=True)
+            self.note_label.setObjectName("PageHelp")
+            root.addWidget(self.note_label)
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
         self.error_label.setVisible(False)
         root.addWidget(self.error_label)
-        row = QHBoxLayout()
-        row.addStretch(1)
         self.list_button = widgets.button("تأیید موجودی با قیمت لیست", variant="success",
                                           icon_name="check", on_click=self._accept_list)
         self.list_button.setVisible(bool(self._list_price))
         self.list_button.setProperty("big", True)
-        row.addWidget(self.list_button)
         ok = widgets.button("ارسال قیمت برای مشتری", variant="primary", on_click=self._accept)
         ok.setProperty("big", True)
-        row.addWidget(ok)
-        row.addWidget(widgets.button("انصراف", on_click=self.reject))
-        root.addLayout(row)
+        root.addLayout(widgets.footer(self.list_button, ok,
+                                      close=widgets.button("انصراف", on_click=self.reject)))
 
     @staticmethod
     def _number(text: str) -> int | None:

@@ -92,6 +92,8 @@ KIND_AUTO_CANCELLED = "order_auto_cancelled"
 KIND_PRICELIST_CORRECTED = "pricelist_corrected"
 #: v2.9.1: the shop's Telegram account joined a channel (choose its role)
 KIND_CHANNEL_NEW = "telegram_channel_new"
+#: v2.9.3: the monthly read of the live site found new models (ref = how many)
+KIND_SITE_MODELS_NEW = "site_models_new"
 #: v2.9.1: events after which the price list and the dashboard show something new
 PRICE_EVENT_KINDS = frozenset({"pricelist_imported", "pricelist_held", "pricelist_failed",
                                KIND_PRICELIST_CORRECTED, "price_held",
@@ -127,6 +129,7 @@ TARGETS = {
     "telegram_login_required": ("server", ""),
     "telegram_unreachable": ("server", ""),
     "model_review": ("catalog", "review"),
+    KIND_SITE_MODELS_NEW: ("catalog", "all"),
     KIND_AUTO_CANCELLED: ("orders", "cancelled"),
     KIND_PAYMENT_INFO_DUE: ("orders", "awaiting_payment"),
     "accounting_duplicate_order": ("orders", "written"),
@@ -204,6 +207,10 @@ def notice_for(event: dict) -> Optional[Notice]:
         return Notice(kind, "کانال تازهٔ تلگرام",
                       "حساب تلگرام فروشگاه عضو کانال تازه‌ای شد؛ در «تنظیمات سرور › تلگرام» نقش آن "
                       "را انتخاب کنید.", ref, warning=True)
+    if kind == KIND_SITE_MODELS_NEW:
+        return Notice(kind, "مدل تازه در سایت",
+                      f"{ref_fa} مدل تازه از سایت خوانده شد؛ در «مدل‌های سایت» ببینید (وصل‌شدن "
+                      "خودکار یا «پیشنهاد خودکار» منتظر تأیید).", ref)
     if kind == KIND_CUSTOMER_CANCEL:
         return Notice(kind, "لغو سفارش توسط مشتری",
                       f"مشتری سفارش شمارهٔ {ref_fa} را پیش از ارسال رسید لغو کرد.", ref)

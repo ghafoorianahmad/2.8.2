@@ -8,6 +8,7 @@ from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QScrollArea,
+    QSizePolicy,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...activity import timeline_text
+from ...activity import timeline_lines
 from ...permissions import (
     ORDERS_APPROVE_PAYMENT,
     ORDERS_ASSIGN,
@@ -53,7 +54,7 @@ from .. import theme, widgets
 from ..async_utils import run_async
 from ..base_page import BasePage
 from ..context import AppContext
-from ..rtl import RIGHT
+from ..rtl import RIGHT, mark_ltr
 
 HEADERS = ("شماره سفارش", "نام مشتری", "تعداد اقلام", "مبلغ کل", "وضعیت", "مسئول",
            "مهلت ارسال رسید", "تاریخ ثبت")
@@ -444,9 +445,10 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         self.items_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.items_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.items_table.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.items_table.horizontalHeader().setStretchLastSection(True)
-        self.items_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.items_table.verticalHeader().setDefaultSectionSize(38)
+        # v2.9.3: the full product name, wrapped («SAMSUNG S26 Ultr…» was cut);
+        # the name takes the room, the other columns their content; no side scroll
+        widgets.wrap_rows(self.items_table, 1)
+        self.items_table.verticalHeader().setMinimumSectionSize(38)
         self.items_table.setMinimumHeight(160)
         widgets.show_full_headers(self.items_table)
         items = order.get("items") or []
@@ -461,7 +463,9 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(value)
                 cell.setTextAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
+                cell.setToolTip(value)
                 self.items_table.setItem(index, column, cell)
+        self.items_table.resizeRowsToContents()
         items_panel.body.addWidget(self.items_table)
         items_panel.body.addWidget(widgets.label(
             f"تعداد اقلام: {to_persian_digits(len(items))} — "
@@ -471,9 +475,10 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         root.addWidget(items_panel, 1)
 
         # ---- v2.8.0: what was done so far (names only for the manager) ------
-        self.timeline_label = widgets.label("…", wrap=True)
+        # v2.9.3: one line per action with its time (it overlapped and was cut)
+        self.timeline_view = widgets.TimelineView()
         timeline_panel = widgets.Panel("کارهای انجام‌شده")
-        timeline_panel.body.addWidget(self.timeline_label)
+        timeline_panel.body.addWidget(self.timeline_view)
         root.addWidget(timeline_panel)
         if order.get("request_id"):
             timeline_panel.body.addWidget(widgets.label(
@@ -507,8 +512,6 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         root.addWidget(ref_panel)
 
         # ---- actions -----------------------------------------------------
-        actions_holder = QWidget()
-        actions = widgets.FlowLayout(actions_holder, spacing=10)
         self.approve_button = widgets.button(
             "تأیید رسید", variant="success", icon_name="check", on_click=self._approve
         )
@@ -581,14 +584,13 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         for widget in (self.payment_button, self.approve_button, self.reject_button,
                        self.ship_button, self.cancel_button, self.assign_button, close):
             widget.setProperty("big", True)
-            # hidden, not disabled, when this account may never do it
-            actions.addWidget(widget)
+        # v2.9.3: a tidy footer: what moves the order on (prominent) on the right, the
+        # other actions after it, «بستن» last; hidden, not disabled, when this account
+        # may never do it
         self.approve_button.setVisible(can_approve and not finished)
         self.reject_button.setVisible(can_reject and not finished)
         self.ship_button.setVisible(can_ship and not finished)
         self.cancel_button.setVisible(context.can(ORDERS_CANCEL) and not finished)
-        root.addWidget(actions_holder)
-
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
         self.error_label.setVisible(False)
         root.addWidget(self.error_label)
@@ -596,6 +598,10 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         self._detail_label = widgets.label("", name="Muted", wrap=True)
         self._detail_label.setVisible(False)
         root.addWidget(self._detail_label)
+        # the footer is the last row: it stays visible and wraps on a narrow window
+        root.addLayout(widgets.footer(self.payment_button, self.approve_button,
+                                      self.reject_button, self.ship_button, self.cancel_button,
+                                      self.assign_button, close=close))
 
     # ---- helpers ---------------------------------------------------------
     @staticmethod
@@ -624,12 +630,12 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         order_id = int(self.order.get("id") or 0)
         api = self.context.api
         if not hasattr(api, "order_timeline"):
-            self.timeline_label.setText("—")
+            self.timeline_view.set_message("—")
             return
         run_async(
             lambda: api.order_timeline(order_id),
-            on_success=lambda rows: self.timeline_label.setText(timeline_text(list(rows or []))),
-            on_error=lambda _m, _k: self.timeline_label.setText("—"),
+            on_success=lambda rows: self.timeline_view.set_lines(timeline_lines(list(rows or []))),
+            on_error=lambda _m, _k: self.timeline_view.set_message("—"),
         )
 
     def _send_payment_info(self) -> None:
@@ -754,16 +760,13 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
 
     def _cancel_order(self) -> None:
         order_id = int(self.order["id"])
-        if not widgets.confirm(
-            self, "لغو سفارش",
-            f"سفارش {to_persian_digits(order_id)} لغو شود؟ این کار برگشت ندارد.\n"
-            "سفارش فقط در برنامهٔ فروشگاه لغو می‌شود؛ در حسابداری چیزی پاک نمی‌شود.",
-            confirm_text="بله، لغو کن", kind="warning",
-        ):
+        dialog = CancelOrderDialog(self, to_persian_digits(order_id))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        reason = dialog.reason
         self.cancel_button.setEnabled(False)
         run_async(
-            lambda: self.context.api.cancel_order(order_id),
+            lambda: self.context.api.cancel_order(order_id, reason),
             on_success=self._cancelled,
             on_error=lambda message, kind: (
                 self.cancel_button.setEnabled(True), self._failed(message, kind)
@@ -957,7 +960,7 @@ class PaymentInfoDialog(widgets.ResponsiveDialog):
             field.setMinimumHeight(38)
             field.setMaxLength(300 if key == "note" else 80)
             if key in ("card_number", "account_number", "sheba"):
-                field.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+                mark_ltr(field)
                 field.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             if key == "card_number":
                 field.setInputMask(CARD_MASK)
@@ -967,7 +970,7 @@ class PaymentInfoDialog(widgets.ResponsiveDialog):
             form.addRow(widgets.label(caption + ":"), field)
         root.addLayout(form)
         last_row = QHBoxLayout()
-        self.last_button = widgets.button("مثل دفعهٔ قبل", icon_name="refresh", variant="ghost",
+        self.last_button = widgets.button("مثل دفعهٔ قبل", icon_name="refresh",
                                           on_click=self.fill_last,
                                           tooltip="همان اطلاعاتی که دفعهٔ قبل فرستادید")
         self.last_button.setEnabled(bool(self._last()))
@@ -1058,6 +1061,44 @@ def send_payment_info(parent: QWidget, context, order: dict) -> bool:
     return True
 
 
+class CancelOrderDialog(widgets.ResponsiveDialog):
+    """v2.9.3 «لغو سفارش»: an optional short reason. The customer gets a cancel
+    message in the bot (with the reason), the bot's old buttons of the order stop
+    working, and the order is «لغوشده» everywhere. Nothing is deleted in «سازه
+    حساب»."""
+
+    MAX_REASON = 200
+
+    def __init__(self, parent: QWidget | None, order_label: str) -> None:
+        super().__init__(parent)
+        self.reason = ""
+        self.setWindowTitle(f"لغو سفارش {order_label}")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumWidth(500)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(10)
+        root.addWidget(widgets.label(f"سفارش {order_label} لغو شود؟", size=14, bold=True))
+        root.addWidget(widgets.label(
+            "به مشتری در ربات پیام لغو فرستاده می‌شود و دکمه‌های قبلی این سفارش دیگر کار "
+            "نمی‌کنند. این کار برگشت ندارد. سفارش فقط در برنامهٔ فروشگاه لغو می‌شود؛ در "
+            "«سازه حساب» چیزی پاک نمی‌شود.", name="Muted", wrap=True))
+        root.addWidget(widgets.label("دلیل کوتاه برای مشتری (اختیاری)"))
+        self.reason_input = QLineEdit()
+        self.reason_input.setPlaceholderText("مثلاً: این رنگ تمام شد")
+        self.reason_input.setMaxLength(self.MAX_REASON)
+        self.reason_input.setMinimumHeight(40)
+        root.addWidget(self.reason_input)
+        self.ok_button = widgets.button("بله، لغو کن", variant="danger", icon_name="trash",
+                                        on_click=self._accept)
+        root.addLayout(widgets.footer(self.ok_button,
+                                      close=widgets.button("انصراف", on_click=self.reject)))
+
+    def _accept(self) -> None:
+        self.reason = " ".join(self.reason_input.text().split())[:self.MAX_REASON]
+        self.accept()
+
+
 class ShipDialog(widgets.ResponsiveDialog):
     """«ارسال شد» with an OPTIONAL courier: when filled, the customer's message
     names them; when empty, the usual «sent» message only."""
@@ -1138,14 +1179,17 @@ def receipt_ref_text(order: dict, receipt_ref: str) -> str:
 
 
 CANCEL_REASON_FA = {"customer": "لغو توسط مشتری (پیش از ارسال رسید)",
-                    "receipt_timeout": "لغو خودکار (رسید در مهلت نرسید)"}
+                    "receipt_timeout": "لغو خودکار (رسید در مهلت نرسید)",
+                    "staff": "لغو توسط فروشگاه"}
 
 
 def tracking_fa(order: dict) -> str:
     """The furthest step after payment: shipped > invoiced > partially invoiced;
     for a cancelled order, who cancelled it (v2.6.2)."""
     if order.get("status") == "cancelled" and order.get("cancel_reason") in CANCEL_REASON_FA:
-        return CANCEL_REASON_FA[order["cancel_reason"]]
+        note = " ".join(str(order.get("cancel_note") or "").split())
+        text = CANCEL_REASON_FA[order["cancel_reason"]]
+        return f"{text} — دلیل: {note}" if note else text
     if order.get("shipped_at"):
         return f"ارسال شده ({format_shamsi(order.get('shipped_at'))})"
     if order.get("invoice_state") == "full":
@@ -1185,9 +1229,13 @@ def _kv(key: str, value: str) -> QWidget:
     layout = QHBoxLayout(holder)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(8)
-    layout.addWidget(widgets.label(f"{key}:", name="Muted"))
-    layout.addWidget(widgets.label(value, bold=True))
-    layout.addStretch(1)
+    caption = widgets.label(f"{key}:", name="Muted")
+    caption.setAlignment(RIGHT | Qt.AlignmentFlag.AlignTop)
+    layout.addWidget(caption, 0, Qt.AlignmentFlag.AlignTop)
+    # v2.9.3: a long value wraps (it widened the dialog to a side scroll bar)
+    value_label = widgets.label(value, bold=True, wrap=True)
+    value_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    layout.addWidget(value_label, 1)
     return holder
 
 

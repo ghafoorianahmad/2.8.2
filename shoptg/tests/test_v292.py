@@ -30,7 +30,7 @@ def test_short_pool_is_refilled_right_after_a_start(env):
     assert worker.collect_due((now - timedelta(minutes=11)).isoformat(), healthy=1, first=True)
     assert not worker.collect_due((now - timedelta(minutes=5)).isoformat(), healthy=1,
                                   first=True)
-    assert not worker.collect_due((now - timedelta(minutes=30)).isoformat(), healthy=5,
+    assert not worker.collect_due((now - timedelta(minutes=30)).isoformat(), healthy=10,
                                   first=True)
 
 

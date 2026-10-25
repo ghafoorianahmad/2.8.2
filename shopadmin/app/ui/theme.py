@@ -297,6 +297,9 @@ globals().update(palette_tokens("ocean", "light"))
 RADIUS_SM = 10
 RADIUS = 14          # v2.9.0: rounder buttons (radius never changes a widget's size)
 RADIUS_LG = 20
+#: v2.9.3: the text area of every push button (padding and edges are the same in
+#: every variant, so every button is equally tall; scripts/button_audit.py)
+BUTTON_CONTENT_HEIGHT = 24
 SPACE_XS = 4
 SPACE_SM = 8
 SPACE = 16
@@ -581,51 +584,50 @@ QLabel#Faint {{ color: {TEXT_FAINT}; }}
 QLabel#EmptyTitle {{ color: {TEXT}; font-size: 13pt; font-weight: 700; }}
 QLabel#EmptyHint {{ color: {TEXT_MUTED}; }}
 
-/* ---------------- buttons (raised, Phone Bridge) ---------------- */
+/* ---------------- buttons (raised, Phone Bridge) ----------------
+   v2.9.3 (scripts/button_audit.py): every button has the same height (the same
+   padding, a 1px border and a 2px bottom edge in every variant and state), the
+   same radius, and a disabled look that cannot be mistaken: flat, dashed edge,
+   grey text, no raised edge and no shadow. A button never looks like plain text
+   (no transparent text buttons; «Ghost» is only for an icon without text). */
 QPushButton {{
     background: {button_fill};
     color: {TEXT}; border: 1px solid {BORDER_STRONG}; border-bottom: 2px solid {BORDER_STRONG};
     border-radius: {RADIUS}px; padding: 8px 16px; font-size: {BASE_FONT_SIZE}pt;
-    min-height: 20px;
+    min-height: {BUTTON_CONTENT_HEIGHT}px; max-height: {BUTTON_CONTENT_HEIGHT}px;
 }}
 QPushButton:hover {{ border-color: {ACCENT}; color: {PRIMARY_TEXT}; }}
-QPushButton:pressed {{ background: {BUTTON2}; border-bottom: 1px solid {BORDER_STRONG};
-                       padding-top: 9px; padding-bottom: 7px; }}
-QPushButton:disabled {{
-    background: {DISABLED_BG}; color: {DISABLED_TEXT}; border-color: {BORDER};
+QPushButton:pressed {{ background: {BUTTON2}; padding-top: 9px; padding-bottom: 7px; }}
+QPushButton:disabled, QPushButton#Primary:disabled, QPushButton#Success:disabled,
+QPushButton#Danger:disabled, QPushButton#Ghost:disabled, QPushButton#Tab:disabled,
+QPushButton#RowMenu:disabled {{
+    background: {DISABLED_BG}; color: {DISABLED_TEXT}; font-weight: 400;
+    border: 1px dashed {TEXT_FAINT}; border-bottom: 2px dashed {TEXT_FAINT};
 }}
 
 QPushButton#Primary {{
     background: {primary_fill};
-    color: #FFFFFF; border: none; border-bottom: 3px solid {PRIMARY_PRESSED};
-    font-weight: 700; padding: 9px 20px;
+    color: #FFFFFF; border: 1px solid {PRIMARY_DARK}; border-bottom: 2px solid {PRIMARY_PRESSED};
+    font-weight: 700;
 }}
 QPushButton#Primary:hover {{ background: {PRIMARY_DARK}; color: #FFFFFF; }}
-QPushButton#Primary:pressed {{ background: {PRIMARY_PRESSED}; border-bottom: 1px solid {PRIMARY_PRESSED};
-                               padding-top: 11px; }}
-QPushButton#Primary:disabled {{
-    background: {DISABLED_BG}; border: 1px solid {BORDER}; color: {DISABLED_TEXT};
-}}
+QPushButton#Primary:pressed {{ background: {PRIMARY_PRESSED}; }}
 
-QPushButton#Success {{ background: {SUCCESS_FILL}; color: #FFFFFF; border: none;
-                       border-bottom: 3px solid {SUCCESS_FILL_DARK}; font-weight: 700; }}
+QPushButton#Success {{ background: {SUCCESS_FILL}; color: #FFFFFF; border: 1px solid {SUCCESS_FILL_DARK};
+                       border-bottom: 2px solid {SUCCESS_FILL_DARK}; font-weight: 700; }}
 QPushButton#Success:hover {{ background: {SUCCESS_FILL_DARK}; color: #FFFFFF; }}
-QPushButton#Success:disabled {{
-    background: {DISABLED_BG}; border: 1px solid {BORDER}; color: {DISABLED_TEXT};
-}}
 
-QPushButton#Danger {{ background: {DANGER_FILL}; color: #FFFFFF; border: none;
-                      border-bottom: 3px solid {DANGER_FILL_DARK}; font-weight: 700; }}
+QPushButton#Danger {{ background: {DANGER_FILL}; color: #FFFFFF; border: 1px solid {DANGER_FILL_DARK};
+                      border-bottom: 2px solid {DANGER_FILL_DARK}; font-weight: 700; }}
 QPushButton#Danger:hover {{ background: {DANGER_FILL_DARK}; color: #FFFFFF; }}
-QPushButton#Danger:disabled {{
-    background: {DISABLED_BG}; border: 1px solid {BORDER}; color: {DISABLED_TEXT};
-}}
 
-QPushButton#Ghost {{ background: transparent; border: none; color: {TEXT_MUTED}; padding: 6px 10px; }}
+/* only for a small icon button without text (the toast's ✕) */
+QPushButton#Ghost {{ background: transparent; border: 1px solid transparent; color: {TEXT_MUTED};
+                     padding: 2px; min-height: 0; max-height: 16777215px; }}
 QPushButton#Ghost:hover {{ background: {HOVER}; color: {PRIMARY_TEXT}; }}
 
-/* big, clear actions for everyday work (orders) */
-QPushButton[big="true"] {{ font-size: 12pt; padding: 12px 22px; min-height: 26px; }}
+/* big actions for everyday work (orders): wider and bolder, never taller */
+QPushButton[big="true"] {{ padding-left: 22px; padding-right: 22px; font-weight: 700; }}
 
 /* One weight in every state: Qt measures a push button's text with its normal
    font, so a bolder «checked» state used to clip the end of «سفارش‌ها».
@@ -634,7 +636,7 @@ QPushButton[big="true"] {{ font-size: 12pt; padding: 12px 22px; min-height: 26px
 QPushButton#NavButton {{
     background: transparent; border: none; border-radius: {RADIUS}px;
     padding: 10px 12px; text-align: left; font-size: 11pt; font-weight: 600;
-    color: {SIDEBAR_TEXT};
+    color: {SIDEBAR_TEXT}; min-height: 0; max-height: 16777215px;
 }}
 QPushButton#NavButton:hover {{ background: {SIDEBAR_HOVER}; color: #FFFFFF; }}
 QPushButton#NavButton:checked {{
@@ -650,24 +652,25 @@ QLabel#SidebarMuted {{ color: {SIDEBAR_MUTED}; }}
 /* v2.9.0: option cards («ظاهر برنامه»): one weight in every state (text fit) */
 QPushButton#OptionCard {{
     background: {SURFACE}; color: {TEXT}; border: 2px solid {BORDER}; border-radius: {RADIUS}px;
-    padding: 8px 12px; font-weight: 600;
+    padding: 8px 12px; font-weight: 600; min-height: 0; max-height: 16777215px;
 }}
 QPushButton#OptionCard:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
 QPushButton#OptionCard:checked {{ border: 2px solid {ACCENT}; background: {PRIMARY_SOFT};
                                   color: {PRIMARY_TEXT}; }}
 
 QPushButton#Tab {{
-    border: 1px solid transparent; border-radius: {RADIUS_SM}px; padding: 8px 16px;
-    background: transparent; color: {TEXT_MUTED}; font-size: {BASE_FONT_SIZE}pt;
+    border: 1px solid {BORDER}; border-bottom: 2px solid {BORDER}; border-radius: {RADIUS}px;
+    padding: 8px 16px; background: {SURFACE}; color: {TEXT}; font-size: {BASE_FONT_SIZE}pt;
     font-weight: 700;
 }}
-QPushButton#Tab:hover {{ background: {HOVER}; color: {TEXT}; }}
+QPushButton#Tab:hover {{ background: {HOVER}; border-color: {ACCENT}; color: {PRIMARY_TEXT}; }}
 QPushButton#Tab:checked {{ background: {PRIMARY_SOFT}; color: {PRIMARY_TEXT};
-                           border: 1px solid {ACCENT}; }}
+                           border: 1px solid {ACCENT}; border-bottom: 2px solid {ACCENT}; }}
 
 QPushButton#LinkButton {{
     border: none; background: transparent; color: {PRIMARY_TEXT}; padding: 2px 4px;
     text-decoration: underline; text-align: left;   /* = the right edge in RTL */
+    min-height: 0; max-height: 16777215px;
 }}
 QPushButton#LinkButton:hover {{ color: {INK}; }}
 
@@ -792,6 +795,9 @@ def apply_theme(app: QApplication, mode: str | None = None, *, palette: str | No
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     app.setStyleSheet(stylesheet(family))
     _install_effects(app)
+    from .rtl import install_rtl_defaults
+
+    install_rtl_defaults(app)
     return EFFECTS
 
 
@@ -839,11 +845,15 @@ class _Effects(QObject):
             if isinstance(obj, QPushButton) and name in SHADOW_BUTTONS:
                 if not _inside_item_view(obj):
                     _shadow(obj, 12, 3, button=True)
+                    # v2.9.3: a disabled button is flat (no shadow)
+                    obj.graphicsEffect().setEnabled(obj.isEnabled())
             elif isinstance(obj, QFrame) and name == "Panel" and _panel_can_have_shadow(obj):
                 _shadow(obj, 26, 6)
         elif isinstance(obj, QPushButton) and obj.objectName() in SHADOW_BUTTONS and \
                 isinstance(obj.graphicsEffect(), QGraphicsDropShadowEffect):
-            if kind == QEvent.Type.Enter and obj.isEnabled():
+            if kind == QEvent.Type.EnabledChange:
+                obj.graphicsEffect().setEnabled(obj.isEnabled())
+            elif kind == QEvent.Type.Enter and obj.isEnabled():
                 self._animate(obj, 22, 6)
             elif kind == QEvent.Type.Leave:
                 self._animate(obj, 12, 3)

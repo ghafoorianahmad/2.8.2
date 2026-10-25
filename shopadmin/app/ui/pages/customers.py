@@ -35,7 +35,7 @@ from .. import theme, widgets
 from ..async_utils import run_async
 from ..base_page import BasePage
 from ..context import AppContext
-from ..rtl import RIGHT
+from ..rtl import RIGHT, mark_ltr
 
 HEADERS = ("نام مشتری", "پلتفرم", "شماره موبایل", "کد شخص", "وضعیت", "تاریخ ثبت", "عملیات")
 
@@ -373,7 +373,7 @@ class ApproveCustomerDialog(widgets.ResponsiveDialog):
         code_row.setSpacing(10)
         self.code_input = QSpinBox()
         self.code_input.setRange(0, 2_000_000_000)
-        self.code_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.code_input)
         self.code_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.code_input.setMinimumWidth(180)
         self.code_input.setSpecialValueText("—")

@@ -168,6 +168,9 @@ class Settings:
     # --- Site catalog models (REQUIREMENTS §9a) ---
     #: Server-local hour of the nightly mapping check; -1 = off.
     model_check_hour: int = 2
+    #: v2.9.3: the live site's public model list, read every this many days (0 = off)
+    site_catalog_url: str = "https://asrertebatat2.ir/assets/products.js"
+    site_catalog_days: int = 30
     #: A renamed product stays visible (only "drifted") at or above this name similarity.
     model_drift_min_score: float = 0.7
     #: The bot accepts a fuzzy model-name match at or above this similarity.
@@ -263,6 +266,9 @@ class Settings:
             tg_status_stale_minutes=max(5, _env_int("TG_STATUS_STALE_MINUTES", 20)),
             statement_max_rows=_env_int("STATEMENT_MAX_ROWS", 2000),
             model_check_hour=_env_int("MODEL_CHECK_HOUR", 2),
+            site_catalog_url=_env("SITE_CATALOG_URL",
+                                  "https://asrertebatat2.ir/assets/products.js").strip(),
+            site_catalog_days=max(0, _env_int("SITE_CATALOG_DAYS", 30)),
             model_drift_min_score=_env_float("MODEL_DRIFT_MIN_SCORE", 0.7),
             model_resolve_min_score=_env_float("MODEL_RESOLVE_MIN_SCORE", 0.75),
             pricelist_unit_rial=_env_int("PRICELIST_UNIT_RIAL", 10_000),

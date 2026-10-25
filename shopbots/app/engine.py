@@ -147,8 +147,16 @@ CUSTOMER_EVENT_KINDS = frozenset(
         "customer_approved", "customer_rejected", "payment_approved", "payment_rejected",
         "order_partially_invoiced", "order_invoiced", "order_shipped",
         "order_auto_cancelled",
+        # v2.9.3: cancelled in ShopAdmin: the customer stopped waiting for nothing
+        "order_cancelled_by_staff",
     }
 )
+#: v2.9.3: an order that ended this way: its old buttons in the chat stop working
+ORDER_ENDED_KINDS = frozenset({"order_auto_cancelled", "order_cancelled_by_staff"})
+#: v2.9.3: orders that can no longer be paid or cancelled
+CLOSED_ORDER_STATUSES = frozenset({"cancelled", "expired", "rejected"})
+#: v2.9.3: how many messages with buttons are remembered per order
+ORDER_MESSAGES_KEEP = 6
 INVOICE_EVENT_KINDS = frozenset({"order_partially_invoiced", "order_invoiced"})
 #: order event kind -> customer message (tracking: invoiced / shipped)
 ORDER_EVENT_TEXTS = {
@@ -159,6 +167,8 @@ ORDER_EVENT_TEXTS = {
     "order_shipped": "ORDER_SHIPPED",
     # v2.5.0: no receipt within the deadline -> cancelled locally by shopapi
     "order_auto_cancelled": "ORDER_AUTO_CANCELLED",
+    # v2.9.3: cancelled by staff in ShopAdmin (with the short reason, when given)
+    "order_cancelled_by_staff": "ORDER_CANCELLED_BY_STAFF",
 }
 #: shopapi event kinds that mean "tell the owner" (admin chats) -> text key.
 OWNER_EVENT_TEXTS = {
@@ -1717,10 +1727,12 @@ class BotEngine:
                 texts.CARD_CAPTION_PRE_INVOICE.format(
                     order_id=order_id, total=total, currency=texts.SHOP.get("currency", "ریال")),
             )
-        await self._send_options(
-            adapter, platform, chat_id, "\n\n".join(parts),
+        body = "\n\n".join(parts)
+        sent = await self._send_options(
+            adapter, platform, chat_id, body,
             [[(texts.BTN_CANCEL_ORDER, f"ocx:{order_id}")], [(texts.BTN_MENU, "menu")]],
         )
+        self._remember_order_message(order_id, platform, chat_id, sent, body)
         if order_id is not None and not self.store.is_announced("neworder", int(order_id)):
             self.store.mark_announced("neworder", int(order_id), platform, chat_id)
             await self._announce_new_order(order)
@@ -2231,10 +2243,12 @@ class BotEngine:
         else:
             # v2.8.2: staff send the payment details next (their own message)
             parts.append(texts.WAIT_PAYMENT_INFO)
-        await self._send_options(
-            adapter, platform, chat_id, "\n\n".join(parts),
+        body = "\n\n".join(parts)
+        sent = await self._send_options(
+            adapter, platform, chat_id, body,
             [[(texts.BTN_CANCEL_ORDER, f"ocx:{order_id}")], [(texts.BTN_MENU, "menu")]],
         )
+        self._remember_order_message(order_id, platform, chat_id, sent, body)
         return True
 
     async def _send_payment_info(self, order_id: int, event_id: int) -> bool:
@@ -2283,10 +2297,81 @@ class BotEngine:
                     order_id=order_id, total=fmt_num(order.get("total")),
                     currency=texts.SHOP.get("currency", "ریال")),
             )
-        await self._send_options(
+        sent = await self._send_options(
             adapter, platform, chat_id, text,
             [[(texts.BTN_CANCEL_ORDER, f"ocx:{order_id}")], [(texts.BTN_MENU, "menu")]],
         )
+        self._remember_order_message(order_id, platform, chat_id, sent, text)
+        return True
+
+    # ---- v2.9.3: an order that ended: its old buttons stop working -----------------
+    @staticmethod
+    def _order_messages_key(order_id) -> str:
+        return f"ordermsgs:{int(order_id)}"
+
+    def _remember_order_message(self, order_id, platform: str, chat_id, sent, text: str) -> None:
+        """Keep where the message with «لغو سفارش» went, to take its buttons away
+        when the order is cancelled (by staff or after the receipt deadline)."""
+        message_id = sent.get("message_id") if isinstance(sent, dict) else None
+        if order_id is None or message_id is None:
+            return
+        key = self._order_messages_key(order_id)
+        try:
+            kept = json.loads(self.store.get_value(key) or "[]")
+        except ValueError:
+            kept = []
+        kept = [m for m in kept if isinstance(m, dict)][-(ORDER_MESSAGES_KEEP - 1):]
+        kept.append({"platform": str(platform), "chat_id": str(chat_id),
+                     "message_id": int(message_id), "text": str(text)[:3500]})
+        self.store.set_value(key, json.dumps(kept, ensure_ascii=False))
+
+    async def _retire_order_buttons(self, order_id: int) -> int:
+        """The order's earlier messages lose their buttons and say it was cancelled
+        (an edit without a keyboard). Returns how many were changed."""
+        key = self._order_messages_key(order_id)
+        try:
+            kept = json.loads(self.store.get_value(key) or "[]")
+        except ValueError:
+            kept = []
+        changed = 0
+        for message in kept if isinstance(kept, list) else []:
+            adapter = self.adapters.get(str(message.get("platform") or ""))
+            if adapter is None or not message.get("message_id"):
+                continue
+            text = f"{message.get('text') or ''}\n\n{texts.ORDER_CANCELLED_MARK}".strip()
+            try:
+                await adapter.edit_text(message["chat_id"], int(message["message_id"]), text)
+                changed += 1
+            except BotApiError as exc:
+                self.logger.info("platform=%s order_buttons_not_retired=%s", adapter.platform,
+                                 exc.method)
+        self.store.set_value(key, "[]")
+        return changed
+
+    async def _order_closed(self, platform: str, chat_id: str, order_id: int) -> bool:
+        """True when this customer's order was cancelled / expired / rejected."""
+        try:
+            orders = await self.orders.list_for(platform, chat_id, limit=50)
+        except ShopApiError:
+            return False
+        for order in orders:
+            if int(order.get("id") or 0) == int(order_id):
+                return str(order.get("status") or "") in CLOSED_ORDER_STATUSES
+        return False
+
+    async def _closed_order_tapped(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                                   order_id: int, callback_id=None) -> bool:
+        """An old «لغو سفارش» / «ارسال رسید» of an order that ended: say so."""
+        if not await self._order_closed(platform, chat_id, order_id):
+            return False
+        await self._answer_callback(adapter, callback_id,
+                                    texts.ORDER_IS_CANCELLED.format(order_id=order_id), True)
+        state, data = self.store.get_conversation(platform, chat_id)
+        if state == STATE_AWAIT_RECEIPT and int((data or {}).get("order_id") or 0) == int(order_id):
+            self.store.set_conversation(platform, chat_id, STATE_NONE, {})
+        await self._send_options(adapter, platform, chat_id,
+                                 texts.ORDER_IS_CANCELLED.format(order_id=order_id),
+                                 [[(texts.BTN_ORDERS, "orders")], [(texts.BTN_MENU, "menu")]])
         return True
 
     async def _watch_sales_opening(self) -> int:
@@ -2478,6 +2563,8 @@ class BotEngine:
                 callback_id=callback_id, edit_message_id=message_id,
             )
         elif action == "ocx":
+            if await self._closed_order_tapped(adapter, platform, chat_id, args[0], callback_id):
+                return
             await self._ask_cancel_order(adapter, platform, chat_id, args[0], callback_id)
         elif action == "ocy":
             await self._cancel_order(adapter, platform, chat_id, args[0], callback_id)
@@ -2526,6 +2613,8 @@ class BotEngine:
             await self._answer_callback(adapter, callback_id)
             await self._show_orders(adapter, platform, chat_id)
         elif action == "rcpt":
+            if await self._closed_order_tapped(adapter, platform, chat_id, args[0], callback_id):
+                return
             await self._answer_callback(adapter, callback_id)
             await self._ask_receipt(adapter, platform, chat_id, args[0])
         elif action == "search":
@@ -2813,9 +2902,16 @@ class BotEngine:
                                       str(msg.get("color") or "").strip(),
                                       str(msg.get("part") or "").strip()) if p)
         currency = texts.SHOP.get("currency", "ریال")
+        # v2.9.3: «قیمت امروز این کالا»; quantity / total only for more than one,
+        # staff's own words (from «پیام به مشتری») under it
+        qty_line = texts.PURCHASE_OFFER_QTY.format(qty=fmt_num(qty), total=fmt_num(qty * price),
+                                                   currency=currency) if qty > 1 else ""
+        note = str(msg.get("note") or "").strip()
+        note_line = texts.PURCHASE_OFFER_NOTE.format(note=note) if note else ""
         body = texts.PURCHASE_OFFER.format(
             name=shorten(name, 80) or "کالای درخواستی", qty=fmt_num(qty),
-            price=fmt_num(price), total=fmt_num(qty * price), currency=currency)
+            price=fmt_num(price), total=fmt_num(qty * price), currency=currency,
+            qty_line=qty_line, note=note_line)
         self.store.mark_announced("offer", int(message_id), str(msg.get("platform") or ""),
                                   str(msg.get("chat_id") or ""),
                                   {"request_id": int(msg.get("request_id") or 0),
@@ -2876,9 +2972,11 @@ class BotEngine:
                 or self.store.get_notice("neworder", ref_id)
                 or await self._find_order_chat(ref_id)
             )
-            text = getattr(texts, ORDER_EVENT_TEXTS[kind]).format(order_id=ref_id)
+            text = getattr(texts, ORDER_EVENT_TEXTS[kind]).format(order_id=ref_id, reason="")
             if kind == "order_shipped":
                 text = await self._shipped_text(ref_id, text)
+            elif kind == "order_cancelled_by_staff":
+                text = await self._staff_cancel_text(ref_id)
         self.store.mark_announced(
             marker, ref_id, str((target or {}).get("platform") or ""),
             (target or {}).get("chat_id") or "",
@@ -2887,8 +2985,28 @@ class BotEngine:
             return False
         if kind in INVOICE_EVENT_KINDS and await self._send_invoice_card(kind, ref_id, target, text):
             return True
+        if kind in ORDER_ENDED_KINDS:
+            # v2.9.3: no more waiting for payment details / a receipt for this order
+            platform, chat_id = str(target.get("platform") or ""), str(target.get("chat_id") or "")
+            state, data = self.store.get_conversation(platform, chat_id)
+            if state == STATE_AWAIT_RECEIPT and \
+                    int((data or {}).get("order_id") or 0) == int(ref_id):
+                self.store.set_conversation(platform, chat_id, STATE_NONE, {})
+            await self._retire_order_buttons(int(ref_id))
         await self._notify_customer(target, text)
         return True
+
+    async def _staff_cancel_text(self, order_id: int) -> str:
+        """v2.9.3: «سفارش … از طرف فروشگاه لغو شد» + the short reason staff gave."""
+        reason = ""
+        try:
+            order = await self.api.admin_get_order(int(order_id))
+        except ShopApiError:
+            order = None
+        note = " ".join(str((order or {}).get("cancel_note") or "").split())
+        if note:
+            reason = texts.ORDER_CANCEL_REASON.format(reason=note)
+        return texts.ORDER_CANCELLED_BY_STAFF.format(order_id=order_id, reason=reason)
 
     async def _shipped_text(self, order_id: int, text: str) -> str:
         """v2.7.0: «ارسال شد» + the courier, only when staff entered one."""

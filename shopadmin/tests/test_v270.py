@@ -133,13 +133,21 @@ def test_ship_sends_the_courier(ui_context, admin_qapp, fake_api, monkeypatch):
 
 
 def test_cancel_asks_first(ui_context, admin_qapp, fake_api, monkeypatch):
-    from app.ui import widgets
+    from PySide6.QtWidgets import QDialog, QLabel
+
+    from app.ui.pages import orders
 
     order = fake_api.add_order(id=8, status="awaiting_payment")
     context = make_context_with_role(ui_context, ROLE_OPERATOR)
-    answers = [False, True]
+    answers = [QDialog.DialogCode.Rejected, QDialog.DialogCode.Accepted]
     asked = []
-    monkeypatch.setattr(widgets, "confirm", lambda *a, **k: asked.append(a[2]) or answers.pop(0))
+
+    def fake_exec(cancel_dialog):
+        # v2.9.3: «لغو سفارش» asks in its own dialog (with an optional reason)
+        asked.append(" ".join(label.text() for label in cancel_dialog.findChildren(QLabel)))
+        return answers.pop(0)
+
+    monkeypatch.setattr(orders.CancelOrderDialog, "exec", fake_exec)
     dialog = OrderDetailDialog(context, order, None)
     assert dialog.cancel_button.isEnabled()
     dialog._cancel_order()                                   # «خیر»

@@ -249,7 +249,8 @@ def offer_purchase_price(
     payload = payload or StockConfirmIn()
     row = _request_or_404(db, request_id, who)
     return request_out(db, who, purchase.offer_price(db, reader, settings, who, row,
-                                                     payload.kala_code, payload.price_rial))
+                                                     payload.kala_code, payload.price_rial,
+                                                     payload.note))
 
 
 @router.post("/item-requests/{request_id}/customer-answer")

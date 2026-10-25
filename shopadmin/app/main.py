@@ -580,6 +580,13 @@ class ShopAdminApp(QObject):
             self.main_window.showMaximized() if maximized else self.main_window.show()
             self.main_window.reset_activity()
             QTimer.singleShot(50, self.main_window.check_server)
+        # v2.9.3: a dialog that chose the look («اعلان‌ها و ظاهر») stays in front
+        from PySide6.QtWidgets import QApplication, QDialog
+
+        for widget in QApplication.topLevelWidgets():
+            if isinstance(widget, QDialog) and widget.isVisible():
+                widget.raise_()
+                widget.activateWindow()
         log.info("look applied without a restart (%s, %s, %s)", palette, mode, effects)
 
     def restart_application(self) -> None:

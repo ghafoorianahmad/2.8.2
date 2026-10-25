@@ -15,7 +15,7 @@ from .. import server_setup as setup
 from ..persian import to_english_digits, to_persian_digits
 from . import theme, widgets
 from .async_utils import run_async
-from .rtl import RIGHT
+from .rtl import RIGHT, mark_ltr
 
 ERRORS_FA = {
     "no_connection": "به تلگرام وصل نشد. یک پراکسی سالم در خانهٔ «پراکسی» بنویسید یا در "
@@ -53,7 +53,7 @@ def _field(placeholder: str, *, password: bool = False) -> QLineEdit:
     field = QLineEdit()
     field.setPlaceholderText(placeholder)
     field.setMinimumHeight(38)
-    field.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+    mark_ltr(field)
     field.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
     if password:
         field.setEchoMode(QLineEdit.EchoMode.Password)

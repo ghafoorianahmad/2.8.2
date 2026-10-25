@@ -28,6 +28,7 @@ from ..schemas import ShipIn
 from ..schemas import (
     ApproveUserIn,
     AssignIn,
+    OrderCancelIn,
     OrderOut,
     PaymentInfoIn,
     PersonMatch,
@@ -727,18 +728,22 @@ STAFF_CANCELLABLE = ("awaiting_payment", "receipt_uploaded")
 @router.post("/orders/{order_id}/cancel", response_model=OrderOut)
 def cancel_order(
     order_id: int,
+    payload: OrderCancelIn | None = None,
     db: OwnDB = Depends(deps.get_db),
     who: Identity = CAN_CANCEL,
 ) -> OrderOut:
     """Staff cancel an order that is not confirmed yet. Local only: «سازه حساب»
-    is never touched; an order already written there raises a ShopAdmin warning."""
+    is never touched; an order already written there raises a ShopAdmin warning.
+    v2.9.3: the bot tells the customer (``order_cancelled_by_staff``, with the
+    optional short reason) and its old buttons for the order stop working."""
+    note = " ".join(str((payload or OrderCancelIn()).reason or "").split())[:200]
     with db.reservation_guard():
         order = _visible_order(db, who, order_id)
         if order["status"] not in STAFF_CANCELLABLE:
             raise HTTPException(status.HTTP_409_CONFLICT,
                                 f"Order in status {order['status']}; cannot be cancelled")
         ownership.take(db, who, "order", order)
-        db.cancel_order_any(order_id, "staff", STAFF_CANCELLABLE)
+        db.cancel_order_any(order_id, "staff", STAFF_CANCELLABLE, note)
     db.audit(who.actor, "order_staff_cancel", f"order id={order_id}")
     db.add_event("order_cancelled_by_staff", order_id, who.actor)
     ownership.log(db, who, ownership.A_CANCEL, "order", order)

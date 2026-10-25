@@ -4,11 +4,13 @@ Option cards like the equipment control panel's theme cards: each palette shows
 its side-bar gradient and accent, so the choice is visible before it is made.
 The look is stored in this computer's local settings (``theme_palette``,
 ``theme_mode``, ``theme_effects``); v2.9.1: it is applied at once (the main
-window is rebuilt on the same page), no restart.
+window is rebuilt on the same page), no restart. v2.9.3: a click on a card is
+enough: the choice is saved and applied to the whole program at once (no
+«ذخیره» button, no restart).
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QCursor, QLinearGradient, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QButtonGroup, QGridLayout, QPushButton, QVBoxLayout, QWidget
 
@@ -113,14 +115,32 @@ class OptionCard(QPushButton):
         self.setMinimumHeight(48)
 
 
+def apply_look_now(context) -> None:
+    """v2.9.3: the saved look on the whole program, right now: the main window is
+    rebuilt on the same page (``context.apply_look``, set by the program for every
+    signed-in window); without it (tests) the look is only saved."""
+    apply_now = getattr(context, "apply_look", None) if context is not None else None
+    if apply_now is not None:
+        QTimer.singleShot(0, apply_now)
+
+
 class AppearancePicker(QWidget):
-    """Palette / mode / effects as three rows of option cards."""
+    """Palette / mode / effects as three rows of option cards. v2.9.3 (``context``
+    given): a click saves and applies the look at once; ``applied`` is emitted."""
 
     changed = Signal()
+    applied = Signal()
+    #: clicks closer than this are applied once (the window is rebuilt each time)
+    APPLY_DELAY_MS = 120
 
-    def __init__(self, store, parent: QWidget | None = None) -> None:
+    def __init__(self, store, parent: QWidget | None = None, *, context=None) -> None:
         super().__init__(parent)
         self.store = store
+        self.context = context
+        self._apply_timer = QTimer(self)
+        self._apply_timer.setSingleShot(True)
+        self._apply_timer.setInterval(self.APPLY_DELAY_MS)
+        self._apply_timer.timeout.connect(self.apply_now)
         self.initial = saved_look(store)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         root = QVBoxLayout(self)
@@ -156,10 +176,13 @@ class AppearancePicker(QWidget):
                 grid.setColumnStretch(column, 1)
                 self.cards[key][value] = card
             group.buttonToggled.connect(lambda *_: self.changed.emit())
+            # v2.9.3: a click (never a programmatic select) saves and applies
+            group.buttonClicked.connect(lambda *_: self._clicked())
             root.addLayout(grid)
         self.note = widgets.label(
-            "ظاهر تازه با «ذخیره» همان لحظه اعمال می‌شود. انتخاب فقط روی همین رایانه ذخیره "
-            "می‌شود.", name="Muted", wrap=True)
+            "با کلیک روی هر گزینه، ظاهر همان لحظه روی کل برنامه اعمال و ذخیره می‌شود؛ "
+            "دکمهٔ ذخیره یا باز کردن دوبارهٔ برنامه لازم نیست. انتخاب فقط روی همین رایانه "
+            "است.", name="Muted", wrap=True)
         root.addWidget(self.note)
 
     def value(self, key: str) -> str:
@@ -184,6 +207,17 @@ class AppearancePicker(QWidget):
         save_look(self.store, *self.values())
         self.initial = self.values()
         return changed
+
+    def _clicked(self) -> None:
+        if self.context is not None and self.has_changed():
+            self._apply_timer.start()
+
+    def apply_now(self) -> None:
+        """Save the chosen look and apply it to the whole program."""
+        self._apply_timer.stop()
+        if self.save():
+            apply_look_now(self.context)
+            self.applied.emit()
 
 
 def offer_restart(parent: QWidget, context) -> None:

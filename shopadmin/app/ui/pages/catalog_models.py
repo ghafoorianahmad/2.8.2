@@ -1,6 +1,9 @@
 """صفحهٔ «مدل‌های سایت» — نگاشت کد مدل دائمی سایت (slug) به کالاهای حسابداری (§9a).
 
-* مدل‌ها از فایل ``products.js`` سایت وارد می‌شوند (کد مدل، نام، برند، نام‌های دیگر).
+* v2.9.3: سرور مدل‌ها را ماهی یک بار خودش از سایت زنده می‌خواند (و با «خواندن از سایت
+  اکنون»)؛ ورود دستی products.js دیگر لازم نیست. گوشی‌ها از راه ردیف لیست قیمت و نگاشت
+  همان ردیف خودکار وصل می‌شوند؛ لوازم جانبی با نام. فقط تطبیق نامطمئن «پیشنهاد خودکار»
+  می‌شود و منتظر تأیید مدیر می‌ماند.
 * برای هر مدل، کالاهای حسابداری با جستجوی فازی پیشنهاد می‌شوند و مالک یک‌بار تأیید می‌کند.
 * بررسی شبانه: تغییر کوچک نام = «نام تغییرکرده» (مدل نمایش داده می‌شود)؛ کالای گم‌شده یا
   تغییر بزرگ نام = مدل تا «تأیید» پنهان می‌شود و هشدار بله می‌رود.
@@ -8,14 +11,12 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
-    QFileDialog,
     QHBoxLayout,
     QLineEdit,
     QListWidget,
@@ -30,6 +31,7 @@ from ...persian import format_int, format_shamsi, to_persian_digits
 from ...permissions import CATALOG_MANAGE
 from .. import theme, widgets
 from ..base_page import BasePage
+from ..rtl import mark_ltr
 
 NL = chr(10)
 MODEL_HEADERS = ("برند", "مدل", "کد مدل", "وضعیت", "کالاها")
@@ -38,13 +40,16 @@ ITEM_HEADERS = ("کد کالا", "برچسب برای مشتری", "نام تأ�
 
 FILTERS = (
     ("review", "پنهان (منتظر تأیید)"),
+    ("suggested", "پیشنهاد خودکار (منتظر تأیید)"),
     ("drifted", "نام تغییرکرده"),
     ("unmapped", "نگاشت‌نشده"),
     ("ok", "فعال"),
     ("all", "همهٔ مدل‌ها"),
 )
-STATUS_FA = {"ok": "فعال", "review": "پنهان — منتظر تأیید", "unmapped": "نگاشت‌نشده"}
-STATUS_COLOR = {"ok": "success", "review": "danger", "unmapped": "warning"}
+STATUS_FA = {"ok": "فعال", "review": "پنهان — منتظر تأیید", "unmapped": "نگاشت‌نشده",
+             "suggested": "پیشنهاد خودکار — منتظر تأیید"}
+STATUS_COLOR = {"ok": "success", "review": "danger", "unmapped": "warning",
+                "suggested": "pending"}
 ITEM_STATE_FA = {"ok": "درست", "drifted": "نام تغییرکرده", "missing": "پیدا نشد / تغییر زیاد"}
 def item_state_color(state: str) -> str | None:
     """v2.9.0: read at run time (light / dark is chosen after this module loads)."""
@@ -81,8 +86,19 @@ def parse_products_js(text: str) -> list[dict]:
     return out
 
 
+def has_suggestion(model: dict) -> bool:
+    """v2.9.3: an automatic match that waits for a manager (no product yet)."""
+    return bool(model.get("suggestions")) and not model.get("item_count")
+
+
+def shown_status(model: dict) -> str:
+    return "suggested" if has_suggestion(model) else str(model.get("status") or "")
+
+
 def model_matches(model: dict, key: str, text: str = "") -> bool:
     if key == "drifted" and not model.get("drifted_count"):
+        return False
+    if key == "suggested" and not has_suggestion(model):
         return False
     if key in ("review", "unmapped", "ok") and model.get("status") != key:
         return False
@@ -107,6 +123,25 @@ def filter_label(key: str, counts: dict) -> str:
     title = dict(FILTERS)[key]
     count = counts.get(key)
     return f"{title} ({to_persian_digits(count)})" if count is not None else title
+
+
+def site_read_fa(last: Optional[dict]) -> str:
+    """v2.9.3: the last read of the live site, in one line."""
+    if not last:
+        return "مدل‌ها هنوز از سایت خوانده نشده‌اند (سرور ماهی یک بار خودش می‌خواند)."
+    when = format_shamsi(last.get("at"))
+    if not last.get("ok"):
+        return f"خواندن سایت ناموفق بود ({when}): {last.get('error') or '—'}؛ فردا دوباره."
+    mapping = last.get("mapping") or {}
+    text = (f"آخرین خواندن سایت: {when} — {format_int(last.get('found') or 0)} مدل "
+            f"({format_int(last.get('added') or 0)} تازه)")
+    if mapping and "phones" in mapping:
+        text += (f"؛ گوشی: {format_int(mapping.get('phones_mapped') or 0)} از "
+                 f"{format_int(mapping.get('phones') or 0)} وصل")
+        if mapping.get("accessories"):
+            text += (f"، لوازم جانبی: {format_int(mapping.get('accessories_mapped') or 0)} از "
+                     f"{format_int(mapping.get('accessories') or 0)}")
+    return text
 
 
 def check_summary_fa(last: Optional[dict]) -> str:
@@ -150,13 +185,15 @@ class CatalogModelsPage(BasePage):
         self.search = widgets.SearchBox("جستجوی مدل، کد مدل یا برند…")
         self.search.textChanged.connect(lambda _t: self._render_models())
         bar.addWidget(self.search)
-        self.import_button = widgets.button("ورود مدل‌ها از سایت…", icon_name="download",
-                                            on_click=self._import_file,
-                                            tooltip="فایل assets/products.js سایت را انتخاب کنید.")
+        # v2.9.3: the server reads the live site itself (monthly); no file import
+        self.read_site_button = widgets.button(
+            "خواندن از سایت اکنون", icon_name="download", on_click=self._read_site,
+            tooltip="سرور فهرست مدل‌ها را همین حالا از سایت می‌خواند و خودکار وصل می‌کند.")
+        self.import_button = self.read_site_button        # older name (tests, docs)
         self.check_button = widgets.button("بررسی اکنون", icon_name="refresh",
                                            on_click=self._check_now,
                                            tooltip="همان بررسی شبانه، همین حالا.")
-        for b in (self.import_button, self.check_button):
+        for b in (self.read_site_button, self.check_button):
             b.setEnabled(self.can_manage)
             bar.addWidget(b)
         self.body.addWidget(bar_holder)
@@ -165,7 +202,8 @@ class CatalogModelsPage(BasePage):
         self.models_table = widgets.DataTable(MODEL_HEADERS, selectable_rows=True,
                                               key="catalog_models")
         self.models_table.set_empty_state(
-            "مدلی نیست", "با «ورود مدل‌ها از سایت» فایل products.js را وارد کنید.", "file")
+            "مدلی نیست", "«خواندن از سایت اکنون» را بزنید (سرور ماهی یک بار خودش می‌خواند).",
+            "file")
         self.models_table.setMinimumHeight(260)
         self.models_table.itemSelectionChanged.connect(self._on_model_selected)
         models_panel.body.addWidget(self.models_table, 1)
@@ -201,12 +239,21 @@ class CatalogModelsPage(BasePage):
                                              on_click=self._edit_aliases)
         self.confirm_button = widgets.button("تأیید و نمایش به مشتری", icon_name="eye",
                                              variant="success", on_click=self._confirm_model)
-        self._detail_buttons = (self.add_button, self.replace_button, self.accept_button,
-                                self.label_button, self.delete_button, self.aliases_button,
-                                self.confirm_button)
+        # v2.9.3: an automatic match that waits for a manager
+        self.accept_suggest_button = widgets.button(
+            "پذیرش پیشنهاد خودکار", icon_name="check", variant="success",
+            on_click=self._accept_suggestion)
+        self.dismiss_suggest_button = widgets.button("رد پیشنهاد", icon_name="close",
+                                                     on_click=self._dismiss_suggestion)
+        self._detail_buttons = (self.accept_suggest_button, self.add_button,
+                                self.replace_button, self.accept_button, self.label_button,
+                                self.delete_button, self.aliases_button, self.confirm_button,
+                                self.dismiss_suggest_button)
         for b in self._detail_buttons:
             b.setEnabled(False)
             actions.addWidget(b)
+        self.accept_suggest_button.setVisible(False)
+        self.dismiss_suggest_button.setVisible(False)
         detail_panel.body.addWidget(actions_holder)
         self.body.addWidget(detail_panel, 1)
 
@@ -243,15 +290,19 @@ class CatalogModelsPage(BasePage):
         self._counts = dict(payload.get("counts") or {})
         for i, (key, _title) in enumerate(FILTERS):
             self.filter_combo.setItemText(i, filter_label(key, self._counts))
-        self._update_banner(payload.get("last_check"))
+        self._update_banner(payload.get("last_check"), payload.get("last_site_read"))
         self._render_models()
         if self._selected_id is not None:
             self._load_detail(self._selected_id)
 
-    def _update_banner(self, last: Optional[dict]) -> None:
-        lines = [check_summary_fa(last)]
+    def _update_banner(self, last: Optional[dict], site: Optional[dict] = None) -> None:
+        lines = [site_read_fa(site), check_summary_fa(last)]
         review = self._counts.get("review") or 0
         unmapped = self._counts.get("unmapped") or 0
+        suggested = self._counts.get("suggested") or 0
+        if suggested:
+            lines.append(f"{to_persian_digits(suggested)} مدل پیشنهاد خودکار دارد و منتظر "
+                         "تأیید شماست (نمایش: «پیشنهاد خودکار»).")
         if review:
             lines.append(f"{to_persian_digits(review)} مدل از دید مشتری پنهان است تا آن را "
                          "بررسی و «تأیید» کنید.")
@@ -280,7 +331,7 @@ class CatalogModelsPage(BasePage):
                 table.set_cell(i, 0, str(m.get("brand") or "—"))
                 table.set_cell(i, 1, str(m.get("name") or ""), bold=True)
                 table.set_cell(i, 2, str(m.get("slug") or ""))
-                status = str(m.get("status") or "")
+                status = shown_status(m)
                 text = STATUS_FA.get(status, status)
                 if status == "ok" and m.get("drifted_count"):
                     text += " (نام تغییرکرده)"
@@ -322,6 +373,10 @@ class CatalogModelsPage(BasePage):
         if any(i.get("state") == "drifted" for i in self._items):
             hints.append("نام برخی کالاها در حسابداری کمی تغییر کرده؛ مدل نمایش داده می‌شود. "
                          "اگر درست است «پذیرش نام فعلی» را بزنید.")
+        if has_suggestion(model):
+            hints.append("پیشنهاد خودکار (مطمئن نبود؛ با «پذیرش پیشنهاد خودکار» وصل می‌شود): "
+                         + "، ".join(f"{s.get('name')} (کد {to_persian_digits(s.get('kala_code'))})"
+                                    for s in model.get("suggestions") or []))
         if model.get("aliases"):
             hints.append("نام‌های دیگر: " + "، ".join(str(model["aliases"]).splitlines()))
         self.detail_hint.setText(NL.join(hints))
@@ -329,6 +384,9 @@ class CatalogModelsPage(BasePage):
         for b in self._detail_buttons:
             b.setEnabled(self.can_manage)
         self.confirm_button.setEnabled(self.can_manage and status == "review")
+        suggested = has_suggestion(model)
+        self.accept_suggest_button.setVisible(suggested)
+        self.dismiss_suggest_button.setVisible(suggested)
 
     def _render_items(self) -> None:
         table = self.items_table
@@ -364,31 +422,32 @@ class CatalogModelsPage(BasePage):
             self.load()
         return done
 
-    def _import_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "فایل products.js سایت", "",
-                                              "products.js (*.js)")
-        if path:
-            self.import_from_path(path)
-
-    def import_from_path(self, path: str) -> None:
-        try:
-            text = Path(path).read_text(encoding="utf-8-sig")
-        except (OSError, UnicodeDecodeError):
-            self.notify_error("فایل خوانده نشد.")
-            return
-        models = parse_products_js(text)
-        if not models:
-            self.notify_error("مدلی در این فایل پیدا نشد؛ فایل assets/products.js سایت را انتخاب کنید.")
-            return
-
-        def done(result: dict) -> None:
-            self.notify_success(
-                f"{format_int(len(models))} مدل خوانده شد: {format_int(result.get('added') or 0)} "
-                f"جدید، {format_int(result.get('updated') or 0)} به‌روز شد.")
+    def _read_site(self) -> None:
+        """v2.9.3 «خواندن از سایت اکنون»: the server reads the live site and maps."""
+        def done(summary: dict) -> None:
+            self.notify_success(site_read_fa(summary))
             self.load()
 
-        self.run(lambda: self.context.api.import_catalog_models(models), on_success=done,
-                 busy_message="در حال ورود مدل‌ها…")
+        self.run(lambda: self.context.api.read_site_catalog(), on_success=done,
+                 busy_message="در حال خواندن مدل‌ها از سایت…")
+
+    def _accept_suggestion(self) -> None:
+        model = self._detail or {}
+        codes = [int(s.get("kala_code")) for s in model.get("suggestions") or []
+                 if s.get("kala_code")]
+        if not model or not codes:
+            return
+        model_id = int(model["id"])
+        self.run(lambda: self.context.api.answer_catalog_suggestion(model_id, codes),
+                 on_success=lambda _r: (self.notify_success("پیشنهاد پذیرفته شد."), self.load()))
+
+    def _dismiss_suggestion(self) -> None:
+        model = self._detail or {}
+        if not model:
+            return
+        model_id = int(model["id"])
+        self.run(lambda: self.context.api.answer_catalog_suggestion(model_id, None),
+                 on_success=lambda _r: self.load())
 
     def _check_now(self) -> None:
         def done(summary: dict) -> None:
@@ -539,7 +598,7 @@ class PickProductDialog(widgets.ResponsiveDialog):
         code_row.addWidget(widgets.label("کد کالا:"))
         self.code_input = QSpinBox()
         self.code_input.setRange(0, 2_000_000_000)
-        self.code_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        mark_ltr(self.code_input)
         self.code_input.setSpecialValueText("—")
         code_row.addWidget(self.code_input)
         code_row.addWidget(widgets.label("برچسب برای مشتری:"))
@@ -551,12 +610,10 @@ class PickProductDialog(widgets.ResponsiveDialog):
 
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
         root.addWidget(self.error_label)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(widgets.button("انصراف", on_click=self.reject))
-        buttons.addWidget(widgets.button("ذخیره", icon_name="check", variant="primary",
-                                         on_click=self._accept))
-        root.addLayout(buttons)
+        root.addLayout(widgets.footer(
+            widgets.button("ذخیره", icon_name="check", variant="primary",
+                           on_click=self._accept),
+            close=widgets.button("انصراف", on_click=self.reject)))
 
         candidates = list((item or {}).get("candidates") or [])
         if candidates:
@@ -628,12 +685,10 @@ class TextDialog(widgets.ResponsiveDialog):
             self.input = QLineEdit(value)
             self.input.setMaxLength(60)
         root.addWidget(self.input)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(widgets.button("انصراف", on_click=self.reject))
-        buttons.addWidget(widgets.button("ذخیره", icon_name="check", variant="primary",
-                                         on_click=self._accept))
-        root.addLayout(buttons)
+        root.addLayout(widgets.footer(
+            widgets.button("ذخیره", icon_name="check", variant="primary",
+                           on_click=self._accept),
+            close=widgets.button("انصراف", on_click=self.reject)))
 
     def _accept(self) -> None:
         widget = self.input

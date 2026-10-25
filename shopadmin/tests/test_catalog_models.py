@@ -288,20 +288,16 @@ def test_label_aliases_and_delete(ui_context, fake_api, admin_qapp, monkeypatch)
     page.close()
 
 
-def test_import_from_products_js_and_check_now(ui_context, fake_api, admin_qapp, tmp_path,
-                                               monkeypatch):
+def test_read_from_site_now_and_check_now(ui_context, fake_api, admin_qapp, monkeypatch):
+    """v2.9.3: no products.js file: «خواندن از سایت اکنون» asks the server."""
+    fake_api.site_models = cm.parse_products_js(SAMPLE_JS)
     page = _page(ui_context, admin_qapp)
-    path = tmp_path / "products.js"
-    path.write_text(SAMPLE_JS, encoding="utf-8")
-    page.import_from_path(str(path))
+    assert page.read_site_button.text() == "خواندن از سایت اکنون"
+    page._read_site()
     _pump(admin_qapp, page)
-    assert [m["slug"] for m in fake_api.catalog_imports[0]] == \
-        ["iphone-17-pro", "iphone-17", "galaxy-s26-plus"]
+    assert fake_api.site_reads == 1
     assert page.models_table.rowCount() == 3
-    bad = tmp_path / "other.js"
-    bad.write_text("var x = 1;", encoding="utf-8")
-    page.import_from_path(str(bad))
-    assert len(fake_api.catalog_imports) == 1
+    assert "آخرین خواندن سایت" in page.banner.text()
     shown = []
     monkeypatch.setattr("app.ui.widgets.info", lambda *a, **k: shown.append(a))
     page._check_now()
