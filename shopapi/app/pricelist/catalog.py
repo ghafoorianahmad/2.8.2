@@ -40,6 +40,7 @@ class PhoneCatalog:
                 "id": v["id"], "color": v["color"], "part": part,
                 "unit_price": float(price) if price else None,
                 "available": bool(price),
+                "price_held": bool(v.get("held")) and self.fresh,
             })
         return out
 
@@ -50,8 +51,10 @@ class PhoneCatalog:
         return None
 
     def sellable(self, code: int) -> bool:
-        """In the current valid list with at least one available color."""
-        return self.has(code) and any(v["available"] for v in self.colors(code))
+        """In the current valid list with at least one available color (v2.9.2: or a
+        color whose price waits for a manager: shown, only to be requested)."""
+        return self.has(code) and any(v["available"] or v["price_held"]
+                                      for v in self.colors(code))
 
     def overlay(self, product: dict) -> dict:
         """A product dict from the reader, priced from the list when mapped."""

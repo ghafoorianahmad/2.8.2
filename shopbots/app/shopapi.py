@@ -404,6 +404,18 @@ class ShopApiClient:
             json_body={"ok": bool(ok), "error": str(error or "")[:300]},
         )
 
+    async def admin_answer_offer(self, request_id: int, accept: bool,
+                                 price_rial: int = 0) -> dict | None:
+        """v2.9.2: the customer's «تأیید و خرید» / «نمی‌خواهم» to an offered price
+        (``price_rial``: the offer the buttons belong to; another one is refused)."""
+        body: dict = {"accept": bool(accept)}
+        if price_rial:
+            body["price_rial"] = int(price_rial)
+        return await self._request(
+            "POST", f"/admin/item-requests/{int(request_id)}/customer-answer",
+            key=self._settings.admin_api_key, json_body=body,
+        )
+
     async def admin_get_inquiry(self, inquiry_id: int) -> dict | None:
         return await self._request(
             "GET", f"/admin/inquiries/{int(inquiry_id)}", key=self._settings.admin_api_key

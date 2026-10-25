@@ -47,7 +47,11 @@ WORKER_STATE_KEYS = frozenset({
     "tg_price_last_id", "tg_proxy_collected_at", "tg_proxy_last_ids", "tg_status",
     # v2.9.1: the newest list post sent (id, edit, size) and the text posts sent
     "tg_price_version", "tg_price_notes",
+    # v2.9.2: the last proxy collection, and «جمع‌آوری اکنون» (asked / handled)
+    "tg_collect_info", "tg_collect_request", "tg_collect_done",
 })
+#: v2.9.2: ShopAdmin «جمع‌آوری اکنون» -> the worker collects within seconds
+COLLECT_REQUEST_KEY = WORKER_STATE_PREFIX + "tg_collect_request"
 #: Alerts the worker may raise (each at most once per ALERT_REPEAT).
 WORKER_ALERTS = frozenset({"telegram_login_required", "telegram_unreachable",
                            # v2.9.0: a price-list PDF of the channel could not be downloaded
@@ -655,6 +659,16 @@ def add_proxy(
         row = ProxyPool(db).set_state(row["id"], "main")
     db.audit(who.actor, "proxy_add", f"proxy id={row['id']}")
     return {**_proxy_out(row, with_secret=False), "created": created}
+
+
+@router.post("/admin/proxies/collect")
+def collect_proxies_now(db: OwnDB = Depends(deps.get_db), who: Identity = CAN_PROXIES) -> dict:
+    """v2.9.2 «جمع‌آوری اکنون»: the Telegram reader reads the proxy channels and
+    tests the new links at once (it looks for this request every 20 seconds)."""
+    ts = now_utc().isoformat(timespec="seconds")
+    db.set_state(COLLECT_REQUEST_KEY, ts, who.actor)
+    db.audit(who.actor, "proxy_collect_now", "")
+    return {"requested_at": ts}
 
 
 @router.post("/admin/proxies/{proxy_id}/state")

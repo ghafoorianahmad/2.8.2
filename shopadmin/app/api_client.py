@@ -910,10 +910,12 @@ class ShopApiClient:
 
     def confirm_purchase_stock(self, request_id: int, kala_code: int | None = None,
                                price_rial: int | None = None) -> dict:
-        """«تأیید موجودی»: a normal order awaiting the customer's payment."""
+        """v2.9.2 «تأیید موجودی» (list price) or a typed price: the price goes to the
+        customer, who confirms in the bot (the order is created then). Returns the
+        request."""
         body = {"kala_code": int(kala_code) if kala_code else None,
                 "price_rial": int(price_rial) if price_rial else None}
-        return self._request("POST", f"/admin/item-requests/{int(request_id)}/confirm-stock",
+        return self._request("POST", f"/admin/item-requests/{int(request_id)}/offer",
                              json_body=body) or {}
 
     def mark_purchase_unavailable(self, request_id: int) -> dict:
@@ -958,6 +960,10 @@ class ShopApiClient:
 
     def delete_proxy(self, proxy_id: int) -> None:
         self._request("DELETE", f"/admin/proxies/{int(proxy_id)}")
+
+    def collect_proxies_now(self) -> dict:
+        """v2.9.2 «جمع‌آوری اکنون»: the Telegram reader collects within seconds."""
+        return self._request("POST", "/admin/proxies/collect") or {}
 
     def test_connection(self) -> SystemInfo:
         """Health check + system info (needs a signed-in session)."""

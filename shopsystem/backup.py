@@ -324,6 +324,17 @@ def prune(folder: Path, suffix: str, keep: int) -> list[Path]:
 # --------------------------------------------------------------------------
 # the daily job
 # --------------------------------------------------------------------------
+def offsite_dir(raw: Optional[str]) -> str:
+    """``BACKUP_COPY_DIR``; v2.9.2: a share of this very computer is written through
+    its local folder (the service account is refused on its own share)."""
+    text = str(raw or "").strip()
+    try:
+        from localshare import local_path_for
+        return local_path_for(text) or text
+    except Exception:  # noqa: BLE001 - never stop the backup over the lookup
+        return text
+
+
 @dataclass
 class BackupConfig:
     hour: int = DEFAULT_HOUR
@@ -343,7 +354,7 @@ class BackupConfig:
         enabled = str(values.get("BACKUP_ENABLED", "true")).strip().lower() not in {"0", "false", "no", "off"}
         return cls(hour=number("BACKUP_HOUR", DEFAULT_HOUR, 0, 23),
                    keep_days=number("BACKUP_KEEP_DAYS", DEFAULT_KEEP_DAYS, 1, 365),
-                   copy_dir=str(values.get("BACKUP_COPY_DIR", "") or "").strip(),
+                   copy_dir=offsite_dir(values.get("BACKUP_COPY_DIR")),
                    passphrase=str(values.get("BACKUP_PASSPHRASE", "") or ""),
                    enabled=enabled)
 

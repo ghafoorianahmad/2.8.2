@@ -171,7 +171,7 @@ def test_purchase_request_row_and_stock_confirm(ui_context, fake_api, admin_qapp
     row = _purchase(fake_api)
     page = page_mod.ItemRequestsPage(make_context_with_role(ui_context, ROLE_SUPER_ADMIN))
     _render_page(admin_qapp, page)
-    assert page.table.item(0, 2).text() == "درخواست خرید"
+    assert page.table.item(0, 2).text() == "درخواست خرید - استعلام قیمت"
     product = page.table.item(0, page_mod.COL_PRODUCT).text()
     assert "Silver" in product and "CHA" in product
     dialog = page_mod.ItemRequestDialog(page.context, row)
@@ -190,17 +190,13 @@ def test_purchase_request_row_and_stock_confirm(ui_context, fake_api, admin_qapp
     monkeypatch.setattr(page_mod, "StockConfirmDialog", Confirm)
     monkeypatch.setattr(page_mod.widgets, "success", lambda *a, **k: None)
     monkeypatch.setattr(page_mod.widgets, "info", lambda *a, **k: None)
-    from app.ui.pages import orders as orders_mod
-
-    opened = []
-    # v2.8.2: the payment-details form opens for the new order
-    monkeypatch.setattr(orders_mod, "send_payment_info",
-                        lambda _p, _c, order: opened.append(order) or True)
     dialog.confirm_stock()
     _pump(admin_qapp)
     assert fake_api.stock_confirms == [{"id": 31, "kala_code": 600, "price_rial": 1_100_000_000}]
-    assert dialog.item["outcome"] == "confirmed" and not dialog.stock_button.isVisibleTo(dialog)
-    assert opened and opened[0].get("id")
+    # v2.9.2: the price is with the customer; it may be sent again until they answer
+    assert dialog.item["outcome"] == "offered" and dialog.stock_button.isVisibleTo(dialog)
+    assert dialog.stock_button.text() == "ارسال قیمت دوباره"
+    assert "منتظر «تأیید و خرید»" in dialog.outcome_label.text()
 
 
 def test_stock_confirm_dialog_needs_a_product_when_unmapped(admin_qapp):
@@ -214,6 +210,20 @@ def test_stock_confirm_dialog_needs_a_product_when_unmapped(admin_qapp):
     dialog.price_input.setText("")
     dialog._accept()
     assert dialog.kala_code == 600 and dialog.price is None
+
+
+def test_stock_confirm_dialog_needs_a_price_without_a_list_price(admin_qapp):
+    """v2.9.2: no list price (or a price waiting for the manager): type one."""
+    from app.ui.pages.item_requests import StockConfirmDialog
+
+    dialog = StockConfirmDialog(None, {"kind": "purchase", "kala_code": 600,
+                                       "price_rial": None, "product_name": "x"})
+    assert not dialog.list_button.isVisibleTo(dialog)
+    dialog._accept()
+    assert dialog.error_label.isVisibleTo(dialog) and dialog.price is None
+    dialog.price_input.setText("۵۲۵٬۰۰۰٬۰۰۰")
+    dialog._accept()
+    assert dialog.price == 525_000_000
 
 
 def test_unavailable_closes_the_request(ui_context, fake_api, admin_qapp, monkeypatch):

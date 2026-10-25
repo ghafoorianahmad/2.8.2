@@ -23,6 +23,9 @@ class VariantOut(BaseModel):
     part: str = ""
     unit_price: Optional[float] = None   # Rial; None = no price (inquiry only)
     available: bool
+    #: v2.9.2: the list changed this price by more than PRICE_GUARD_PCT (likely a
+    #: misread): no price until a manager approves -> «درخواست خرید - استعلام قیمت»
+    price_held: bool = False
 
 
 class ProductOut(BaseModel):
@@ -454,6 +457,16 @@ class ItemRequestOut(BaseModel):
     qty: float = 1
     outcome: str = ""
     order_id: Optional[int] = None
+    #: v2.9.2: the price offered to the customer (waits for «تأیید و خرید»)
+    offer_price_rial: Optional[int] = None
+    offered_at: Optional[str] = None
+
+
+class OfferAnswerIn(BaseModel):
+    """v2.9.2: the customer's answer in the bot to an offered price (service key)."""
+    accept: bool
+    #: the offer the buttons belong to (a newer offer replaced it -> refused)
+    price_rial: Optional[int] = Field(default=None, gt=0)
 
 
 class ItemRequestStatusIn(BaseModel):
@@ -478,6 +491,7 @@ class ItemRequestMessageOut(BaseModel):
     created_at: str
     created_by: str = ""
     sent_at: Optional[str] = None
+    purpose: str = ""
 
 
 class ItemRequestMessageDelivery(ItemRequestMessageOut):
@@ -487,6 +501,12 @@ class ItemRequestMessageDelivery(ItemRequestMessageOut):
     product_name: str = ""
     request_text: str = ""
     kind: str = "unavailable"
+    #: v2.9.2: ``offer`` = the price offer (the bot adds «تأیید و خرید» / «نمی‌خواهم»)
+    color: str = ""
+    part: str = ""
+    qty: float = 1
+    offer_price_rial: Optional[int] = None
+    outcome: str = ""
 
 
 class ItemRequestMessageResultIn(BaseModel):

@@ -421,6 +421,11 @@ MIGRATIONS = (
     ("price_list_rows", "pending_price_rial", "INTEGER"),
     ("price_list_rows", "pending_estimated", "INTEGER NOT NULL DEFAULT 0"),
     ("price_list_rows", "pending_source", "TEXT NOT NULL DEFAULT ''"),     # list | correction
+    # v2.9.2: «درخواست خرید - استعلام قیمت»: staff offer a price, the customer
+    # answers in the bot («تأیید و خرید» -> order); outcome 'offered' / 'declined'
+    ("item_requests", "offer_price_rial", "INTEGER"),
+    ("item_requests", "offered_at", "TEXT"),
+    ("item_request_messages", "purpose", "TEXT NOT NULL DEFAULT ''"),     # '' | offer
 )
 
 #: Item request kinds (v2.6.1).
@@ -955,12 +960,13 @@ class OwnDB:
             return self.get_item_request(request_id)
 
     # ---- staff replies to item requests (v2.6.1) ----
-    def add_item_request_message(self, request_id: int, text: str, actor: str) -> dict:
+    def add_item_request_message(self, request_id: int, text: str, actor: str,
+                                 purpose: str = "") -> dict:
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO item_request_messages (request_id, text, created_at, created_by) "
-                "VALUES (?,?,?,?)",
-                (request_id, text, now_iso(), actor),
+                "INSERT INTO item_request_messages (request_id, text, created_at, created_by, "
+                "purpose) VALUES (?,?,?,?,?)",
+                (request_id, text, now_iso(), actor, purpose),
             )
             self._commit()
             return self.get_item_request_message(cur.lastrowid)
@@ -969,6 +975,7 @@ class OwnDB:
         with self._lock:
             return self._fetchone(
                 "SELECT m.*, r.product_name, r.text AS request_text, r.kind, "
+                "r.color, r.part, r.qty, r.offer_price_rial, r.outcome, "
                 "u.platform, u.chat_id FROM item_request_messages m "
                 "JOIN item_requests r ON r.id = m.request_id "
                 "JOIN users u ON u.id = r.user_id WHERE m.id=?",
@@ -1014,7 +1021,7 @@ class OwnDB:
     def update_item_request(self, request_id: int, **fields) -> dict | None:
         """v2.8.0: purchase-request outcome / mapping (known columns only)."""
         allowed = {"status", "handled_at", "handled_by", "outcome", "order_id", "kala_code",
-                   "mapping_id", "price_rial"}
+                   "mapping_id", "price_rial", "offer_price_rial", "offered_at", "product_name"}
         sets = {k: v for k, v in fields.items() if k in allowed}
         with self._lock:
             if sets:

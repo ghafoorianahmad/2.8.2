@@ -44,6 +44,11 @@ K_STATUS = "tg_status"
 K_PRICE_VERSION = "tg_price_version"
 #: v2.9.1: text posts after the list already sent ({channel:id: version})
 K_PRICE_NOTES = "tg_price_notes"
+#: v2.9.2: the last collection (shown on «سرور فروشگاه» also after a restart) and
+#: «جمع‌آوری اکنون» from ShopAdmin (request time / the request already handled)
+K_COLLECT_INFO = "tg_collect_info"
+K_COLLECT_REQUEST = "tg_collect_request"
+K_COLLECT_DONE = "tg_collect_done"
 
 ROLE_PRICELIST = "pricelist"
 ROLE_PROXY = "proxy"
@@ -59,6 +64,11 @@ POOL_SPARE = 2
 REFILL_AFTER = timedelta(hours=1)
 #: How often the collection is considered (it decides itself whether it is due).
 COLLECT_CHECK_SEC = 30 * 60
+#: v2.9.2: right after a start a short pool is refilled at once, unless the last
+#: collection is this recent (a restart loop must not hammer the channel)
+START_REFILL_AFTER = timedelta(minutes=10)
+#: v2.9.2: how often «جمع‌آوری اکنون» from ShopAdmin is looked for
+REQUEST_CHECK_SEC = 20
 #: v2.9.1: the newest posts of a proxy channel read at each collection
 PROXY_SCAN = 100
 #: Consecutive download failures of a price-list PDF before the owner is alerted.
@@ -104,7 +114,9 @@ class Worker:
         self._login_missing = False
         self._probe_offset = 0
         self._next = {"health": 0.0, "price": 0.0, "collect": 0.0, "probe": 0.0,
-                      "channels": 0.0}
+                      "channels": 0.0, "request": 0.0}
+        #: v2.9.2: the first collection check after a start
+        self._first_collect = True
         self._roles: list[dict] | None = None
         self._roles_at = 0.0
         self._paused_until = 0.0
@@ -390,8 +402,11 @@ class Worker:
                                at=self._now().isoformat(timespec="seconds"))
 
     # ---- proxy channels -------------------------------------------------------------
-    def collect_due(self, collected_at: str, healthy: int | None = None) -> bool:
-        """Daily (TG_PROXY_COLLECT_HOURS), or hourly while the pool is short."""
+    def collect_due(self, collected_at: str, healthy: int | None = None, *,
+                    first: bool = False) -> bool:
+        """Daily (TG_PROXY_COLLECT_HOURS), or hourly while the pool is short.
+        v2.9.2: right after a start (``first``) a short pool does not wait for the
+        hour of the previous run (2.9.1 waited up to an hour after an upgrade)."""
         try:
             last = datetime.fromisoformat(collected_at)
         except ValueError:
@@ -399,7 +414,8 @@ class Worker:
         elapsed = self._now() - last
         if elapsed >= timedelta(hours=self.s.proxy_collect_hours):
             return True
-        return healthy is not None and healthy < self.s.pool_size and elapsed >= REFILL_AFTER
+        short = healthy is not None and healthy < self.s.pool_size
+        return short and elapsed >= (START_REFILL_AFTER if first else REFILL_AFTER)
 
     async def healthy_count(self) -> int:
         """Usable proxies that worked at their last check."""
@@ -447,11 +463,20 @@ class Worker:
         """New proxy links -> tested -> the working ones into the pool. Returns how
         many working proxies were added."""
         channels = await self.proxy_channels()
-        if not channels:
-            return 0
         state = await self.api.get_state()
+        first, self._first_collect = self._first_collect, False
+        if not self.collect_info:
+            self.collect_info = self._stored_collect_info(state)
+        if not channels:
+            if force:
+                self.collect_info = {"at": self._now().isoformat(timespec="seconds"),
+                                     "found": 0, "tested": 0, "added": 0, "via": "",
+                                     "error": "no proxy channel (TG_PROXY_CHANNELS / roles)"}
+                await self.api.put_json_state(K_COLLECT_INFO, self.collect_info)
+            return 0
         healthy = await self.healthy_count()
-        if not force and not self.collect_due(state.get(K_COLLECTED_AT) or "", healthy):
+        if not force and not self.collect_due(state.get(K_COLLECTED_AT) or "", healthy,
+                                              first=first):
             return 0
         try:
             last_ids = json.loads(state.get(K_PROXY_LAST_IDS) or "{}")
@@ -475,9 +500,29 @@ class Worker:
         self.collect_info = {"at": self._now().isoformat(timespec="seconds"), "found": len(found),
                              "tested": tested, "added": added, "via": ",".join(ways),
                              "error": "; ".join(errors)[:300] if not found else ""}
+        await self.api.put_json_state(K_COLLECT_INFO, self.collect_info)
         if added and not self.tg.connected:
             self._next["health"] = 0.0          # a new proxy may get us connected now
         return added
+
+    @staticmethod
+    def _stored_collect_info(state: dict) -> dict:
+        try:
+            value = json.loads(state.get(K_COLLECT_INFO) or "{}")
+        except ValueError:
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    async def request_tick(self) -> bool:
+        """v2.9.2 «جمع‌آوری اکنون» in ShopAdmin: collect now (each request once)."""
+        state = await self.api.get_state()
+        wanted = state.get(K_COLLECT_REQUEST) or ""
+        if not wanted or wanted == (state.get(K_COLLECT_DONE) or ""):
+            return False
+        await self.api.put_state(K_COLLECT_DONE, wanted)
+        log.info("proxy collection requested from ShopAdmin")
+        await self.collect_tick(force=True)
+        return True
 
     async def _test_and_add(self, found: list[tuple[str, str]], healthy: int) -> tuple[int, int]:
         """Test links the server never saw, until the pool holds pool_size + spare
@@ -560,12 +605,14 @@ class Worker:
             # v2.9.0: also without a connection (web preview + anonymous tests)
             ("collect", COLLECT_CHECK_SEC, self.collect_tick, False),
             ("probe", self.s.probe_interval_sec, self.probe_tick, True),
+            ("request", REQUEST_CHECK_SEC, self.request_tick, False),
         ):
             if now < self._next[name] or (needs_connection and not connected):
                 continue
             self._next[name] = now + interval
+            result = None
             try:
-                await job()
+                result = await job()
             except ApiError as exc:
                 log.warning("%s: %s", name, exc)
             except Exception as exc:  # noqa: BLE001 - FloodWait, network, ...
@@ -575,7 +622,7 @@ class Worker:
                 log.warning("%s failed (%s)", name, type(exc).__name__)
                 if name != "probe":
                     self._next["health"] = 0.0      # check the connection now
-            if name in ("price", "collect"):
+            if name in ("price", "collect") or (name == "request" and result):
                 await self.publish_status()
 
     def price_interval(self) -> int:

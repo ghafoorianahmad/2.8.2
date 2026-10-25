@@ -115,6 +115,17 @@ def _tg_status(db: OwnDB) -> dict | None:
                            ("collect", ("at", "found", "tested", "added", "via", "error"))):
         raw = value.get(nested)
         out[nested] = {k: raw.get(k) for k in fields} if isinstance(raw, dict) else {}
+    if not out["collect"].get("at"):
+        # v2.9.2: the last collection survives a restart of the reader
+        try:
+            stored = json.loads(db.get_state("worker:tg_collect_info", "") or "{}")
+        except ValueError:
+            stored = {}
+        if isinstance(stored, dict) and stored.get("at"):
+            out["collect"] = {k: stored.get(k) for k in
+                              ("at", "found", "tested", "added", "via", "error")}
+    asked = db.get_state("worker:tg_collect_request", "")
+    out["collect"]["requested"] = bool(asked) and asked != db.get_state("worker:tg_collect_done", "")
     return out
 
 

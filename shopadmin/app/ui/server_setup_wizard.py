@@ -450,6 +450,8 @@ class ServerSetupWizard(QWidget):
             name="Muted", wrap=True))
         form = _form()
         self.backup_dir = _line(r"\\PC\ShopBackups")
+        # v2.9.2: a share of this computer -> its local folder (the service can write)
+        self.backup_dir.editingFinished.connect(self._local_backup_folder)
         form.addRow(widgets.label("پوشهٔ مقصد:"), self.backup_dir)
         pass_row = QHBoxLayout()
         self.backup_pass = _line(f"حداقل {to_persian_digits(setup.BACKUP_PASSPHRASE_MIN)} نویسه",
@@ -499,7 +501,24 @@ class ServerSetupWizard(QWidget):
             return "برای پشتیبان بیرون از سرور یک عبارت رمز لازم است («ساخت عبارت تازه»)."
         return ""
 
+    def _local_backup_folder(self) -> bool:
+        """v2.9.2: a share of THIS computer (\\\\SERVER\\Share) -> the share's own
+        folder. The service account «NT SERVICE\\ShopServer» is refused on its own
+        computer's share but can be granted the folder itself. True = changed."""
+        from .. import localshare
+
+        folder = self.backup_dir.text().strip()
+        local = localshare.local_path_for(folder)
+        if not local or local == folder:
+            return False
+        self.backup_dir.setText(local)
+        self._backup_message(
+            f"این پوشهٔ اشتراکی روی همین رایانهٔ سرور است؛ مسیر محلی آن «{local}» گذاشته شد تا "
+            "حساب سرویس سرور بتواند در آن بنویسد (دسترسی پس از ذخیره خودکار داده می‌شود).", None)
+        return True
+
     def _test_backup_folder(self) -> None:
+        self._local_backup_folder()
         folder = self.backup_dir.text().strip()
         if not folder:
             self._backup_message("ابتدا پوشهٔ مقصد را وارد کنید.", False)
@@ -1091,6 +1110,7 @@ class ServerSetupWizard(QWidget):
         extra["tg_api_preset"] = self.tg_preset()
         extra["tg_price_channel"] = self.tg_channel.text().strip().lstrip("@") or DEFAULT_PRICE_CHANNEL
         # v2.9.1: the off-server backup copy (an untouched passphrase = keep the saved one)
+        self._local_backup_folder()
         extra["backup_copy_dir"] = self.backup_dir.text().strip()
         extra["backup_keep_days"] = str(self.backup_keep.value())
         extra["backup_passphrase"] = self.backup_pass.text().strip() or None

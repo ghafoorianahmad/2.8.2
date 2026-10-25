@@ -129,6 +129,7 @@ class FakeShopApi:
         self.archived_requests: list[dict] = []
         self.assigned: list[tuple[str, int, int]] = []
         self.stock_confirms: list[dict] = []
+        self.collect_requests = 0
         self.suggestions: dict[str, dict] = {}
 
     # ---- helpers used by tests ------------------------------------------
@@ -634,7 +635,8 @@ class FakeShopApi:
             row = next((r for r in rows if r["id"] == ident), None)
             if action == "timeline":
                 return reply(200, self.timelines.get((kind, ident), []))
-            if row is None and action in ("claim", "assign", "confirm-stock", "unavailable"):
+            if row is None and action in ("claim", "assign", "confirm-stock", "offer",
+                                          "unavailable"):
                 return detail(404, "Order not found" if kind == "order" else "Request not found")
             if action == "claim":
                 row.update(owned=True, owned_by_me=True, owner_id=user["id"])
@@ -643,13 +645,17 @@ class FakeShopApi:
                 self.assigned.append((kind, ident, int(body.get("staff_id"))))
                 row.update(owned=True, owned_by_me=body.get("staff_id") == user["id"])
                 return reply(200, row)
-            if action == "confirm-stock":
+            if action in ("confirm-stock", "offer"):
+                # v2.9.2: the price goes to the customer (the order comes with their answer)
                 self.stock_confirms.append({"id": ident, **body})
                 if not body.get("kala_code") and not row.get("kala_code"):
                     return detail(422, "Choose the product")
-                row.update(status="done", outcome="confirmed", order_id=900)
-                order = self.add_order(id=900, status="awaiting_payment", request_id=ident)
-                return reply(200, order)
+                price = body.get("price_rial") or row.get("price_rial")
+                if not price:
+                    return detail(422, "Enter the price")
+                row.update(status="seen", outcome="offered", offer_price_rial=price,
+                           kala_code=body.get("kala_code") or row.get("kala_code"))
+                return reply(200, row)
             if action == "unavailable":
                 row.update(status="done", outcome="unavailable")
                 self.item_request_messages.setdefault(ident, []).append(
@@ -691,6 +697,9 @@ class FakeShopApi:
                 return detail(403, "Not permitted for this account")
             if path == "/admin/proxies" and method == "GET":
                 return reply(200, self.proxies)
+            if path == "/admin/proxies/collect" and method == "POST":
+                self.collect_requests += 1          # v2.9.2 «جمع‌آوری اکنون»
+                return reply(200, {"requested_at": TS})
             if path == "/admin/proxies" and method == "POST":
                 self.proxy_adds.append(body)
                 if "proxy?" not in body.get("link", ""):

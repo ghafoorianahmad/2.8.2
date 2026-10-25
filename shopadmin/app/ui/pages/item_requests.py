@@ -33,14 +33,22 @@ HEADERS = ("شماره", "زمان ثبت", "نوع", "مشتری", "کد شخص
 COL_TIME = 1
 COL_PRODUCT = 7
 STATUS_FA = {"new": "جدید", "seen": "دیده شد", "done": "رسیدگی شد"}
-KIND_FA = {"unavailable": "ناموجود", "inquiry": "استعلام قیمت", "purchase": "درخواست خرید"}
-OUTCOME_FA = {"confirmed": "موجودی تأیید شد (سفارش ساخته شد)", "unavailable": "ناموجود اعلام شد"}
+KIND_FA = {"unavailable": "ناموجود", "inquiry": "استعلام قیمت",
+           "purchase": "درخواست خرید - استعلام قیمت"}
+OUTCOME_FA = {"confirmed": "مشتری قیمت را تأیید کرد (سفارش ساخته شد)",
+              "unavailable": "ناموجود اعلام شد",
+              # v2.9.2: the price is with the customer («تأیید و خرید» / «نمی‌خواهم»)
+              "offered": "قیمت برای مشتری فرستاده شد؛ منتظر «تأیید و خرید»",
+              "declined": "مشتری قیمت را نخواست"}
+#: v2.9.2: a price can be sent to the customer for these kinds
+OFFER_KINDS = ("purchase", "inquiry", "unavailable")
 PLATFORM_FA = {"bale": "بله", "telegram": "تلگرام"}
 MESSAGE_STATUS_FA = {"pending": "در صف ارسال (ربات)", "sent": "ارسال شد", "failed": "ارسال نشد"}
 #: v2.8.1: each filter says what it covers (two buttons both read «همه» before)
 TABS = (("open", "باز"), ("done", "رسیدگی‌شده"), ("all", "همهٔ وضعیت‌ها"))
 SCOPES = (("mine", "کارهای من"), ("all", "همهٔ درخواست‌ها"))
-KIND_FILTERS = (("", "همهٔ انواع"), ("purchase", "درخواست خرید"), ("unavailable", "ناموجود"),
+KIND_FILTERS = (("", "همهٔ انواع"), ("purchase", "درخواست خرید - استعلام قیمت"),
+                ("unavailable", "ناموجود"),
                 ("inquiry", "استعلام قیمت"))
 #: After sending, the dialog re-reads the delivery state this often, this many times.
 POLL_MS = 3000
@@ -315,11 +323,10 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
                 p for p in (str(item.get("color") or ""), str(item.get("part") or "")) if p)
                 or "—"))
             meta.body.addWidget(_kv("قیمت لیست", format_money(item.get("price_rial") or 0)
-                                    if item.get("price_rial") else "—"))
-            if item.get("outcome"):
-                meta.body.addWidget(_kv("نتیجه", OUTCOME_FA.get(item["outcome"], item["outcome"])
-                                        + (f" — سفارش {to_persian_digits(item['order_id'])}"
-                                           if item.get("order_id") else "")))
+                                    if item.get("price_rial") else
+                                    "ندارد (یا منتظر تأیید مدیر است؛ قیمت را بنویسید)"))
+        self.outcome_label = widgets.label("", bold=True, wrap=True)
+        meta.body.addWidget(self.outcome_label)
         meta.body.addWidget(_kv("پیام‌رسان", PLATFORM_FA.get(platform, platform or "—")))
         name = str(item.get("product_name") or "").strip()
         if name:
@@ -378,8 +385,9 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         root.addWidget(timeline_panel)
 
         buttons = QHBoxLayout()
-        self.stock_button = widgets.button("تأیید موجودی", variant="success", icon_name="check",
-                                           on_click=self.confirm_stock)
+        # v2.9.2: the price (list price or typed) goes to the customer, who confirms it
+        self.stock_button = widgets.button("تأیید موجودی / ارسال قیمت", variant="success",
+                                           icon_name="check", on_click=self.confirm_stock)
         self.unavailable_button = widgets.button("ناموجود", variant="danger",
                                                  on_click=self.mark_unavailable)
         self.assign_button = widgets.button("ارجاع به همکار", icon_name="users",
@@ -409,13 +417,24 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
             {"new": "pending", "seen": "receipt_uploaded", "done": "approved"}.get(status, status),
             STATUS_FA.get(status, status))
         purchase = self.item.get("kind") == "purchase"
+        offerable = self.item.get("kind") in OFFER_KINDS
         finished = status == "done" or bool(self.item.get("archived") or self.item.get("archived_at"))
+        outcome = str(self.item.get("outcome") or "")
+        text = OUTCOME_FA.get(outcome, outcome)
+        if outcome == "offered" and self.item.get("offer_price_rial"):
+            text += f" — قیمت: {format_money(self.item['offer_price_rial'])}"
+        if self.item.get("order_id"):
+            text += f" — سفارش {to_persian_digits(self.item['order_id'])}"
+        self.outcome_label.setText(f"نتیجه: {text}" if outcome else "")
+        self.outcome_label.setVisible(bool(outcome))
         self.seen_button.setVisible(status == "new" and not finished)
         # a purchase request ends with «تأیید موجودی» / «ناموجود» (the customer is told)
         self.done_button.setVisible(not finished and not purchase)
         # v2.8.0: a finished request is read-only
         self.reopen_button.setVisible(False)
-        self.stock_button.setVisible(purchase and not finished)
+        self.stock_button.setVisible(offerable and not finished)
+        self.stock_button.setText("ارسال قیمت دوباره" if outcome == "offered"
+                                  else "تأیید موجودی / ارسال قیمت")
         self.unavailable_button.setVisible(purchase and not finished)
         may_assign = self.context.can(ORDERS_ASSIGN) or bool(self.item.get("owned_by_me"))
         self.assign_button.setVisible(not finished and may_assign)
@@ -453,23 +472,22 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         run_async(lambda: self.context.api.confirm_purchase_stock(request_id, code, price),
                   on_success=self._stock_confirmed,
                   on_error=lambda m, _k: (self.stock_button.setEnabled(True),
-                                          widgets.error(self, "سفارش ساخته نشد", m)))
+                                          widgets.error(self, "قیمت فرستاده نشد", m)))
 
-    def _stock_confirmed(self, order: object) -> None:
-        order_id = (order or {}).get("id") if isinstance(order, dict) else None
-        self.item.update(status="done", outcome="confirmed", order_id=order_id)
+    def _stock_confirmed(self, row: object) -> None:
+        """v2.9.2: the price is with the customer; the order comes with «تأیید و خرید»
+        (then «سفارش جدید» appears and the payment details are sent as usual)."""
+        self.stock_button.setEnabled(True)
+        if isinstance(row, dict) and row:
+            self.item.update(row)
         self.changed = True
         self._render_item()
+        self.load_messages()
         self.load_timeline()
-        # v2.8.2: the payment details are typed for this order right away (the
-        # form opens; nothing is sent before «ارسال» and its confirmation)
-        if isinstance(order, dict) and order_id:
-            from .orders import send_payment_info
-
-            widgets.info(self, "سفارش ساخته شد",
-                         f"سفارش شمارهٔ {to_persian_digits(order_id)} ساخته شد. اکنون اطلاعات "
-                         "پرداخت را برای مشتری بنویسید و بفرستید.", kind="success")
-            send_payment_info(self, self.context, order)
+        widgets.info(self, "قیمت فرستاده شد",
+                     "قیمت در ربات برای مشتری فرستاده شد. وقتی مشتری «تأیید و خرید» بزند سفارش "
+                     "با همین قیمت ساخته می‌شود و اعلان «سفارش جدید» می‌گیرید؛ آن‌گاه اطلاعات "
+                     "پرداخت را مثل همیشه بفرستید.", kind="success")
 
     def mark_unavailable(self) -> None:
         if not widgets.confirm(self, "ناموجود",
@@ -602,8 +620,10 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
 
 
 class StockConfirmDialog(widgets.ResponsiveDialog):
-    """«تأیید موجودی»: the «سازه حساب» product (needed when the row is not mapped
-    yet) and, optionally, another price. A normal order awaiting payment follows."""
+    """v2.9.2 «تأیید موجودی / ارسال قیمت»: the «سازه حساب» product (needed when the
+    row is not mapped yet) and the price: the list price («تأیید موجودی با قیمت
+    لیست») or one typed by staff when the item is here but has no price. The
+    customer gets it in the bot and confirms; the order is created only then."""
 
     def __init__(self, parent: QWidget | None, item: dict) -> None:
         super().__init__(parent)
@@ -612,18 +632,19 @@ class StockConfirmDialog(widgets.ResponsiveDialog):
         self.kala_code: int | None = None
         self.price: int | None = None
         self._item = item
-        self.setWindowTitle("تأیید موجودی")
+        self.setWindowTitle("تأیید موجودی / ارسال قیمت")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(520)
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 20)
         root.setSpacing(10)
-        root.addWidget(widgets.label("تأیید موجودی", size=14, bold=True))
+        root.addWidget(widgets.label("تأیید موجودی / ارسال قیمت", size=14, bold=True))
         root.addWidget(widgets.label(product_text(item), bold=True, wrap=True))
         root.addWidget(widgets.label(
-            "با تأیید، یک سفارش عادی برای مشتری ساخته می‌شود و ربات اطلاعات پرداخت را "
-            "می‌فرستد؛ رسید باید در مهلت معمول برسد. اگر فروش گوشی بسته باشد، سفارش ساخته "
-            "نمی‌شود.", name="Muted", wrap=True))
+            "قیمت در ربات با دکمه‌های «تأیید و خرید» و «نمی‌خواهم» برای مشتری فرستاده می‌شود. "
+            "با «تأیید و خرید» سفارش با همین قیمت ساخته می‌شود و اطلاعات پرداخت را مثل همیشه "
+            "می‌فرستید. اگر فروش گوشی بسته باشد، سفارش تا باز شدن فروش ساخته نمی‌شود.",
+            name="Muted", wrap=True))
         mapped = bool(item.get("kala_code"))
         root.addWidget(widgets.label("کد کالا در «سازه حساب»" +
                                      (" (اختیاری؛ ردیف قبلاً وصل شده)" if mapped else "")))
@@ -631,9 +652,15 @@ class StockConfirmDialog(widgets.ResponsiveDialog):
         self.code_input.setPlaceholderText("مثلاً ۱۲۳۴")
         self.code_input.setMinimumHeight(40)
         root.addWidget(self.code_input)
-        root.addWidget(widgets.label("قیمت (ریال) — خالی = قیمت لیست"))
-        self.price_input = QLineEdit(to_persian_digits(item["price_rial"])
-                                     if item.get("price_rial") else "")
+        self._list_price = int(item.get("price_rial") or 0) if item.get("kind") == "purchase" \
+            else 0
+        root.addWidget(widgets.label(
+            "قیمت (ریال) — خالی = قیمت لیست" if self._list_price else
+            "قیمت (ریال) — لازم است (این کالا قیمت لیست ندارد یا قیمتش منتظر تأیید است)"))
+        self.price_input = QLineEdit(to_persian_digits(item["offer_price_rial"])
+                                     if item.get("offer_price_rial") else "")
+        self.price_input.setPlaceholderText(to_persian_digits(f"{self._list_price:,}")
+                                            if self._list_price else "مثلاً ۵۲۵۰۰۰۰۰۰")
         self.price_input.setMinimumHeight(40)
         root.addWidget(self.price_input)
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
@@ -641,8 +668,12 @@ class StockConfirmDialog(widgets.ResponsiveDialog):
         root.addWidget(self.error_label)
         row = QHBoxLayout()
         row.addStretch(1)
-        ok = widgets.button("ساخت سفارش", variant="success", icon_name="check",
-                            on_click=self._accept)
+        self.list_button = widgets.button("تأیید موجودی با قیمت لیست", variant="success",
+                                          icon_name="check", on_click=self._accept_list)
+        self.list_button.setVisible(bool(self._list_price))
+        self.list_button.setProperty("big", True)
+        row.addWidget(self.list_button)
+        ok = widgets.button("ارسال قیمت برای مشتری", variant="primary", on_click=self._accept)
         ok.setProperty("big", True)
         row.addWidget(ok)
         row.addWidget(widgets.button("انصراف", on_click=self.reject))
@@ -653,16 +684,25 @@ class StockConfirmDialog(widgets.ResponsiveDialog):
         digits = "".join(ch for ch in to_english_digits(text) if ch.isdigit())
         return int(digits) if digits else None
 
+    def _error(self, text: str) -> None:
+        self.error_label.setText(text)
+        self.error_label.setVisible(True)
+
+    def _accept_list(self) -> None:
+        self.price_input.clear()
+        self._accept()
+
     def _accept(self) -> None:
         code = self._number(self.code_input.text())
         price = self._number(self.price_input.text())
         if code is None and not self._item.get("kala_code"):
-            self.error_label.setText("این ردیف هنوز به کالایی وصل نیست؛ کد کالا را بنویسید.")
-            self.error_label.setVisible(True)
+            self._error("این ردیف هنوز به کالایی وصل نیست؛ کد کالا را بنویسید.")
             return
         if self.price_input.text().strip() and not price:
-            self.error_label.setText("قیمت درست نیست؛ فقط رقم بنویسید یا خالی بگذارید.")
-            self.error_label.setVisible(True)
+            self._error("قیمت درست نیست؛ فقط رقم بنویسید یا خالی بگذارید.")
+            return
+        if not price and not self._list_price:
+            self._error("قیمت لیست ندارد؛ قیمت را بنویسید.")
             return
         self.kala_code = code
         self.price = price

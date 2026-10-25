@@ -2,6 +2,18 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## v2.9.2 — proxy collection that really runs, price guard never sells the old price, «درخواست خرید - استعلام قیمت» with the customer's confirmation, backup share → local folder (2026-10-25, same branch) — DONE in code; the new build NOT installed
+
+Owner's list after installing 2.9.1 on this PC (login and automatic list import OK). Decisions in `REQUIREMENTS.md` §7e.
+
+1. **Proxy collection «never runs»** — real cause from `C:\ProgramData\ShopServer\shoptg.log`: until 2026-10-25 12:58 the service still ran the **2.9.0** reader (the installed exe keeps its build date, 10-23); every hourly collection read @ProxyMTProto with the account and logged `0 links (account)` — the 2.9.0 parser did not know the channel's formats (fixed in 2.9.1 `proxylinks.py`). After 2.9.1 started at 12:58 the next collection waited for the hour after the previous (2.9.0) run (12:07 → due 13:07, checked every 30 min → 13:28), and «سرور فروشگاه» showed «هنوز انجام نشده» because the last collection lived only in the reader's memory (lost at every restart). Live result of 2.9.1 at 13:28: **54 links, 9 tested, 4 working added**; 13:59 «probed 6 proxies: 6 ok». Fixes: the last collection is stored (`tg_collect_info`) and shown after a restart; after a start a short pool is collected at once (if the previous run is ≥ 10 min old); «جمع‌آوری اکنون» (`POST /admin/proxies/collect` → `tg_collect_request`, the reader looks every 20 s; «در صف» shown).
+2. **«۳ پراکسی سالم» but «هنوز پراکسی‌ای در استخر نیست»**: `set_busy(False)` showed the table's empty overlay before the rows were inserted and nothing hid it (`server.py` was the only page without `_refresh_states()`).
+3. **Price guard**: a held row (`pending_price_rial`) has no price for customers anywhere (`repo.variants`, `purchase.active_rows`, phone search, `/orders` → 422 `price waits for approval; purchase request`); the bot shows «قیمت … در حال بررسی است» + «درخواست خرید - استعلام قیمت». Approve = sold at the new price at once.
+4. **Offer flow**: `POST /admin/item-requests/{id}/offer` (also `confirm-stock`) = list price or typed price → request `outcome=offered`, a message with `purpose=offer` (history) delivered by the bot with «✅ تأیید و خرید» / «✖ نمی‌خواهم» (`pok:` / `pno:` + staff message id; another chat or a replaced offer is refused). `POST …/customer-answer` (service key only): accept → order at the offered price (`order_created`, `purchase_order_created`, sales windows), decline → closed (`purchase_offer_declined` notice). Timeline: «قیمت را برای تأیید مشتری فرستاد» → «مشتری «تأیید و خرید» زد». Works for purchase, inquiry and unavailable requests. One bot button «🛍 درخواست خرید - استعلام قیمت» (new keys, so an old operator copy of `messages.fa.json` cannot keep the old labels).
+5. **Backup share on this computer**: `localshare.py` (shopsystem + shopadmin): `\\THIS-PC\Share\sub` → the share's folder from `LanmanServer\Shares` (or `D$` → `D:\`); the wizard replaces it (with a note) on edit / «آزمایش» / save; the service converts again (backup + ACL grant). Checked on this PC: `\\<PC>\work\sub` → `G:\Work\sub`.
+
+Tests: shopapi 498, shopbots 284, shoptg 78, shopsystem 57, shopadmin 625 ✓. **Not verified on the installed build** (not installed by request): the offer buttons in real Bale, «جمع‌آوری اکنون», the backup share conversion in the real wizard.
+
 ## v2.9.1 — price-channel corrections / «فروش بسته», price guard, every proxy format, channel roles, saved password, live look, off-server backup (2026-10-23, same branch) — DONE in code; installed build UNVERIFIED
 
 Owner's list after testing 2.9.0 on this PC (reader connected, Abrishami PDF imported). Decisions in `REQUIREMENTS.md` §7d.

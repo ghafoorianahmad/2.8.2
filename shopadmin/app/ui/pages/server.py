@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -249,6 +249,13 @@ class ServerPage(BasePage):
             tooltip="پیوند tg://proxy یا t.me/proxy؛ اول از همه امتحان می‌شود")
         self.add_proxy_button.setVisible(self.context.can(PROXIES_MANAGE))
         buttons.addWidget(self.add_proxy_button)
+        # v2.9.2: read the proxy channels and test the new links now
+        self.collect_button = widgets.button(
+            "جمع‌آوری اکنون", icon_name="refresh", on_click=self._collect_now,
+            tooltip="خواننده تا چند ثانیهٔ دیگر کانال‌های پراکسی را می‌خواند و پیوندهای تازه را "
+                    "می‌آزماید")
+        self.collect_button.setVisible(self.context.can(PROXIES_MANAGE))
+        buttons.addWidget(self.collect_button)
         buttons.addWidget(widgets.button("به‌روزرسانی", icon_name="refresh", on_click=self.load))
         panel.body.addLayout(buttons)
         return panel
@@ -285,8 +292,9 @@ class ServerPage(BasePage):
             table.set_cell(row, 4, f"{to_persian_digits(latency)} میلی‌ثانیه" if latency else "—")
             table.set_cell(row, 5, proxy_source_fa(p.get("source")))
         self.proxy_hint.setVisible(False)
-        if not active:
-            table.fill([])
+        # v2.9.2: set_busy(False) showed «هنوز پراکسی‌ای در استخر نیست» over the rows
+        # added after it (the header said «۳ پراکسی سالم»)
+        table._refresh_states()
 
     def _proxies_unavailable(self, message: str, kind: str) -> None:
         self.proxy_table.set_busy(False)
@@ -308,6 +316,22 @@ class ServerPage(BasePage):
                  on_success=lambda _r: (self.notify_success(
                      "پراکسی اضافه شد؛ خواننده در چند دقیقه آن را امتحان می‌کند."),
                      self._load_proxies()))
+
+    def _collect_now(self) -> None:
+        self.collect_button.setEnabled(False)
+
+        def failed(message: str, _kind: str = "") -> None:
+            self.collect_button.setEnabled(True)
+            widgets.error(self, "جمع‌آوری پراکسی", message)
+
+        def done(_result) -> None:
+            self.collect_button.setEnabled(True)
+            self.notify_success("جمع‌آوری پراکسی درخواست شد؛ خواننده تا چند ثانیهٔ دیگر شروع "
+                                "می‌کند. نتیجه در «آخرین جمع‌آوری پراکسی» دیده می‌شود.")
+            self.tg_labels["collect"].setText("در حال جمع‌آوری… (چند ثانیه تا یکی‌دو دقیقه)")
+            QTimer.singleShot(COLLECT_RELOAD_MS, self.load)
+
+        self.run(self.context.api.collect_proxies_now, on_success=done, on_error=failed)
 
     def load(self) -> None:
         if not self.context.can(SERVER_VIEW):
@@ -542,6 +566,8 @@ def backup_text(backup: dict | None) -> tuple[str, str, str | None]:
     return "backup", text, theme.SUCCESS_DARK if backup.get("offsite_configured") else theme.WARNING_TEXT
 
 
+#: v2.9.2: after «جمع‌آوری اکنون» the page reads the result again this much later
+COLLECT_RELOAD_MS = 45_000
 SERVER_PROXY_HEADERS = ("پراکسی", "نوع", "وضعیت", "الان", "تأخیر", "منبع")
 PROXY_STATE_FA = {"main": "اصلی", "probation": "آزمایشی", "retired": "کنار گذاشته",
                   "disabled": "غیرفعال"}
@@ -616,6 +642,11 @@ def telegram_details(worker: dict | None, pool: dict | None) -> dict[str, tuple[
             theme.WARNING_TEXT if collect.get("error") else None)
     else:
         out["collect"] = ("هنوز انجام نشده (روزی یک بار؛ وقتی استخر کم باشد هر ساعت)", None)
+    if collect.get("requested"):
+        # v2.9.2: «جمع‌آوری اکنون» was pressed and the reader has not started yet
+        text, color = out["collect"]
+        out["collect"] = ("«جمع‌آوری اکنون» در صف است (خواننده هر ۲۰ ثانیه سر می‌زند)\n"
+                          + text, color)
     return out
 
 

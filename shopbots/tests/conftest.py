@@ -209,6 +209,10 @@ class FakeShopApi:
         self.phone_rows: list[dict] = []
         self.phone_sales_open = True
         self.purchase_requests: list[dict] = []
+        #: v2.9.2: answers to offered prices, the order an accept returns, an error
+        self.offer_answers: list[dict] = []
+        self.offer_order_id: int | None = None
+        self.offer_answer_error: tuple[int, str] | None = None
         self._next_user = 1
         self._next_order = 1
 
@@ -385,6 +389,16 @@ class FakeShopApi:
                 row["status"] = "sent" if body.get("ok") else "failed"
                 row["error"] = body.get("error") or ""
             return self._ok(row)
+
+        if method == "POST" and path.startswith("/admin/item-requests/")                 and path.endswith("/customer-answer"):
+            # v2.9.2: the customer's answer to an offered price
+            request_id = int(path.split("/")[3])
+            self.offer_answers.append({"id": request_id, **body})
+            if self.offer_answer_error:
+                return self._err(*self.offer_answer_error)
+            order = self.orders.get(self.offer_order_id) if body.get("accept") else None
+            return self._ok({"request": {"id": request_id},
+                             "order": self._order_public(order) if order else None})
 
         if method == "GET" and path.startswith("/admin/item-requests/"):
             request_id = int(path.split("/")[3])

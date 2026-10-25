@@ -74,6 +74,10 @@ def local_backup_dir(raw: Optional[str]) -> Optional[Path]:
     """``BACKUP_COPY_DIR`` when it is a folder on a local disk the service account
     can be granted (a share is granted on the file server; a drive root never)."""
     text = (raw or "").strip()
+    if text.startswith("\\\\") or text.startswith("//"):
+        # v2.9.2: a share of this computer is granted through its local folder
+        from localshare import local_path_for
+        text = local_path_for(text) or ""
     if not text or text.startswith("\\\\") or text.startswith("//"):
         return None
     path = Path(text)

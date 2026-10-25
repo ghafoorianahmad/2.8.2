@@ -23,6 +23,10 @@ ACTION_FA = {
     "note": "یادداشت گذاشت",
     "request_status": "وضعیت درخواست را عوض کرد",
     "stock_confirm": "موجودی را تأیید کرد و سفارش ساخت",
+    # v2.9.2: the price goes to the customer; the customer answers in the bot
+    "price_offer": "قیمت را برای تأیید مشتری فرستاد",
+    "offer_accept": "مشتری «تأیید و خرید» زد و سفارش ساخته شد",
+    "offer_decline": "مشتری قیمت را نخواست («نمی‌خواهم»)",
     "stock_unavailable": "«ناموجود» اعلام کرد",
     "archive": "کارهای تمام‌شده را بایگانی کرد",
     "payment_info": "اطلاعات پرداخت را برای مشتری فرستاد",
@@ -47,8 +51,14 @@ def to_fa(entry: dict) -> str:
     return "شما" if entry.get("to_me") else "همکار"
 
 
+#: v2.9.2: steps the customer took in the bot (the sentence names the customer)
+CUSTOMER_ACTIONS = frozenset({"offer_accept", "offer_decline"})
+
+
 def sentence(entry: dict, *, with_actor: bool = True) -> str:
     template = ACTION_FA.get(str(entry.get("action") or ""), "کاری انجام داد")
+    if entry.get("action") in CUSTOMER_ACTIONS:
+        return template
     if entry.get("from_name") and entry.get("action") == "assign":
         # v2.8.3 (manager only): whose work was moved
         template = "کار {from_} را به {to} ارجاع داد"

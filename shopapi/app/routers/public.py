@@ -59,6 +59,9 @@ ON_INQUIRY_DETAIL = "is price on inquiry"
 NOT_IN_PRICE_LIST_DETAIL = "is not in the current price list"
 #: v2.8.0: a phone whose product has no stock in «سازه حساب» -> «درخواست خرید».
 PHONE_NO_STOCK_DETAIL = "has no stock; purchase request"
+#: v2.9.2: the list price changed by more than PRICE_GUARD_PCT and waits for a
+#: manager -> «درخواست خرید - استعلام قیمت» (never the old price).
+PRICE_HELD_DETAIL = "price waits for approval; purchase request"
 
 
 def variant_text(color: str, part: str) -> str:
@@ -444,6 +447,9 @@ def create_order(
                 if variant is None:
                     raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                         f"Unknown color for product {kala_code}")
+                if variant.get("price_held"):
+                    # v2.9.2: never the old price while a new one waits for a manager
+                    raise _refuse(kala_code, PRICE_HELD_DETAIL)
                 if not variant["available"]:
                     raise HTTPException(status.HTTP_409_CONFLICT,
                                         f"Color not available for product {kala_code}")
@@ -809,14 +815,17 @@ def phones_search(
     items = []
     for r in found:
         code = int(r["kala_code"]) if r.get("action") == "map" and r.get("kala_code") else None
-        can_order = code is not None and (code in stock or not settings.phone_stock_required)
+        can_order = code is not None and (code in stock or not settings.phone_stock_required)             and not r.get("price_held")
         items.append({
             "row_key": r["row_key"], "model_index": r["model_index"], "model": r["model"],
             "section": r["section"], "description": r["description"],
             "color": (r.get("color_label") or r.get("color") or "").strip(),
-            "part": r["part"], "price": int(r["price_rial"]), "kala_code": code,
+            "part": r["part"], "price": int(r["price_rial"]) if r.get("price_rial") else None,
+            "kala_code": code,
             "variant_id": r.get("mapping_id") if code else None,
             "action": "order" if can_order else "purchase", "score": r["score"],
+            # v2.9.2: the price waits for a manager: «درخواست خرید - استعلام قیمت»
+            "price_held": bool(r.get("price_held")),
         })
     return {"list_ready": bool(rows), "list_date": (active or {}).get("list_date") or "",
             "sales_open": state.open, "items": items}
@@ -845,7 +854,7 @@ def create_purchase_request(
     if row_key is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Choose the phone")
     row = purchase.row_by_key(db, settings, row_key)
-    if row is None or not row.get("price_rial") or row.get("action") == "ignore":
+    if row is None or (not row.get("price_rial") and not row.get("price_held"))             or row.get("action") == "ignore":
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Row not found in the current list")
     since = (now_utc() - timedelta(days=1)).isoformat(timespec="seconds")
     if db.count_item_requests_since(user["id"], since) >= ITEM_REQUESTS_PER_DAY:

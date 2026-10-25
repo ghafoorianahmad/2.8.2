@@ -25,6 +25,9 @@ class Color:
     available: bool
     #: v2.6.2: part / region code (ZAA, CHA …) picked after the color; "" = none
     part: str = ""
+    #: v2.9.2: the new list price waits for a manager (>10%): only
+    #: «درخواست خرید - استعلام قیمت», never the old price
+    held: bool = False
 
 
 @dataclass(frozen=True)
@@ -61,7 +64,7 @@ class Product:
         if self.colors:
             cache["colors"] = [
                 {"id": c.id, "name": c.name, "price": c.price, "available": c.available,
-                 "part": c.part}
+                 "part": c.part, "held": c.held}
                 for c in self.colors
             ]
         return cache
@@ -80,6 +83,7 @@ def _colors(raw) -> tuple[Color, ...]:
             price=float(price) if price else None,
             available=bool(v.get("available")) and bool(price),
             part=str(v.get("part") or "").strip(),
+            held=bool(v.get("price_held")),
         ))
     return tuple(out)
 

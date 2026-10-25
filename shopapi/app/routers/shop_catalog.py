@@ -26,6 +26,7 @@ from ..schemas import (
     ItemRequestNoteIn,
     ItemRequestOut,
     ItemRequestStatusIn,
+    OfferAnswerIn,
     ProductGroupOut,
     ProductGroupsIn,
 )
@@ -206,7 +207,7 @@ def set_item_request_status(
 ) -> dict:
     current = _editable(db, who, request_id)
     if current.get("kind") == purchase.KIND and payload.status == "done":
-        # a purchase request ends with «تأیید موجودی» or «ناموجود» (the customer is told)
+        # a purchase request ends with the customer's answer to a price or «ناموجود»
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Answer the purchase request: confirm stock or unavailable")
     row = db.set_item_request_status(request_id, payload.status, who.actor)
@@ -231,22 +232,45 @@ def set_item_request_note(
     return request_out(db, who, row)
 
 
-@router.post("/item-requests/{request_id}/confirm-stock", response_model=OrderOut)
-def confirm_purchase_stock(
+@router.post("/item-requests/{request_id}/offer", response_model=ItemRequestOut)
+@router.post("/item-requests/{request_id}/confirm-stock", response_model=ItemRequestOut)
+def offer_purchase_price(
     request_id: int,
     payload: StockConfirmIn | None = None,
     db: OwnDB = Depends(deps.get_db),
     reader: AccountingReader = Depends(deps.get_reader),
     settings: Settings = Depends(deps.get_settings),
     who: Identity = CAN_REQUESTS,
-) -> OrderOut:
-    """«تأیید موجودی» of a purchase request: a normal order awaiting the
-    customer's payment (receipt within the deadline; sales windows apply)."""
+) -> dict:
+    """v2.9.2 «تأیید موجودی» (list price) or a price typed by staff: the customer
+    gets it in the bot with «تأیید و خرید»; the order is created only then."""
+    if who.kind != "staff":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only staff can offer a price")
     payload = payload or StockConfirmIn()
     row = _request_or_404(db, request_id, who)
-    order = purchase.confirm_stock(db, reader, settings, who, row, payload.kala_code,
-                                   payload.price_rial)
-    return OrderOut(**{**order, **ownership.owner_fields(db, who, order)})
+    return request_out(db, who, purchase.offer_price(db, reader, settings, who, row,
+                                                     payload.kala_code, payload.price_rial))
+
+
+@router.post("/item-requests/{request_id}/customer-answer")
+def purchase_offer_answer(
+    request_id: int,
+    payload: OfferAnswerIn,
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+    who: Identity = CAN_REQUESTS,
+) -> dict:
+    """The bot (service key only) passes on the customer's «تأیید و خرید» /
+    «نمی‌خواهم». Returns the request and, when accepted, the new order."""
+    if who.kind != "service":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this account")
+    row = _request_or_404(db, request_id)
+    if payload.price_rial and int(row.get("offer_price_rial") or 0) != payload.price_rial:
+        raise HTTPException(status.HTTP_409_CONFLICT, purchase.OFFER_GONE_DETAIL)
+    request, order = purchase.answer_offer(db, settings, who, row, payload.accept)
+    return {"request": request_out(db, who, request),
+            "order": OrderOut(**{**order, **ownership.owner_fields(db, who, order)}).model_dump()
+            if order else None}
 
 
 @router.post("/item-requests/{request_id}/unavailable", response_model=ItemRequestOut)

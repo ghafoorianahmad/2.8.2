@@ -233,7 +233,7 @@ class PriceListRepo:
         with self.db._lock:
             rows = self.db._fetchall(
                 "SELECT m.id, m.kala_code, m.color_label, r.color, r.price_rial, "
-                "r.description, r.kind "
+                "r.pending_price_rial, r.description, r.kind "
                 "FROM price_mappings m JOIN price_list_rows r "
                 "ON r.row_key = m.row_key AND r.list_id = ? "
                 "WHERE m.action = 'map' ORDER BY m.kala_code, m.id",
@@ -251,7 +251,9 @@ class PriceListRepo:
                 # the catalogue decides what the customer picks after the color.
                 "part_code": part_code(r["description"]),
                 "kind": " ".join(str(r["kind"] or "").split()),
-                "price_rial": r["price_rial"],
+                # v2.9.2: never the old price while a new one waits for a manager
+                "price_rial": None if r["pending_price_rial"] is not None else r["price_rial"],
+                "held": r["pending_price_rial"] is not None,
             })
         return out
 

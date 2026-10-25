@@ -110,6 +110,12 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 - **ShopAdmin**: «مرا به خاطر بسپار» keeps the last user's password (Windows DPAPI) so after «خروج» only «ورود» is needed; the eye shows only a typed password; look changes apply at once.
 - **Backup**: an encrypted copy of the nightly backup in a configurable folder (share), last ~14 kept, «آزمایش» button; copying them to the management PC is the owner's own scheduled task (robocopy), not part of the app.
 
+## 7e. v2.9.2 (decision 2026-10-25; owner's list after the 2.9.1 test)
+- **Price guard, stricter**: a change of more than 10 % is a likely misread (an extra / missing zero): the row is NEVER sold at the old price. Until a manager approves it has no price for customers and the bot offers only «درخواست خرید - استعلام قیمت»; on one-click approval it sells at the new price. Changes of 10 % or less apply automatically.
+- **«درخواست خرید - استعلام قیمت»**: one button in the bot for every request (no stock, no price, price on inquiry, held price). Staff either confirm the stock (list price) or, when the item is here but has no price, type a price; the customer gets the price with «تأیید و خرید» / «نمی‌خواهم». «تأیید و خرید» creates the order at that price (sales windows apply), then the usual payment-details flow. Every step is in the request's history.
+- **Proxy pool**: the last collection is kept across restarts; right after a start a short pool is refilled (not before 10 min after the previous run); «جمع‌آوری اکنون» on «سرور فروشگاه».
+- **Backup destination**: a share of the server itself (`\\SERVER\Share`) is replaced by its local folder (the service account is refused on its own share but can be granted the folder).
+
 ## 8. Alerts to the owner
 - Bale message to the owner's chat (ChatId in .env) on every new order and pending customer.
 - Windows tray app: detects when the Sazeh Hesab program starts (process watch) → "X new orders, Y customers awaiting approval" + link to shopadmin.

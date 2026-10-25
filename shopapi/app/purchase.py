@@ -2,11 +2,13 @@
 ordered now - its row is not mapped to a «سازه حساب» product, or that product
 has no stock - is requested instead of ordered.
 
-* The bot shows the list price and a «درخواست خرید» button; the request lands
-  in ShopAdmin «درخواست کالا» (kind ``purchase``) with color, part and price.
-* «تأیید موجودی»: staff map the row if needed, may change the price, and a
-  normal order is created (receipt flow, 30-minute deadline, sales windows);
-  the bot messages the customer to pay.
+* The bot shows the list price and a «درخواست خرید - استعلام قیمت» button
+  (v2.9.2: one button; also a row whose price waits for a manager, without a
+  price); the request lands in ShopAdmin «درخواست کالا» (kind ``purchase``).
+* «تأیید موجودی» (list price) or a price typed by staff: v2.9.2 the customer
+  gets the price with «تأیید و خرید» / «نمی‌خواهم»; on «تأیید و خرید» a normal
+  order is created at that price (payment details from staff, receipt deadline,
+  sales windows). Every step is in the request's history.
 * «ناموجود»: the customer gets a polite message.
 Nothing is written to «سازه حساب» here; the order is written only after its
 receipt is approved, as every other order.
@@ -29,7 +31,17 @@ from .security import Identity
 from .util import now_iso, now_utc, round_half_up
 
 KIND = "purchase"
+#: v2.9.2: a price can be offered for these (the customer confirms in the bot)
+OFFER_KINDS = ("purchase", "inquiry", "unavailable")
 EVENT_ORDER_CREATED = "purchase_order_created"
+EVENT_OFFER_DECLINED = "purchase_offer_declined"
+OUTCOME_OFFERED = "offered"
+OUTCOME_CONFIRMED = "confirmed"
+OUTCOME_DECLINED = "declined"
+PURPOSE_OFFER = "offer"
+OFFER_GONE_DETAIL = "The offer is no longer open"
+#: The offer as it shows in the request's message history (the bot builds its own text).
+OFFER_TEXT = "قیمت پیشنهادی: {price} ریال (جمع {total} ریال) — منتظر «تأیید و خرید» مشتری"
 #: What the customer is told when staff mark the request «ناموجود».
 UNAVAILABLE_TEXT = ("با پوزش، «{product}» در حال حاضر موجود نیست. به‌محض موجود شدن "
                     "می‌توانید دوباره درخواست بدهید. از صبر و همراهی شما سپاسگزاریم.")
@@ -41,12 +53,20 @@ def variant_text(color: str, part: str) -> str:
 
 
 def active_rows(db: OwnDB, settings: Settings) -> tuple[dict | None, list[dict]]:
-    """The active list (only while it is valid) and its rows with mappings."""
+    """The active list (only while it is valid) and its rows with mappings.
+    v2.9.2: a row whose new price waits for a manager (price guard) has no price
+    here (``price_held``): never sold at the old price, only requested."""
     repo = PriceListRepo(db)
     active = repo.active_list()
     if active is None or not active_list_fresh(active, settings):
         return active, []
-    return active, repo.rows(active["id"])
+    return active, [sellable_row(r) for r in repo.rows(active["id"])]
+
+
+def sellable_row(row: dict) -> dict:
+    if row.get("pending_price_rial") is None:
+        return {**row, "price_held": False}
+    return {**row, "price_held": True, "price_rial": None, "naghd": None, "raval": None}
 
 
 def row_by_key(db: OwnDB, settings: Settings, row_key: str) -> dict | None:
@@ -88,21 +108,12 @@ def request_from_row(db: OwnDB, settings: Settings, row: dict, user: dict, qty: 
 
 
 # ---- staff ---------------------------------------------------------------------------------------
-def confirm_stock(db: OwnDB, reader: AccountingReader, settings: Settings, who: Identity,
-                  request: dict, kala_code: int | None, price_rial: int | None) -> dict:
-    """«تأیید موجودی» -> a normal order awaiting payment. Returns the order."""
-    if request.get("kind") != KIND:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Not a purchase request")
-    ownership.ensure_request_editable(request)
-    ownership.take(db, who, "request", request)
-    state = sales.compute(db, settings)
-    if not state.open:
-        # the same sales windows as an order from the bot (phones only)
-        raise HTTPException(status.HTTP_409_CONFLICT, f"{SALES_CLOSED_DETAIL}: {state.reason}")
-    user = db.get_user_by_id(int(request["user_id"]))
-    if user is None or user["status"] == "rejected":
-        raise HTTPException(status.HTTP_409_CONFLICT, "Customer cannot order")
-
+def _product_and_price(db: OwnDB, reader: AccountingReader, settings: Settings, who: Identity,
+                       request: dict, kala_code: int | None,
+                       price_rial: int | None) -> tuple[int, dict | None, dict, int]:
+    """(code, mapping, product, price) of an offer: the «سازه حساب» product (the
+    row is mapped now if needed) and the price (staff's, else the list price -
+    never a price that waits for a manager)."""
     repo = PriceListRepo(db)
     mapping = repo.mapping_for_key(request["row_key"]) if request.get("row_key") else None
     code = kala_code or (mapping or {}).get("kala_code") or request.get("kala_code")
@@ -124,37 +135,101 @@ def confirm_stock(db: OwnDB, reader: AccountingReader, settings: Settings, who: 
         db.audit(who.actor, "price_mapping_map", f"mapping id={mapping['id']} kala={code} "
                  f"(purchase request {request['id']})")
     price = int(price_rial or 0)
-    if not price:
-        current = row_by_key(db, settings, request["row_key"]) if request.get("row_key") else None
-        price = int((current or {}).get("price_rial") or request.get("price_rial") or 0)
+    if not price and request.get("row_key"):
+        # the list price read now (None while a new price waits for a manager)
+        current = row_by_key(db, settings, request["row_key"])
+        price = int((current or {}).get("price_rial") or 0)
+    if not price and not request.get("row_key"):
+        price = int(request.get("price_rial") or 0)
     if price <= 0:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Enter the price")
+    return int(code), mapping, product, price
+
+
+def offer_price(db: OwnDB, reader: AccountingReader, settings: Settings, who: Identity,
+                request: dict, kala_code: int | None, price_rial: int | None) -> dict:
+    """v2.9.2 «تأیید موجودی» (list price) or a price typed by staff: the customer
+    gets it in the bot with «تأیید و خرید» / «نمی‌خواهم»; nothing is ordered yet.
+    Offering again replaces the earlier price. Returns the request."""
+    if request.get("kind") not in OFFER_KINDS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Not a purchase request")
+    ownership.ensure_request_editable(request)
+    ownership.take(db, who, "request", request)
+    user = db.get_user_by_id(int(request["user_id"]))
+    if user is None or user["status"] == "rejected":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Customer cannot order")
+    if not request.get("platform"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Customer has no messenger")
+    code, mapping, product, price = _product_and_price(db, reader, settings, who, request,
+                                                       kala_code, price_rial)
+    qty = float(request.get("qty") or 1)
+    updates = dict(status="seen", handled_at=now_iso(), handled_by=who.actor,
+                   outcome=OUTCOME_OFFERED, kala_code=code, offer_price_rial=price,
+                   offered_at=now_iso())
+    if mapping:
+        updates["mapping_id"] = mapping.get("id")
+    if not str(request.get("product_name") or "").strip():
+        updates["product_name"] = str(product.get("name") or "")
+    row = db.update_item_request(int(request["id"]), **updates)
+    text = OFFER_TEXT.format(price=f"{price:,}", total=f"{round_half_up(qty * price):,}")
+    message = db.add_item_request_message(int(request["id"]), text, who.actor,
+                                          purpose=PURPOSE_OFFER)
+    ownership.log(db, who, ownership.A_PRICE_OFFER, "request", request, detail=f"price={price}")
+    db.audit(who.actor, "purchase_offer", f"request id={request['id']} price={price}")
+    db.add_event("item_request_message", message["id"], who.actor)
+    return row
+
+
+def answer_offer(db: OwnDB, settings: Settings, who: Identity, request: dict,
+                 accept: bool) -> tuple[dict, dict | None]:
+    """The customer's answer in the bot. «تأیید و خرید» -> a normal order at the
+    offered price (payment details from staff next, the usual receipt deadline;
+    phones only while sales are open). Returns (request, order or None)."""
+    if request.get("outcome") != OUTCOME_OFFERED or request.get("status") == "done" \
+            or not request.get("offer_price_rial") or not request.get("kala_code"):
+        raise HTTPException(status.HTTP_409_CONFLICT, OFFER_GONE_DETAIL)
+    if not accept:
+        row = db.update_item_request(int(request["id"]), status="done", handled_at=now_iso(),
+                                     handled_by=who.actor, outcome=OUTCOME_DECLINED)
+        ownership.log(db, who, ownership.A_OFFER_DECLINE, "request", request)
+        db.audit(who.actor, "purchase_offer_declined", f"request id={request['id']}")
+        db.add_event(EVENT_OFFER_DECLINED, int(request["id"]), who.actor)
+        return row, None
+    state = sales.compute(db, settings)
+    if not state.open:
+        # the same sales windows as an order from the bot (phones only)
+        raise HTTPException(status.HTTP_409_CONFLICT, f"{SALES_CLOSED_DETAIL}: {state.reason}")
+    user = db.get_user_by_id(int(request["user_id"]))
+    if user is None or user["status"] == "rejected":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Customer cannot order")
+    code = int(request["kala_code"])
+    price = int(request["offer_price_rial"])
     qty = float(request.get("qty") or 1)
     variant = variant_text(request.get("color") or "", request.get("part") or "")
-    name = f"{product['name']} — {variant}" if variant else str(product["name"])
+    base = str(request.get("product_name") or "").strip() or str(code)
+    name = f"{base} — {variant}" if variant else base
     # v2.8.2: the receipt deadline starts with «ارسال اطلاعات پرداخت»
-    reserve_until = None
     with db.reservation_guard():
         order = db.create_order(
-            int(user["id"]), settings.price_level_bot, round_half_up(qty * price), reserve_until,
-            [(int(code), name, qty, float(price), (mapping or {}).get("id"), variant or None,
+            int(user["id"]), settings.price_level_bot, round_half_up(qty * price), None,
+            [(code, name, qty, float(price), request.get("mapping_id"), variant or None,
               request.get("color") or None, request.get("part") or None)],
             accounting_db=settings.database_name(), request_id=int(request["id"]),
-            owner_id=ownership.staff_id(who) or request.get("owner_id"))
-    db.update_item_request(int(request["id"]), status="done", handled_at=now_iso(),
-                           handled_by=who.actor, outcome="confirmed", order_id=order["id"],
-                           kala_code=int(code), mapping_id=(mapping or {}).get("id"),
-                           price_rial=price)
-    ownership.log(db, who, ownership.A_STOCK_CONFIRM, "request", request,
+            owner_id=request.get("owner_id"))
+    row = db.update_item_request(int(request["id"]), status="done", handled_at=now_iso(),
+                                 handled_by=who.actor, outcome=OUTCOME_CONFIRMED,
+                                 order_id=order["id"])
+    ownership.log(db, who, ownership.A_OFFER_ACCEPT, "request", request,
                   detail=f"order={order['id']} price={price}")
-    db.audit(who.actor, "purchase_confirm", f"request id={request['id']} order id={order['id']}")
+    db.audit(who.actor, "purchase_offer_accepted",
+             f"request id={request['id']} order id={order['id']}")
     db.add_event("order_created", order["id"], who.actor)
     db.add_event(EVENT_ORDER_CREATED, order["id"], who.actor)
-    return order
+    return row, order
 
 
 def mark_unavailable(db: OwnDB, who: Identity, request: dict) -> dict:
-    if request.get("kind") != KIND:
+    if request.get("kind") not in OFFER_KINDS:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Not a purchase request")
     ownership.ensure_request_editable(request)
     ownership.take(db, who, "request", request)

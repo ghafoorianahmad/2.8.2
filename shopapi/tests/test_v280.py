@@ -175,12 +175,19 @@ def test_purchase_request_then_stock_confirmed_creates_an_order(shop, db):
     # not mapped yet: the product is required
     url = f"/admin/item-requests/{req['id']}/confirm-stock"
     assert shop.post(url, json={}, headers=mina).status_code == 422
-    order = shop.post(url, json={"kala_code": PRO, "price_rial": 1_100_000_000},
-                      headers=mina).json()
+    # v2.9.2: the price goes to the customer first; no order yet
+    offered = shop.post(url, json={"kala_code": PRO, "price_rial": 1_100_000_000},
+                        headers=mina).json()
+    assert offered["outcome"] == "offered" and offered["offer_price_rial"] == 1_100_000_000
+    assert offered["status"] != "done" and offered["owned_by_me"]
+    assert "purchase_order_created" not in events(db)
+    answer = shop.post(f"/admin/item-requests/{req['id']}/customer-answer",
+                       json={"accept": True}, headers=h("admin")).json()
+    order = answer["order"]
     assert order["status"] == "awaiting_payment" and order["total"] == 1_100_000_000
     assert order["items"][0]["variant"] == "Silver — CHA" and order["request_id"] == req["id"]
     # v2.8.2: the deadline starts with «ارسال اطلاعات پرداخت»
-    assert order["reserve_until"] is None and order["owned_by_me"]
+    assert order["reserve_until"] is None
     assert "purchase_order_created" in events(db)
     # the row is mapped now (also for later lists) and the request is finished
     assert PriceListRepo(db).mapping_for_key("i17p-cha-silver")["kala_code"] == PRO
@@ -188,6 +195,8 @@ def test_purchase_request_then_stock_confirmed_creates_an_order(shop, db):
     assert done["status"] == "done" and done["outcome"] == "confirmed"
     assert done["order_id"] == order["id"] and done["finished"]
     assert shop.post(url, json={"kala_code": PRO}, headers=mina).status_code == 409
+    got_order = shop.get(f"/admin/orders/{order['id']}", headers=mina).json()
+    assert got_order["owned_by_me"]
     # v2.8.2: staff send the payment details; then the bot can show them
     sent = shop.post(f"/admin/orders/{order['id']}/payment-info", headers=mina,
                      json={"card_number": "6037-0000-1111-2222", "holder": "فروشگاه"})
@@ -215,6 +224,9 @@ def test_stock_confirm_follows_the_sales_window(shop, db, settings):
     shop.post("/admin/sales/action", json={"action": "close"}, headers=boss)
     r = shop.post(f"/admin/item-requests/{req['id']}/confirm-stock",
                   json={"kala_code": PRO}, headers=boss)
+    assert r.status_code == 200                     # v2.9.2: the price may be offered
+    r = shop.post(f"/admin/item-requests/{req['id']}/customer-answer", json={"accept": True},
+                  headers=h("admin"))
     assert r.status_code == 409 and "Sales are closed" in r.json()["detail"]
 
 

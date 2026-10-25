@@ -35,6 +35,9 @@ A_STOCK_CONFIRM = "stock_confirm"
 A_STOCK_UNAVAILABLE = "stock_unavailable"
 A_ARCHIVE = "archive"
 A_PAYMENT_INFO = "payment_info"       # v2.8.2: «ارسال اطلاعات پرداخت»
+A_PRICE_OFFER = "price_offer"         # v2.9.2: price sent to the customer
+A_OFFER_ACCEPT = "offer_accept"       # the customer: «تأیید و خرید» (order created)
+A_OFFER_DECLINE = "offer_decline"     # the customer: «نمی‌خواهم»
 
 FINISHED_DETAIL = "Order is finished and read-only"
 REQUEST_FINISHED_DETAIL = "Request is finished and read-only"

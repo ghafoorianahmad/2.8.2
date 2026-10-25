@@ -107,11 +107,12 @@ def model_name(row: dict) -> str:
 
 def search(rows: list[dict], text: str) -> list[dict]:
     """Best rows of ``rows`` (active-list rows with their mapping) for ``text``,
-    grouped by model, best first. Rows without a price or ignored are skipped."""
+    grouped by model, best first. Rows without a price or ignored are skipped
+    (v2.9.2: a row whose price waits for a manager stays, without a price)."""
     query = list(dict.fromkeys(search_tokens(text)))
     scored = []
     for row in rows:
-        if not row.get("price_rial") or row.get("action") == "ignore":
+        if (not row.get("price_rial") and not row.get("price_held"))                 or row.get("action") == "ignore":
             continue
         value = score(query, row)
         if value > 0:
@@ -122,6 +123,8 @@ def search(rows: list[dict], text: str) -> list[dict]:
         group = groups.setdefault(key, {"score": 0.0, "rows": [], "min_price": None})
         group["score"] = max(group["score"], value)
         group["rows"].append(row)
+        if not row.get("price_rial"):
+            continue
         price = int(row["price_rial"])
         group["min_price"] = price if group["min_price"] is None else min(group["min_price"], price)
     ranked = sorted(groups.items(), key=lambda kv: (-kv[1]["score"], kv[1]["min_price"] or 0,

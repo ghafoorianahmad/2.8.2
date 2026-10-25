@@ -27,6 +27,8 @@ KIND_PASSWORD = "password_request"
 KIND_ITEM_REQUEST = "item_request"
 #: v2.6.2: a customer cancelled their own order in the bot (before any receipt).
 KIND_CUSTOMER_CANCEL = "order_cancelled_by_customer"
+#: v2.9.2: the customer answered «نمی‌خواهم» to an offered price.
+KIND_OFFER_DECLINED = "purchase_offer_declined"
 #: v2.8.0: an order / request was handed to a colleague (refreshes the lists).
 KIND_ORDER_ASSIGNED = "order_assigned"
 KIND_REQUEST_ASSIGNED = "request_assigned"
@@ -57,8 +59,9 @@ SERVER_WARNINGS = {
                                 "در صورت نیاز PDF را دستی در «لیست قیمت» بارگذاری کنید.",
     "security_alert": "فعالیت مشکوک (ربات یا ورود به کنسول) دیده شد؛ گزارش ممیزی را ببینید.",
     # v2.9.1: price guard, corrections that matched nothing, the distributor closed sales
-    "price_held": "قیمت تازهٔ یک یا چند مدل بیش از ۱۰٪ تغییر کرده و خودکار اعمال نشد؛ قیمت قبلی "
-                  "فعال است. در «لیست قیمت» ردیف‌های «منتظر تأیید» را تأیید یا رد کنید.",
+    "price_held": "قیمت تازهٔ یک یا چند مدل بیش از ۱۰٪ تغییر کرده و خودکار اعمال نشد؛ تا تأیید "
+                  "شما با قیمت قبلی فروخته نمی‌شود و در ربات فقط «درخواست خرید - استعلام قیمت» "
+                  "دارد. در «لیست قیمت» ردیف‌های «منتظر تأیید» را تأیید یا رد کنید.",
     "price_correction_unmatched": "چند سطر «اصلاحیه» کانال لیست قیمت با هیچ مدلی جور نشد؛ در "
                                   "«لیست قیمت › پیام‌های کانال» ببینید.",
     "sales_closed_channel": "پخش‌کننده در کانال «فروش بسته» اعلام کرد؛ فروش گوشی تا لیست قیمت "
@@ -109,6 +112,7 @@ TARGETS = {
     KIND_RECEIPT: ("orders", "receipt_uploaded"),
     KIND_PASSWORD: ("password_requests", ""),
     KIND_ITEM_REQUEST: ("item_requests", "open"),
+    KIND_OFFER_DECLINED: ("item_requests", "done"),
     "pricelist_held": ("pricelist", ""),
     "pricelist_failed": ("pricelist", ""),
     "proxies_all_dead": ("server", ""),
@@ -169,7 +173,11 @@ def notice_for(event: dict) -> Optional[Notice]:
                       "یکی از کاربران گذرواژه‌اش را فراموش کرده و منتظر تأیید شماست.", ref)
     if kind == KIND_ITEM_REQUEST:
         return Notice(kind, "درخواست تازه از مشتری",
-                      "یک مشتری در ربات کالایی خواسته (درخواست خرید یا کالای ناموجود).", ref)
+                      "یک مشتری در ربات کالایی خواسته (درخواست خرید - استعلام قیمت یا کالای "
+                      "ناموجود).", ref)
+    if kind == KIND_OFFER_DECLINED:
+        return Notice(kind, "قیمت پذیرفته نشد",
+                      f"مشتری قیمت درخواست شمارهٔ {ref_fa} را نخواست؛ درخواست بسته شد.", ref)
     if kind.startswith(HEALTH_PREFIX):
         check, _, state = kind[len(HEALTH_PREFIX):].rpartition("_")
         label = HEALTH_LABELS.get(check)

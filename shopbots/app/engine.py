@@ -130,6 +130,9 @@ CALLBACK_ARG_COUNTS: dict[str, int] = {
     "psr": 1,
     "pbr": 1,
     "pbv": 2,
+    # v2.9.2: the customer's answer to a price offered by staff (staff message id)
+    "pok": 1,
+    "pno": 1,
     "snot": 0,
     "psl": 0,
     # v2.8.3: «مرحلهٔ قبل» (one screen back, the earlier choices kept)
@@ -194,6 +197,16 @@ PAYMENT_INFO_LINES = (("card_number", "PAYMENT_INFO_CARD"),
 LTR_PAYMENT_FIELDS = frozenset({"card_number", "account_number", "sheba"})
 #: v2.8.0: sales state the sweep saw last ("1" open / "0" closed) for the watchers.
 SALES_SEEN_KEY = "sales_last_open"
+def _lowest(prices) -> float:
+    """The lowest real price (0 when every one waits for a manager)."""
+    values = [p for p in prices if p]
+    return min(values) if values else 0.0
+
+
+def _price_or_ask(price) -> str:
+    return fmt_num(price) if price else texts.PRICE_ON_REQUEST
+
+
 #: shopapi detail of a refused cart item: "Product <code> <reason>".
 _REFUSED_ITEM = re.compile(r"^Product (\d+) (.+)$")
 REFUSED_ITEM_TEXTS = {
@@ -202,6 +215,8 @@ REFUSED_ITEM_TEXTS = {
     "is not in the current price list": "CART_ITEM_NOT_IN_LIST",
     # v2.8.0: a phone without stock in «سازه حساب»
     "has no stock; purchase request": "CART_ITEM_NO_STOCK",
+    # v2.9.2: the list price waits for a manager (price guard)
+    "price waits for approval; purchase request": "CART_ITEM_PRICE_HELD",
 }
 SHOP_STATE_TTL = 30.0
 #: Receipt deadline when shopapi does not say (minutes).
@@ -1058,7 +1073,7 @@ class BotEngine:
             await self._send_options(
                 adapter, platform, chat_id,
                 texts.PRODUCT_DETAIL_INQUIRY.format(name=product["name"]),
-                [[(texts.BTN_INQUIRY, f"pinq:{code}")], [(texts.BTN_MENU, "menu")]],
+                [[(texts.BTN_BUY_INQUIRY, f"pinq:{code}")], [(texts.BTN_MENU, "menu")]],
                 state=STATE_NONE, data=data, edit_message_id=edit_message_id,
                 screen=(f"product:{code}", f"prod:{code}"),
             )
@@ -1240,8 +1255,8 @@ class BotEngine:
         if not colors:
             await self._send_options(
                 adapter, platform, chat_id,
-                f"«{product['name']}»\n{texts.COLOR_NO_COLORS}",
-                [[(texts.BTN_INQUIRY, f"inq:{code}:0")], [(texts.BTN_MENU, "menu")]],
+                f"«{product['name']}»\n{texts.NO_COLORS_PRICE}",
+                [[(texts.BTN_BUY_INQUIRY, f"inq:{code}:0")], [(texts.BTN_MENU, "menu")]],
                 state=STATE_NONE, data=data, edit_message_id=edit_message_id,
                 screen=(f"product:{code}", f"prod:{code}"),
             )
@@ -1318,13 +1333,27 @@ class BotEngine:
         detail_screen = (f"color:{code}", f"prt:{code}:{color_id}", f"part:{code}:",
                          f"part:{code}:{color.get('name') or ''}")
 
+        if color.get("held"):
+            # v2.9.2: the new list price waits for a manager: only a request
+            await self._answer_callback(adapter, callback_id)
+            await self._send_options(
+                adapter, platform, chat_id,
+                texts.PRICE_HELD_NOTE.format(
+                    name=name, color=color["name"],
+                    part=f" — {color['part']}" if color.get("part") else ""),
+                [[(texts.BTN_BUY_INQUIRY, f"pbv:{code}:{color_id}")], *others,
+                 [(texts.BTN_MENU, "menu")]],
+                state=STATE_NONE, data=data, edit_message_id=edit_message_id,
+                screen=detail_screen,
+            )
+            return
         if not color.get("available") or not color.get("price"):
             await self._answer_callback(adapter, callback_id)
-            rows = [[(texts.BTN_INQUIRY, f"inq:{code}:{color_id}")], *others,
+            rows = [[(texts.BTN_BUY_INQUIRY, f"inq:{code}:{color_id}")], *others,
                     [(texts.BTN_MENU, "menu")]]
             await self._send_options(
                 adapter, platform, chat_id,
-                texts.COLOR_UNAVAILABLE.format(name=name, color=color["name"]), rows,
+                texts.COLOR_NO_PRICE.format(name=name, color=color["name"]), rows,
                 state=STATE_NONE, data=data, edit_message_id=edit_message_id,
                 screen=detail_screen,
             )
@@ -1339,11 +1368,11 @@ class BotEngine:
         refusal = await self._phone_refusal(platform, chat_id, code, int(color_id), qty)
         if refusal == "color":
             await self._answer_callback(adapter, callback_id)
-            rows = [[(texts.BTN_INQUIRY, f"inq:{code}:{color_id}")], *others,
+            rows = [[(texts.BTN_BUY_INQUIRY, f"inq:{code}:{color_id}")], *others,
                     [(texts.BTN_MENU, "menu")]]
             await self._send_options(
                 adapter, platform, chat_id,
-                texts.COLOR_UNAVAILABLE.format(name=name, color=color["name"]), rows,
+                texts.COLOR_NO_PRICE.format(name=name, color=color["name"]), rows,
                 state=STATE_NONE, data=data, edit_message_id=edit_message_id,
                 screen=detail_screen,
             )
@@ -1359,7 +1388,7 @@ class BotEngine:
                     model=name, color=color["name"], price=price,
                     part=texts.PHONE_SEARCH_PART_LINE.format(part=color["part"])
                     if color.get("part") else "") + "\n\n" + texts.PURCHASE_REQUEST_NOTE,
-                [[(texts.BTN_PURCHASE_REQUEST, f"pbv:{code}:{color_id}")], *others,
+                [[(texts.BTN_BUY_INQUIRY, f"pbv:{code}:{color_id}")], *others,
                  [(texts.BTN_MENU, "menu")]],
                 state=STATE_NONE, data=data, edit_message_id=edit_message_id,
                 screen=detail_screen,
@@ -1415,6 +1444,10 @@ class BotEngine:
         if color is None:
             await self._answer_callback(adapter, callback_id, texts.BAD_CALLBACK)
             return
+        if color.get("held"):
+            await self._answer_callback(adapter, callback_id)
+            await self._show_color(adapter, platform, chat_id, code, int(color_id), 1)
+            return
         if not color.get("available") or not color.get("price"):
             await self._answer_callback(adapter, callback_id, texts.OUT_OF_STOCK)
             return
@@ -1445,7 +1478,8 @@ class BotEngine:
             await self.api.check_order(platform, chat_id, [line])
         except ShopApiRejected as exc:
             detail = str(exc.detail or "").lower()
-            if "no stock" in detail or "insufficient stock" in detail:
+            if "no stock" in detail or "insufficient stock" in detail \
+                    or "price waits for approval" in detail:
                 return "stock"
             if "color" in detail or "not in the current price list" in detail \
                     or "not available for sale" in detail:
@@ -1627,7 +1661,7 @@ class BotEngine:
                 no_stock = self._no_stock_item(platform, chat_id, exc.detail)
                 if no_stock is not None:
                     # v2.8.2: became unavailable since it was added: one tap to request it
-                    rows.insert(0, [(texts.BTN_PURCHASE_REQUEST_NOW,
+                    rows.insert(0, [(texts.BTN_BUY_INQUIRY,
                                      f"pbv:{no_stock[0]}:{no_stock[1]}")])
                 await self._send_options(adapter, platform, chat_id, refused, rows)
                 return
@@ -1700,7 +1734,8 @@ class BotEngine:
     def _no_stock_item(self, platform: str, chat_id: str, detail) -> tuple[int, int] | None:
         """(code, color) of a cart phone refused for lack of stock, or None."""
         match = _REFUSED_ITEM.match(str(detail or "").strip())
-        if not match or "no stock" not in match.group(2):
+        if not match or ("no stock" not in match.group(2)
+                         and "price waits for approval" not in match.group(2)):
             return None
         code = int(match.group(1))
         variant = next((int(it.get("variant_id") or 0) for it in self.cart.items(platform, chat_id)
@@ -1975,6 +2010,8 @@ class BotEngine:
         rows = [{"k": str(i["row_key"]), "m": int(i.get("model_index") or 0),
                  "n": str(i.get("model") or ""), "c": str(i.get("color") or ""),
                  "p": str(i.get("part") or ""), "pr": float(i.get("price") or 0),
+                 # v2.9.2: the price waits for a manager (shown «با استعلام»)
+                 "h": bool(i.get("price_held")),
                  "code": int(i["kala_code"]) if i.get("kala_code") else 0,
                  "v": int(i["variant_id"]) if i.get("variant_id") else 0,
                  "a": "order" if i.get("action") == "order" else "purchase"}
@@ -2005,8 +2042,8 @@ class BotEngine:
             if r["m"] in seen:
                 continue
             seen.add(r["m"])
-            low = min(x["pr"] for x in rows if x["m"] == r["m"])
-            buttons.append([(f"{shorten(r['n'], 28)} — {fmt_num(low)}", f"psm:{r['m']}")])
+            low = _lowest(x["pr"] for x in rows if x["m"] == r["m"])
+            buttons.append([(f"{shorten(r['n'], 28)} — {_price_or_ask(low)}", f"psm:{r['m']}")])
         buttons.append([(texts.BTN_MENU, "menu")])
         await self._send_options(
             adapter, platform, chat_id,
@@ -2028,8 +2065,8 @@ class BotEngine:
             return
         buttons, row = [], []
         for n, color in enumerate(colors):
-            low = min(r["pr"] for r in mine if r["c"] == color)
-            row.append((f"🎨 {shorten(color, 16)} — {fmt_num(low)}", f"psc:{model}:{n}"))
+            low = _lowest(r["pr"] for r in mine if r["c"] == color)
+            row.append((f"🎨 {shorten(color, 16)} — {_price_or_ask(low)}", f"psc:{model}:{n}"))
             if len(row) == 2:
                 buttons.append(row)
                 row = []
@@ -2057,7 +2094,7 @@ class BotEngine:
             await self._ps_row(adapter, platform, chat_id, parts[0][0],
                                edit_message_id=edit_message_id)
             return
-        buttons = [[(f"{shorten(r['p'] or '—', 20)} — {fmt_num(r['pr'])}", f"psr:{n}")]
+        buttons = [[(f"{shorten(r['p'] or '—', 20)} — {_price_or_ask(r['pr'])}", f"psr:{n}")]
                    for n, r in parts]
         buttons.append([(texts.BTN_OTHER_MODELS, "psl"), (texts.BTN_MENU, "menu")])
         await self._send_options(
@@ -2086,13 +2123,19 @@ class BotEngine:
                                        refresh=False)
                 return
         await self._answer_callback(adapter, callback_id)
-        body = texts.PHONE_SEARCH_ROW.format(
-            model=row["n"], color=row["c"] or "—", price=fmt_num(row["pr"]),
-            part=texts.PHONE_SEARCH_PART_LINE.format(part=row["p"]) if row["p"] else "")
-        body += "\n\n" + texts.PURCHASE_REQUEST_NOTE
+        if row.get("h") or not row["pr"]:
+            # v2.9.2: the new list price waits for a manager: never the old one
+            body = texts.PRICE_HELD_NOTE.format(
+                name=row["n"], color=row["c"] or "—",
+                part=f" — {row['p']}" if row["p"] else "")
+        else:
+            body = texts.PHONE_SEARCH_ROW.format(
+                model=row["n"], color=row["c"] or "—", price=fmt_num(row["pr"]),
+                part=texts.PHONE_SEARCH_PART_LINE.format(part=row["p"]) if row["p"] else "")
+            body += "\n\n" + texts.PURCHASE_REQUEST_NOTE
         if not (data.get("ps") or {}).get("open", True):
             body = f"{texts.SALES_CLOSED_SEARCH}\n\n{body}"
-        buttons = [[(texts.BTN_PURCHASE_REQUEST, f"pbr:{int(index)}")]]
+        buttons = [[(texts.BTN_BUY_INQUIRY, f"pbr:{int(index)}")]]
         if len({r["m"] for r in rows}) > 1:
             buttons.append([(texts.BTN_OTHER_MODELS, "psl")])
         buttons.append([(texts.BTN_MENU, "menu")])
@@ -2513,6 +2556,9 @@ class BotEngine:
         elif action == "pbv":
             await self._purchase_request(adapter, platform, chat_id, callback_id,
                                          code=args[0], variant_id=args[1])
+        elif action in ("pok", "pno"):
+            await self._answer_offer(adapter, platform, chat_id, args[0], action == "pok",
+                                     callback_id)
         elif action == "snot":
             self.store.add_sales_watch(platform, chat_id)
             if not self.store.get_value(SALES_SEEN_KEY):
@@ -2741,8 +2787,11 @@ class BotEngine:
                 product=f" («{shorten(product, 60)}»)" if product else "",
                 text=str(msg.get("text") or ""),
             )
+            markup = None
+            if msg.get("purpose") == "offer" and msg.get("offer_price_rial"):
+                body, markup = self._offer_message(adapter, msg, message_id)
             try:
-                await adapter.send_text(chat_id, body, None)
+                await adapter.send_text(chat_id, body, markup)
                 ok = True
             except BotApiError as exc:
                 error = ("پیام‌رسان در دسترس نبود (اینترنت سرور)." if exc.network else
@@ -2753,6 +2802,64 @@ class BotEngine:
         except ShopApiError:
             pass
         return ok
+
+    def _offer_message(self, adapter: PlatformAdapter, msg: dict,
+                       message_id: int) -> tuple[str, dict | None]:
+        """v2.9.2: the price staff offered, with «تأیید و خرید» / «نمی‌خواهم». The
+        buttons carry the staff message id: an older offer's buttons are refused."""
+        price = float(msg.get("offer_price_rial") or 0)
+        qty = float(msg.get("qty") or 1)
+        name = " — ".join(p for p in (str(msg.get("product_name") or "").strip(),
+                                      str(msg.get("color") or "").strip(),
+                                      str(msg.get("part") or "").strip()) if p)
+        currency = texts.SHOP.get("currency", "ریال")
+        body = texts.PURCHASE_OFFER.format(
+            name=shorten(name, 80) or "کالای درخواستی", qty=fmt_num(qty),
+            price=fmt_num(price), total=fmt_num(qty * price), currency=currency)
+        self.store.mark_announced("offer", int(message_id), str(msg.get("platform") or ""),
+                                  str(msg.get("chat_id") or ""),
+                                  {"request_id": int(msg.get("request_id") or 0),
+                                   "price": int(price)})
+        rows = [[(texts.BTN_OFFER_ACCEPT, f"pok:{int(message_id)}"),
+                 (texts.BTN_OFFER_DECLINE, f"pno:{int(message_id)}")]]
+        markup = self._markup(adapter, rows)
+        return self._flatten(body, markup, rows), markup
+
+    async def _answer_offer(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                            message_id: int, accept: bool, callback_id=None) -> None:
+        """v2.9.2: «تأیید و خرید» -> the order at the offered price (staff send the
+        payment details next); «نمی‌خواهم» -> the request is closed."""
+        notice = self.store.get_notice("offer", int(message_id))
+        if not notice or str(notice.get("platform")) != str(platform) \
+                or str(notice.get("chat_id")) != str(chat_id):
+            await self._answer_callback(adapter, callback_id, texts.BAD_CALLBACK)
+            return
+        payload = notice.get("payload") or {}
+        try:
+            result = await self.api.admin_answer_offer(int(payload.get("request_id") or 0),
+                                                       accept, int(payload.get("price") or 0))
+        except ShopApiRejected as exc:
+            detail = str(exc.detail or "").lower()
+            text = (self._sales_closed_text(await self._sales_state())
+                    if "sales are closed" in detail else texts.PURCHASE_OFFER_GONE)
+            await self._answer_callback(adapter, callback_id)
+            await self._send_options(adapter, platform, chat_id, text,
+                                     [[(texts.BTN_MENU, "menu")]])
+            return
+        except ShopApiError:
+            await self._answer_callback(adapter, callback_id, texts.SERVICE_UNAVAILABLE, True)
+            return
+        await self._answer_callback(adapter, callback_id)
+        order = (result or {}).get("order") if isinstance(result, dict) else None
+        if accept and isinstance(order, dict) and order.get("id"):
+            # the usual «سفارش ثبت شد» message (also sent by the events feed: once)
+            if await self._notify_purchase_order(int(order["id"])):
+                return
+            await self._send_options(adapter, platform, chat_id, texts.PURCHASE_OFFER_ACCEPTED,
+                                     [[(texts.BTN_MENU, "menu")]])
+            return
+        await self._send_options(adapter, platform, chat_id, texts.PURCHASE_OFFER_DECLINED,
+                                 [[(texts.BTN_MENU, "menu")]])
 
     async def _notify_decision(self, kind: str, ref_id: int) -> bool:
         """Message the customer about one decision, at most once."""
