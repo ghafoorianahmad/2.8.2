@@ -17,7 +17,7 @@ Owner's list after installing and testing 2.9.2 on this PC. Decisions in `REQUIR
 9. **Look** — `AppearancePicker(context=…)`: a click saves and applies (`apply_look_now`); «اعلان‌ها و ظاهر» has no parent (survives the main-window rebuild) and saves the sound / Windows switches at once.
 10. **Site models** — `shopapi/app/site_catalog.py` (read, parse, import with `source` / `kind`, `auto_map`, suggestions, monthly loop + re-map after a new price list), `POST /admin/catalog-models/read-site`, `…/{id}/suggestion/accept|dismiss`, event `site_models_new`; ShopAdmin «خواندن از سایت اکنون», filter «پیشنهاد خودکار», «پذیرش پیشنهاد خودکار» / «رد پیشنهاد», last-read line. Checked offline against the live site (66 models, all phones) and `samples/price_list.pdf`: 16 site models have rows in that list, every one matched correctly (no Air → MacBook, A16 → iPad, S25 → S25 FE, Redmi 15 → Note 15); the other 50 are not in that list. How many reach a «سازه حساب» product depends on the price-list mappings on the server (not readable here).
 
-Tests: see `CLAUDE.md`. **Not verified on the installed build** (not installed by request).
+Tests: shopapi 525, shopbots 287, shoptg 81, shopsystem 59, shopadmin 648 ✓ (in `build_all.bat`); text-fit, RTL and button audits 0 in all 9 looks. Build: commit `df9da09`, ShopServerSetup / ShopAdminSetup 2.9.3. **Not verified on the installed build** (not installed by request).
 
 ## v2.9.2 — proxy collection that really runs, price guard never sells the old price, «درخواست خرید - استعلام قیمت» with the customer's confirmation, backup share → local folder (2026-10-25, same branch) — DONE in code; the new build NOT installed
 
