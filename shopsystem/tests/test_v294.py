@@ -132,6 +132,8 @@ def test_fresh_install_only_remembers_the_folder(tmp_path, monkeypatch, capsys):
 
 
 def test_list_dbs_reads_the_password_from_stdin(tmp_path, monkeypatch, capsys):
+    # the server package as bundled by build_exe.bat (skipped before the first build)
+    monkeypatch.syspath_prepend(str(Path(launcher.__file__).resolve().parent / "build_src"))
     pytest.importorskip("shopapi_app.db_setup")
     from shopapi_app import db_setup
 
