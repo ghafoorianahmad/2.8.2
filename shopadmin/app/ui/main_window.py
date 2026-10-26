@@ -190,7 +190,7 @@ class MainWindow(QMainWindow):
         brand_layout.setContentsMargins(6, 0, 6, 10)
         brand_layout.setSpacing(10)
         logo = QLabel()
-        logo.setPixmap(theme.icon_pixmap("products", 28, "#FFFFFF"))
+        theme.set_icon(logo, "products", 28, "#FFFFFF")
         logo.setFixedSize(42, 42)
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo.setStyleSheet(
@@ -221,7 +221,7 @@ class MainWindow(QMainWindow):
             button = QPushButton(f"  {text}")
             button.setObjectName("NavButton")
             button.setCheckable(True)
-            button.setIcon(theme.nav_icon(icon_name))
+            theme.set_nav_icon(button, icon_name)
             button.setIconSize(QSize(20, 20))
             button.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -261,7 +261,7 @@ class MainWindow(QMainWindow):
         banner_layout.setContentsMargins(20, 10, 20, 10)
         banner_layout.setSpacing(10)
         banner_icon = QLabel()
-        banner_icon.setPixmap(theme.icon_pixmap("warning", 20, theme.WARNING))
+        theme.set_icon(banner_icon, "warning", 20, theme.WARNING)
         banner_layout.addWidget(banner_icon)
         self.banner_label = widgets.label(BANNER_TEXT, color=theme.WARNING_TEXT, bold=True, wrap=True)
         banner_layout.addWidget(self.banner_label, 1)
@@ -331,7 +331,7 @@ class MainWindow(QMainWindow):
         user_layout.setContentsMargins(0, 0, 0, 0)
         user_layout.setSpacing(10)
         avatar = QLabel()
-        avatar.setPixmap(theme.icon_pixmap("user", 20, theme.PRIMARY_DARK))
+        theme.set_icon(avatar, "user", 20, theme.PRIMARY_DARK)
         avatar.setFixedSize(38, 38)
         avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         avatar.setStyleSheet(f"background: {theme.PRIMARY_SOFT}; border-radius: 19px;")
@@ -466,7 +466,7 @@ class MainWindow(QMainWindow):
         self._refresh_header()
 
     def edit_own_notifications(self) -> None:
-        # v2.9.3: no parent: a new look rebuilds this window while the dialog stays open
+        # v2.9.3: no parent, application-modal (v2.9.4: the look is applied live, in place)
         dialog = NotificationDialog(self.context, None)
         dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
         dialog.exec()
@@ -788,6 +788,14 @@ class MainWindow(QMainWindow):
             return
         self._inactivity.stop()
         self._clock.stop()
+        # v2.9.4: the application-wide activity filter goes with the window (it
+        # stayed after a sign-out; every later event, and every re-polish of a
+        # new look, ran one more Python filter per closed window)
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
         super().closeEvent(event)
 
 

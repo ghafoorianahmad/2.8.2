@@ -49,8 +49,38 @@ CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 __all__ = ["SetupError"]
 
 
-def data_dir() -> Path:
+#: v2.9.4: the data folder chosen in the server installer (default D:\ShopServerData)
+REGISTRY_KEY = r"SOFTWARE\ShopServer"
+REGISTRY_VALUE = "DataDir"
+
+
+def default_data_dir() -> Path:
     return Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "ShopServer"
+
+
+def registered_data_dir() -> Optional[Path]:
+    """``HKLM\\SOFTWARE\\ShopServer\\DataDir`` written by ShopServerSetup (64-bit view)."""
+    try:
+        import winreg
+    except ImportError:
+        return None
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, REGISTRY_KEY, 0,
+                            winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            value, _kind = winreg.QueryValueEx(key, REGISTRY_VALUE)
+    except OSError:
+        return None
+    text = str(value or "").strip()
+    return Path(text) if text else None
+
+
+def data_dir() -> Path:
+    """The server's data folder: SHOPSERVER_DATA_DIR, else the installer's choice
+    (registry), else %ProgramData%\\ShopServer (2.9.3 and older)."""
+    explicit = os.environ.get("SHOPSERVER_DATA_DIR", "").strip()
+    if explicit:
+        return Path(explicit)
+    return registered_data_dir() or default_data_dir()
 
 
 # --------------------------------------------------------------------------
@@ -123,12 +153,15 @@ def _server_env() -> dict:
     return env
 
 
-def run_server_tool(args: list[str], timeout: float = 60) -> dict:
-    """Run ShopSystem with a setup flag and return its JSON answer."""
+def run_server_tool(args: list[str], timeout: float = 60, stdin: dict | None = None) -> dict:
+    """Run ShopSystem with a setup flag and return its JSON answer. ``stdin``: a
+    JSON object for the tool (a password never goes on a command line)."""
     command = server_command() + ["--data-dir", str(data_dir()), *args]
+    payload = json.dumps(stdin, ensure_ascii=False).encode("utf-8") if stdin is not None else None
     try:
         completed = subprocess.run(command, capture_output=True, timeout=timeout,
-                                   creationflags=CREATE_NO_WINDOW, env=_server_env())
+                                   creationflags=CREATE_NO_WINDOW, env=_server_env(),
+                                   input=payload)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise SetupError("اجرای برنامهٔ سرور ممکن نشد.", type(exc).__name__) from exc
     stdout = completed.stdout.decode("utf-8", errors="replace").strip()
@@ -243,32 +276,88 @@ def write_config(db: DatabaseConfig, *, port: int, extra: dict | None = None) ->
 #: (same list as shopapi's grant_access.ACCESS_ERRORS)
 ACCESS_ERROR_CODES = frozenset({"4060", "916", "229", "230", "18456", "4064"})
 
+#: v2.9.4: ShopSystem --check-db answers one of these (shopapi db_setup.diagnose)
+DB_KINDS = {"server_not_found": "db_server", "db_missing": "db_missing",
+            "no_access": "db_access", "bad_password": "db_password",
+            "remote_windows": "db_remote", "error": "db_error"}
 
-class DatabaseAccessError(SetupError):
-    """The shop's SQL sign-in may not open the chosen database (``code``)."""
+
+class DatabaseCheckError(SetupError):
+    """v2.9.4: the connection test failed for one precise reason: ``kind`` is one
+    of :data:`DB_KINDS` values; ``title`` and ``fix`` are Persian."""
+
+    kind = "db_error"
+
+    def __init__(self, message: str, detail: str = "", code: str = "", *,
+                 kind: str = "db_error", title: str = "", fix: str = "",
+                 databases: list[str] | None = None) -> None:
+        super().__init__(message, detail)
+        self.code = code
+        self.kind = kind
+        self.title = title
+        self.fix = fix
+        self.databases = list(databases or [])
+
+
+class DatabaseAccessError(DatabaseCheckError):
+    """The account the shop connects with may not open the chosen database."""
 
     kind = "db_access"
 
-    def __init__(self, message: str, detail: str = "", code: str = "") -> None:
-        super().__init__(message, detail)
-        self.code = code
+    def __init__(self, message: str, detail: str = "", code: str = "", **extra) -> None:
+        extra.setdefault("kind", "db_access")
+        super().__init__(message, detail, code, **extra)
+
+
+def database_error(answer: dict) -> DatabaseCheckError:
+    """The JSON of ``--check-db`` / ``--list-dbs`` as one precise error."""
+    kind = DB_KINDS.get(str(answer.get("kind") or "error"), "db_error")
+    title = str(answer.get("title_fa") or "")
+    fix = str(answer.get("fix_fa") or "")
+    message = (f"{title}: {fix}" if title and fix else answer.get("message_fa") or title or
+               "اتصال به پایگاه‌دادهٔ حسابداری برقرار نشد.")
+    code = str(answer.get("error_code") or "")
+    detail = str(answer.get("message") or answer.get("error") or "")
+    cls = DatabaseAccessError if kind == "db_access" else DatabaseCheckError
+    return cls(message, detail, code, kind=kind, title=title, fix=fix,
+               databases=answer.get("databases"))
 
 
 def check_database() -> dict:
+    """The saved settings, tested by ShopSystem: precise reason on failure, and
+    with Windows sign-in the test runs as the service's own account (v2.9.4)."""
     answer = run_server_tool(["--check-db"], timeout=90)
     if not answer.get("ok"):
-        # v2.8.1: the real reason in plain Persian (wrong name, no permission, …)
-        reason = answer.get("message_fa") or (
-            "اتصال به پایگاه‌دادهٔ حسابداری برقرار نشد. نام سرور، نام پایگاه‌داده و "
-            "روش ورود را بررسی کنید.")
-        code = str(answer.get("error_code") or "")
-        if code in ACCESS_ERROR_CODES:
-            reason += (" اگر نام درست است، کاربر فروشگاه به این پایگاه‌داده دسترسی ندارد: "
-                       "دکمهٔ «دادن دسترسی به این دیتابیس» را بزنید.")
-            raise DatabaseAccessError(reason, answer.get("message") or answer.get("error", ""),
-                                      code)
-        raise SetupError(reason, answer.get("message") or answer.get("error", ""))
+        raise database_error(answer)
     return answer
+
+
+def list_databases(server: str, *, user: str = "", password: str = "",
+                   driver: str = "ODBC Driver 17 for SQL Server") -> list[str]:
+    """v2.9.4: every user database on ``server`` (for the drop-down): this Windows
+    account first, then the SQL login (an empty password = the saved one)."""
+    answer = run_server_tool(["--list-dbs"], timeout=60,
+                             stdin={"server": server, "user": user, "password": password,
+                                    "driver": driver})
+    if not answer.get("ok"):
+        raise database_error(answer)
+    return [str(name) for name in answer.get("databases") or []]
+
+
+def service_db_check(port: int, server: str, database: str) -> Optional[dict]:
+    """v2.9.4: the RUNNING service tests a Windows sign-in to the chosen database
+    as itself (like the backup folder test). None when the service is not running
+    (the impersonation test of ``--check-db`` stands then)."""
+    try:
+        client = local_server_client(port)
+    except SetupError:
+        return None
+    try:
+        return client.service_db_check(server, database, service_key())
+    except Exception:  # noqa: BLE001 - the service is stopped / not set up yet
+        return None
+    finally:
+        client.close()
 
 
 GRANT_STEP_FA = {"login_created": "کاربر ورود (login) ساخته شد",
@@ -295,7 +384,9 @@ def grant_result_text(answer: dict) -> str:
     if answer.get("note") == "db_owner":
         lines.append("ℹ این کاربر در این پایگاه‌داده db_owner است و همهٔ دسترسی‌ها را دارد؛ "
                      "برای سرور اصلی بهتر است فقط نقش محدود shop_app داشته باشد.")
-    if answer.get("check_ok"):
+    if answer.get("check_ok") and answer.get("as_service"):
+        lines.append(f"✔ اتصال با حساب خود سرویس («{answer.get('login')}») آزموده و برقرار شد.")
+    elif answer.get("check_ok"):
         lines.append("✔ اتصال فروشگاه با همین تنظیمات برقرار شد.")
     elif "check_ok" in answer:
         lines.append("✖ اتصال فروشگاه هنوز برقرار نیست: " +
@@ -568,6 +659,34 @@ def new_backup_passphrase() -> str:
     return "-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(8))
 
 
+def backup_target(folder: str) -> str:
+    """v2.9.4: where the off-server copies really go: always the dedicated
+    ``ShopServerBackup`` sub-folder (never a drive root such as ``E:\\``)."""
+    from .localshare import backup_target as target
+
+    return target(folder)
+
+
+def grant_backup_folder(folder: str) -> bool:
+    """v2.9.4: create the local backup sub-folder and give the service account
+    Modify on it (what the service install does), so «آزمایش» with the service
+    account passes before saving. False when it is a network folder or the
+    service account does not exist yet (the install grants it later)."""
+    from .localshare import is_network_path
+
+    if not folder or is_network_path(folder):
+        return False
+    path = Path(folder)
+    if not path.is_absolute() or path == Path(path.anchor):
+        return False
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    result = _run(["icacls", str(path), "/grant", f"{SERVICE_ACCOUNT}:(OI)(CI)M", "/C", "/Q"])
+    return result.returncode == 0
+
+
 def test_backup_folder(folder: str) -> dict:
     """Write, read back and delete a small test file with THIS Windows user."""
     import secrets
@@ -602,6 +721,49 @@ def local_server_client(port: int):
 
     pem, _fingerprint = read_certificate()
     return ShopApiClient(f"https://127.0.0.1:{int(port)}", server_cert_pem=pem, timeout=15)
+
+
+# --------------------------------------------------------------------------
+# v2.9.4: «مدیر کل» on reinstall / settings, test-data cleanup (service key)
+# --------------------------------------------------------------------------
+def _with_local_client(port: int, call):
+    client = local_server_client(port)
+    try:
+        return call(client, service_key())
+    finally:
+        client.close()
+
+
+def current_owners(port: int) -> list[dict]:
+    """The «مدیر کل» accounts of the running server (usernames only)."""
+    return _with_local_client(port, lambda client, key: client.owners(key))
+
+
+def save_owner(port: int, username: str, full_name: str, password: str) -> dict:
+    """Same username as an owner = its new password; a new username = a new owner."""
+    return _with_local_client(port, lambda client, key: client.set_owner(
+        username, full_name, password, key))
+
+
+def backup_now() -> dict:
+    """``ShopSystem.exe --backup-now`` (verified local zip + off-server copy)."""
+    answer = run_server_tool(["--backup-now"], timeout=600)
+    if not answer.get("file") or not (answer.get("verify") or {}).get("ok"):
+        raise SetupError("پشتیبان گرفته نشد؛ پاک‌سازی انجام نمی‌شود.",
+                         str(answer.get("error") or answer.get("message") or "")[:300])
+    return answer
+
+
+def cleanup_preview(port: int) -> dict:
+    return _with_local_client(port, lambda client, key: client.cleanup_preview(key))
+
+
+def cleanup_run(port: int, confirm: str) -> dict:
+    return _with_local_client(port, lambda client, key: client.cleanup_run(confirm, key))
+
+
+def order_status_codes(port: int) -> dict:
+    return _with_local_client(port, lambda client, key: client.order_status_codes(key))
 
 
 def server_installed_here() -> bool:

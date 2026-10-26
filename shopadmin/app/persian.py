@@ -95,6 +95,55 @@ def format_money(value: object, with_unit: bool = True) -> str:
     return f"{text} ریال" if with_unit else text
 
 
+_ONES = ("", "یک", "دو", "سه", "چهار", "پنج", "شش", "هفت", "هشت", "نه")
+_TEENS = ("ده", "یازده", "دوازده", "سیزده", "چهارده", "پانزده", "شانزده", "هفده", "هجده",
+          "نوزده")
+_TENS = ("", "", "بیست", "سی", "چهل", "پنجاه", "شصت", "هفتاد", "هشتاد", "نود")
+_HUNDREDS = ("", "صد", "دویست", "سیصد", "چهارصد", "پانصد", "ششصد", "هفتصد", "هشتصد", "نهصد")
+_SCALES = ("", "هزار", "میلیون", "میلیارد", "هزار میلیارد")
+
+
+def _three_digits_words(number: int) -> str:
+    hundreds, rest = divmod(number, 100)
+    parts = [_HUNDREDS[hundreds]] if hundreds else []
+    if 10 <= rest < 20:
+        parts.append(_TEENS[rest - 10])
+    else:
+        tens, ones = divmod(rest, 10)
+        if tens:
+            parts.append(_TENS[tens])
+        if ones:
+            parts.append(_ONES[ones])
+    return " و ".join(parts)
+
+
+def number_to_words(value: int) -> str:
+    """v2.9.4: 525000000 -> «پانصد و بیست و پنج میلیون» (up to 999 هزار میلیارد)."""
+    number = int(value)
+    if number == 0:
+        return "صفر"
+    if number < 0:
+        return "منفی " + number_to_words(-number)
+    groups: list[str] = []
+    scale = 0
+    while number and scale < len(_SCALES):
+        number, chunk = divmod(number, 1000)
+        if chunk:
+            words = "" if chunk == 1 and scale == 1 else _three_digits_words(chunk)  # «هزار»
+            groups.append(f"{words} {_SCALES[scale]}".strip())
+        scale += 1
+    return " و ".join(reversed(groups))
+
+
+def money_in_words(rial: int) -> str:
+    """«پانصد و بیست و پنج میلیون ریال (پنجاه و دو میلیون و پانصد هزار تومان)»."""
+    text = f"{number_to_words(rial)} ریال"
+    toman = int(rial) // 10
+    if toman and int(rial) % 10 == 0:
+        text += f" ({number_to_words(toman)} تومان)"
+    return text
+
+
 def format_percent(value: float, digits: int = 0) -> str:
     return to_persian_digits(f"{value:.{digits}f}") + "٪"
 

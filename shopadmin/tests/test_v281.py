@@ -91,7 +91,8 @@ def test_settings_wizard_is_filled_and_keeps_untouched_secrets(server_folder, ad
 
     wizard = wiz.ServerSetupWizard(mode=wiz.MODE_SETTINGS)
     try:
-        assert wizard.settings_mode and "admin" not in wizard._steps
+        # v2.9.4: «مدیر کل» in settings too (blank = keep), plus «ابزارها»
+        assert wizard.settings_mode and "admin" in wizard._steps and "tools" in wizard._steps
         assert wizard.windowTitle() == "تنظیمات سرور فروشگاه"
         assert wizard.db_name.text() == "hesab5" and wizard.port.value() == 9443
         assert wizard.db_password.text() == "" and wizard.db_password.placeholderText() == wiz.KEEP_SECRET
@@ -153,7 +154,7 @@ def test_first_setup_writes_nothing_and_shows_no_write_switch_on(admin_qapp, mon
     # «تنظیمات سرور» before any setup = the normal first setup
     wizard = wiz.ServerSetupWizard(mode=wiz.MODE_SETTINGS)
     try:
-        assert not wizard.settings_mode and "admin" in wizard._steps
+        assert not wizard.settings_mode and "admin" in wizard._steps and "tools" not in wizard._steps
         assert wizard.db_access.allowed() == [] and wizard.db_access.writing() == []
         assert wizard.config_extra()["write_databases"] == ""
     finally:

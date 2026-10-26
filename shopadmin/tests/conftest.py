@@ -1138,3 +1138,16 @@ def _no_real_dotenv(monkeypatch):
 
     # app.main imports load_dotenv inside the function, so patch the source.
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_server_tool(monkeypatch):
+    """v2.9.4: tests never start the real ShopSystem (the database page reads the
+    SQL Server's database list on its own); a test that needs a tool answer
+    patches ``run_server_tool`` / ``list_databases`` itself."""
+    from app import errors, server_setup
+
+    def refused(*_args, **_kwargs):
+        raise errors.SetupError("برنامهٔ سرور در آزمون اجرا نمی‌شود.")
+
+    monkeypatch.setattr(server_setup, "server_command", refused)

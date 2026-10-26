@@ -55,6 +55,9 @@ MSG_TOO_MANY = "تعداد تلاش‌های ورود از این رایانه �
 MSG_MUST_CHANGE = "ابتدا باید گذرواژهٔ خود را تغییر دهید."
 MSG_NOT_FOUND = "این مورد پیدا نشد؛ شاید حذف یا عوض شده است. «به‌روزرسانی» را بزنید."
 MSG_SERVER_ERROR = "کار انجام نشد. چند لحظه بعد دوباره امتحان کنید؛ اگر تکرار شد به مدیر خبر دهید."
+#: v2.9.4: the server refused with a reason this program has no Persian text for
+MSG_SERVER_REFUSED = ("سرور فروشگاه این کار را نپذیرفت. اطلاعات را بررسی و دوباره امتحان "
+                      "کنید؛ اگر تکرار شد به مدیر خبر دهید (جزئیات در گزارش برنامه).")
 MSG_UNAVAILABLE = ("برنامهٔ حسابداری یا رایانهٔ اصلی فروشگاه فعلاً پاسخ نمی‌دهد. چند دقیقه بعد دوباره امتحان کنید؛ اگر درست نشد به مدیر خبر دهید.")
 MSG_BAD_RESPONSE = "پاسخ سرور فروشگاه قابل خواندن نبود."
 MSG_UNEXPECTED = "خطای پیش‌بینی‌نشده در ارتباط با سرور فروشگاه رخ داد."
@@ -203,6 +206,71 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
      "این کالا در «سازه حساب» پیدا نشد یا غیرفعال است."),
     (re.compile(r"row not found in the current list", re.I),
      "این ردیف در لیست قیمت فعلی نیست."),
+    # ---- v2.9.4: every remaining server message in Persian (tests/test_v294.py) ----
+    (re.compile(r"confirmation text does not match", re.I),
+     "متن تأیید درست نیست؛ کلمهٔ «پاک‌سازی» را دقیقاً بنویسید."),
+    (re.compile(r"take a backup first", re.I),
+     "پیش از پاک‌سازی باید پشتیبان تازه گرفته شود؛ «گرفتن پشتیبان» را بزنید."),
+    (re.compile(r"username belongs to another account", re.I),
+     "این نام کاربری مال یک کارمند است، نه «مدیر کل»؛ نام کاربری دیگری بنویسید."),
+    (re.compile(r"a newer price list is already active", re.I),
+     "لیست قیمت تازه‌تری فعال است؛ این لیست دیگر اعمال نمی‌شود."),
+    (re.compile(r"channel not found", re.I), "این کانال پیدا نشد."),
+    (re.compile(r"choose the phone", re.I), "گوشی را انتخاب کنید."),
+    (re.compile(r"describe the item", re.I), "کالای درخواستی را بنویسید."),
+    (re.compile(r"duplicate group", re.I), "این گروه تکراری است."),
+    (re.compile(r"duplicate slug", re.I), "این کد مدل قبلاً استفاده شده است."),
+    (re.compile(r"inquiry not found", re.I), "این استعلام پیدا نشد."),
+    (re.compile(r"invalid idempotency-key", re.I), "شناسهٔ تکرار سفارش درست نیست."),
+    (re.compile(r"invalid base64", re.I), "فایل فرستاده‌شده خوانا نبود."),
+    (re.compile(r"invalid proxy link", re.I),
+     "پیوند پراکسی درست نیست؛ پیوند tg://proxy?… یا https://t.me/proxy?… بگذارید."),
+    (re.compile(r"item not found", re.I), "این مورد پیدا نشد."),
+    (re.compile(r"map at least one product first", re.I), "اول دست‌کم یک کالا را وصل کنید."),
+    (re.compile(r"mapping not found", re.I), "این نگاشت پیدا نشد."),
+    (re.compile(r"message not found", re.I), "این پیام پیدا نشد."),
+    (re.compile(r"model not found", re.I), "این مدل پیدا نشد."),
+    (re.compile(r"no price waits for approval on this row", re.I),
+     "برای این ردیف قیمتی منتظر تأیید نیست."),
+    (re.compile(r"no such pending request", re.I), "چنین درخواست بازی نیست."),
+    (re.compile(r"no super admin exists yet", re.I),
+     "هنوز «مدیر کل»ی ساخته نشده است؛ «تنظیمات سرور» را روی سرور اجرا کنید."),
+    (re.compile(r"not a pdf file", re.I), "این فایل PDF نیست."),
+    (re.compile(r"not a mobile number", re.I), "شمارهٔ موبایل درست نیست (مثل ۰۹۱۲۳۴۵۶۷۸۹)."),
+    (re.compile(r"not available on this channel", re.I), "این کار از این راه در دسترس نیست."),
+    (re.compile(r"not permitted for this key", re.I), MSG_FORBIDDEN),
+    (re.compile(r"only a super admin may decide this", re.I), "این تصمیم فقط با «مدیر کل» است."),
+    (re.compile(r"only staff can offer a price", re.I), "فقط کارکنان می‌توانند قیمت بفرستند."),
+    (re.compile(r"order cannot be cancelled", re.I),
+     "این سفارش دیگر قابل لغو نیست (پرداختش تأیید یا ثبت شده است)."),
+    (re.compile(r"pdf too large", re.I), "فایل PDF بیش از حد بزرگ است."),
+    (re.compile(r"price list is (\w+)", re.I), "این لیست قیمت «{0}» است و این کار روی آن انجام نمی‌شود."),
+    (re.compile(r"price list not found", re.I), "این لیست قیمت پیدا نشد."),
+    (re.compile(r"product not found", re.I), "این کالا پیدا نشد."),
+    (re.compile(r"product (\d+) ", re.I), "کالای {0} قابل سفارش نیست."),
+    (re.compile(r"proxy not found", re.I), "این پراکسی پیدا نشد."),
+    (re.compile(r"receipt:", re.I), "تصویر رسید پذیرفته نشد (نوع یا اندازهٔ فایل)."),
+    (re.compile(r"request is not approved", re.I), "این درخواست هنوز تأیید نشده است."),
+    (re.compile(r"same colleague", re.I), "این کار همین حالا با همین همکار است."),
+    (re.compile(r"site not read", re.I), "فهرست مدل‌ها از سایت خوانده نشد (اینترنت سرور؟)."),
+    (re.compile(r"too many requests today", re.I), "امروز بیش از حد درخواست فرستاده شده است."),
+    (re.compile(r"too many requests", re.I), "درخواست‌ها بیش از حد زیاد است؛ کمی صبر کنید."),
+    (re.compile(r"unknown alert", re.I), "این هشدار شناخته نشد."),
+    (re.compile(r"unknown color", re.I), "این رنگ شناخته نشد."),
+    (re.compile(r"unknown key", re.I), "این تنظیم شناخته نشد."),
+    (re.compile(r"unknown kind", re.I), "این نوع شناخته نشد."),
+    (re.compile(r"unknown permission", re.I), "این دسترسی شناخته نشد."),
+    (re.compile(r"kala_code is required", re.I), "کد کالا لازم است."),
+    (re.compile(r"choose a color for product (\d+)", re.I), "برای کالای {0} رنگ را انتخاب کنید."),
+    (re.compile(r"color not available for product (\d+)", re.I),
+     "این رنگ برای کالای {0} موجود نیست."),
+    (re.compile(r"idempotency-key belongs to another customer", re.I),
+     "شناسهٔ تکرار سفارش مال مشتری دیگری است؛ سفارش ساخته نشد."),
+    (re.compile(r"product already mapped to model (\d+)", re.I),
+     "این کالا قبلاً به مدل دیگری (شمارهٔ {0}) وصل شده است."),
+    (re.compile(r"product is not price on inquiry", re.I), "این کالا «قیمت با استعلام» نیست."),
+    (re.compile(r"replace or remove products missing from accounting", re.I),
+     "کالاهایی که دیگر در «سازه حساب» نیستند را جایگزین یا حذف کنید."),
     # ---- sign-in and staff accounts ----
     (re.compile(r"invalid username or password", re.I), MSG_BAD_CREDENTIALS),
     (re.compile(r"account temporarily locked", re.I), MSG_LOCKED),
@@ -239,6 +307,8 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
      "فایل تنظیمات سرور در دسترس نیست (سرور در حالت سرویس اجرا نمی‌شود)."),
     (re.compile(r"log file not available", re.I), "فایل گزارش سرور در دسترس نیست."),
     (re.compile(r"nothing to change", re.I), "تغییری برای ذخیره وجود ندارد."),
+    # v2.9.4: last: any other «… not found»
+    (re.compile(r"\bnot found\b", re.I), MSG_NOT_FOUND),
 )
 
 _STATUS_FA = {
@@ -293,18 +363,11 @@ def translate_detail(detail: Any, status_code: int | None = None) -> str:
         return translate_field_errors(detail["fields"])
 
     if isinstance(detail, list):
-        parts: list[str] = []
-        for item in detail:
-            if isinstance(item, dict):
-                location = ".".join(str(p) for p in item.get("loc", ()) if p != "body")
-                message = str(item.get("msg", "")).strip()
-                if location:
-                    parts.append(f"{location}: {message}")
-                elif message:
-                    parts.append(message)
-        if parts:
-            return "اطلاعات ارسال‌شده نامعتبر است: " + "؛ ".join(parts)
-        return "اطلاعات ارسال‌شده نامعتبر است."
+        # v2.9.4: pydantic errors in Persian with the field's Persian name
+        # («price_rial: Input should be less than or equal to …» reached staff in 2.9.3)
+        from .user_messages import validation_errors_text
+
+        return validation_errors_text(detail)
 
     text = str(detail or "").strip()
     if not text:
@@ -330,7 +393,9 @@ def translate_detail(detail: Any, status_code: int | None = None) -> str:
 
     if status_code == 404:
         return MSG_NOT_FOUND
-    return "خطای سرور فروشگاه: " + to_persian_digits(text)
+    # v2.9.4: an English text the program does not know is never shown as it is
+    log.warning("untranslated server message (HTTP %s): %s", status_code, text[:200])
+    return MSG_SERVER_REFUSED
 
 
 @dataclass
@@ -768,6 +833,39 @@ class ShopApiClient:
         headers = {API_KEY_HEADER: service_key} if service_key else None
         return self._request("POST", "/admin/server/backup-test", json_body={"folder": folder},
                              headers=headers, with_auth=not service_key) or {}
+
+    # ---- v2.9.4: «تنظیمات سرور» on the server (service key) and the status helper ----
+    def _service_call(self, method: str, path: str, service_key: str, **kwargs) -> Any:
+        headers = {API_KEY_HEADER: service_key} if service_key else None
+        return self._request(method, path, headers=headers, with_auth=not service_key, **kwargs)
+
+    def service_db_check(self, server: str, database: str, service_key: str) -> dict:
+        """The RUNNING service tests a Windows sign-in to ``database`` as itself."""
+        return self._service_call("POST", "/admin/server/db-check", service_key,
+                                  json_body={"server": server, "database": database}) or {}
+
+    def owners(self, service_key: str) -> list[dict]:
+        """The «مدیر کل» accounts (no password)."""
+        return list((self._service_call("GET", "/auth/owner", service_key) or {})
+                    .get("owners") or [])
+
+    def set_owner(self, username: str, full_name: str, password: str, service_key: str) -> dict:
+        """Same username = new password for that owner; a new one = one more owner."""
+        return self._service_call("POST", "/auth/owner", service_key,
+                                  json_body={"username": username, "full_name": full_name,
+                                             "password": password}) or {}
+
+    def cleanup_preview(self, service_key: str) -> dict:
+        return self._service_call("GET", "/admin/server/cleanup-test-data", service_key) or {}
+
+    def cleanup_run(self, confirm: str, service_key: str) -> dict:
+        return self._service_call("POST", "/admin/server/cleanup-test-data", service_key,
+                                  json_body={"confirm": confirm}) or {}
+
+    def order_status_codes(self, service_key: str = "") -> dict:
+        """Read-only: Status values / counts of the accounting orders + latest
+        orders made by «سازه حساب» itself."""
+        return self._service_call("GET", "/admin/server/order-status-codes", service_key) or {}
 
     def approve_row_price(self, row_key: str) -> dict:
         """The held new price of a row (changed more than 10 %) is sold from now."""

@@ -49,6 +49,35 @@ BUILD_PROBLEMS: list[str] = []
 LONG_NAME = "SAMSUNG Galaxy S26 Ultra 512GB 12GB RAM — Titanium Silverblue (ZAA) — گارانتی ۱۸ ماهه"
 
 
+#: v2.9.4: what the server answers for the two «ابزارها» dialogs (no real server)
+SAMPLE_STATUS_CODES = {
+    "ok": True, "database": "hesab5 t",
+    "statuses": [{"status": None, "internet": True, "count": 41, "last_order": 1290,
+                  "last_date": "1405/08/03"},
+                 {"status": 1, "internet": False, "count": 1180, "last_order": 1288,
+                  "last_date": "1405/08/03"},
+                 {"status": 3, "internet": False, "count": 66, "last_order": 1201,
+                  "last_date": "1405/07/20"}],
+    "latest_sazeh": [{"order": 1288 - i, "date": "1405/08/03", "status": 1 if i % 3 else 3,
+                      "user_code": 2, "total": 52_500_000 * (i + 1), "items": i % 4 + 1}
+                     for i in range(8)],
+}
+SAMPLE_CLEANUP = {
+    "counts": {"orders": 37, "order_items": 52, "payments": 30, "item_requests": 9,
+               "item_request_messages": 14, "inquiries": 3, "users": 6, "events": 410,
+               "activity_log": 220, "staff": 2, "conversations": 6, "carts": 2,
+               "receipt_files": 28},
+    "owners": ["owner"], "staff_removed": ["sara", "test1"], "backup_fresh": False,
+    "confirm_text": "پاک‌سازی",
+    "labels": {"orders": "سفارش", "order_items": "قلم سفارش", "payments": "پرداخت/رسید",
+               "item_requests": "درخواست خرید و کالا", "item_request_messages": "پیام درخواست",
+               "inquiries": "استعلام", "users": "مشتری (با پیوند ربات)", "events": "اعلان",
+               "activity_log": "گزارش فعالیت", "staff": "کاربر کارمند (غیرمدیر کل)",
+               "conversations": "گفت‌وگوی ربات", "carts": "سبد خرید ربات",
+               "receipt_files": "فایل تصویر رسید"},
+}
+
+
 def seed_more(fake) -> None:
     """Data that exercises long and mixed (Persian + Latin) text."""
     from tests.conftest import TS
@@ -301,7 +330,13 @@ def _extra_screens(app, tmp: Path, tag: str) -> Iterator[tuple[str, QWidget]]:
                             ("read_current_config", lambda: None),
                             ("lan_addresses", lambda: ["192.168.1.10"]),
                             ("server_installed_here", lambda: False),
-                            ("telegram_logged_in", lambda: False)):
+                            ("telegram_logged_in", lambda: False),
+                            # v2.9.4: never the real ShopSystem / server in an audit
+                            ("list_databases", lambda *a, **k: ["hesab5", "hesab5 t"]),
+                            ("current_owners", lambda *a, **k: [{"username": "owner"}]),
+                            ("cleanup_preview", lambda *a, **k: SAMPLE_CLEANUP),
+                            ("order_status_codes", lambda *a, **k: SAMPLE_STATUS_CODES),
+                            ("service_db_check", lambda *a, **k: None)):
             if hasattr(setup_module, name):
                 setattr(setup_module, name, value)
         from app.ui.server_setup_wizard import ServerSetupWizard
@@ -313,6 +348,28 @@ def _extra_screens(app, tmp: Path, tag: str) -> Iterator[tuple[str, QWidget]]:
             server_wizard._update()
             yield _show(app, server_wizard, f"{tag} server setup {key}")
         _close(server_wizard)
+        # v2.9.4: «تنظیمات سرور» (current values, «مدیر کل فعلی», «ابزارها»)
+        setup_module.read_current_config = lambda: setup_module.CurrentConfig(
+            db_server=r".\SQLEXPRESS", db_name="hesab5", db_user="shopbot",
+            db_password_set=True, allowed_databases=["hesab5 t"], write_databases=[])
+        settings_wizard = ServerSetupWizard(mode="settings")
+        settings_wizard.resize(900, 760)
+        for index, key in enumerate(settings_wizard._steps):
+            if key not in ("database", "admin", "tools"):
+                continue
+            settings_wizard._step = index
+            settings_wizard._update()
+            yield _show(app, settings_wizard, f"{tag} server settings {key}")
+        from app.ui.cleanup_dialog import CleanupDialog
+        from app.ui.status_codes import StatusCodesDialog
+
+        dialog = StatusCodesDialog(settings_wizard, lambda: SAMPLE_STATUS_CODES)
+        yield _show(app, dialog, f"{tag} dialog status codes")
+        _close(dialog)
+        dialog = CleanupDialog(settings_wizard, port=8443)
+        yield _show(app, dialog, f"{tag} dialog cleanup")
+        _close(dialog)
+        _close(settings_wizard)
     finally:
         store.close()
 

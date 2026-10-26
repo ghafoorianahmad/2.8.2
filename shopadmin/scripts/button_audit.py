@@ -11,6 +11,9 @@ checks:
 * dialog footers are tidy: the prominent actions (Primary / Success / Danger)
   are together on the right (the start in right-to-left), the other actions
   after them, and «بستن» / «انصراف» last on the left, never prominent;
+* v2.9.4: no button looks faint: its frame or its fill stands out from what is
+  around it by at least 3:1 (WCAG 1.4.11), measured on the screen's pixels
+  (the 2.9.3 «بستن» had a 1.3:1 frame and looked like plain text);
 * the theme: every button rule has the same radius, every variant has a
   disabled look (flat, dashed edge, grey text), and a disabled button really
   looks different from an enabled one in every variant (pixels compared).
@@ -45,6 +48,50 @@ MIN_GAP = 6
 HEIGHT_SLACK = 1
 #: average pixel difference (0..255) a disabled button must have from an enabled one
 MIN_DISABLED_DIFF = 6.0
+#: v2.9.4: frame / fill against the surrounding background (WCAG non-text contrast)
+MIN_EDGE_CONTRAST = 3.0
+
+
+def _luminance(color) -> float:
+    def channel(value: int) -> float:
+        c = value / 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    return 0.2126 * channel(color.red()) + 0.7152 * channel(color.green()) +         0.0722 * channel(color.blue())
+
+
+def contrast(a, b) -> float:
+    la, lb = _luminance(a), _luminance(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def edge_contrast(image, button: QPushButton, root: QWidget) -> float | None:
+    """The best of (frame, fill) against the background just outside the button,
+    on both sides at mid-height; the weaker side counts. None = not measurable."""
+    effect = button.graphicsEffect()
+    if effect is not None and effect.isEnabled():
+        return None     # a soft shadow (filled Primary / Success / Danger): drawn apart
+    if button.visibleRegion().boundingRect().size() != button.size():
+        return None     # partly scrolled out of its view
+    ratio = image.devicePixelRatio() or 1.0
+    origin = button.mapTo(root, QPoint(0, 0))
+    y = int((origin.y() + button.height() // 2) * ratio)
+    width, height = image.width(), image.height()
+    if not 0 <= y < height:
+        return None
+    sides = []
+    for edge_x, step in ((origin.x(), -1), (origin.x() + button.width() - 1, 1)):
+        outside_x = int((edge_x + 3 * step) * ratio)
+        if not 0 <= outside_x < width:
+            continue
+        outside = image.pixelColor(outside_x, y)
+        frame = [image.pixelColor(int((edge_x - k * step) * ratio), y) for k in (0, 1)
+                 if 0 <= int((edge_x - k * step) * ratio) < width]
+        fill_x = int((edge_x - 7 * step) * ratio)
+        fill = [image.pixelColor(fill_x, y)] if 0 <= fill_x < width else []
+        candidates = [contrast(c, outside) for c in frame + fill]
+        if candidates:
+            sides.append(max(candidates))
+    return min(sides) if sides else None
 
 
 def _visible_buttons(root: QWidget) -> list[QPushButton]:
@@ -98,6 +145,7 @@ def _footer(root: QWidget, buttons: list[QPushButton]) -> list[QPushButton]:
 def problems_in(root: QWidget, where: str, height: int) -> list[str]:
     out: list[str] = []
     buttons = _visible_buttons(root)
+    image = root.grab().toImage() if buttons else None
     for button in buttons:
         name = button.objectName()
         label = _text(button) or button.toolTip() or "(بی‌متن)"
@@ -113,6 +161,11 @@ def problems_in(root: QWidget, where: str, height: int) -> list[str]:
             out.append(f"{tag}: button-local style sheet (use the theme variants)")
         if abs(button.height() - height) > HEIGHT_SLACK:
             out.append(f"{tag}: height {button.height()} ≠ standard {height}")
+        if image is not None and button.isEnabled():
+            measured = edge_contrast(image, button, root)
+            if measured is not None and measured < MIN_EDGE_CONTRAST:
+                out.append(f"{tag}: looks faint (frame/fill {measured:.2f}:1 against the "
+                           f"background, at least {MIN_EDGE_CONTRAST:.0f}:1)")
     # neighbours in one row: never touching
     rows: dict[tuple[int, int], list[QPushButton]] = {}
     for button in buttons:

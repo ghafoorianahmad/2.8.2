@@ -20,6 +20,7 @@ from ..api_client import ApiError
 from ..auth import AuthError
 from ..errors import SetupError
 from ..logging_setup import get_logger
+from ..user_messages import humanize
 
 log = get_logger("worker")
 
@@ -102,15 +103,17 @@ class _Worker(QRunnable):
             else:
                 result = self.fn(*self.args, **self.kwargs)
         except ApiError as exc:
-            self.signals.failed.emit(exc.message, exc.kind)
+            self.signals.failed.emit(humanize(exc.message), exc.kind)
         except AuthError as exc:
             # Kinds the UI already understands: the server said no, or it is away.
-            self.signals.failed.emit(exc.message, "connection" if exc.code == "offline" else "auth_error")
+            self.signals.failed.emit(humanize(exc.message),
+                                     "connection" if exc.code == "offline" else "auth_error")
         except SetupError as exc:
             if exc.detail:
                 log.warning("server setup step failed: %s", exc.detail)
             # v2.9.3: a step may say what kind of failure it was («db_access»)
-            self.signals.failed.emit(exc.message, getattr(exc, "kind", "") or "setup")
+            # v2.9.4: never an exception name or English sentence on screen
+            self.signals.failed.emit(humanize(exc.message), getattr(exc, "kind", "") or "setup")
         except Exception as exc:  # noqa: BLE001 - never let a thread die silently
             log.exception("background task failed: %s", type(exc).__name__)
             self.signals.failed.emit(MSG_UNEXPECTED, "unexpected")

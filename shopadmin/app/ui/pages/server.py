@@ -432,6 +432,12 @@ class ServerPage(BasePage):
         panel.body.addWidget(self.settings_message)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
+        # v2.9.4: read-only helper for «کد وضعیت سفارش» before real writing is switched on
+        self.status_codes_button = widgets.button(
+            "راهنمای کد وضعیت سفارش…", icon_name="search", on_click=self._open_status_codes,
+            tooltip="کدهای وضعیت سفارش‌های حسابداری و تعداد هر کدام (فقط خواندن)")
+        self.status_codes_button.setVisible(self.context.can(SERVER_MANAGE))
+        buttons.addWidget(self.status_codes_button)
         self.save_settings_button = widgets.button(
             "ذخیرهٔ تنظیمات سرور", icon_name="save", variant="primary", on_click=self._save_settings)
         buttons.addWidget(self.save_settings_button)
@@ -440,6 +446,11 @@ class ServerPage(BasePage):
         self.save_settings_button.setVisible(self.context.can(SERVER_MANAGE))
         panel.body.addLayout(buttons)
         return panel
+
+    def _open_status_codes(self) -> None:
+        from ..status_codes import StatusCodesDialog
+
+        StatusCodesDialog(self, self.context.api.order_status_codes).exec()
 
     def _settings_unavailable(self, message: str, _kind: str) -> None:
         self.save_settings_button.setEnabled(False)

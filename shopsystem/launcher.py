@@ -28,9 +28,15 @@ Modes
     The passphrase of a .ssbk comes from SHOPSERVER_BACKUP_PASSPHRASE, else the
     server's .env, else a hidden prompt - never from the command line.
 
+    ShopSystem.exe --list-dbs   v2.9.4: databases of a SQL Server (JSON on stdin)
+    ShopSystem.exe --move-data <folder>   v2.9.4: move the data folder safely
+                                (copy, verify, switch, health check; the old folder
+                                is deleted only after the server answers)
+
 Data folder (``.env``, databases, log, TLS certificate)
     --data-dir <folder>  >  SHOPSERVER_DATA_DIR  >  the exe folder when a ``.env``
-    is already there (old portable layout)  >  %ProgramData%\\ShopServer.
+    is already there (old portable layout)  >  the folder chosen in the installer
+    (registry ``HKLM\\SOFTWARE\\ShopServer\\DataDir``)  >  %ProgramData%\\ShopServer.
     Nothing is ever written into the program folder of an installed copy.
 
 Failure isolation
@@ -104,13 +110,43 @@ def _arg_value(args: list[str], name: str) -> str | None:
     return None
 
 
+#: v2.9.4: the data folder chosen in the server installer (D:\\ShopServerData by
+#: default), shared by the installer, ShopAdmin's server setup and this program
+REGISTRY_KEY = r"SOFTWARE\ShopServer"
+REGISTRY_VALUE = "DataDir"
+
+
+def registered_data_dir() -> Path | None:
+    """``HKLM\\SOFTWARE\\ShopServer\\DataDir`` (64-bit view), or None."""
+    try:
+        import winreg
+    except ImportError:
+        return None
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, REGISTRY_KEY, 0,
+                            winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            value, _kind = winreg.QueryValueEx(key, REGISTRY_VALUE)
+    except OSError:
+        return None
+    text = str(value or "").strip()
+    return Path(text) if text else None
+
+
+def register_data_dir(folder: Path) -> None:
+    import winreg
+
+    with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, REGISTRY_KEY, 0,
+                            winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY) as key:
+        winreg.SetValueEx(key, REGISTRY_VALUE, 0, winreg.REG_SZ, str(folder))
+
+
 def resolve_data_dir(args: list[str]) -> Path:
     explicit = _arg_value(args, "--data-dir") or os.environ.get("SHOPSERVER_DATA_DIR", "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
     if (APP_DIR / ".env").exists():
         return APP_DIR  # old portable layout: keep working where it already lives
-    return DEFAULT_DATA_DIR
+    return registered_data_dir() or DEFAULT_DATA_DIR
 
 
 def configure_paths(data_dir: Path) -> None:
@@ -1144,63 +1180,244 @@ def init_config(json_path: Path) -> int:
 
 
 def check_db() -> int:
-    """Try the accounting connection with the saved settings; print JSON."""
+    """Try the accounting connection with the saved settings; print JSON.
+    v2.9.4: one precise answer (server not found / no such database / no access
+    / wrong password), and with Windows sign-in the test runs as the account the
+    SERVICE connects with (``db_setup.diagnose``), not only as this administrator."""
     if not load_env_file():
         _emit({"ok": False, "error": "no .env"})
         return EXIT_NO_CONFIG
     normalise_configuration_for_db()
-    from shopapi_app.accounting_reader import AccountingReader
     from shopapi_app.config import Settings
+    from shopapi_app.db_setup import diagnose
 
-    try:
-        reader = AccountingReader(Settings.from_env())
-        reader.ping()
-        groups = len(reader.list_groups())
-    except Exception as exc:  # noqa: BLE001 - reported to the setup screen
-        from shopapi_app.sql_errors import describe
+    answer = diagnose(Settings.from_env())
+    _emit(answer)
+    return EXIT_OK if answer.get("ok") else 1
 
-        info = describe(exc)
-        message = str(exc).splitlines()[0][:300] if str(exc) else ""
-        _emit({"ok": False, "error": type(exc).__name__, "message": message,
-               "error_code": info.code, "message_fa": info.message_fa})
-        return 1
-    _emit({"ok": True, "groups": groups})
-    return EXIT_OK
+
+def list_dbs() -> int:
+    """v2.9.4: the databases of a SQL Server for the setup's drop-down. Reads
+    ``{"server", "driver", "user", "password"}`` from stdin (the password never
+    goes on a command line); tries this Windows account first."""
+    import json
+    from dataclasses import replace
+
+    from shopapi_app.config import Settings
+    from shopapi_app.db_setup import list_databases
+
+    data = json.loads(sys.stdin.read() or "{}")
+    user = str(data.get("user") or "").strip()
+    password = str(data.get("password") or "")
+    if user and not password:
+        # «خالی = بدون تغییر»: the saved password of the same login
+        saved = read_env_values()
+        if (saved.get("DB_USER") or saved.get("ACCOUNTING_USERNAME") or "") == user:
+            password = saved.get("DB_PASSWORD") or saved.get("ACCOUNTING_PASSWORD") or ""
+    settings = replace(Settings.from_env(),
+                       accounting_server=str(data.get("server") or "").strip(),
+                       accounting_driver=str(data.get("driver") or
+                                             "ODBC Driver 17 for SQL Server"),
+                       accounting_database="master",
+                       accounting_trusted=not user,
+                       accounting_username=user,
+                       accounting_password=password)
+    answer = list_databases(settings)
+    _emit(answer)
+    return EXIT_OK if answer.get("ok") else 1
+
+
+def _ensure_service_registered() -> None:
+    """CREATE LOGIN [NT SERVICE\\ShopServer] needs the service (its account) to
+    exist: register it first (the same as the setup does at the end)."""
+    import winservice
+
+    if winservice.exists():
+        return
+    values = read_env_values()
+    shoptg_dir, shoptg_data = _shoptg_paths(values)
+    winservice.install(self_command(), Paths.data_dir, shoptg_dir=shoptg_dir,
+                       shoptg_data=shoptg_data,
+                       backup_dir=winservice.local_backup_dir(values.get("BACKUP_COPY_DIR")))
 
 
 def grant_db() -> int:
     """v2.9.3 «دادن دسترسی به این دیتابیس» (server setup): with the setup's own
-    administrator Windows sign-in, give the shop's SQL login (or the service
-    account) exactly what grant_shop_app.ps1 gives on the saved database, then
-    try the shop's own connection again; print JSON (never the password)."""
+    administrator Windows sign-in, give the shop's SQL login (or, v2.9.4, exactly
+    the account the service connects with) what grant_shop_app.ps1 gives on the
+    saved database, then test again AS THAT ACCOUNT; print JSON (never the
+    password)."""
     if not load_env_file():
         _emit({"ok": False, "error": "no .env"})
         return EXIT_NO_CONFIG
     normalise_configuration_for_db()
     from shopapi_app.config import Settings
+    from shopapi_app.db_setup import diagnose, is_local_server
     from shopapi_app.grant_access import GrantError, grant_shop_app
 
     settings = Settings.from_env()
+    if settings.accounting_trusted and is_local_server(settings.accounting_server):
+        _ensure_service_registered()
     try:
         result = grant_shop_app(settings)
     except GrantError as exc:
         _emit({"ok": False, "error": "GrantError", "message_fa": exc.message_fa,
                "message": exc.detail[:300]})
         return 1
-    try:
-        from shopapi_app.accounting_reader import AccountingReader
-
-        reader = AccountingReader(settings)
-        reader.ping()
-        result["check_ok"] = True
-        result["groups"] = len(reader.list_groups())
-    except Exception as exc:  # noqa: BLE001 - reported to the setup screen
-        from shopapi_app.sql_errors import describe
-
-        result["check_ok"] = False
-        result["check_message_fa"] = describe(exc).message_fa
+    check = diagnose(settings)
+    result["check_ok"] = bool(check.get("ok"))
+    result["groups"] = check.get("groups")
+    result["as_service"] = check.get("as_service")
+    if not check.get("ok"):
+        result["check_message_fa"] = check.get("message_fa") or ""
     _emit(result)
     return EXIT_OK
+
+
+# --------------------------------------------------------------------------
+# v2.9.4: moving the data folder (server installer, administrator)
+# --------------------------------------------------------------------------
+#: never copied: the old folder's own leftovers
+MOVE_SKIP = ("*.tmp", "*.partial")
+
+
+def _tree_files(root: Path) -> list[Path]:
+    import fnmatch
+
+    return sorted(p for p in root.rglob("*") if p.is_file() and
+                  not any(fnmatch.fnmatch(p.name, pattern) for pattern in MOVE_SKIP))
+
+
+def _file_hash(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def copy_verified(source: Path, target: Path) -> int:
+    """Copy every file of ``source`` into ``target`` and compare the SHA-256 of
+    each; raises on the first difference. Returns the number of files."""
+    import shutil
+
+    files = _tree_files(source)
+    for path in files:
+        dest = target / path.relative_to(source)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, dest)
+    for path in files:
+        dest = target / path.relative_to(source)
+        if not dest.is_file() or _file_hash(path) != _file_hash(dest):
+            raise RuntimeError(f"copy differs: {path.relative_to(source)}")
+    return len(files)
+
+
+def _run_quiet(command: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(command, capture_output=True, text=True, errors="replace",
+                          timeout=120, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+def harden_folder(folder: Path, run=None) -> None:
+    """SYSTEM + Administrators only (by SID, so a Persian Windows works too), the
+    same lock as the server setup; the service's Modify is added by its install."""
+    run = run or _run_quiet
+    result = run(["icacls", str(folder), "/inheritance:r", "/grant:r",
+                  "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/C", "/Q"])
+    if result.returncode != 0:
+        raise RuntimeError("icacls failed on the new data folder")
+    for child in sorted(folder.rglob("*")):
+        run(["icacls", str(child), "/reset", "/C", "/Q"])
+
+
+def _point_service(folder: Path) -> None:
+    import winservice
+
+    configure_paths(folder)
+    values = read_env_values()
+    shoptg_dir, shoptg_data = _shoptg_paths(values)
+    winservice.install(self_command(), folder, shoptg_dir=shoptg_dir, shoptg_data=shoptg_data,
+                       backup_dir=winservice.local_backup_dir(values.get("BACKUP_COPY_DIR")))
+
+
+def move_data(target_raw: str, *, health=None) -> int:
+    """``--move-data <folder>``: move the server's data folder. Copy + SHA-256 of
+    every file, lock the new folder, register it, point the service there, start
+    it and wait for /health; only then delete the old folder. Any failure
+    switches everything back to the old folder and deletes nothing."""
+    import shutil
+
+    import winservice
+
+    health = health or health_check_quiet
+    source = Paths.data_dir
+    target = Path(target_raw).expanduser()
+    if not target.is_absolute():
+        _emit({"ok": False, "error": "relative", "message_fa": "مسیر کامل لازم است."})
+        return 1
+    if target.resolve() == source.resolve() or not (source / ".env").exists():
+        # nothing to move (same folder, or a fresh install): just remember it
+        register_data_dir(target)
+        _emit({"ok": True, "moved": False, "data_dir": str(target)})
+        return EXIT_OK
+    if target.exists() and any(target.iterdir()):
+        _emit({"ok": False, "error": "not_empty",
+               "message_fa": "پوشهٔ مقصد خالی نیست؛ چیزی جابه‌جا نشد."})
+        return 1
+    previous = registered_data_dir()
+    was_installed = winservice.exists()
+    was_running = winservice.state() == "running"
+    winservice.stop()
+    count = 0
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        harden_folder(target)
+        count = copy_verified(source, target)
+        harden_folder(target)                       # the copied files inherit the lock
+        register_data_dir(target)
+        if was_installed:
+            _point_service(target)
+            winservice.start()
+            if not health(120):
+                raise RuntimeError("the server did not answer from the new folder")
+    except Exception as exc:  # noqa: BLE001 - back to the old folder, nothing deleted
+        try:
+            winservice.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            register_data_dir(previous or source)
+            if was_installed:
+                _point_service(source)
+                if was_running:
+                    winservice.start()
+        except Exception:  # noqa: BLE001
+            pass
+        _emit({"ok": False, "error": type(exc).__name__, "message": str(exc)[:300],
+               "message_fa": "انتقال انجام نشد و همه‌چیز به پوشهٔ قبلی برگشت؛ هیچ داده‌ای "
+                             "پاک نشد."})
+        return 1
+    if was_installed and not was_running:
+        winservice.stop()
+    removed = True
+    try:
+        shutil.rmtree(source)
+    except OSError:
+        removed = False                             # the verified copy is in use; old stays
+    _emit({"ok": True, "moved": True, "files": count, "data_dir": str(target),
+           "old_removed": removed, "old_dir": str(source)})
+    return EXIT_OK
+
+
+def health_check_quiet(timeout: float) -> bool:
+    """``health_check`` without printing; True when /health answered."""
+    import contextlib
+    import io
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        return health_check(timeout) == EXIT_OK
 
 
 def normalise_configuration_for_db() -> None:
@@ -1218,10 +1435,16 @@ def main(argv: list[str] | None = None) -> int:
     configure_paths(resolve_data_dir(args))
 
     init_json = _arg_value(args, "--init-config")
-    if init_json or "--check-db" in args or "--grant-db" in args:
+    move_target = _arg_value(args, "--move-data")
+    if init_json or move_target or any(f in args for f in ("--check-db", "--grant-db",
+                                                            "--list-dbs")):
         # Setup helpers must always answer with JSON, even on failure, so the
         # wizard can show the real reason instead of "unreadable response".
         try:
+            if move_target:
+                return move_data(move_target)
+            if "--list-dbs" in args:
+                return list_dbs()
             if "--grant-db" in args:
                 return grant_db()
             return init_config(Path(init_json)) if init_json else check_db()

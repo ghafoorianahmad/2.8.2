@@ -103,6 +103,7 @@ class LoginWindow(QWidget):
         self.password_input.setMinimumHeight(42)
         # v2.9.1: the eye shows what is being typed (never a saved password)
         self._eye_shown = False
+        self.password_input.setProperty("password_eye", True)   # its own eye (v2.9.4 filter)
         self.eye_action = self.password_input.addAction(
             theme.icon("eye", 18, theme.TEXT_MUTED), QLineEdit.ActionPosition.TrailingPosition)
         self.eye_action.setToolTip("نمایش گذرواژه")

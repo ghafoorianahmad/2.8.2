@@ -52,10 +52,13 @@ log = get_logger("server_setup_ui")
 MODE_SETUP = "setup"
 MODE_SETTINGS = "settings"
 
-#: step key -> title. «مدیر کل» only on the first setup.
+#: step key -> title. v2.9.4: «مدیر کل» in both modes (blank = the owner stays);
+#: «ابزارها» (status-code helper, test-data cleanup) only in «تنظیمات سرور».
 STEP_TITLES = {"checks": "پیش‌نیازها", "database": "حسابداری", "network": "شبکه",
-               "bots": "ربات‌ها", "telegram": "تلگرام", "admin": "مدیر کل", "run": "اجرا"}
-STEPS = tuple(STEP_TITLES.values())   # the first setup (kept for older callers)
+               "bots": "ربات‌ها", "telegram": "تلگرام", "admin": "مدیر کل", "tools": "ابزارها",
+               "run": "اجرا"}
+STEPS = tuple(t for k, t in STEP_TITLES.items() if k != "tools")   # the first setup
+CHOOSE_DB = "— پایگاه‌داده را انتخاب کنید —"
 
 KEEP_SECRET = "تنظیم شده — خالی بگذارید تا تغییر نکند"
 #: v2.9.0: the public channel the price lists come from
@@ -104,6 +107,66 @@ def _same_name(a: str, b: str) -> bool:
     return a.strip().lower() == b.strip().lower()
 
 
+class DatabasePicker(QComboBox):
+    """v2.9.4: the database is CHOSEN from the databases of the SQL Server (no
+    free typing: «hesab2» was typed by mistake). ``text()`` / ``setText()`` keep
+    the line-edit interface; a saved name that is not on the list is shown
+    marked until the list is read."""
+
+    textChanged = Signal(str)
+    #: the person picked another database (not a programmatic change)
+    textEdited = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setEditable(False)
+        self.setMinimumHeight(38)
+        self.setMinimumContentsLength(18)
+        self.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        mark_ltr(self)
+        self._names: list[str] = []
+        self.loaded = False
+        self.addItem(CHOOSE_DB, "")
+        self.currentIndexChanged.connect(lambda _i: self.textChanged.emit(self.text()))
+        self.activated.connect(lambda _i: self.textEdited.emit(self.text()))
+
+    def text(self) -> str:
+        return str(self.currentData() or "")
+
+    def names(self) -> list[str]:
+        return list(self._names)
+
+    def setText(self, name: str) -> None:  # noqa: N802 - line-edit interface
+        name = str(name or "").strip()
+        if not name:
+            self.setCurrentIndex(0)
+            return
+        index = self.findData(name)
+        if index < 0:
+            for i in range(1, self.count()):
+                if _same_name(str(self.itemData(i) or ""), name):
+                    index = i
+                    break
+        if index < 0:
+            self.addItem(name if not self.loaded else f"{name} (روی این سرور پیدا نشد)", name)
+            index = self.count() - 1
+        self.setCurrentIndex(index)
+
+    def set_names(self, names: list[str]) -> None:
+        """The list read from the server; the current choice stays when present."""
+        current = self.text()
+        self.blockSignals(True)
+        self.clear()
+        self.addItem(CHOOSE_DB, "")
+        self._names = sorted({str(n) for n in names if str(n).strip()}, key=str.lower)
+        for name in self._names:
+            self.addItem(name, name)
+        self.loaded = True
+        self.blockSignals(False)
+        self.setText(current)
+        self.textChanged.emit(self.text())
+
+
 class DatabaseAccessList(QWidget):
     """فهرست پایگاه‌داده‌های مجاز، هرکدام با تیک «ثبت واقعی» (با هشدار و تأیید)."""
 
@@ -126,7 +189,8 @@ class DatabaseAccessList(QWidget):
             "در حسابداری ثبت نمی‌شود.", name="Muted", wrap=True)
         layout.addWidget(self.empty_label)
         add_row = QHBoxLayout()
-        self.name_input = _line("نام پایگاه‌داده، مثلاً hesab5")
+        # v2.9.4: chosen from the server's databases, never typed
+        self.name_input = DatabasePicker()
         add_row.addWidget(self.name_input, 1)
         add_row.addWidget(widgets.button("افزودن به فهرست مجاز", icon_name="plus",
                                          on_click=self._add_typed))
@@ -201,12 +265,15 @@ class DatabaseAccessList(QWidget):
         self._render()
         self.changed.emit()
 
+    def set_choices(self, names: list[str]) -> None:
+        self.name_input.set_names(names)
+
     def _add_typed(self) -> None:
         name = self.name_input.text().strip()
         if not name:
             return
         if self.add(name):
-            self.name_input.clear()
+            self.name_input.setText("")
 
     def _render(self) -> None:
         while self.grid.count():
@@ -242,7 +309,16 @@ class ServerSetupWizard(QWidget):
                 mode = MODE_SETUP   # never set up here: the full setup it is
         self.mode = mode
         self.settings_mode = mode == MODE_SETTINGS
-        self._steps = [key for key in STEP_TITLES if key != "admin" or not self.settings_mode]
+        self._steps = [key for key in STEP_TITLES if key != "tools" or self.settings_mode]
+        #: v2.9.4: the «مدیر کل» accounts of the running server (None = not known);
+        #: a reinstall opens the setup mode on a server that already has its settings
+        self._owners: list[dict] | None = None
+        try:
+            self._existing = self._current is not None or setup.existing_config_port() is not None
+        except Exception:  # noqa: BLE001 - an unreadable .env: treat as existing
+            self._existing = True
+        self._owners_loaded = False
+        self._db_list_loaded_for = ""
         title = "تنظیمات سرور فروشگاه" if self.settings_mode else "راه‌اندازی سرور فروشگاه"
         self.setWindowTitle(title)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -285,7 +361,8 @@ class ServerSetupWizard(QWidget):
         builders = {"checks": self._page_checks, "database": self._page_database,
                     "network": self._page_network, "bots": self._page_bots,
                     "telegram": self._page_telegram,
-                    "admin": self._page_admin, "run": self._page_run}
+                    "admin": self._page_admin, "tools": self._page_tools,
+                    "run": self._page_run}
         self.stack = QStackedWidget()
         for key in self._steps:
             page = QWidget()
@@ -346,10 +423,19 @@ class ServerSetupWizard(QWidget):
         form = _form()
         self.db_server = _line(r".\SQLEXPRESS")
         self.db_server.setText(r".\SQLEXPRESS")
-        self.db_name = _line("نام پایگاه‌داده، مثلاً hesab5")
+        # v2.9.4: a drop-down of the server's databases (no free typing)
+        self.db_name = DatabasePicker()
+        name_row = QHBoxLayout()
+        name_row.addWidget(self.db_name, 1)
+        self.db_list_button = widgets.button("خواندن فهرست", icon_name="refresh",
+                                             on_click=lambda: self._load_databases(force=True),
+                                             tooltip="فهرست پایگاه‌داده‌های همین سرور SQL")
+        name_row.addWidget(self.db_list_button)
         form.addRow(widgets.label("نام سرور SQL:"), self.db_server)
-        form.addRow(widgets.label("نام پایگاه‌داده:"), self.db_name)
+        form.addRow(widgets.label("نام پایگاه‌داده:"), name_row)
         panel.body.addLayout(form)
+        self.db_list_status = widgets.label("", name="Muted", wrap=True)
+        panel.body.addWidget(self.db_list_status)
 
         self.auth_sql = QRadioButton("ورود SQL (توصیه می‌شود: کاربر با دسترسی محدود، مثل shopbot)")
         self.auth_windows = QRadioButton("احراز هویت ویندوز با حساب سرویس NT SERVICE\\ShopServer")
@@ -368,8 +454,8 @@ class ServerSetupWizard(QWidget):
         # The server runs as the virtual account NT SERVICE\ShopServer (no password).
         self.win_hint = widgets.label(
             "سرور به‌صورت سرویس ویندوز با حساب اختصاصی NT SERVICE\\ShopServer اجرا می‌شود. "
-            "در این حالت باید در SQL Server برای همین حساب یک login با دسترسی محدود بسازید؛ "
-            "آزمایش اتصال این صفحه با حساب فعلی شما انجام می‌شود، نه حساب سرویس.",
+            "«آزمایش اتصال» با همین حساب سرویس انجام می‌شود (نه حساب شما) و «دادن دسترسی» "
+            "دقیقاً به همین حساب دسترسی محدود می‌دهد.",
             name="Muted", wrap=True)
         panel.body.addWidget(self.win_hint)
         self.auth_sql.toggled.connect(self._auth_changed)
@@ -389,6 +475,10 @@ class ServerSetupWizard(QWidget):
         row.addWidget(self.grant_button)
         row.addStretch(1)
         panel.body.addLayout(row)
+        # v2.9.4: one precise reason (bold) and its fix below it
+        self.db_result_title = widgets.label("", bold=True, wrap=True)
+        self.db_result_title.setVisible(False)
+        panel.body.addWidget(self.db_result_title)
         self.db_result = widgets.label("", wrap=True)
         panel.body.addWidget(self.db_result)
         outer.addWidget(panel)
@@ -407,6 +497,8 @@ class ServerSetupWizard(QWidget):
 
         for field in (self.db_server, self.db_name, self.db_user, self.db_password):
             field.textEdited.connect(self._db_changed)
+        # another SQL Server: its own databases
+        self.db_server.editingFinished.connect(lambda: self._load_databases())
         self.db_name.textChanged.connect(self._update_access_status)
         self.db_access.changed.connect(self._update_access_status)
         self._auth_changed()
@@ -455,7 +547,8 @@ class ServerSetupWizard(QWidget):
             "هر شب پس از پشتیبان روزانه، یک نسخهٔ رمزشده (AES-256) در این پوشه گذاشته و بازخوانی "
             "می‌شود؛ فقط آخرین نسخه‌ها نگه داشته می‌شوند. پوشهٔ اشتراکی شبکه هم می‌شود "
             "(\\\\رایانه\\پوشه)؛ سرور با حساب سرویس «NT SERVICE\\ShopServer» می‌نویسد، پس پوشهٔ "
-            "اشتراکی باید به رایانهٔ سرور (یا Everyone) اجازهٔ نوشتن بدهد. خالی = بدون نسخهٔ بیرونی.",
+            "اشتراکی باید به رایانهٔ سرور (یا Everyone) اجازهٔ نوشتن بدهد. نسخه‌ها همیشه در زیرپوشهٔ "
+            "اختصاصی «ShopServerBackup» نوشته می‌شوند، نه در ریشهٔ درایو. خالی = بدون نسخهٔ بیرونی.",
             name="Muted", wrap=True))
         form = _form()
         self.backup_dir = _line(r"\\PC\ShopBackups")
@@ -517,13 +610,22 @@ class ServerSetupWizard(QWidget):
         from .. import localshare
 
         folder = self.backup_dir.text().strip()
-        local = localshare.local_path_for(folder)
-        if not local or local == folder:
+        if not folder:
             return False
-        self.backup_dir.setText(local)
-        self._backup_message(
-            f"این پوشهٔ اشتراکی روی همین رایانهٔ سرور است؛ مسیر محلی آن «{local}» گذاشته شد تا "
-            "حساب سرویس سرور بتواند در آن بنویسد (دسترسی پس از ذخیره خودکار داده می‌شود).", None)
+        local = localshare.local_path_for(folder)
+        # v2.9.4: never a drive root / whole share: the dedicated sub-folder
+        target = setup.backup_target(folder)
+        if target == folder:
+            return False
+        self.backup_dir.setText(target)
+        if local and local != folder:
+            self._backup_message(
+                f"این پوشهٔ اشتراکی روی همین رایانهٔ سرور است؛ مسیر محلی «{target}» گذاشته شد تا "
+                "حساب سرویس سرور بتواند در آن بنویسد (دسترسی خودکار داده می‌شود).", None)
+        else:
+            self._backup_message(
+                f"نسخه‌ها در پوشهٔ اختصاصی «{target}» نوشته می‌شوند (هرگز مستقیم در ریشهٔ درایو یا "
+                "پوشهٔ اشتراکی)؛ دسترسی حساب سرویس به همین پوشه داده می‌شود.", None)
         return True
 
     def _test_backup_folder(self) -> None:
@@ -539,6 +641,9 @@ class ServerSetupWizard(QWidget):
 
         def work() -> dict:
             mine = setup.test_backup_folder(folder)
+            if mine.get("ok"):
+                # v2.9.4: the service account gets Modify on the sub-folder now
+                setup.grant_backup_folder(folder)
             service = None
             if settings_mode and mine.get("ok"):
                 client = setup.local_server_client(port)
@@ -741,7 +846,13 @@ class ServerSetupWizard(QWidget):
             on_error=lambda message, _kind: widgets.error(self, "نقش کانال", message))
 
     def _page_admin(self) -> QWidget:
-        panel = widgets.Panel("نخستین «مدیر کل»")
+        panel = widgets.Panel("«مدیر کل»")
+        # v2.9.4: on a reinstall / in «تنظیمات سرور» the current owner is shown; blank
+        # = it stays, the same username + a new password = its password is reset, a
+        # new username = one more owner. Nothing here is stored by the installer.
+        self.owner_current = widgets.label("", bold=True, wrap=True)
+        self.owner_current.setVisible(False)
+        panel.body.addWidget(self.owner_current)
         self.admin_note = widgets.label(
             "این حساب مدیر فروشگاه است و بعداً حساب کارکنان را می‌سازد.", name="Muted", wrap=True)
         panel.body.addWidget(self.admin_note)
@@ -760,6 +871,111 @@ class ServerSetupWizard(QWidget):
         self.admin_error = widgets.label("", color=theme.DANGER, wrap=True)
         panel.body.addWidget(self.admin_error)
         return panel
+
+    # ------------------------------------------------------------------ v2.9.4: owner
+    def owner_exists(self) -> bool | None:
+        """True / False when the server answered; None when it is not known."""
+        if self._owners is not None:
+            return bool(self._owners)
+        if not self._existing:
+            return False            # never set up here: the first owner is made now
+        return None
+
+    def owner_names(self) -> list[str]:
+        return [str(o.get("username") or "") for o in (self._owners or []) if o.get("username")]
+
+    def _load_owners(self) -> None:
+        if self._owners_loaded or not self._existing:
+            self._show_owner_state()
+            return
+        self._owners_loaded = True
+        port = self.port.value()
+        self.owner_current.setText("در حال خواندن «مدیر کل» فعلی…")
+        self.owner_current.setVisible(True)
+
+        def ok(owners: list) -> None:
+            self._owners = list(owners or [])
+            self._show_owner_state()
+
+        def fail(_message: str, _kind: str) -> None:
+            self._owners = None
+            self._show_owner_state()
+
+        run_async(setup.current_owners, port, on_success=ok, on_error=fail)
+
+    def _show_owner_state(self) -> None:
+        exists = self.owner_exists()
+        names = self.owner_names()
+        if exists:
+            shown = "، ".join(names[:3]) + ("…" if len(names) > 3 else "")
+            self.owner_current.setText(f"مدیر کل فعلی: {shown} — اگر خالی بگذارید همان می‌ماند")
+            self.admin_note.setText(
+                "برای عوض کردن گذرواژهٔ همین مدیر کل، همان نام کاربری و گذرواژهٔ تازه را بنویسید. "
+                "نام کاربری تازه = یک «مدیر کل» تازه. گذرواژه‌ها در نصب‌کننده ذخیره نمی‌شوند.")
+        elif exists is None:
+            self.owner_current.setText(
+                "مدیر کل فعلی خوانده نشد (سرور روشن نیست). اگر قبلاً مدیر کل ساخته‌اید، خالی "
+                "بگذارید تا همان بماند.")
+            self.admin_note.setText(
+                "نام کاربری موجود + گذرواژهٔ تازه = عوض شدن گذرواژهٔ همان مدیر کل؛ نام کاربری "
+                "تازه = یک «مدیر کل» تازه.")
+        else:
+            self.owner_current.setText("هنوز «مدیر کل»ی ساخته نشده است؛ نخستین مدیر کل را بسازید.")
+            self.admin_note.setText(
+                "این حساب مدیر فروشگاه است و بعداً حساب کارکنان را می‌سازد.")
+        self.owner_current.setVisible(True)
+
+    def owner_request(self) -> tuple[str, str, str] | None:
+        """(username, full name, password) to save, or None = keep the owner."""
+        username = to_english_digits(self.admin_username.text()).strip()
+        if not username and not self.admin_password.text():
+            return None
+        return username, self.admin_full_name.text().strip(), self.admin_password.text()
+
+    # ------------------------------------------------------------------ v2.9.4: tools
+    def _page_tools(self) -> QWidget:
+        holder = QWidget()
+        column = QVBoxLayout(holder)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(12)
+        status = widgets.Panel("راهنمای «کد وضعیت سفارش» (فقط خواندن)")
+        status.body.addWidget(widgets.label(
+            "پیش از روشن کردن «ثبت واقعی»: همهٔ کدهای وضعیت (Status) سفارش‌های حسابداری با تعداد هر "
+            "کدام، و آخرین سفارش‌هایی که خود «سازه حساب» ساخته است. همان سفارش‌ها را در «سازه حساب» "
+            "باز کنید و ببینید هر عدد کدام وضعیت است؛ عدد درست را در «کد وضعیت سفارش» بنویسید. "
+            "این ابزار هیچ چیزی در حسابداری نمی‌نویسد.", name="Muted", wrap=True))
+        row = QHBoxLayout()
+        row.addWidget(widgets.button("نمایش کدهای وضعیت…", icon_name="search",
+                                     on_click=self._open_status_codes))
+        row.addStretch(1)
+        status.body.addLayout(row)
+        column.addWidget(status)
+
+        clean = widgets.Panel("پاک‌سازی داده‌های آزمایشی")
+        clean.body.addWidget(widgets.label(
+            "پیش از شروع کار واقعی: سفارش‌ها، درخواست‌های خرید، پیام‌ها، رسیدها، مشتریان و پیوند "
+            "ربات‌شان، گزارش فعالیت، بایگانی، اعلان‌ها و کاربران آزمایشی (غیر از «مدیر کل») از "
+            "داده‌های خود فروشگاه پاک می‌شوند. «مدیر کل»، تنظیمات، نگاشت لیست قیمت، مدل‌های "
+            "سایت، پراکسی‌ها و نشست تلگرام می‌مانند. پایگاه‌دادهٔ حسابداری («سازه حساب») هرگز "
+            "دست نمی‌خورد. پیش از پاک‌سازی خودکار پشتیبان گرفته می‌شود.", name="Muted", wrap=True))
+        row = QHBoxLayout()
+        row.addWidget(widgets.button("پاک‌سازی داده‌های آزمایشی…", icon_name="trash",
+                                     variant="danger", on_click=self._open_cleanup))
+        row.addStretch(1)
+        clean.body.addLayout(row)
+        column.addWidget(clean)
+        return holder
+
+    def _open_status_codes(self) -> None:
+        from .status_codes import StatusCodesDialog
+
+        port = self.port.value()
+        StatusCodesDialog(self, lambda: setup.order_status_codes(port)).exec()
+
+    def _open_cleanup(self) -> None:
+        from .cleanup_dialog import CleanupDialog
+
+        CleanupDialog(self, port=self.port.value()).exec()
 
     def _page_run(self) -> QWidget:
         panel = widgets.Panel("ذخیره و راه‌اندازی دوباره" if self.settings_mode else "راه‌اندازی")
@@ -945,6 +1161,12 @@ class ServerSetupWizard(QWidget):
                 chip.setStyleSheet(f"background: {theme.SURFACE}; color: {theme.TEXT_MUTED}; "
                                    f"border: 1px solid {theme.BORDER}; border-radius: 10px; "
                                    "padding: 0 12px;")
+        # v2.9.4: what a page needs from the server is read when it is shown
+        key = self._key()
+        if key == "database":
+            self._load_databases()
+        elif key == "admin":
+            self._load_owners()
 
     def _say(self, text: str, ok: bool | None = None) -> None:
         mark = "✔ " if ok else "✖ " if ok is False else "… "
@@ -979,11 +1201,49 @@ class ServerSetupWizard(QWidget):
 
     # ------------------------------------------------------------------ database
     def _db_input_problem(self, db: setup.DatabaseConfig) -> str:
-        if not db.server or not db.database:
-            return "نام سرور و نام پایگاه‌داده را وارد کنید."
+        if not db.server:
+            return "نام سرور SQL را وارد کنید."
+        if not db.database:
+            return "نام پایگاه‌داده را از فهرست انتخاب کنید (اگر فهرست خالی است «خواندن فهرست»)."
         if not db.trusted and (not db.user or not (db.password or self._password_kept())):
             return "نام کاربری و گذرواژهٔ SQL را وارد کنید."
         return ""
+
+    # ---- v2.9.4: the database list ------------------------------------------------
+    def _load_databases(self, *, force: bool = False) -> None:
+        server = self.db_server.text().strip()
+        if not server:
+            self.db_list_status.setText("نام سرور SQL را وارد کنید.")
+            return
+        sql = self.auth_sql.isChecked()
+        key = f"{server.lower()}|{sql}|{self.db_user.text().strip().lower()}"
+        if not force and key == self._db_list_loaded_for:
+            return
+        self._db_list_loaded_for = key
+        user = self.db_user.text().strip() if sql else ""
+        password = self.db_password.text() if sql else ""
+        self.db_list_button.setEnabled(False)
+        self.db_list_status.setText("در حال خواندن فهرست پایگاه‌داده‌های سرور…")
+        self.db_list_status.setStyleSheet("")
+
+        def ok(names: list) -> None:
+            self.db_name.set_names(names)
+            self.db_access.set_choices(names)
+            if names:
+                self.db_list_status.setText(
+                    f"{to_persian_digits(len(names))} پایگاه‌داده روی این سرور پیدا شد؛ یکی را "
+                    "انتخاب کنید.")
+            else:
+                self.db_list_status.setText("روی این سرور هیچ پایگاه‌دادهٔ کاربری پیدا نشد.")
+            self._update_access_status()
+
+        def fail(message: str, _kind: str) -> None:
+            self._db_list_loaded_for = ""
+            self.db_list_status.setText("فهرست خوانده نشد: " + message)
+            self.db_list_status.setStyleSheet(f"color: {theme.DANGER};")
+
+        run_async(setup.list_databases, server, user=user, password=password, on_success=ok,
+                  on_error=fail, on_done=lambda: self.db_list_button.setEnabled(True))
 
     def _test_database(self) -> None:
         db = self._db_config()
@@ -994,30 +1254,68 @@ class ServerSetupWizard(QWidget):
         self.db_test_button.setEnabled(False)
         self._db_message("در حال ذخیره و آزمایش…", None)
         port = self.port.value()
+        windows = db.trusted
+        settings_mode = self.settings_mode
 
         def work() -> dict:
             setup.harden_data_dir()
             setup.write_config(db, port=port)
-            return setup.check_database()
+            result = setup.check_database()
+            if windows and settings_mode:
+                # like the backup test: the running service itself, when it answers
+                result["service_live"] = setup.service_db_check(port, db.server, db.database)
+            return result
 
         def ok(result: dict) -> None:
+            live = result.get("service_live")
+            if live is not None and not live.get("ok"):
+                self._db_ok = False
+                self._db_message(
+                    "سرویس سرور (با حساب خودش) به این پایگاه‌داده وصل نشد: "
+                    + str(live.get("message_fa") or ""), False,
+                    title="دسترسی نیست")
+                self.grant_button.setVisible(True)
+                return
             self._db_ok = True
-            self._db_message(f"اتصال برقرار شد ({to_persian_digits(result.get('groups', 0))} گروه کالا).",
-                             True)
+            groups = to_persian_digits(result.get("groups", 0))
+            if result.get("as_service") or (live or {}).get("ok"):
+                text = (f"اتصال با حساب خود سرویس («{result.get('login')}») برقرار شد "
+                        f"({groups} گروه کالا).")
+            elif result.get("windows"):
+                text = (f"اتصال برقرار شد ({groups} گروه کالا). "
+                        + str(result.get("note_fa") or ""))
+            else:
+                text = f"اتصال برقرار شد ({groups} گروه کالا)."
+            self._db_message(text.strip(), True)
 
         def fail(message: str, kind: str) -> None:
             self._db_ok = False
-            self._db_message(message, False)
-            # v2.9.3: no access to this database -> «دادن دسترسی به این دیتابیس»
-            self.grant_button.setVisible(kind == setup.DatabaseAccessError.kind)
+            self._show_db_error(message, kind)
 
         self.grant_button.setVisible(False)
         run_async(work, on_success=ok, on_error=fail,
                   on_done=lambda: self.db_test_button.setEnabled(True))
 
+    #: v2.9.4: the title of each precise failure (the fix comes from the server)
+    DB_ERROR_TITLES = {"db_server": "SQL Server پیدا نشد", "db_missing": "این پایگاه‌داده وجود ندارد",
+                       "db_access": "دسترسی نیست",
+                       "db_password": "نام کاربری یا گذرواژهٔ SQL نادرست است",
+                       "db_remote": "احراز هویت ویندوز به SQL Server رایانهٔ دیگر نمی‌رسد"}
+
+    def _show_db_error(self, message: str, kind: str) -> None:
+        title = self.DB_ERROR_TITLES.get(kind, "اتصال برقرار نشد")
+        fix = message.split(":", 1)[1].strip() if message.startswith(title + ":") else message
+        self._db_message(fix, False, title=title)
+        # «دادن دسترسی به این دیتابیس» only when access is what is missing
+        self.grant_button.setVisible(kind == setup.DatabaseAccessError.kind)
+        if kind == "db_missing":
+            self._load_databases(force=True)
+
     def shop_login_name(self) -> str:
-        return ("NT SERVICE\\ShopServer" if self.auth_windows.isChecked()
-                else self.db_user.text().strip())
+        """The account the service connects with (the one «دادن دسترسی» grants)."""
+        if self.auth_windows.isChecked():
+            return setup.SERVICE_ACCOUNT
+        return self.db_user.text().strip()
 
     def _grant_access(self) -> None:
         database = self.db_name.text().strip()
@@ -1036,11 +1334,12 @@ class ServerSetupWizard(QWidget):
 
         def ok(result: dict) -> None:
             self._db_ok = bool(result.get("check_ok"))
-            self._db_message(setup.grant_result_text(result), self._db_ok)
+            self._db_message(setup.grant_result_text(result), self._db_ok,
+                             title="" if self._db_ok else "دسترسی هنوز کامل نیست")
             self.grant_button.setVisible(not self._db_ok)
 
         def fail(message: str, _kind: str) -> None:
-            self._db_message("دسترسی داده نشد: " + message, False)
+            self._db_message(message, False, title="دسترسی داده نشد")
 
         def done() -> None:
             self.grant_button.setEnabled(True)
@@ -1048,8 +1347,11 @@ class ServerSetupWizard(QWidget):
 
         run_async(setup.grant_database_access, on_success=ok, on_error=fail, on_done=done)
 
-    def _db_message(self, text: str, ok: bool | None) -> None:
+    def _db_message(self, text: str, ok: bool | None, *, title: str = "") -> None:
         color = theme.SUCCESS_DARK if ok else theme.DANGER if ok is False else theme.TEXT_MUTED
+        self.db_result_title.setText(("✖ " if ok is False else "") + title)
+        self.db_result_title.setVisible(bool(title))
+        self.db_result_title.setStyleSheet(f"color: {color};")
         self.db_result.setText(text)
         self.db_result.setStyleSheet(f"color: {color};")
 
@@ -1084,14 +1386,15 @@ class ServerSetupWizard(QWidget):
             if problem:
                 widgets.error(self, "تلگرام", problem)
                 return
+        elif key == "admin":
+            if not self._validate_admin():
+                return
         elif key == "run":
             if self._result:
                 self.completed.emit(*self._result)
             self.close()
             return
         if self._key(self._step + 1) == "run":
-            if key == "admin" and not self._validate_admin():
-                return
             if not self._confirm_run():
                 return
             self._step += 1
@@ -1116,12 +1419,23 @@ class ServerSetupWizard(QWidget):
             confirm_text="ذخیره", cancel_text="بازگشت", kind="danger")
 
     def _validate_admin(self) -> bool:
+        """v2.9.4: blank = keep the current owner (when there is one); otherwise a
+        username and a strong password (the full name only for the first owner)."""
         self.admin_error.setText("")
         name = self.admin_full_name.text().strip()
         username = to_english_digits(self.admin_username.text()).strip()
         password = self.admin_password.text()
-        if not name:
+        exists = self.owner_exists()
+        if not username and not password and not self.admin_confirm.text():
+            if exists is False:
+                self.admin_error.setText("هنوز «مدیر کل»ی نیست؛ نام، نام کاربری و گذرواژه را "
+                                         "وارد کنید.")
+            return not self.admin_error.text()
+        if not name and exists is False:
             self.admin_error.setText("نام و نام خانوادگی را وارد کنید.")
+        elif not username:
+            self.admin_error.setText("نام کاربری را بنویسید (برای عوض کردن گذرواژه، همان نام "
+                                     "کاربری مدیر کل فعلی).")
         elif not USERNAME_RE.match(username):
             self.admin_error.setText("نام کاربری باید ۳ تا ۳۲ نویسهٔ انگلیسی، عدد، نقطه یا خط تیره باشد.")
         elif password != self.admin_confirm.text():
@@ -1167,9 +1481,10 @@ class ServerSetupWizard(QWidget):
         allowed_ips = self.allowed_ips.text().strip()
         extra = self.config_extra()
         settings_mode = self.settings_mode
-        admin = None if settings_mode else (
-            self.admin_username.text().strip(), self.admin_full_name.text().strip(),
-            self.admin_password.text())
+        # v2.9.4: None = keep the current owner; never stored anywhere but the server
+        admin = self.owner_request()
+        if admin is not None:
+            admin = (to_english_digits(admin[0]), admin[1], admin[2])
 
         def work(on_progress) -> tuple[str, str, str]:
             on_progress("محدود کردن دسترسی پوشهٔ داده")
@@ -1193,13 +1508,18 @@ class ServerSetupWizard(QWidget):
             try:
                 if client.auth_status().get("bootstrap_required"):
                     if admin is None:
-                        on_progress("هنوز مدیر کلی ساخته نشده؛ «راه‌اندازی سرور فروشگاه» را از "
-                                    "منوی شروع اجرا کنید")
+                        on_progress("هنوز مدیر کلی ساخته نشده؛ در مرحلهٔ «مدیر کل» نام کاربری و "
+                                    "گذرواژه را وارد و دوباره ذخیره کنید")
                     else:
                         on_progress("ساخت مدیر کل")
                         client.bootstrap(setup.service_key(), *admin)
                 elif admin is not None:
-                    on_progress("مدیر کل از قبل وجود دارد؛ با همان حساب وارد شوید")
+                    answer = client.set_owner(admin[0], admin[1], admin[2], setup.service_key())
+                    on_progress(f"گذرواژهٔ مدیر کل «{answer.get('username')}» عوض شد"
+                                if answer.get("action") == "password_reset" else
+                                f"مدیر کل تازه «{answer.get('username')}» ساخته شد")
+                else:
+                    on_progress("مدیر کل فعلی بدون تغییر ماند")
             finally:
                 client.close()
             return base_url, pem, fingerprint

@@ -21,7 +21,7 @@
 
 #define MyAppName "ShopAdmin"
 #define MyAppNameFa "مدیریت فروشگاه"
-#define MyAppVersion "2.9.3"
+#define MyAppVersion "2.9.4"
 #define MyAppPublisher "فروشگاه"
 #define MyAppExeName "ShopAdmin.exe"
 #define MyServiceExeName "ShopSystem.exe"
@@ -49,7 +49,9 @@ AppName=ShopServer
 AppVerName=سرور فروشگاه {#MyAppVersion}
 UninstallDisplayName=سرور فروشگاه
 OutputBaseFilename=ShopServerSetup
-DefaultDirName={autopf}\ShopServer
+; v2.9.4: D:\ShopServer when the computer has a D: disk (else Program Files);
+; an upgrade keeps the folder chosen the first time (UsePreviousAppDir).
+DefaultDirName={code:DefaultAppDir|ShopServer}
 DefaultGroupName=سرور فروشگاه
 ; Registering the Windows service, a firewall rule and a locked data folder all
 ; need an administrator.
@@ -61,7 +63,8 @@ AppName={#MyAppName}
 AppVerName={#MyAppNameFa} {#MyAppVersion}
 UninstallDisplayName={#MyAppNameFa}
 OutputBaseFilename=ShopAdminSetup
-DefaultDirName={autopf}\{#MyAppName}
+; v2.9.4: D:\ShopAdmin when the computer has a D: disk (else Program Files)
+DefaultDirName={code:DefaultAppDir|{#MyAppName}}
 DefaultGroupName={#MyAppNameFa}
 ; --- per-user by default, per-machine when the user has admin rights ----
 ; PrivilegesRequired=lowest + OverridesAllowed=dialog gives the user a choice
@@ -74,6 +77,10 @@ AppPublisher={#MyAppPublisher}
 VersionInfoVersion={#MyAppVersion}
 DisableProgramGroupPage=yes
 AllowNoIcons=yes
+; v2.9.4: the program folder is always chosen on its own page (on an upgrade
+; it shows the folder used so far)
+DisableDirPage=no
+UsePreviousAppDir=yes
 
 ; --- a running copy is closed before files are replaced -----------------
 ; ShopAdmin holds this named mutex while it runs (it lives in the tray).
@@ -106,6 +113,16 @@ english.LaunchAfterInstall=اجرای «مدیریت فروشگاه» پس از 
 english.ReadMeFirst=مطالعهٔ «راهنمای نصب» پس از نصب
 english.AdditionalIcons=میان‌برهای بیشتر:
 english.ServerSetupNow=راه‌اندازی سرور فروشگاه (پایگاه‌داده، شبکه، مدیر کل)
+english.DataDirTitle=پوشهٔ داده‌های سرور
+english.DataDirDesc=تنظیمات، پایگاه‌داده‌های خود فروشگاه، رسیدها، گواهی امنیتی و پشتیبان‌ها کجا نگه داشته شوند؟
+english.DataDirLabel=پوشهٔ داده‌ها (فقط مدیران ویندوز و حساب سرویس سرور به آن دسترسی خواهند داشت):
+english.DataDirMove=انتقال امن داده‌های فعلی به پوشهٔ بالا (اول رونوشت و آزمایش؛ پوشهٔ قبلی فقط پس از کار کردن سرور پاک می‌شود)
+english.DataDirCurrent=داده‌های فعلی سرور در این پوشه است:
+english.DataDirRoot=ریشهٔ درایو پذیرفته نیست؛ یک پوشه انتخاب کنید (مثلاً D:\ShopServerData).
+english.DataDirInsideApp=پوشهٔ داده‌ها نباید داخل پوشهٔ برنامه باشد.
+english.DataMoving=انتقال امن داده‌های سرور به پوشهٔ تازه…
+english.DataMoveFailed=انتقال داده‌ها انجام نشد؛ سرور با همان پوشهٔ قبلی کار می‌کند و هیچ داده‌ای پاک نشد.
+english.DataKeptOld=داده‌ها جابه‌جا نشدند و سرور با همان پوشهٔ فعلی کار می‌کند:
 english.OdbcMissing=درایور «ODBC Driver 17 for SQL Server» روی این رایانه نصب نیست. سرور بدون آن به حسابداری وصل نمی‌شود. آن را از سایت مایکروسافت نصب کنید (می‌توانید نصب را ادامه دهید و بعداً راه‌اندازی سرور را از منوی شروع اجرا کنید). ادامه می‌دهید؟
 
 [Tasks]
@@ -187,11 +204,12 @@ Filename: "{app}\installer_readme.txt"; Description: "{cm:ReadMeFirst}"; \
 [UninstallRun]
 ; Stop and remove what the setup wizard registered: the Windows service
 ; ShopServer (and its grants), the firewall rule, and the boot task of older
-; versions. The data folder %ProgramData%\ShopServer (configuration, databases,
+; versions. The data folder (v2.9.4: the one chosen at install, e.g. D:\ShopServerData;
+; configuration, databases,
 ; certificate, logs, backups) is deliberately kept: a reinstall continues with
 ; the same data and keys.
 Filename: "{app}\ShopSystem\{#MyServiceExeName}"; \
-    Parameters: "--uninstall-service --data-dir ""{commonappdata}\ShopServer"""; \
+    Parameters: "--uninstall-service --data-dir ""{code:CurrentDataDir|}"""; \
     Flags: runhidden; RunOnceId: "RemoveService"
 Filename: "{sys}\sc.exe"; Parameters: "delete {#ServerTask}"; \
     Flags: runhidden; RunOnceId: "DeleteService"
@@ -236,6 +254,24 @@ begin
   Exec(FileName, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
+{ v2.9.4: D:\<name> when D: is a fixed disk, else Program Files (both installers). }
+function GetDriveTypeW(lpRootPathName: String): Cardinal;
+  external 'GetDriveTypeW@kernel32.dll stdcall';
+
+function HasFixedD(): Boolean;
+begin
+  Result := GetDriveTypeW('D:\') = 3;
+end;
+
+function DefaultAppDir(Param: String): String;
+begin
+  if HasFixedD() then
+    Result := 'D:\' + Param
+  else
+    Result := ExpandConstant('{autopf}\') + Param;
+end;
+
+
 #ifdef SERVER
 function OdbcDriverInstalled(): Boolean;
 begin
@@ -256,9 +292,116 @@ begin
     Result := -1;
 end;
 
+{ ---------------------------------------------------------------------
+  v2.9.4: the data folder (default D:\ShopServerData, else
+  %ProgramData%\ShopServer). The choice is kept in
+  HKLM\SOFTWARE\ShopServer\DataDir, read by ShopSystem and the server setup,
+  and offered again on every upgrade. Data in another folder (2.9.3 and older:
+  %ProgramData%\ShopServer) is moved by ShopSystem --move-data: copy, SHA-256
+  check, switch, health check, and only then the old folder is deleted; on any
+  failure everything goes back and nothing is deleted.
+  --------------------------------------------------------------------- }
+const
+  DataKey = 'SOFTWARE\ShopServer';
+  DataValue = 'DataDir';
+
 var
   ServiceWasInstalled: Boolean;
   TaskWasInstalled: Boolean;
+  DataPage: TInputDirWizardPage;
+  MoveCheck: TNewCheckBox;
+  CurrentLabel: TNewStaticText;
+  OldDataDir: String;
+  FinalDataDir: String;
+
+function RegisteredDataDir(): String;
+begin
+  Result := '';
+  if not RegQueryStringValue(HKLM, DataKey, DataValue, Result) then
+    Result := '';
+end;
+
+{ Where the server's data is today ('' = a new server). }
+function ExistingDataDir(): String;
+begin
+  Result := RegisteredDataDir();
+  if (Result <> '') and FileExists(AddBackslash(Result) + '.env') then
+    exit;
+  Result := ExpandConstant('{commonappdata}\ShopServer');
+  if not FileExists(AddBackslash(Result) + '.env') then
+    Result := '';
+end;
+
+function DefaultDataDir(): String;
+begin
+  Result := RegisteredDataDir();
+  if Result <> '' then
+    exit;                                   { an upgrade: the folder chosen before }
+  if HasFixedD() then
+    Result := 'D:\ShopServerData'
+  else
+    Result := ExpandConstant('{commonappdata}\ShopServer');
+end;
+
+{ For [UninstallRun]: the folder in use (the registry, else the old default). }
+function CurrentDataDir(Param: String): String;
+begin
+  Result := RegisteredDataDir();
+  if Result = '' then
+    Result := ExpandConstant('{commonappdata}\ShopServer');
+end;
+
+function SameDir(const A, B: String): Boolean;
+begin
+  Result := CompareText(RemoveBackslashUnlessRoot(A), RemoveBackslashUnlessRoot(B)) = 0;
+end;
+
+procedure InitializeWizard();
+begin
+  OldDataDir := ExistingDataDir();
+  DataPage := CreateInputDirPage(wpSelectDir, CustomMessage('DataDirTitle'),
+    CustomMessage('DataDirDesc'), CustomMessage('DataDirLabel'), False, 'ShopServerData');
+  DataPage.Add('');
+  DataPage.Values[0] := DefaultDataDir();
+  CurrentLabel := TNewStaticText.Create(DataPage);
+  CurrentLabel.Parent := DataPage.Surface;
+  CurrentLabel.Top := DataPage.Edits[0].Top + DataPage.Edits[0].Height + ScaleY(14);
+  CurrentLabel.Width := DataPage.SurfaceWidth;
+  CurrentLabel.AutoSize := False;
+  CurrentLabel.WordWrap := True;
+  CurrentLabel.Height := ScaleY(32);
+  CurrentLabel.Caption := CustomMessage('DataDirCurrent') + ' ' + OldDataDir;
+  CurrentLabel.Visible := OldDataDir <> '';
+  MoveCheck := TNewCheckBox.Create(DataPage);
+  MoveCheck.Parent := DataPage.Surface;
+  MoveCheck.Top := CurrentLabel.Top + CurrentLabel.Height + ScaleY(6);
+  MoveCheck.Width := DataPage.SurfaceWidth;
+  MoveCheck.Height := ScaleY(34);
+  MoveCheck.Caption := CustomMessage('DataDirMove');
+  MoveCheck.Checked := True;
+  MoveCheck.Visible := OldDataDir <> '';
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  Folder: String;
+begin
+  Result := True;
+  if CurPageID <> DataPage.ID then
+    exit;
+  Folder := RemoveBackslashUnlessRoot(Trim(DataPage.Values[0]));
+  if (Length(Folder) <= 3) then
+  begin
+    MsgBox(CustomMessage('DataDirRoot'), mbError, MB_OK);
+    Result := False;
+    exit;
+  end;
+  if Pos(Lowercase(AddBackslash(WizardDirValue())), Lowercase(AddBackslash(Folder))) = 1 then
+  begin
+    MsgBox(CustomMessage('DataDirInsideApp'), mbError, MB_OK);
+    Result := False;
+  end;
+end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
@@ -274,18 +417,70 @@ begin
   RunHidden(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyServiceExeName}');
 end;
 
+{ The program folder: SYSTEM and Administrators full, users read/run only (a
+  D:\ folder would otherwise inherit "Authenticated Users: Modify", and the
+  service runs ShopSystem.exe from here). Children inherit (never /T with
+  /inheritance:r on files: that leaves them with an empty ACL). }
+procedure LockProgramFolder();
+var
+  App: String;
+begin
+  App := ExpandConstant('{app}');
+  RunHidden(ExpandConstant('{sys}\icacls.exe'), '"' + App + '" /inheritance:r /grant:r' +
+    ' *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX' +
+    ' *S-1-5-11:(OI)(CI)RX *S-1-5-6:(OI)(CI)RX /C /Q');
+  RunHidden(ExpandConstant('{sys}\icacls.exe'), '"' + App + '\*" /reset /T /C /Q');
+end;
+
+{ Decide the data folder and move the data there when asked; the result is in
+  FinalDataDir and in the registry. }
+procedure SettleDataDir();
+var
+  Wanted, Exe: String;
+  Code: Integer;
+begin
+  Wanted := RemoveBackslashUnlessRoot(Trim(DataPage.Values[0]));
+  FinalDataDir := Wanted;
+  Exe := ExpandConstant('{app}\ShopSystem\{#MyServiceExeName}');
+  if (OldDataDir = '') or SameDir(OldDataDir, Wanted) then
+  begin
+    ForceDirectories(Wanted);
+    RegWriteStringValue(HKLM, DataKey, DataValue, Wanted);
+    exit;
+  end;
+  if not MoveCheck.Checked then
+  begin
+    FinalDataDir := OldDataDir;               { kept where it is, nothing moved }
+    RegWriteStringValue(HKLM, DataKey, DataValue, OldDataDir);
+    if not WizardSilent() then
+      MsgBox(CustomMessage('DataKeptOld') + ' ' + OldDataDir, mbInformation, MB_OK);
+    exit;
+  end;
+  WizardForm.StatusLabel.Caption := CustomMessage('DataMoving');
+  Code := RunHiddenCode(Exe, '--data-dir "' + OldDataDir + '" --move-data "' + Wanted + '"');
+  if Code <> 0 then
+  begin
+    FinalDataDir := OldDataDir;
+    if not WizardSilent() then
+      MsgBox(CustomMessage('DataMoveFailed'), mbError, MB_OK);
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep <> ssPostInstall then
     exit;
-  { An older version ran as a boot task: move it to the Windows service now,
-    so a silent upgrade does not leave the server on the old mechanism. }
-  if TaskWasInstalled and not ServiceWasInstalled then
-    RunHidden(ExpandConstant('{app}\ShopSystem\{#MyServiceExeName}'),
-      '--install-service --data-dir "' + ExpandConstant('{commonappdata}\ShopServer') + '"');
-  { Start the (new) program again; harmless when no service exists yet. }
+  LockProgramFolder();
+  SettleDataDir();
+  { Re-register the service with this program and data folder: it also gives
+    the service account its grants again (e.g. the backup sub-folder, v2.9.4).
+    An older version ran as a boot task: this moves it to the service too. }
   if TaskWasInstalled or ServiceWasInstalled then
+  begin
+    RunHidden(ExpandConstant('{app}\ShopSystem\{#MyServiceExeName}'),
+      '--install-service --data-dir "' + FinalDataDir + '"');
     RunHidden(ExpandConstant('{sys}\net.exe'), 'start {#ServerTask}');
+  end;
 end;
 #else
 function PrepareToInstall(var NeedsRestart: Boolean): String;

@@ -325,12 +325,14 @@ def prune(folder: Path, suffix: str, keep: int) -> list[Path]:
 # the daily job
 # --------------------------------------------------------------------------
 def offsite_dir(raw: Optional[str]) -> str:
-    """``BACKUP_COPY_DIR``; v2.9.2: a share of this very computer is written through
-    its local folder (the service account is refused on its own share)."""
+    """``BACKUP_COPY_DIR`` as it is really written: v2.9.2 a share of this very
+    computer through its local folder (the service account is refused on its own
+    share); v2.9.4 always inside the dedicated ``ShopServerBackup`` sub-folder,
+    never a drive root (``E:\\`` refused the service: "Access is denied")."""
     text = str(raw or "").strip()
     try:
-        from localshare import local_path_for
-        return local_path_for(text) or text
+        from localshare import backup_target
+        return backup_target(text)
     except Exception:  # noqa: BLE001 - never stop the backup over the lookup
         return text
 

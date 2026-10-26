@@ -102,7 +102,7 @@ def button(text: str, *, icon_name: str = "", variant: str = "default",
            tooltip: str = "", on_click: Callable[[], None] | None = None) -> QPushButton:
     widget = QPushButton(text)
     if icon_name:
-        widget.setIcon(theme.icon(icon_name, 18, _variant_icon_color(variant)))
+        theme.set_icon(widget, icon_name, 18, _variant_icon_color(variant))
         widget.setIconSize(QSize(18, 18))
     if variant == "primary":
         widget.setObjectName("Primary")
@@ -312,12 +312,12 @@ class StatCard(QFrame):
         icon_holder.setFixedSize(58, 58)
         icon_holder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         if theme.EFFECTS == "simple":
-            icon_holder.setPixmap(theme.icon_pixmap(icon_name, 30, accent))
+            theme.set_icon(icon_holder, icon_name, 30, accent)
             icon_holder.setStyleSheet(f"background: {tint}; border-radius: 16px;")
         else:
             # v2.9.0 (the control panel's stat icons): a white icon on an accent gradient
             light = QColor(accent).lighter(135).name()
-            icon_holder.setPixmap(theme.icon_pixmap(icon_name, 30, "#FFFFFF"))
+            theme.set_icon(icon_holder, icon_name, 30, "#FFFFFF")
             icon_holder.setStyleSheet(
                 f"background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {accent}, "
                 f"stop:1 {light}); border-radius: 16px;")
@@ -529,6 +529,131 @@ def pill_cell(widget: QWidget) -> QWidget:
 # --------------------------------------------------------------------------
 # search box
 # --------------------------------------------------------------------------
+#: v2.9.4: the server refuses a price above this (shopapi PriceIn.price_rial le=1e11)
+MAX_PRICE_RIAL = 100_000_000_000
+
+
+class MoneyInput(QWidget):
+    """v2.9.4: an amount in ریال: digits grouped by thousands while typing
+    («۵۲۵٬۰۰۰٬۰۰۰»), the unit «ریال» beside it and the amount in Persian words
+    under it, so an extra zero is obvious. ``text()`` / ``setText()`` /
+    ``setPlaceholderText()`` / ``clear()`` keep the line-edit interface;
+    :meth:`value` is the number (None when empty) and :meth:`problem` the reason
+    it cannot be sent, in Persian."""
+
+    textChanged = Signal(str)
+
+    def __init__(self, text: str = "", parent: QWidget | None = None, *,
+                 maximum: int = MAX_PRICE_RIAL) -> None:
+        super().__init__(parent)
+        from .rtl import mark_ltr
+
+        self.maximum = int(maximum)
+        column = QVBoxLayout(self)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(4)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.edit = QLineEdit()
+        self.edit.setMinimumHeight(40)
+        mark_ltr(self.edit)
+        row.addWidget(self.edit, 1)
+        self.unit = label("ریال", bold=True)
+        row.addWidget(self.unit)
+        column.addLayout(row)
+        self.words = label("", name="Muted", wrap=True)
+        column.addWidget(self.words)
+        self.edit.textEdited.connect(self._reformat)
+        self.edit.textChanged.connect(self._changed)
+        self.setText(text)
+
+    # ---- line-edit interface ------------------------------------------------
+    def text(self) -> str:
+        return self.edit.text()
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt naming
+        digits = self._digits(text)
+        self.edit.setText(self.format(int(digits)) if digits else "")
+
+    def setPlaceholderText(self, text: str) -> None:  # noqa: N802 - Qt naming
+        self.edit.setPlaceholderText(text)
+
+    def clear(self) -> None:
+        self.edit.clear()
+
+    def setFocus(self) -> None:  # noqa: N802 - Qt naming
+        self.edit.setFocus()
+
+    # ---- value ----------------------------------------------------------------
+    @staticmethod
+    def _digits(text: str) -> str:
+        from ..persian import to_english_digits
+
+        return "".join(ch for ch in to_english_digits(str(text or "")) if ch.isdigit())
+
+    @staticmethod
+    def format(value: int) -> str:
+        return to_persian_digits(f"{int(value):,}").replace(",", "٬")
+
+    def value(self) -> int | None:
+        digits = self._digits(self.edit.text())
+        return int(digits) if digits else None
+
+    def problem(self) -> str:
+        """Why this amount cannot be sent ('' = fine; empty is the caller's call)."""
+        raw = self.edit.text().strip()
+        value = self.value()
+        if raw and value is None:
+            return "مبلغ را فقط با رقم بنویسید."
+        if value is not None and value <= 0:
+            return "مبلغ باید بیشتر از صفر باشد."
+        if value is not None and value > self.maximum:
+            return (f"مبلغ بیش از حد مجاز است (حداکثر {self.format(self.maximum)} ریال = "
+                    f"{_money_words(self.maximum)}). یک صفر اضافه نوشته‌اید؟")
+        return ""
+
+    # ---- behaviour --------------------------------------------------------------
+    def _reformat(self, text: str) -> None:
+        """Group the digits while typing; the cursor stays after the same digit."""
+        cursor = self.edit.cursorPosition()
+        digits_before = len(self._digits(text[:cursor]))
+        digits = self._digits(text)
+        formatted = self.format(int(digits)) if digits else ""
+        if formatted == text:
+            return
+        self.edit.blockSignals(True)
+        self.edit.setText(formatted)
+        self.edit.blockSignals(False)
+        position, seen = 0, 0
+        for position, ch in enumerate(formatted, start=1):
+            if self._digits(ch):
+                seen += 1
+            if seen >= digits_before:
+                break
+        self.edit.setCursorPosition(position if digits_before else 0)
+        self._changed(formatted)
+
+    def _changed(self, text: str) -> None:
+        value = self.value()
+        problem = self.problem()
+        if problem:
+            self.words.setText(problem)
+            self.words.setStyleSheet(f"color: {theme.DANGER};")
+        elif value:
+            self.words.setText(_money_words(value))
+            self.words.setStyleSheet("")
+        else:
+            self.words.setText("")
+            self.words.setStyleSheet("")
+        self.textChanged.emit(text)
+
+
+def _money_words(value: int) -> str:
+    from ..persian import money_in_words
+
+    return money_in_words(value)
+
+
 class SearchBox(QLineEdit):
     def __init__(self, placeholder: str = "جستجو…", parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1107,13 +1232,13 @@ class Toast(QFrame):
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(10)
         icon_label = QLabel()
-        icon_label.setPixmap(theme.icon_pixmap(icon_name, 20, foreground))
+        theme.set_icon(icon_label, icon_name, 20, foreground)
         layout.addWidget(icon_label)
         text = label(message, color=theme.INK, wrap=True)
         text.setStyleSheet(f"color: {theme.INK}; background: transparent;")
         layout.addWidget(text, 1)
         close = QPushButton()
-        close.setIcon(theme.icon("close", 14, theme.TEXT_MUTED))
+        theme.set_icon(close, "close", 14, theme.TEXT_MUTED)
         close.setObjectName("Ghost")
         close.setFixedSize(24, 24)
         close.clicked.connect(self.dismiss)
@@ -1164,10 +1289,10 @@ class ToastHost(QWidget):
         self.show(message, "success")
 
     def show_error(self, message: str) -> None:
-        self.show(message, "error", 6000)
+        self.show(_shown(message), "error", 6000)
 
     def show_warning(self, message: str) -> None:
-        self.show(message, "warning", 5000)
+        self.show(_shown(message), "warning", 5000)
 
     def _reposition(self) -> None:
         margin = 24
@@ -1441,7 +1566,7 @@ class MessageDialog(ResponsiveDialog):
         header = QHBoxLayout()
         header.setSpacing(12)
         icon_label = QLabel()
-        icon_label.setPixmap(theme.icon_pixmap(icon_name, 34, accent))
+        theme.set_icon(icon_label, icon_name, 34, accent)
         icon_label.setFixedSize(46, 46)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_label.setStyleSheet(f"background: {theme.BACKGROUND}; border-radius: 12px;")
@@ -1490,7 +1615,7 @@ class ConfirmDialog(ResponsiveDialog):
         root.setSpacing(14)
         header = QHBoxLayout()
         icon_label = QLabel()
-        icon_label.setPixmap(theme.icon_pixmap(icon_name, 34, accent))
+        theme.set_icon(icon_label, icon_name, 34, accent)
         icon_label.setFixedSize(46, 46)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_label.setStyleSheet(f"background: {theme.BACKGROUND}; border-radius: 12px;")
@@ -1518,11 +1643,20 @@ class ConfirmDialog(ResponsiveDialog):
 
 def info(parent: QWidget | None, title: str, message: str, *, kind: str = "info",
          detail: str = "") -> None:
+    if kind in ("error", "warning"):
+        message = _shown(message)
     MessageDialog(parent, title, message, kind, detail).exec()
 
 
+def _shown(message: str) -> str:
+    """v2.9.4: an error is always plain Persian (no exception names, no English)."""
+    from ..user_messages import humanize
+
+    return humanize(message)
+
+
 def error(parent: QWidget | None, title: str, message: str, detail: str = "") -> None:
-    MessageDialog(parent, title, message, "error", detail).exec()
+    MessageDialog(parent, title, _shown(message), "error", detail).exec()
 
 
 def success(parent: QWidget | None, title: str, message: str) -> None:

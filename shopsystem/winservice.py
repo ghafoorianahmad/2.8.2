@@ -71,14 +71,15 @@ def install_commands(bin_path: str, *, exists: bool) -> list[list[str]]:
 
 
 def local_backup_dir(raw: Optional[str]) -> Optional[Path]:
-    """``BACKUP_COPY_DIR`` when it is a folder on a local disk the service account
-    can be granted (a share is granted on the file server; a drive root never)."""
-    text = (raw or "").strip()
-    if text.startswith("\\\\") or text.startswith("//"):
-        # v2.9.2: a share of this computer is granted through its local folder
-        from localshare import local_path_for
-        text = local_path_for(text) or ""
-    if not text or text.startswith("\\\\") or text.startswith("//"):
+    """The local folder of ``BACKUP_COPY_DIR`` the service account is granted:
+    v2.9.4 always the dedicated ``ShopServerBackup`` sub-folder (never a drive
+    root: ``\\\\THIS-PC\\E`` = ``E:\\`` left the account without a grant and the
+    nightly copy failed with "Access is denied"). A share of another computer is
+    granted on that computer (None here)."""
+    from localshare import backup_target, is_network_path
+
+    text = backup_target(raw or "")
+    if not text or is_network_path(text):
         return None
     path = Path(text)
     if not path.is_absolute() or path == Path(path.anchor):

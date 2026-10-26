@@ -125,6 +125,19 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 - **Look**: a click on a palette / mode / effect card applies and saves it app-wide at once (no «ذخیره», no restart).
 - **Site models**: the server reads the live site's `assets/products.js` once a month (`SITE_CATALOG_URL`, `SITE_CATALOG_DAYS`=30; a failed read is retried a day later) and with «خواندن از سایت اکنون»; no manual import. Phones map site model → price-list row → «سازه حساب» product with the price list's own mappings (same brand; every model word of the site name in the row; no extra model word such as Pro / Max / FE / Note / 14S), again after every new price list; accessories (`kind: "accessory"`) by name, priced at the bot's level (3). Only uncertain matches wait for a manager («پیشنهاد خودکار»); new site models are announced in ShopAdmin. Bot links for the site: `https://ble.ir/<bot>?start=m_<slug>` and `https://t.me/<bot>?start=m_<slug>`.
 
+## 7g. v2.9.4 (decision 2026-10-26; owner's list after the 2.9.3 test — the last release before the real server)
+- **Database**: chosen from a drop-down of the SQL Server's own databases (never typed). The connection test answers one precise reason with its fix: «SQL Server پیدا نشد», «این پایگاه‌داده وجود ندارد», «دسترسی نیست» (+ «دادن دسترسی به این دیتابیس»), wrong SQL password.
+- **Service account**: with Windows sign-in the test runs as the account the service connects with (`NT SERVICE\ShopServer`; a SQL Server on another computer sees `DOMAIN\COMPUTER$`), by impersonation and — when the service runs — by the service itself; «دادن دسترسی» grants exactly that account.
+- **Folders**: both installers let the owner choose the program folder; the server installer also the data folder. Defaults `D:\ShopServer` and `D:\ShopServerData` (C: when there is no D:: Program Files and `%ProgramData%\ShopServer`). The choice is remembered (registry `HKLM\SOFTWARE\ShopServer\DataDir`). Data in an older folder is moved only on request, verified (SHA-256, the server answering from the new folder) before the old folder is deleted; on failure nothing is deleted.
+- **Owner on reinstall / settings**: «مدیر کل فعلی: <username> — اگر خالی بگذارید همان می‌ماند»; blank = keep, same username + new password = reset, new username = another owner. Never a password in the installer.
+- **Passwords**: every password field has an eye that shows typed text only, never a saved password.
+- **Backup**: never a drive root; always the dedicated `ShopServerBackup` sub-folder, granted to the service account; every failed run is reported in the owners' Bale chat with the reason.
+- **Look**: palette / mode / effects apply live, without a restart or a rebuilt window.
+- **Prices**: grouped digits, «ریال» and the amount in Persian words under the field. No raw English / technical text ever reaches a user (validation errors, server messages, exceptions).
+- **Buttons**: a normal button («بستن») has a frame of at least 3:1 against its background; `button_audit.py` fails a faint one.
+- **Cleanup** (server settings, on the server, owner): backup first, typed «پاک‌سازی», only the shop's own data; owners, settings, mappings, site models, proxies and the Telegram session stay; the accounting database is never touched.
+- **Status-code helper** (read only): Status values and counts of `KalaOrder` and the latest orders «سازه حساب» made itself, to choose `ACCOUNTING_STATUS_CODE` on a separate copy of the real database before real writing is switched on.
+
 ## 8. Alerts to the owner
 - Bale message to the owner's chat (ChatId in .env) on every new order and pending customer.
 - Windows tray app: detects when the Sazeh Hesab program starts (process watch) → "X new orders, Y customers awaiting approval" + link to shopadmin.

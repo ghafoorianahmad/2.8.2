@@ -141,8 +141,12 @@ def test_iss_defines_the_output_installer_name(iss_text):
 def test_iss_installs_under_program_files_when_all_users(iss_text):
     setup = _section(iss_text, "[Setup]")
     directory = _directives(setup, "DefaultDirName")[0]
-    assert "{autopf}" in directory, f"expected an auto Program Files path, got {directory}"
+    # v2.9.4: D:\<name> when there is a D: disk, else the auto Program Files path
+    assert directory.startswith("{code:DefaultAppDir|"), directory
     assert "MyAppName" in directory, f"expected the app name in the path, got {directory}"
+    code = iss_text[iss_text.index("function DefaultAppDir"):]
+    assert "'D:\\' + Param" in code and "{autopf}" in code.split("end;")[0]
+    assert "DisableDirPage=no" in setup and "UsePreviousAppDir=yes" in setup
 
 
 def test_the_app_name_define_is_ShopAdmin(iss_text):

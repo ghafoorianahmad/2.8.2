@@ -95,6 +95,47 @@ class AccountingReader:
             conn.close()
         return True
 
+    def order_status_overview(self, limit: int = 20) -> dict:
+        """v2.9.4 «راهنمای کد وضعیت سفارش» (read only): every ``KalaOrder.Status``
+        with its count, split into orders made by «سازه حساب» itself and internet
+        orders (``Codf = -100``: this shop, the official bot, the site module), and
+        the latest orders «سازه حساب» made itself (no person, no description).
+        The owner opens those orders in «سازه حساب» to see which status name each
+        number is (``TabaghehBandi`` holds the names and is closed to the shop)."""
+        db = self._db()
+        top = max(1, min(int(limit), 100))
+        conn = self.connection()
+        try:
+            counts = self._rows(conn.execute(
+                f"SELECT Status, CASE WHEN ISNULL(Codf, 0) = -100 THEN 1 ELSE 0 END AS Internet, "
+                f"COUNT(*) AS Cnt, MIN(Codlp) AS FirstCode, MAX(Codlp) AS LastCode, "
+                f"MAX(Datelp) AS LastDate FROM {db}.dbo.KalaOrder WHERE ISNULL(va, 0) = 0 "
+                f"GROUP BY Status, CASE WHEN ISNULL(Codf, 0) = -100 THEN 1 ELSE 0 END "
+                f"ORDER BY Status"))
+            latest = self._rows(conn.execute(
+                f"SELECT TOP {top} h.Codlp, h.Datelp, h.Status, h.usercode, h.Mablp, "
+                f"(SELECT COUNT(*) FROM {db}.dbo.KalaOrderDetail d WHERE d.Codlp_ = h.Codlp) "
+                f"AS Items FROM {db}.dbo.KalaOrder h "
+                f"WHERE ISNULL(h.Codf, 0) <> -100 AND ISNULL(h.va, 0) = 0 "
+                f"ORDER BY h.Codlp DESC"))
+        finally:
+            conn.close()
+
+        def number(value):
+            return None if value is None else int(value)
+
+        return {
+            "database": self.settings.accounting_database,
+            "statuses": [{"status": number(r["Status"]), "internet": bool(r["Internet"]),
+                          "count": int(r["Cnt"] or 0), "first_order": number(r["FirstCode"]),
+                          "last_order": number(r["LastCode"]),
+                          "last_date": str(r["LastDate"] or "")} for r in counts],
+            "latest_sazeh": [{"order": number(r["Codlp"]), "date": str(r["Datelp"] or ""),
+                              "status": number(r["Status"]), "user_code": number(r["usercode"]),
+                              "total": float(r["Mablp"] or 0), "items": int(r["Items"] or 0)}
+                             for r in latest],
+        }
+
     def list_groups(self) -> list[dict]:
         db = self._db()
         conn = self.connection()

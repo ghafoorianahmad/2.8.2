@@ -11,6 +11,7 @@ from app.api_client import (
     MSG_SESSION_EXPIRED,
     MSG_NOT_FOUND,
     MSG_SERVER_ERROR,
+    MSG_SERVER_REFUSED,
     MSG_TIMEOUT,
     ApiAuthError,
     ApiConnectionError,
@@ -208,14 +209,15 @@ def test_non_json_error_body_does_not_crash(fake_api):
         with pytest.raises(ApiError) as exc:
             client.list_orders()
         assert exc.value.message  # always something Persian-ish, never empty
-        assert "خطای سرور فروشگاه" in exc.value.message
+        # v2.9.4: never the raw body
+        assert exc.value.message == MSG_SERVER_REFUSED and "html" not in exc.value.message
     finally:
         client.close()
 
 
 def test_raw_html_never_reaches_the_user_untranslated():
     message = translate_detail("<html>boom</html>", 500)
-    assert message.startswith("خطای سرور")
+    assert message == MSG_SERVER_REFUSED and "<html>" not in message
 
 
 def test_invalid_json_on_success_is_a_decode_error(fake_api):
@@ -268,8 +270,8 @@ def test_known_shopapi_errors_are_translated(detail, expected_fragment):
 
 def test_unknown_english_detail_is_not_shown_raw():
     message = translate_detail("SomeBrandNewEnglishError", 500)
-    assert "SomeBrandNewEnglishError" in message  # prefixed, but never bare
-    assert message.startswith("خطای سرور")
+    # v2.9.4: an unknown English text is never shown at all (it is logged)
+    assert "SomeBrandNewEnglishError" not in message and message == MSG_SERVER_REFUSED
 
 
 def test_persian_detail_from_server_is_kept():
@@ -281,8 +283,8 @@ def test_validation_error_list_becomes_persian():
         {"loc": ["body", "person_code"], "msg": "Input should be greater than 0", "type": "greater_than"}
     ]
     message = translate_detail(detail, 422)
-    assert "نامعتبر" in message
-    assert "person_code" in message
+    # v2.9.4: the field's Persian name and the rule, no English
+    assert message == "اطلاعات واردشده درست نیست: «کد شخص» باید بیشتر از صفر باشد."
 
 
 def test_empty_detail_falls_back_by_status():

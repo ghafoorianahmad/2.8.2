@@ -237,3 +237,90 @@ def check_backup_folder(folder: str) -> dict:
 @router.post("/backup-test")
 def backup_test(payload: BackupFolderIn, _: Identity = Depends(_can_test_backup)) -> dict:
     return check_backup_folder(payload.folder)
+
+
+# ---- v2.9.4: «تنظیمات سرور» on the server itself ----------------------------------------
+def _service_only(identity: Identity = Depends(get_identity)) -> Identity:
+    """Only the server's own key (the setup on the server computer, loopback)."""
+    if identity.kind != "service":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this account")
+    return identity
+
+
+class DbCheckIn(BaseModel):
+    server: str
+    database: str
+
+
+@router.post("/db-check")
+def db_check(payload: DbCheckIn, settings: Settings = Depends(deps.get_settings),
+             _: Identity = Depends(_service_only)) -> dict:
+    """«آزمایش اتصال» by the RUNNING SERVICE (its own Windows account) for the
+    server / database chosen in the setup, with Windows sign-in. Read only."""
+    from dataclasses import replace
+
+    trial = replace(settings, accounting_server=payload.server.strip(),
+                    accounting_database=payload.database.strip(), accounting_trusted=True)
+    try:
+        reader = AccountingReader(trial)
+        reader.ping()
+        return {"ok": True, "groups": len(reader.list_groups())}
+    except Exception as exc:  # noqa: BLE001 - reported, never raised
+        info = sql_errors.describe(exc)
+        return {"ok": False, "error_code": info.code, "message_fa": info.message_fa}
+
+
+@router.get("/order-status-codes")
+def order_status_codes(reader: AccountingReader = Depends(deps.get_reader),
+                       identity: Identity = Depends(get_identity)) -> dict:
+    """«راهنمای کد وضعیت سفارش»: Status values and counts of the accounting order
+    table and the latest orders «سازه حساب» made itself. Read only."""
+    if not (identity.kind == "service" or (not identity.must_change_password
+                                           and identity.can(P_SERVER_MANAGE))):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this account")
+    try:
+        return {"ok": True, **reader.order_status_overview()}
+    except Exception as exc:  # noqa: BLE001 - reported, never raised
+        info = sql_errors.describe(exc)
+        return {"ok": False, "error_code": info.code, "message_fa": info.message_fa}
+
+
+class CleanupIn(BaseModel):
+    confirm: str
+
+
+def _cleanup_paths(settings: Settings):
+    from pathlib import Path
+
+    bots = control.STATE.env_file.parent / "shopbots.db" if control.STATE.env_file else None
+    receipts = settings.receipts_path()
+    return (Path(bots) if bots else None), receipts
+
+
+@router.get("/cleanup-test-data")
+def cleanup_preview(settings: Settings = Depends(deps.get_settings),
+                    db: OwnDB = Depends(deps.get_db),
+                    _: Identity = Depends(_service_only)) -> dict:
+    from .. import cleanup
+
+    bots, receipts = _cleanup_paths(settings)
+    return {**cleanup.preview(db, bots_path=bots, receipts_dir=receipts),
+            "backup_fresh": cleanup.backup_is_fresh(control.backup_status() or {}),
+            "confirm_text": cleanup.CONFIRM_TEXT}
+
+
+@router.post("/cleanup-test-data")
+def cleanup_run(payload: CleanupIn, settings: Settings = Depends(deps.get_settings),
+                db: OwnDB = Depends(deps.get_db),
+                _: Identity = Depends(_service_only)) -> dict:
+    """«پاک‌سازی داده‌های آزمایشی»: only the shop's own SQLite data (never the
+    accounting database), after a fresh verified backup and the typed confirmation."""
+    from .. import cleanup
+
+    bots, receipts = _cleanup_paths(settings)
+    try:
+        return cleanup.clear_test_data(db, bots_path=bots, receipts_dir=receipts,
+                                       confirm=payload.confirm,
+                                       backup_status=control.backup_status() or {})
+    except cleanup.CleanupError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None

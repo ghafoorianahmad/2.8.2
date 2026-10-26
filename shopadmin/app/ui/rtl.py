@@ -139,6 +139,9 @@ class _RtlDefaults:
     left-to-right code / log box (``mark_ltr``). Installed by ``theme.apply_theme``."""
 
     _filter = None
+    #: v2.9.4: more first-polish steps in the same (single) application filter,
+    #: e.g. the eye of password fields: one Python call per event, not one each
+    hooks: list = []
 
     @classmethod
     def install(cls, app) -> None:
@@ -150,10 +153,12 @@ class _RtlDefaults:
 
         class Filter(QObject):
             def eventFilter(self, obj, event):  # noqa: N802 - Qt naming
-                if event.type() == QEvent.Type.Polish and \
-                        isinstance(obj, (QPlainTextEdit, QTextEdit)) and \
-                        not is_marked_ltr(obj) and not document_is_rtl(obj):
-                    rtl_text(obj)
+                if event.type() == QEvent.Type.Polish:
+                    if isinstance(obj, (QPlainTextEdit, QTextEdit)) and \
+                            not is_marked_ltr(obj) and not document_is_rtl(obj):
+                        rtl_text(obj)
+                    for hook in _RtlDefaults.hooks:
+                        hook(obj)
                 return False
 
         cls._filter = Filter()
@@ -162,3 +167,9 @@ class _RtlDefaults:
 
 def install_rtl_defaults(app) -> None:
     _RtlDefaults.install(app)
+
+
+def add_polish_hook(hook) -> None:
+    """``hook(widget)`` on every widget's first polish (once per hook)."""
+    if hook not in _RtlDefaults.hooks:
+        _RtlDefaults.hooks.append(hook)

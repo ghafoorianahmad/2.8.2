@@ -197,7 +197,9 @@ def test_is_due():
 def test_config_from_values():
     cfg = backup.BackupConfig.from_values({"BACKUP_HOUR": "25", "BACKUP_KEEP_DAYS": "x",
                                            "BACKUP_COPY_DIR": " E:\\Bak ", "BACKUP_ENABLED": "no"})
-    assert (cfg.hour, cfg.keep_days, cfg.copy_dir, cfg.enabled) == (23, 14, "E:\\Bak", False)
+    # v2.9.4: always the dedicated sub-folder
+    assert (cfg.hour, cfg.keep_days, cfg.copy_dir, cfg.enabled) == (
+        23, 14, "E:\\Bak\\ShopServerBackup", False)
 
 
 # ---- restore -----------------------------------------------------------------------
@@ -268,9 +270,11 @@ def test_insecure_bind():
 def test_local_backup_dir():
     assert winservice.local_backup_dir("") is None
     assert winservice.local_backup_dir(r"\\nas\share\shop") is None
-    assert winservice.local_backup_dir("E:\\") is None
+    # v2.9.4: a drive root gets the dedicated sub-folder (granted), never the root
+    assert winservice.local_backup_dir("E:\\") == Path(r"E:\ShopServerBackup")
     assert winservice.local_backup_dir("relative\\dir") is None
-    assert winservice.local_backup_dir(r"E:\ShopBackup") == Path(r"E:\ShopBackup")
+    assert winservice.local_backup_dir(r"E:\ShopBackup") == Path(r"E:\ShopBackup\ShopServerBackup")
+    assert winservice.local_backup_dir(r"E:\ShopServerBackup") == Path(r"E:\ShopServerBackup")
 
 
 def test_acl_includes_backup_dir(tmp_path):

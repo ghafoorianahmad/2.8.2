@@ -87,11 +87,13 @@ def test_wizard_turns_a_share_of_this_computer_into_its_folder(admin_qapp, monke
     try:
         wizard.backup_dir.setText(r"\\SHOPSRV\Backups\Shop")
         assert wizard._local_backup_folder() is True
-        assert wizard.backup_dir.text() == r"G:\Backups\Shop"
+        # v2.9.4: always inside the dedicated sub-folder
+        assert wizard.backup_dir.text() == r"G:\Backups\Shop\ShopServerBackup"
         assert "همین رایانهٔ سرور" in wizard.backup_result.text()
+        assert wizard._local_backup_folder() is False      # already the final folder
         wizard.backup_dir.setText(r"\\NAS\Backups")
-        assert wizard._local_backup_folder() is False
-        assert wizard.config_extra()["backup_copy_dir"] == r"\\NAS\Backups"
+        assert wizard._local_backup_folder() is True
+        assert wizard.config_extra()["backup_copy_dir"] == r"\\NAS\Backups\ShopServerBackup"
     finally:
         wizard.close()
         wizard.deleteLater()

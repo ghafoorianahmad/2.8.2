@@ -95,3 +95,28 @@ def local_path_for(folder: str, *, names: Optional[Iterable[str]] = None,
         if part:
             path = path / part
     return str(path)
+
+
+#: v2.9.4: the shop's own folder inside the chosen backup destination. A drive root
+#: (``E:\``) or a whole share is never written to directly: the service account
+#: cannot be granted a drive root safely, and a root usually refuses to create
+#: files for it ("PermissionError: Access is denied", the 2.9.3 nightly backup).
+BACKUP_SUBFOLDER = "ShopServerBackup"
+
+
+def backup_target(folder: str, **lookup) -> str:
+    """The folder the off-server copies really go to: a share of this computer as
+    its local folder, then always the dedicated ``ShopServerBackup`` sub-folder
+    (unless the path already ends with it). Empty stays empty."""
+    text = str(folder or "").strip()
+    if not text:
+        return ""
+    local = local_path_for(text, **lookup) or text
+    path = PureWindowsPath(local)
+    if path.name.lower() == BACKUP_SUBFOLDER.lower():
+        return str(path)
+    return str(path / BACKUP_SUBFOLDER)
+
+
+def is_network_path(folder: str) -> bool:
+    return str(folder or "").strip()[:2] in ("\\\\", "//")

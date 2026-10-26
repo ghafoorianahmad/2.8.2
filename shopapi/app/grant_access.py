@@ -27,6 +27,10 @@ SERVICE_LOGIN = "NT SERVICE\\ShopServer"
 #: same rules as grant_shop_app.ps1 (names go into the SQL text, bracket-quoted)
 DATABASE_RE = re.compile(r"^[A-Za-z0-9_ ]{1,64}$")
 LOGIN_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
+#: the service's Windows logins: NT SERVICE\ShopServer or DOMAIN\COMPUTER$
+WINDOWS_LOGIN_RE = re.compile(r"^(NT SERVICE\\ShopServer|[A-Za-z0-9_.-]{1,64}\\[A-Za-z0-9_.-]{1,63}\$)$")
+#: CREATE LOGIN ... FROM WINDOWS: the account does not exist (service not registered)
+UNKNOWN_WINDOWS_ACCOUNT = frozenset({15401})
 #: the database errors after which «دادن دسترسی» is offered (no user / no grant)
 ACCESS_ERRORS = frozenset({"4060", "916", "229", "230", "18456", "4064"})
 #: SQL Server answered «you may not» to the setup's own Windows account
@@ -129,10 +133,13 @@ class GrantError(Exception):
 
 
 def shop_login(settings) -> tuple[str, bool]:
-    """(login name, Windows sign-in?) the shop connects with."""
-    if settings.accounting_trusted:
-        return SERVICE_LOGIN, True
-    return settings.accounting_username.strip(), False
+    """(login name, Windows sign-in?) the shop connects with. v2.9.4: exactly the
+    account the SERVICE signs in with (``NT SERVICE\\ShopServer`` on this computer,
+    ``DOMAIN\\COMPUTER$`` for a SQL Server on another one), never the person
+    running the setup."""
+    from .db_setup import shop_login as service_aware
+
+    return service_aware(settings)
 
 
 def grant_batches(database: str, user: str) -> list[str]:
@@ -140,7 +147,7 @@ def grant_batches(database: str, user: str) -> list[str]:
     if not DATABASE_RE.match(database or ""):
         raise GrantError(f"نام پایگاه‌داده «{database}» پذیرفته نیست (فقط حرف لاتین، رقم، _ "
                          "و فاصله).")
-    if user != SERVICE_LOGIN and not LOGIN_RE.match(user or ""):
+    if not WINDOWS_LOGIN_RE.match(user or "") and not LOGIN_RE.match(user or ""):
         raise GrantError(f"نام کاربری SQL «{user}» پذیرفته نیست (فقط حرف لاتین، رقم و _).")
     text = GRANT_SQL.replace("$(DB_NAME)", database.replace("]", "]]")).replace(
         "$(SHOP_USER)", user)
@@ -150,8 +157,9 @@ def grant_batches(database: str, user: str) -> list[str]:
 def admin_connection_string(settings) -> str:
     """The shop's server and driver, signed in with the CURRENT Windows account
     (the setup runs as an administrator), on ``master``."""
-    return replace(settings, accounting_trusted=True,
-                   accounting_database="master").accounting_connection_string()
+    from .db_setup import admin_connection_string as admin
+
+    return admin(settings)
 
 
 def _numbers(exc: BaseException) -> list[int]:
@@ -164,6 +172,9 @@ def _sql_error(exc: BaseException) -> GrantError:
     from .sql_errors import describe
 
     text = " ".join(str(a) for a in getattr(exc, "args", ()) or ())
+    if any(n in UNKNOWN_WINDOWS_ACCOUNT for n in _numbers(exc)):
+        return GrantError("حساب سرویس «NT SERVICE\\ShopServer» هنوز روی این رایانه ثبت نشده است؛ "
+                          "دوباره «دادن دسترسی» را بزنید (سرویس پیش از آن ثبت می‌شود).", text[:300])
     if any(n in NO_ADMIN_ERRORS for n in _numbers(exc)):
         return GrantError("حساب ویندوز شما در SQL Server اجازهٔ ساخت کاربر و دادن دسترسی ندارد. "
                           "«تنظیمات سرور» را با حسابی اجرا کنید که در SQL Server «sysadmin» است "

@@ -694,13 +694,12 @@ class StockConfirmDialog(widgets.ResponsiveDialog):
         self._list_price = int(item.get("price_rial") or 0) if item.get("kind") == "purchase" \
             else 0
         root.addWidget(widgets.label(
-            "قیمت (ریال) — خالی = قیمت لیست" if self._list_price else
-            "قیمت (ریال) — لازم است (این کالا قیمت لیست ندارد یا قیمتش منتظر تأیید است)"))
-        self.price_input = QLineEdit(to_persian_digits(item["offer_price_rial"])
-                                     if item.get("offer_price_rial") else "")
-        self.price_input.setPlaceholderText(to_persian_digits(f"{self._list_price:,}")
-                                            if self._list_price else "مثلاً ۵۲۵۰۰۰۰۰۰")
-        self.price_input.setMinimumHeight(40)
+            "قیمت — خالی = قیمت لیست" if self._list_price else
+            "قیمت — لازم است (این کالا قیمت لیست ندارد یا قیمتش منتظر تأیید است)"))
+        # v2.9.4: grouped digits, «ریال» and the amount in words (an extra zero shows)
+        self.price_input = widgets.MoneyInput(str(item.get("offer_price_rial") or ""))
+        self.price_input.setPlaceholderText(widgets.MoneyInput.format(self._list_price)
+                                            if self._list_price else "مثلاً ۵۲۵٬۰۰۰٬۰۰۰")
         root.addWidget(self.price_input)
         if note:
             # v2.9.3: the message staff typed goes under the price, in the same message
@@ -736,12 +735,13 @@ class StockConfirmDialog(widgets.ResponsiveDialog):
 
     def _accept(self) -> None:
         code = self._number(self.code_input.text())
-        price = self._number(self.price_input.text())
+        price = self.price_input.value()
         if code is None and not self._item.get("kala_code"):
             self._error("این ردیف هنوز به کالایی وصل نیست؛ کد کالا را بنویسید.")
             return
-        if self.price_input.text().strip() and not price:
-            self._error("قیمت درست نیست؛ فقط رقم بنویسید یا خالی بگذارید.")
+        problem = self.price_input.problem()
+        if problem:
+            self._error(problem)
             return
         if not price and not self._list_price:
             self._error("قیمت لیست ندارد؛ قیمت را بنویسید.")

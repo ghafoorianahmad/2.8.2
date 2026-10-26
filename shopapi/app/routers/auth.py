@@ -144,6 +144,54 @@ def bootstrap(
     return staff_out(row)
 
 
+def _service_only(identity: Identity) -> None:
+    if identity.kind != "service":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this account")
+
+
+@router.get("/owner")
+def current_owners(identity: Identity = Depends(get_identity),
+                   db: OwnDB = Depends(deps.get_db)) -> dict:
+    """v2.9.4: the «مدیر کل» accounts, for the server setup on the server itself
+    (service key): «مدیر کل فعلی: <username>». No password, no hash."""
+    _service_only(identity)
+    owners = [{"username": row["username"], "full_name": row["full_name"] or "",
+               "active": bool(row["active"])}
+              for row in db.list_staff() if row["role"] == ROLE_SUPER_ADMIN]
+    return {"owners": owners}
+
+
+@router.post("/owner")
+def set_owner(payload: BootstrapIn, identity: Identity = Depends(get_identity),
+              db: OwnDB = Depends(deps.get_db)) -> dict:
+    """v2.9.4, the setup's «مدیر کل» step (service key, server only). The same
+    username as an existing owner = a new password for it (unlocked, active);
+    a new username = one more owner. A username of another (non-owner) account
+    is refused. Blank in the setup = this is never called (the owner stays)."""
+    _service_only(identity)
+    username = payload.username.strip()
+    for problem in (validate_username(username), validate_password(payload.password)):
+        if problem:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, problem)
+    row = db.get_staff_by_username(username)
+    if row is not None and row["role"] != ROLE_SUPER_ADMIN:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Username belongs to another account that is not an owner")
+    if row is not None:
+        fields = {"password_hash": hash_password(payload.password), "active": 1,
+                  "failed_attempts": 0, "locked_until": None, "must_change_password": 0}
+        if payload.full_name.strip():
+            fields["full_name"] = payload.full_name.strip()
+        db.update_staff(row["id"], **fields)
+        db.delete_sessions_for_user(row["id"])
+        db.audit("service", "owner_password_reset", f"staff id={row['id']} username={username}")
+        return {"ok": True, "action": "password_reset", "username": row["username"]}
+    created = db.create_staff(username, payload.full_name.strip() or username, ROLE_SUPER_ADMIN,
+                              hash_password(payload.password))
+    db.audit("service", "owner_created", f"staff id={created['id']} username={username}")
+    return {"ok": True, "action": "created", "username": created["username"]}
+
+
 @router.post("/login", response_model=LoginOut)
 def login(
     payload: LoginIn,

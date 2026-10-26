@@ -562,32 +562,16 @@ class ShopAdminApp(QObject):
         from .ui.appearance import saved_look
 
         palette, mode, effects = saved_look(self.store)
+        # v2.9.4: in place: the windows stay where they are (2.9.3 rebuilt the main
+        # window, which looked like the program restarting); every widget's own
+        # colours, icons and shadows move to the new look, then the pages reload
+        # their data so table colours follow too.
+        before = theme.current_tokens()
         theme.apply_theme(self.app, mode, palette=palette, effects=effects)
-        old = self.main_window
-        if old is None or self.context is None:
-            return
-        key = old.current_key()
-        geometry = old.saveGeometry()
-        maximized, visible = old.isMaximized(), old.isVisible()
-        self.main_window = self._new_main_window()
-        self.main_window.restoreGeometry(geometry)
-        if key:
-            self.main_window.navigate(key)
-        old.allow_close = True
-        old.hide()
-        old.deleteLater()
-        if visible:
-            self.main_window.showMaximized() if maximized else self.main_window.show()
-            self.main_window.reset_activity()
-            QTimer.singleShot(50, self.main_window.check_server)
-        # v2.9.3: a dialog that chose the look («اعلان‌ها و ظاهر») stays in front
-        from PySide6.QtWidgets import QApplication, QDialog
-
-        for widget in QApplication.topLevelWidgets():
-            if isinstance(widget, QDialog) and widget.isVisible():
-                widget.raise_()
-                widget.activateWindow()
-        log.info("look applied without a restart (%s, %s, %s)", palette, mode, effects)
+        theme.restyle_live(self.app, before, extra=(self.main_window,))
+        if self.context is not None:
+            self.context.data_changed.emit()
+        log.info("look applied live (%s, %s, %s)", palette, mode, effects)
 
     def restart_application(self) -> None:
         """v2.9.0: open the program again (a new look is applied at start). This

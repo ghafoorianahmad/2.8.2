@@ -3,10 +3,10 @@
 Option cards like the equipment control panel's theme cards: each palette shows
 its side-bar gradient and accent, so the choice is visible before it is made.
 The look is stored in this computer's local settings (``theme_palette``,
-``theme_mode``, ``theme_effects``); v2.9.1: it is applied at once (the main
-window is rebuilt on the same page), no restart. v2.9.3: a click on a card is
-enough: the choice is saved and applied to the whole program at once (no
-«ذخیره» button, no restart).
+``theme_mode``, ``theme_effects``). v2.9.3: a click on a card is enough: the
+choice is saved and applied to the whole program at once (no «ذخیره» button).
+v2.9.4: applied LIVE in place (``theme.restyle_live``): no restart and no rebuilt
+window — the windows and dialogs stay open where they are.
 """
 from __future__ import annotations
 
@@ -116,9 +116,9 @@ class OptionCard(QPushButton):
 
 
 def apply_look_now(context) -> None:
-    """v2.9.3: the saved look on the whole program, right now: the main window is
-    rebuilt on the same page (``context.apply_look``, set by the program for every
-    signed-in window); without it (tests) the look is only saved."""
+    """The saved look on the whole program, right now (``context.apply_look``, set
+    by the program for every signed-in window; v2.9.4 live, in place); without it
+    (tests) the look is only saved."""
     apply_now = getattr(context, "apply_look", None) if context is not None else None
     if apply_now is not None:
         QTimer.singleShot(0, apply_now)
@@ -130,7 +130,7 @@ class AppearancePicker(QWidget):
 
     changed = Signal()
     applied = Signal()
-    #: clicks closer than this are applied once (the window is rebuilt each time)
+    #: clicks closer than this are applied once
     APPLY_DELAY_MS = 120
 
     def __init__(self, store, parent: QWidget | None = None, *, context=None) -> None:
@@ -184,6 +184,13 @@ class AppearancePicker(QWidget):
             "دکمهٔ ذخیره یا باز کردن دوبارهٔ برنامه لازم نیست. انتخاب فقط روی همین رایانه "
             "است.", name="Muted", wrap=True)
         root.addWidget(self.note)
+
+    def refresh_look(self) -> None:
+        """v2.9.4 (``theme.restyle_live``): the palette tiles in the new mode."""
+        for name, card in self.cards.get("palette", {}).items():
+            card.setIcon(palette_swatch(name, theme.MODE))
+        for name, card in self.cards.get("mode", {}).items():
+            card.setIcon(_mode_swatch(name))
 
     def value(self, key: str) -> str:
         button = self.groups[key].checkedButton()

@@ -37,6 +37,7 @@ BACKUP_OVERDUE_HOURS = 30
 BALE_ERRORS = 3
 BALE_SILENCE = timedelta(minutes=3)
 TG_STATUS_KEY = "worker:tg_status"
+BACKUP_ALERT_KEY = "monitor:backup_alerted_at"
 
 TEXTS_DOWN = {
     "sql": "⚠️ هشدار سرور: پایگاه دادهٔ حسابداری (SQL) در دسترس نیست. "
@@ -54,6 +55,31 @@ TEXTS_UP = {
     "tg": "✅ کارگر تلگرام دوباره گزارش می‌دهد.",
     "backup": "✅ پشتیبان‌گیری روزانه دوباره موفق شد.",
 }
+
+
+#: v2.9.4: the reason of a failed backup in plain Persian (the status keeps the
+#: technical text; only these sentences reach the owner's Bale chat)
+BACKUP_REASONS = (
+    ("PermissionError", "حساب سرویس سرور اجازهٔ نوشتن در پوشهٔ پشتیبان را ندارد. «تنظیمات سرور» "
+                        "را روی سرور باز و ذخیره کنید تا پوشهٔ ShopServerBackup با دسترسی درست "
+                        "ساخته شود؛ اگر پوشه روی رایانهٔ دیگری است، همان‌جا به رایانهٔ سرور اجازهٔ "
+                        "نوشتن بدهید."),
+    ("BACKUP_PASSPHRASE", "عبارت رمز پشتیبان تنظیم نشده و نسخهٔ بیرون از سرور نوشته نشد."),
+    ("FileNotFoundError", "پوشهٔ پشتیبان پیدا نشد (دیسک یا رایانهٔ مقصد وصل و روشن است؟)."),
+    ("does not match", "نسخهٔ بیرون از سرور پس از نوشتن درست بازخوانی نشد (دیسک مقصد را بررسی کنید)."),
+    ("No space", "جای خالی دیسک مقصد پشتیبان تمام شده است."),
+)
+
+
+def backup_failure_text(status: dict) -> str:
+    """The Bale alert of one failed backup run, with its reason in Persian."""
+    offsite = status.get("offsite") if isinstance(status.get("offsite"), dict) else {}
+    raw = str((offsite or {}).get("error") or status.get("error") or "")
+    where = ("نسخهٔ بیرون از سرور" if (offsite or {}).get("ok") is False
+             else "پشتیبان روزانه روی خود سرور")
+    reason = next((text for mark, text in BACKUP_REASONS if mark.lower() in raw.lower()),
+                  "علت در صفحهٔ «سرور فروشگاه» (بخش پشتیبان) آمده است.")
+    return f"⚠️ هشدار سرور: پشتیبان‌گیری ناموفق بود ({where}). {reason}"
 
 
 def _parse_time(raw: str | None) -> Optional[datetime]:
@@ -80,6 +106,8 @@ class HealthMonitor:
         self.down: dict[str, bool] = {name: False for name in CHECKS}
         self.last: dict[str, Optional[bool]] = {name: None for name in CHECKS}
         self.checked_at: Optional[datetime] = None
+        #: v2.9.4: the last failed backup run already reported to the owner
+        self.backup_alerted_at: Optional[str] = None
 
     # ---- probes: True = good, False = bad, None = not applicable ------------
     def probe_sql(self) -> Optional[bool]:
@@ -133,12 +161,44 @@ class HealthMonitor:
         last = _parse_time(status.get("last_success_at"))
         return last is not None and self.clock() - last < timedelta(hours=BACKUP_OVERDUE_HOURS)
 
+    def failed_backup_run(self) -> Optional[dict]:
+        """v2.9.4: a failed backup run not reported yet (each failure is reported
+        once, at once, with its reason; not only the first of a series)."""
+        status = control.backup_status()
+        if not status or status.get("ok") or not status.get("at"):
+            return None
+        if self.backup_alerted_at is None:
+            # kept across restarts of the service: a failure is never reported twice
+            try:
+                self.backup_alerted_at = self.db_factory().get_state(BACKUP_ALERT_KEY, "") or ""
+            except Exception:  # noqa: BLE001
+                self.backup_alerted_at = ""
+        if status.get("at") == self.backup_alerted_at:
+            return None
+        return status
+
+    def _remember_backup_alert(self, at: str) -> None:
+        self.backup_alerted_at = at
+        try:
+            self.db_factory().set_state(BACKUP_ALERT_KEY, at, "monitor")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("health: backup alert mark not stored (%s)", type(exc).__name__)
+
     # ---- one round ------------------------------------------------------------
     def tick(self) -> list[str]:
         """Run every check once; return the event kinds that were raised."""
         results = {name: getattr(self, f"probe_{name}")() for name in CHECKS}
         self.checked_at = self.clock()
         raised: list[str] = []
+        failed = self.failed_backup_run()
+        if failed is not None:
+            self._remember_backup_alert(str(failed.get("at")))
+            self.fails["backup"] = max(self.fails["backup"], self.threshold - 1)
+            if not self.down["backup"]:
+                self.down["backup"] = True
+                raised.append(self._raise("backup", up=False, text=backup_failure_text(failed)))
+            else:
+                self._send(backup_failure_text(failed))
         for name, ok in results.items():
             self.last[name] = ok
             if ok is None:
@@ -156,7 +216,13 @@ class HealthMonitor:
                 raised.append(self._raise(name, up=False))
         return raised
 
-    def _raise(self, name: str, *, up: bool) -> str:
+    def _send(self, text: str) -> None:
+        try:
+            self.sender(text)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("health: owner alert failed (%s)", type(exc).__name__)
+
+    def _raise(self, name: str, *, up: bool, text: str | None = None) -> str:
         kind = f"health_{name}_{'up' if up else 'down'}"
         if up:
             logger.info("health: %s recovered", name)
@@ -166,10 +232,7 @@ class HealthMonitor:
             self.db_factory().add_event(kind, None, "monitor")
         except Exception as exc:  # noqa: BLE001 - the Bale alert still goes out
             logger.warning("health: event not stored (%s)", type(exc).__name__)
-        try:
-            self.sender((TEXTS_UP if up else TEXTS_DOWN)[name])
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("health: owner alert failed (%s)", type(exc).__name__)
+        self._send(text or (TEXTS_UP if up else TEXTS_DOWN)[name])
         return kind
 
     def snapshot(self) -> dict:

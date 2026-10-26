@@ -55,6 +55,9 @@ _BASE: dict[str, dict[str, str]] = {
         "DISABLED_BG": "#EEF1F6",
         "DISABLED_TEXT": "#5B6779",
         "SHADOW": "#26304D",
+        # v2.9.4: the frame of a normal button: 3:1 on every background (WCAG 1.4.11),
+        # so «بستن» never looks faint (scripts/button_audit.py checks the pixels)
+        "BUTTON_BORDER": "#5F6B7F",
         # v2.9.0: button fills (white text) apart from the same colours used as text
         "SUCCESS_FILL": "#047857", "SUCCESS_FILL_DARK": "#065F46",
         "DANGER_FILL": "#C5221F", "DANGER_FILL_DARK": "#A51B18",
@@ -76,6 +79,7 @@ _BASE: dict[str, dict[str, str]] = {
         "BORDER_STRONG": "#3A4456",
         "SURFACE": "#1B212B",
         "BUTTON2": "#212833",
+        "BUTTON_BORDER": "#737F93",
         "SIDEBAR_OK": "#6EE7B7",
         "SIDEBAR_BAD": "#FCA5A5",
         "ALT_ROW": "#1F2631",
@@ -192,7 +196,7 @@ BORDER = BORDER_STRONG = SURFACE = BACKGROUND = BACKGROUND2 = BUTTON2 = ""
 SIDEBAR_BG = SIDEBAR_BG2 = SIDEBAR_TEXT = SIDEBAR_MUTED = SIDEBAR_HOVER = ""
 SIDEBAR_ACTIVE = SIDEBAR_ACTIVE2 = SIDEBAR_OK = SIDEBAR_BAD = ""
 HOVER = SELECTED_BG = ALT_ROW = ROW_LINE = HEADER_BG = ERROR_BG = ""
-DISABLED_BG = DISABLED_TEXT = ""
+DISABLED_BG = DISABLED_TEXT = BUTTON_BORDER = ""
 SUCCESS_FILL = SUCCESS_FILL_DARK = DANGER_FILL = DANGER_FILL_DARK = ""
 
 
@@ -592,8 +596,8 @@ QLabel#EmptyHint {{ color: {TEXT_MUTED}; }}
    (no transparent text buttons; «Ghost» is only for an icon without text). */
 QPushButton {{
     background: {button_fill};
-    color: {TEXT}; border: 1px solid {BORDER_STRONG}; border-bottom: 2px solid {BORDER_STRONG};
-    border-radius: {RADIUS}px; padding: 8px 16px; font-size: {BASE_FONT_SIZE}pt;
+    color: {TEXT}; border: 1px solid {BUTTON_BORDER}; border-bottom: 2px solid {BUTTON_BORDER};
+    border-radius: {RADIUS}px; padding: 8px 16px; font-size: {BASE_FONT_SIZE}pt; font-weight: 600;
     min-height: {BUTTON_CONTENT_HEIGHT}px; max-height: {BUTTON_CONTENT_HEIGHT}px;
 }}
 QPushButton:hover {{ border-color: {ACCENT}; color: {PRIMARY_TEXT}; }}
@@ -659,13 +663,13 @@ QPushButton#OptionCard:checked {{ border: 2px solid {ACCENT}; background: {PRIMA
                                   color: {PRIMARY_TEXT}; }}
 
 QPushButton#Tab {{
-    border: 1px solid {BORDER}; border-bottom: 2px solid {BORDER}; border-radius: {RADIUS}px;
+    border: 1px solid {BUTTON_BORDER}; border-bottom: 2px solid {BUTTON_BORDER}; border-radius: {RADIUS}px;
     padding: 8px 16px; background: {SURFACE}; color: {TEXT}; font-size: {BASE_FONT_SIZE}pt;
     font-weight: 700;
 }}
 QPushButton#Tab:hover {{ background: {HOVER}; border-color: {ACCENT}; color: {PRIMARY_TEXT}; }}
 QPushButton#Tab:checked {{ background: {PRIMARY_SOFT}; color: {PRIMARY_TEXT};
-                           border: 1px solid {ACCENT}; border-bottom: 2px solid {ACCENT}; }}
+                           border: 1px solid {PRIMARY_TEXT}; border-bottom: 2px solid {PRIMARY_TEXT}; }}
 
 QPushButton#LinkButton {{
     border: none; background: transparent; color: {PRIMARY_TEXT}; padding: 2px 4px;
@@ -793,11 +797,19 @@ def apply_theme(app: QApplication, mode: str | None = None, *, palette: str | No
     app.setFont(font)
     # Full RTL everywhere: layout direction, alignment and widget mirroring.
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    # v2.9.4: the old «جلوه‌ها» filter is off while every widget is polished again
+    # (with it, each panel searched its children and got a shadow: quadratic, and
+    # with thousands of widgets the look change "hung" for minutes)
+    _remove_effects_filter(app)
     app.setStyleSheet(stylesheet(family))
     _install_effects(app)
     from .rtl import install_rtl_defaults
 
     install_rtl_defaults(app)
+    # v2.9.4: an eye on every password field (typed text only)
+    from . import password_eye
+
+    password_eye.install(app)
     return EFFECTS
 
 
@@ -900,13 +912,18 @@ def _shadow(widget: QWidget, blur: float, dy: float, *, button: bool = False) ->
 _EFFECTS_FILTER: _Effects | None = None
 
 
+def _remove_effects_filter(app: QApplication) -> None:
+    global _EFFECTS_FILTER
+    if _EFFECTS_FILTER is not None:
+        app.removeEventFilter(_EFFECTS_FILTER)
+        _EFFECTS_FILTER = None
+
+
 def _install_effects(app: QApplication) -> None:
     global _EFFECTS_FILTER
     from PySide6.QtWidgets import QGraphicsDropShadowEffect
 
-    if _EFFECTS_FILTER is not None:
-        app.removeEventFilter(_EFFECTS_FILTER)
-        _EFFECTS_FILTER = None
+    _remove_effects_filter(app)
     if EFFECTS == "full":
         _EFFECTS_FILTER = _Effects()
         app.installEventFilter(_EFFECTS_FILTER)
@@ -914,6 +931,144 @@ def _install_effects(app: QApplication) -> None:
     for widget in app.allWidgets():          # simple: take away the shadows already there
         if isinstance(widget.graphicsEffect(), QGraphicsDropShadowEffect):
             widget.setGraphicsEffect(None)
+
+
+# --------------------------------------------------------------------------
+# v2.9.4: a new look applied LIVE — no restart and no rebuilt window. The global
+# style sheet and palette are set again by apply_theme; what widgets baked in
+# when they were made (their own style sheets, icons, shadows) is translated
+# from the old palette's colours to the new ones in place.
+# --------------------------------------------------------------------------
+TOKEN_NAMES = tuple(palette_tokens("ocean", "light").keys())
+_HEX = __import__("re").compile(r"#[0-9A-Fa-f]{6}\b")
+
+
+def current_tokens() -> dict[str, str]:
+    """The colours in use (call before :func:`apply_theme` to restyle after it)."""
+    return {name: str(globals().get(name) or "") for name in TOKEN_NAMES}
+
+
+#: white / black are also written literally («white text on the accent»): only a
+#: background or a border made of them follows the palette, never a text colour
+_PLAIN = {"#FFFFFF", "#000000"}
+_PROPERTY = __import__("re").compile(r"([A-Za-z-]+)(\s*:\s*)([^;{}]+)")
+
+
+def colour_map(old: dict[str, str], new: dict[str, str]) -> dict[str, str]:
+    """Old hex -> new hex for every token, then the lighter shade the stat cards
+    derive (never over a real token, never white)."""
+    mapping: dict[str, str] = {}
+    for name in TOKEN_NAMES:
+        before, after = (old.get(name) or "").upper(), (new.get(name) or "").upper()
+        if before and after and before not in mapping:
+            mapping[before] = after
+    for name in TOKEN_NAMES:
+        before, after = (old.get(name) or "").upper(), (new.get(name) or "").upper()
+        if not before or not after:
+            continue
+        light_before = QColor(before).lighter(135).name().upper()
+        if light_before not in mapping and light_before not in _PLAIN:
+            mapping[light_before] = QColor(after).lighter(135).name().upper()
+    return {k: v for k, v in mapping.items() if k != v}
+
+
+def remap(text: str, mapping: dict[str, str]) -> str:
+    if not mapping or not text:
+        return text
+
+    def value(match) -> str:
+        prop, sep, val = match.groups()
+        surface = "background" in prop.lower() or "border" in prop.lower()
+
+        def colour(hex_match) -> str:
+            key = hex_match.group(0).upper()
+            if key in _PLAIN and not surface:
+                return hex_match.group(0)
+            return mapping.get(key, hex_match.group(0))
+
+        return prop + sep + _HEX.sub(colour, val)
+
+    return _PROPERTY.sub(value, text)
+
+
+def set_icon(widget, name: str, size: int, color: str) -> None:
+    """An icon that follows a live change of the look (button or label)."""
+    from PySide6.QtWidgets import QAbstractButton, QLabel
+
+    if isinstance(widget, QAbstractButton):
+        widget.setIcon(icon(name, size, color))
+    elif isinstance(widget, QLabel):
+        widget.setPixmap(icon_pixmap(name, size, color))
+    widget.setProperty("icon_spec", f"{name}|{size}|{color}")
+
+
+def set_nav_icon(button, name: str, size: int = 20) -> None:
+    button.setIcon(nav_icon(name, size))
+    button.setProperty("icon_spec", f"{name}|{size}|nav")
+
+
+def live_widgets(app: QApplication, extra=()) -> list:
+    """The windows on screen (and ``extra``, e.g. the main window hidden in the
+    tray) with everything inside them; closed leftovers are not walked (a window
+    made later is built with the new colours anyway)."""
+    roots = [w for w in app.topLevelWidgets() if w.isVisible()]
+    roots += [w for w in extra if w is not None and w not in roots]
+    out, seen = [], set()
+    for root in roots:
+        for widget in [root, *root.findChildren(QWidget)]:
+            if id(widget) not in seen:
+                seen.add(id(widget))
+                out.append(widget)
+    return out
+
+
+def restyle_live(app: QApplication, old: dict[str, str], extra=()) -> int:
+    """After :func:`apply_theme`: every widget's own style sheet and icon move to
+    the new colours, shadows follow the new «جلوه‌ها» and mode. Returns how
+    many widgets changed."""
+    from PySide6.QtWidgets import QGraphicsDropShadowEffect
+
+    mapping = colour_map(old, current_tokens())
+    changed = 0
+    widgets_now = live_widgets(app, extra)
+    for widget in widgets_now:
+        try:
+            sheet = widget.styleSheet()
+            if sheet:
+                updated = remap(sheet, mapping)
+                if updated != sheet:
+                    widget.setStyleSheet(updated)
+                    changed += 1
+            spec = widget.property("icon_spec")
+            if spec:
+                name, size, color = str(spec).split("|", 2)
+                if color == "nav":
+                    set_nav_icon(widget, name, int(size))
+                elif color.upper() not in _PLAIN:      # white icons stay white
+                    set_icon(widget, name, int(size), mapping.get(color.upper(), color))
+                changed += 1
+            effect = widget.graphicsEffect()
+            if isinstance(effect, QGraphicsDropShadowEffect):
+                button = widget.objectName() in SHADOW_BUTTONS
+                effect.setColor(shadow_color(90 if button and MODE != "dark" else None))
+            refresh = getattr(widget, "refresh_look", None)
+            if callable(refresh):
+                refresh()
+            widget.update()
+        except RuntimeError:          # deleted while we walked the list
+            continue
+    if EFFECTS == "full" and _EFFECTS_FILTER is not None:
+        # widgets made under «ساده» get their shadows now (as when first shown)
+        from PySide6.QtCore import QEvent
+
+        polish = QEvent(QEvent.Type.Polish)
+        for widget in widgets_now:
+            try:
+                if widget.isVisible():
+                    _EFFECTS_FILTER.eventFilter(widget, polish)
+            except RuntimeError:
+                continue
+    return changed
 
 
 def _apply_qt_palette(app: QApplication) -> None:
