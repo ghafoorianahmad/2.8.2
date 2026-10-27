@@ -253,19 +253,6 @@ class ItemRequestsPage(BasePage):
                  on_error=lambda m, _k: widgets.error(self, "انجام نشد", m))
 
 
-def _kv(key: str, value: str, *, selectable: bool = True) -> QWidget:
-    holder = QWidget()
-    layout = QHBoxLayout(holder)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(8)
-    layout.addWidget(widgets.label(f"{key}:", name="Muted"))
-    value_label = widgets.label(value, bold=True, wrap=True)
-    if selectable:
-        value_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    layout.addWidget(value_label, 1)
-    return holder
-
-
 class ItemRequestDialog(widgets.ResponsiveDialog):
     """جزئیات یک درخواست: متن کامل، مشتری، وضعیت، یادداشت و پیام به مشتری."""
 
@@ -301,12 +288,19 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         code = item.get("person_code")
         phone = str(item.get("customer_phone") or "").strip()
         platform = str(item.get("platform") or "")
-        meta.body.addWidget(_kv("زمان ثبت", full_datetime(item.get("created_at"))))
-        meta.body.addWidget(_kv("مشتری", str(item.get("customer_name") or "—")))
-        meta.body.addWidget(_kv("کد شخص", to_persian_digits(code) if code is not None
-                                else "هنوز وصل نشده"))
-        phone_row = QHBoxLayout()
-        phone_row.addWidget(_kv("موبایل", to_persian_digits(phone) if phone else "—"), 1)
+        # v2.13.0: one two-column list (captions and values aligned)
+        rows = widgets.KeyValueList()
+        rows.add("زمان ثبت", full_datetime(item.get("created_at")), selectable=True)
+        rows.add("مشتری", str(item.get("customer_name") or "—"), selectable=True)
+        rows.add("کد شخص", to_persian_digits(code) if code is not None else "هنوز وصل نشده",
+                 selectable=True)
+        phone_holder = QWidget()
+        phone_row = QHBoxLayout(phone_holder)
+        phone_row.setContentsMargins(0, 0, 0, 0)
+        phone_row.setSpacing(8)
+        phone_value = widgets.label(to_persian_digits(phone) if phone else "—", bold=True)
+        phone_value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        phone_row.addWidget(phone_value)
         if phone:
             from .orders import copy_to_clipboard
 
@@ -315,24 +309,26 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
                 on_click=lambda: (copy_to_clipboard(phone),
                                   self._set_send_info("شمارهٔ موبایل کپی شد.", ok=True)))
             phone_row.addWidget(self.copy_phone_button)
-        meta.body.addLayout(phone_row)
+        phone_row.addStretch(1)
+        rows.add_widget("موبایل", phone_holder)
         from .orders import owner_label
 
-        meta.body.addWidget(_kv("مسئول", owner_label(item)))
+        rows.add("مسئول", owner_label(item), selectable=True)
         if kind == "purchase":
-            meta.body.addWidget(_kv("رنگ / پارت", " — ".join(
+            rows.add("رنگ / پارت", " — ".join(
                 p for p in (str(item.get("color") or ""), str(item.get("part") or "")) if p)
-                or "—"))
-            meta.body.addWidget(_kv("قیمت لیست", format_money(item.get("price_rial") or 0)
-                                    if item.get("price_rial") else
-                                    "ندارد (یا منتظر تأیید مدیر است؛ قیمت را بنویسید)"))
-        self.outcome_label = widgets.label("", bold=True, wrap=True)
-        meta.body.addWidget(self.outcome_label)
-        meta.body.addWidget(_kv("پیام‌رسان", PLATFORM_FA.get(platform, platform or "—")))
+                or "—", selectable=True)
+            rows.add("قیمت لیست", format_money(item.get("price_rial") or 0)
+                     if item.get("price_rial") else
+                     "ندارد (یا منتظر تأیید مدیر است؛ قیمت را بنویسید)", selectable=True)
+        rows.add("پیام‌رسان", PLATFORM_FA.get(platform, platform or "—"), selectable=True)
         name = str(item.get("product_name") or "").strip()
         if name:
-            meta.body.addWidget(_kv("کالا", f"{name} (کد {to_persian_digits(item.get('kala_code'))})"
-                                    if item.get("kala_code") else name))
+            rows.add("کالا", f"{name} (کد {to_persian_digits(item.get('kala_code'))})"
+                     if item.get("kala_code") else name, selectable=True)
+        meta.body.addWidget(rows)
+        self.outcome_label = widgets.label("", bold=True, wrap=True)
+        meta.body.addWidget(self.outcome_label)
         self.handled_label = widgets.label("", name="Muted", wrap=True)
         meta.body.addWidget(self.handled_label)
         root.addWidget(meta)

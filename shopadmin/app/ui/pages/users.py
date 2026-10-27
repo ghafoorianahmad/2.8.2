@@ -423,7 +423,7 @@ class UserFormDialog(widgets.ResponsiveDialog):
         ))
 
         form = QFormLayout()
-        form.setLabelAlignment(RIGHT)
+        form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
 
@@ -649,7 +649,7 @@ class ResetPasswordDialog(widgets.ResponsiveDialog):
         ))
 
         form = QFormLayout()
-        form.setLabelAlignment(RIGHT)
+        form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
         self.password_input = QLineEdit()

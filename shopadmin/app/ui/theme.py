@@ -542,6 +542,66 @@ def indicator_images() -> tuple[str, str]:
 # --------------------------------------------------------------------------
 # global stylesheet + RTL
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# v2.13.0: glass buttons
+# --------------------------------------------------------------------------
+def _rgb(color: str) -> tuple[int, int, int]:
+    value = color.lstrip("#")
+    return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
+
+
+def rgba(color: str, alpha: float) -> str:
+    """``#RRGGBB`` + opacity (0..1) as a style-sheet colour."""
+    r, g, b = _rgb(color)
+    return f"rgba({r}, {g}, {b}, {max(0, min(255, round(alpha * 255)))})"
+
+
+def mix(color: str, other: str, amount: float) -> str:
+    """``color`` moved ``amount`` (0..1) towards ``other``, as ``#RRGGBB``."""
+    a, b = _rgb(color), _rgb(other)
+    return "#" + "".join(f"{round(x + (y - x) * amount):02X}" for x, y in zip(a, b))
+
+
+def _sheen(fill: str, dark: str) -> str:
+    """A coloured (prominent) button: its own colour with a soft light top edge."""
+    return (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {mix(fill, '#FFFFFF', 0.16)}, "
+            f"stop:0.45 {fill}, stop:1 {dark})")
+
+
+def glass_fills(simple: bool) -> dict[str, str]:
+    """The see-through fills of a normal button: at rest, hovered (lighter, a hint
+    of the accent = the «light glow») and pressed (darker). «ساده»: flat, still
+    see-through (no gradient)."""
+    if MODE == "dark":
+        if simple:
+            return {"fill": rgba("#FFFFFF", 0.07), "hover": rgba(ACCENT, 0.22),
+                    "pressed": rgba("#000000", 0.25)}
+        return {
+            "fill": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba('#FFFFFF', 0.16)}, "
+                     f"stop:0.5 {rgba('#FFFFFF', 0.07)}, stop:1 {rgba('#FFFFFF', 0.04)})"),
+            "hover": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba('#FFFFFF', 0.24)}, "
+                      f"stop:1 {rgba(ACCENT, 0.24)})"),
+            "pressed": rgba("#000000", 0.28),
+        }
+    if simple:
+        return {"fill": rgba("#FFFFFF", 0.72), "hover": rgba(mix(PRIMARY_SOFT, "#FFFFFF", 0.3), 0.95),
+                "pressed": rgba(BUTTON2, 0.95)}
+    return {
+        "fill": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba('#FFFFFF', 0.96)}, "
+                 f"stop:0.5 {rgba('#FFFFFF', 0.72)}, stop:1 {rgba(BUTTON2, 0.62)})"),
+        "hover": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba('#FFFFFF', 1.0)}, "
+                  f"stop:1 {rgba(PRIMARY_SOFT, 0.95)})"),
+        "pressed": rgba(BUTTON2, 0.95),
+    }
+
+
+def glow_color() -> QColor:
+    """The soft halo around a hovered button («جلوه‌ها: کامل»)."""
+    color = QColor(ACCENT)
+    color.setAlpha(170 if MODE == "dark" else 120)
+    return color
+
+
 # NOTE: the font family is resolved lazily in :func:`apply_theme`. Calling
 # QFontDatabase before a QGuiApplication exists aborts the process, so the
 # stylesheet template must never touch Qt at import time.
@@ -550,10 +610,11 @@ def _stylesheet_template() -> str:
     # raised buttons with a darker bottom edge, gradient side bar and accents.
     # v2.9.0: three palettes; «ساده» = flat fills (no gradients, no shadows).
     simple = EFFECTS == "simple"
-    button_fill = SURFACE if simple else (
-        f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {SURFACE}, stop:1 {BUTTON2})")
-    primary_fill = PRIMARY if simple else (
-        f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {PRIMARY}, stop:1 {PRIMARY_DARK})")
+    glass = glass_fills(simple)
+    button_fill, button_hover, button_pressed = glass["fill"], glass["hover"], glass["pressed"]
+    primary_fill = PRIMARY if simple else _sheen(PRIMARY, PRIMARY_DARK)
+    success_fill = SUCCESS_FILL if simple else _sheen(SUCCESS_FILL, SUCCESS_FILL_DARK)
+    danger_fill = DANGER_FILL if simple else _sheen(DANGER_FILL, DANGER_FILL_DARK)
     return f"""
 QWidget {{
     font-family: "__FONT_FAMILY__";
@@ -602,8 +663,14 @@ QPushButton {{
     border-radius: {RADIUS}px; padding: 8px 16px; font-size: {BASE_FONT_SIZE}pt; font-weight: 600;
     min-height: {BUTTON_CONTENT_HEIGHT}px; max-height: {BUTTON_CONTENT_HEIGHT}px;
 }}
-QPushButton:hover {{ border-color: {ACCENT}; color: {PRIMARY_TEXT}; }}
-QPushButton:pressed {{ background: {BUTTON2}; padding-top: 9px; padding-bottom: 7px; }}
+/* v2.13.0 glass: a see-through fill with a light top edge; hover = a soft light
+   glow (the accent frame here, a coloured halo from «جلوه‌ها»); pressed = the
+   button sinks (the thick edge moves to the top, the text 1px down, darker fill).
+   The height never changes: 1 + 2 px of edges and 16 px of padding in every state. */
+QPushButton:hover {{ background: {button_hover}; border-color: {ACCENT}; color: {PRIMARY_TEXT}; }}
+QPushButton:pressed {{ background: {button_pressed}; border-top: 2px solid {BUTTON_BORDER};
+                       border-bottom: 1px solid {BUTTON_BORDER}; padding-top: 9px;
+                       padding-bottom: 7px; }}
 QPushButton:disabled, QPushButton#Primary:disabled, QPushButton#Success:disabled,
 QPushButton#Danger:disabled, QPushButton#Ghost:disabled, QPushButton#Tab:disabled,
 QPushButton#RowMenu:disabled {{
@@ -616,16 +683,24 @@ QPushButton#Primary {{
     color: #FFFFFF; border: 1px solid {PRIMARY_DARK}; border-bottom: 2px solid {PRIMARY_PRESSED};
     font-weight: 700;
 }}
-QPushButton#Primary:hover {{ background: {PRIMARY_DARK}; color: #FFFFFF; }}
-QPushButton#Primary:pressed {{ background: {PRIMARY_PRESSED}; }}
+QPushButton#Primary:hover {{ background: {PRIMARY_DARK}; color: #FFFFFF; border-color: {ACCENT}; }}
+QPushButton#Primary:pressed {{ background: {PRIMARY_PRESSED}; border-top: 2px solid {PRIMARY_PRESSED};
+                               border-bottom: 1px solid {PRIMARY_PRESSED}; padding-top: 9px;
+                               padding-bottom: 7px; }}
 
-QPushButton#Success {{ background: {SUCCESS_FILL}; color: #FFFFFF; border: 1px solid {SUCCESS_FILL_DARK};
+QPushButton#Success {{ background: {success_fill}; color: #FFFFFF; border: 1px solid {SUCCESS_FILL_DARK};
                        border-bottom: 2px solid {SUCCESS_FILL_DARK}; font-weight: 700; }}
 QPushButton#Success:hover {{ background: {SUCCESS_FILL_DARK}; color: #FFFFFF; }}
+QPushButton#Success:pressed {{ background: {SUCCESS_FILL_DARK}; border-top: 2px solid {SUCCESS_FILL_DARK};
+                               border-bottom: 1px solid {SUCCESS_FILL_DARK}; padding-top: 9px;
+                               padding-bottom: 7px; }}
 
-QPushButton#Danger {{ background: {DANGER_FILL}; color: #FFFFFF; border: 1px solid {DANGER_FILL_DARK};
+QPushButton#Danger {{ background: {danger_fill}; color: #FFFFFF; border: 1px solid {DANGER_FILL_DARK};
                       border-bottom: 2px solid {DANGER_FILL_DARK}; font-weight: 700; }}
 QPushButton#Danger:hover {{ background: {DANGER_FILL_DARK}; color: #FFFFFF; }}
+QPushButton#Danger:pressed {{ background: {DANGER_FILL_DARK}; border-top: 2px solid {DANGER_FILL_DARK};
+                              border-bottom: 1px solid {DANGER_FILL_DARK}; padding-top: 9px;
+                              padding-bottom: 7px; }}
 
 /* only for a small icon button without text (the toast's ✕) */
 QPushButton#Ghost {{ background: transparent; border: 1px solid transparent; color: {TEXT_MUTED};
@@ -666,10 +741,10 @@ QPushButton#OptionCard:checked {{ border: 2px solid {ACCENT}; background: {PRIMA
 
 QPushButton#Tab {{
     border: 1px solid {BUTTON_BORDER}; border-bottom: 2px solid {BUTTON_BORDER}; border-radius: {RADIUS}px;
-    padding: 8px 16px; background: {SURFACE}; color: {TEXT}; font-size: {BASE_FONT_SIZE}pt;
+    padding: 8px 16px; background: {button_fill}; color: {TEXT}; font-size: {BASE_FONT_SIZE}pt;
     font-weight: 700;
 }}
-QPushButton#Tab:hover {{ background: {HOVER}; border-color: {ACCENT}; color: {PRIMARY_TEXT}; }}
+QPushButton#Tab:hover {{ background: {button_hover}; border-color: {ACCENT}; color: {PRIMARY_TEXT}; }}
 QPushButton#Tab:checked {{ background: {PRIMARY_SOFT}; color: {PRIMARY_TEXT};
                            border: 1px solid {PRIMARY_TEXT}; border-bottom: 2px solid {PRIMARY_TEXT}; }}
 
@@ -821,6 +896,8 @@ def apply_theme(app: QApplication, mode: str | None = None, *, palette: str | No
 # --------------------------------------------------------------------------
 #: Buttons that get the soft, animated shadow (full effects only).
 SHADOW_BUTTONS = ("Primary", "Success", "Danger")
+#: v2.13.0: buttons that only glow while hovered (no idle effect: cheap)
+GLOW_BUTTONS = ("", "Tab", "RowMenu", "OptionCard")
 
 
 def _inside_item_view(widget: QWidget) -> bool:
@@ -865,17 +942,51 @@ class _Effects(QObject):
                 _shadow(obj, 26, 6)
         elif isinstance(obj, QPushButton) and obj.objectName() in SHADOW_BUTTONS and \
                 isinstance(obj.graphicsEffect(), QGraphicsDropShadowEffect):
+            effect = obj.graphicsEffect()
             if kind == QEvent.Type.EnabledChange:
-                obj.graphicsEffect().setEnabled(obj.isEnabled())
+                effect.setEnabled(obj.isEnabled())
             elif kind == QEvent.Type.Enter and obj.isEnabled():
-                self._animate(obj, 22, 6)
+                # v2.13.0: the shadow turns into a soft light glow of the accent
+                effect.setColor(glow_color())
+                self._animate(obj, 24, 0)
             elif kind == QEvent.Type.Leave:
+                effect.setColor(shadow_color(90 if MODE != "dark" else None))
                 self._animate(obj, 12, 3)
             elif kind == QEvent.Type.MouseButtonPress:
-                self._animate(obj, 4, 1, 80)
+                self._animate(obj, 6, 0, 80)
             elif kind == QEvent.Type.MouseButtonRelease:
-                self._animate(obj, 22, 6, 120)
+                self._animate(obj, 24, 0, 120)
+        elif isinstance(obj, QPushButton) and obj.objectName() in GLOW_BUTTONS:
+            self._glow(obj, kind)
         return False
+
+    def _glow(self, button, kind) -> None:
+        """v2.13.0: a normal button gets a soft light halo while the mouse is over
+        it (made on enter, removed on leave: nothing is drawn for idle buttons)."""
+        from PySide6.QtCore import QEvent
+        from PySide6.QtWidgets import QGraphicsDropShadowEffect
+
+        effect = button.graphicsEffect()
+        ours = effect is not None and bool(button.property("glassGlow"))
+        if kind == QEvent.Type.Enter and button.isEnabled() and effect is None \
+                and not _inside_item_view(button):
+            glow = QGraphicsDropShadowEffect(button)
+            glow.setColor(glow_color())
+            glow.setOffset(0, 0)
+            glow.setBlurRadius(4)
+            button.setGraphicsEffect(glow)
+            button.setProperty("glassGlow", True)
+            self._animate(button, 20, 0, 140)
+        elif ours and kind in (QEvent.Type.Leave, QEvent.Type.EnabledChange, QEvent.Type.Hide):
+            old = self._anims.pop(id(button), None)
+            if old is not None:
+                old.stop()
+            button.setProperty("glassGlow", False)
+            button.setGraphicsEffect(None)
+        elif ours and kind == QEvent.Type.MouseButtonPress:
+            self._animate(button, 6, 0, 80)
+        elif ours and kind == QEvent.Type.MouseButtonRelease:
+            self._animate(button, 20, 0, 120)
 
     def _animate(self, widget, blur: float, dy: float, ms: int = 160) -> None:
         from PySide6.QtCore import QEasingCurve, QPointF, QVariantAnimation

@@ -391,46 +391,49 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         # ---- meta --------------------------------------------------------
         meta = widgets.Panel()
         grid = QHBoxLayout()
-        grid.setSpacing(28)
-        left = QVBoxLayout()
-        left.setSpacing(6)
-        left.addWidget(_kv("مشتری", self._customer_label(order)))
+        grid.setSpacing(32)
+        # v2.13.0: two clean columns of «عنوان: مقدار» (captions and values aligned)
+        left = widgets.KeyValueList()
+        left.add("مشتری", self._customer_label(order))
         if order.get("user_phone"):
-            phone_row = QHBoxLayout()
-            phone_row.addWidget(_kv("موبایل مشتری", to_persian_digits(order["user_phone"])), 1)
+            phone_holder = QWidget()
+            phone_row = QHBoxLayout(phone_holder)
+            phone_row.setContentsMargins(0, 0, 0, 0)
+            phone_row.setSpacing(8)
+            phone_value = widgets.label(to_persian_digits(order["user_phone"]), bold=True)
+            phone_row.addWidget(phone_value)
             self.copy_phone_button = widgets.button(
                 "کپی", icon_name="copy", tooltip="کپی شمارهٔ موبایل مشتری",
                 on_click=lambda: (copy_to_clipboard(order["user_phone"]),
                                   self._show_info("شمارهٔ موبایل کپی شد.")))
             phone_row.addWidget(self.copy_phone_button)
-            left.addLayout(phone_row)
-        left.addWidget(_kv("مسئول", owner_label(order)))
+            phone_row.addStretch(1)
+            left.add_widget("موبایل مشتری", phone_holder)
+        left.add("مسئول", owner_label(order))
         code = order.get("user_person_code")
-        left.addWidget(_kv("کد شخص در حسابداری",
-                           to_persian_digits(code) if code is not None else "هنوز وصل نشده"))
-        left.addWidget(_kv("تاریخ ثبت", format_shamsi(order.get("created_at"))))
+        left.add("کد شخص در حسابداری",
+                 to_persian_digits(code) if code is not None else "هنوز وصل نشده")
+        left.add("تاریخ ثبت", format_shamsi(order.get("created_at")))
         # v2.8.2: payment details are sent per order; the deadline starts then
         if order.get("status") == "awaiting_payment":
-            left.addWidget(_kv("اطلاعات پرداخت", "فرستاده شد — " + format_datetime_shamsi(
+            left.add("اطلاعات پرداخت", "فرستاده شد — " + format_datetime_shamsi(
                 order["payment_info_at"]) if order.get("payment_info_at")
-                else "هنوز فرستاده نشده (دکمهٔ «ارسال اطلاعات پرداخت»)"))
-        left.addWidget(_kv("مهلت ارسال رسید", format_datetime_shamsi(order.get("reserve_until"))
-                           if order.get("reserve_until") else "—"))
+                else "هنوز فرستاده نشده (دکمهٔ «ارسال اطلاعات پرداخت»)")
+        left.add("مهلت ارسال رسید", format_datetime_shamsi(order.get("reserve_until"))
+                 if order.get("reserve_until") else "—")
         if context.can(SERVER_VIEW):
-            left.addWidget(_kv("پایگاه‌دادهٔ حسابداری", str(order.get("accounting_db") or "—")))
-        right = QVBoxLayout()
-        right.setSpacing(6)
-        right.addWidget(_kv("مبلغ کل", format_money(order.get("total", 0))))
+            left.add("پایگاه‌دادهٔ حسابداری", str(order.get("accounting_db") or "—"))
+        right = widgets.KeyValueList()
+        right.add("مبلغ کل", format_money(order.get("total", 0)))
         if context.can(SERVER_VIEW):
-            right.addWidget(_kv("سطح قیمت", price_level_label(order.get("price_level", 0))))
-        right.addWidget(_kv("شمارهٔ حسابداری", to_persian_digits(order.get("accounting_order_no"))
-                            if order.get("accounting_order_no") else "—"))
-        right.addWidget(_kv("پیگیری", tracking_fa(order)))
+            right.add("سطح قیمت", price_level_label(order.get("price_level", 0)))
+        right.add("شمارهٔ حسابداری", to_persian_digits(order.get("accounting_order_no"))
+                  if order.get("accounting_order_no") else "—")
+        right.add("پیگیری", tracking_fa(order))
         if order.get("courier_name") or order.get("courier_phone"):
-            right.addWidget(_kv("پیک", courier_text(order)))
-        grid.addLayout(right)
-        grid.addLayout(left)
-        grid.addStretch(1)
+            right.add("پیک", courier_text(order))
+        grid.addWidget(right, 2, Qt.AlignmentFlag.AlignTop)
+        grid.addWidget(left, 3, Qt.AlignmentFlag.AlignTop)
         meta.body.addLayout(grid)
         root.addWidget(meta)
 
@@ -948,7 +951,7 @@ class PaymentInfoDialog(widgets.ResponsiveDialog):
             "هر خانه‌ای که خالی بماند در پیام مشتری نمی‌آید. پس از «ارسال»، مهلت ارسال رسید "
             "شروع می‌شود.", name="Muted", wrap=True))
         form = QFormLayout()
-        form.setLabelAlignment(RIGHT)
+        form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
         form.setHorizontalSpacing(14)
         form.setVerticalSpacing(8)
         self.inputs: dict[str, QLineEdit] = {}
@@ -1222,21 +1225,6 @@ class ReceiptImageDialog(widgets.ResponsiveDialog):
         row.addStretch(1)
         row.addWidget(close)
         root.addLayout(row)
-
-
-def _kv(key: str, value: str) -> QWidget:
-    holder = QWidget()
-    layout = QHBoxLayout(holder)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(8)
-    caption = widgets.label(f"{key}:", name="Muted")
-    caption.setAlignment(RIGHT | Qt.AlignmentFlag.AlignTop)
-    layout.addWidget(caption, 0, Qt.AlignmentFlag.AlignTop)
-    # v2.9.3: a long value wraps (it widened the dialog to a side scroll bar)
-    value_label = widgets.label(value, bold=True, wrap=True)
-    value_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-    layout.addWidget(value_label, 1)
-    return holder
 
 
 class RejectPaymentDialog(widgets.ResponsiveDialog):

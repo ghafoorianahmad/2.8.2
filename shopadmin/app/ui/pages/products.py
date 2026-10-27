@@ -291,10 +291,13 @@ class ProductDetailDialog(widgets.ResponsiveDialog):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(8)
 
-        content_layout.addWidget(_row("نام کالا", str(product.get("name") or "—")))
-        content_layout.addWidget(_row("گروه", group_name))
-        content_layout.addWidget(_row("قیمت", format_money(product.get("unit_price", 0))))
-        content_layout.addWidget(_row("موجودی قابل فروش", format_qty(product.get("available_qty", 0))))
+        # v2.13.0: captions and values in two aligned columns
+        rows = widgets.KeyValueList()
+        rows.add("نام کالا", str(product.get("name") or "—"))
+        rows.add("گروه", group_name)
+        rows.add("قیمت", format_money(product.get("unit_price", 0)))
+        rows.add("موجودی قابل فروش", format_qty(product.get("available_qty", 0)))
+        content_layout.addWidget(rows)
 
         image_url = product.get("image")
         if image_url:
@@ -336,15 +339,3 @@ class ProductDetailDialog(widgets.ResponsiveDialog):
         buttons.addStretch(1)
         buttons.addWidget(widgets.button("بستن", variant="primary", on_click=self.accept))
         root.addLayout(buttons)
-
-
-def _row(key: str, value: str) -> QWidget:
-    holder = QWidget()
-    layout = QHBoxLayout(holder)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(10)
-    key_label = widgets.label(f"{key}:", name="Muted")
-    key_label.setMinimumWidth(140)
-    layout.addWidget(key_label)
-    layout.addWidget(widgets.label(value, bold=True), 1)
-    return holder

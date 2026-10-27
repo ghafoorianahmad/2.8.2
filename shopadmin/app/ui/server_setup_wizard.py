@@ -97,7 +97,7 @@ def _line(placeholder: str = "", *, ltr: bool = True, password: bool = False) ->
 
 def _form() -> QFormLayout:
     form = QFormLayout()
-    form.setLabelAlignment(RIGHT)
+    form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
     form.setHorizontalSpacing(18)
     form.setVerticalSpacing(12)
     form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)

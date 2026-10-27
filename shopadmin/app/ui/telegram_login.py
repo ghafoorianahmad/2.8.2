@@ -105,7 +105,7 @@ class TelegramLoginDialog(widgets.ResponsiveDialog):
             layout = QVBoxLayout(page)
             layout.setContentsMargins(0, 0, 0, 0)
             form = QFormLayout()
-            form.setLabelAlignment(RIGHT)
+            form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
             form.setHorizontalSpacing(14)
             for caption, field in fields:
                 form.addRow(widgets.label(caption), field)

@@ -158,19 +158,30 @@ class ServerPage(BasePage):
             ("archive", "بایگانی لیست‌های قیمت"),
             ("counts", "در انتظار رسیدگی"),
         )
-        for index, (key, caption) in enumerate(rows):
-            grid.addWidget(widgets.label(caption + ":", name="Muted"), index, 0,
-                           Qt.AlignmentFlag.AlignTop)
-            value = widgets.label("—", wrap=True)
-            grid.addWidget(value, index, 1)
-            self.status_labels[key] = value
         self.archive_open_button = widgets.button(
             "باز کردن پوشه", icon_name="folder", on_click=self._open_archive,
             tooltip="پوشهٔ بایگانی PDFها در «پروندهٔ ویندوز» (فقط روی خود رایانهٔ سرور)")
         self.archive_open_button.setEnabled(False)
-        grid.addWidget(self.archive_open_button, rows.index(("archive", "بایگانی لیست‌های قیمت")),
-                       2, Qt.AlignmentFlag.AlignTop)
         self._archive_path = ""
+        for index, (key, caption) in enumerate(rows):
+            grid.addWidget(widgets.label(caption + ":", name="Muted"), index, 0,
+                           Qt.AlignmentFlag.AlignTop)
+            value = widgets.label("—", wrap=True)
+            self.status_labels[key] = value
+            if key == "archive":
+                # the path and its button together, in the value column
+                holder = QWidget()
+                column = QVBoxLayout(holder)
+                column.setContentsMargins(0, 0, 0, 0)
+                column.setSpacing(6)
+                column.addWidget(value)
+                line = QHBoxLayout()
+                line.addWidget(self.archive_open_button)
+                line.addStretch(1)
+                column.addLayout(line)
+                grid.addWidget(holder, index, 1)
+            else:
+                grid.addWidget(value, index, 1)
         grid.setColumnStretch(1, 1)
         panel.body.addLayout(grid)
 
@@ -460,7 +471,7 @@ class ServerPage(BasePage):
             "روشن کردن ثبت واقعی و کلیدهای سرویس فقط روی خود رایانهٔ سرور تغییر می‌کنند.",
             name="Muted", wrap=True))
         self.settings_form = QFormLayout()
-        self.settings_form.setLabelAlignment(RIGHT)
+        self.settings_form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
         self.settings_form.setHorizontalSpacing(18)
         self.settings_form.setVerticalSpacing(10)
         panel.body.addLayout(self.settings_form)
@@ -617,7 +628,7 @@ def backup_text(backup: dict | None) -> tuple[str, str, str | None]:
             lines.append("پشتیبان روی خود سرور: سالم (فقط نسخهٔ بیرون از سرور نوشته نشد)")
         last = backup.get("last_success_at")
         if last:
-            lines.append(f"آخرین پشتیبان کامل موفق: {format_shamsi(last)}")
+            lines.append(f"آخرین پشتیبان موفق: {format_shamsi(last)}")
         return "backup", "\n".join(lines), theme.DANGER
     if backup.get("offsite_configured"):
         where = "نسخهٔ رمزگذاری‌شدهٔ بیرون از سرور: سالم"

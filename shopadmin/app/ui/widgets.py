@@ -5,6 +5,7 @@ digits by the caller (or by the helpers in :mod:`app.persian`).
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Iterable, Sequence
 
 from PySide6.QtCore import (QEasingCurve, QEvent, QObject, QPropertyAnimation, QRect, QSize, Qt,
@@ -49,13 +50,36 @@ class BidiLabel(QLabel):
     never come out in the wrong order (scripts/rtl_audit.py)."""
 
     def setText(self, text: str) -> None:  # noqa: N802 - Qt naming
-        super().setText(fix_mixed(text) if self.textFormat() == Qt.TextFormat.PlainText or
-                        "<" not in str(text or "") else text)
+        plain = self.textFormat() == Qt.TextFormat.PlainText or "<" not in str(text or "")
+        if plain and self.wordWrap():
+            text = keep_together(str(text or ""))
+        super().setText(fix_mixed(text) if plain else text)
+
+    def setWordWrap(self, on: bool) -> None:  # noqa: N802 - Qt naming
+        changed = on != self.wordWrap()
+        super().setWordWrap(on)
+        if changed and on and self.text():
+            self.setText(self.text())
+
+
+#: v2.13.0: short groups that must never be split over two lines
+_GROUPS = re.compile(r"\([^()\n]{1,28}\)|«[^«»\n]{1,28}»")
+_NUMBER_WORD = re.compile(r"(?<![\w])([0-9۰-۹][0-9۰-۹,٬./:٫]*) (?=[^\s\d])")
+NBSP = " "
+
+
+def keep_together(text: str) -> str:
+    """v2.13.0: a wrapped label breaks only between groups: «(کد شخص ۴)», «hesab5 t»
+    and a number with the word after it («۳۶ دقیقه») stay on one line (the 2.12.0
+    «جزئیات سفارش» split «(کد شخص» / «۴)»)."""
+    text = _GROUPS.sub(lambda m: m.group(0).replace(" ", NBSP), text)
+    return _NUMBER_WORD.sub(lambda m: m.group(1) + NBSP, text)
 
 
 def label(text: str, *, name: str = "", size: int | None = None, bold: bool = False,
           color: str | None = None, wrap: bool = False) -> QLabel:
     widget = BidiLabel()
+    widget.setWordWrap(wrap)
     widget.setText(text)
     if name:
         widget.setObjectName(name)
@@ -71,6 +95,47 @@ def label(text: str, *, name: str = "", size: int | None = None, bold: bool = Fa
     widget.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     widget.setAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
     return widget
+
+
+class KeyValueList(QWidget):
+    """v2.13.0: «عنوان: مقدار» rows in two clean columns: every caption in one
+    column (as wide as the longest, captions on the right), every value in the
+    other, one spacing for all; a long value wraps by words without splitting a
+    short group (:func:`keep_together`)."""
+
+    def __init__(self, parent: QWidget | None = None, *, spacing: int = 8) -> None:
+        super().__init__(parent)
+        self.grid = QGridLayout(self)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setHorizontalSpacing(14)
+        self.grid.setVerticalSpacing(spacing)
+        self.grid.setColumnStretch(1, 1)
+        self.captions: list[QLabel] = []
+        self._rows = 0
+
+    def _caption(self, key: str) -> QLabel:
+        caption = label(f"{key}:", name="Muted")
+        caption.setAlignment(RIGHT | Qt.AlignmentFlag.AlignTop)
+        self.captions.append(caption)
+        return caption
+
+    def add(self, key: str, value: str, *, bold: bool = True, selectable: bool = False,
+            color: str | None = None) -> QLabel:
+        row, self._rows = self._rows, self._rows + 1
+        value_label = label(value, bold=bold, wrap=True, color=color)
+        value_label.setAlignment(RIGHT | Qt.AlignmentFlag.AlignTop)
+        value_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        if selectable:
+            value_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.grid.addWidget(self._caption(key), row, 0, Qt.AlignmentFlag.AlignTop)
+        self.grid.addWidget(value_label, row, 1)
+        return value_label
+
+    def add_widget(self, key: str, widget: QWidget) -> QWidget:
+        row, self._rows = self._rows, self._rows + 1
+        self.grid.addWidget(self._caption(key), row, 0, Qt.AlignmentFlag.AlignTop)
+        self.grid.addWidget(widget, row, 1)
+        return widget
 
 
 def add_shadow(widget: QWidget, *, blur: int = 24, dy: int = 4, alpha: int = 28) -> QWidget:
@@ -1342,13 +1407,50 @@ def available_geometry(widget: QWidget | None) -> QRect:
     return screen.availableGeometry() if screen is not None else QRect(0, 0, 1280, 800)
 
 
+#: v2.13.0: a dialog takes at most this part of the MAIN window it belongs to
+WINDOW_FRACTION = 0.94
+#: the title bar and frame Windows adds around a dialog (before it is shown)
+DIALOG_FRAME_ALLOWANCE = 40
+
+
+def owner_window(widget: QWidget | None) -> QWidget | None:
+    """v2.13.0: the program's main window a dialog belongs to (through dialogs
+    opened from dialogs), when it is on the screen; None otherwise."""
+    owner = None
+    parent = widget.parentWidget() if widget is not None else None
+    while parent is not None:
+        top = parent.window()
+        if top is not widget and top.isVisible() and not top.isMinimized():
+            owner = top
+        parent = top.parentWidget()
+    return owner
+
+
+def dialog_area(window: QWidget) -> QRect:
+    """Where a window may be: a dialog inside its main window (v2.13.0, the 2.12.0
+    «جزئیات سفارش» was taller than the main window and went off it), anything
+    else on its screen's work area."""
+    area = available_geometry(window)
+    owner = owner_window(window) if isinstance(window, QDialog) else None
+    if owner is not None:
+        inner = owner.geometry().intersected(area)
+        if inner.width() >= 360 and inner.height() >= 300:
+            return inner
+    return area
+
+
 def fit_window_to_screen(window: QWidget, *, center: bool = True) -> None:
     """Never bigger than the screen: shrink the minimum size and the size to the
     work area (the content scrolls instead), grow to the wanted size when there
-    is room, and keep the whole window on the screen."""
-    area = available_geometry(window)
-    max_w = max(320, int(area.width() * SCREEN_FRACTION))
-    max_h = max(240, int(area.height() * SCREEN_FRACTION))
+    is room, and keep the whole window on the screen. v2.13.0: a dialog of the
+    main window is never larger than that window, opens centred on it and stays
+    inside it (long content scrolls inside the dialog)."""
+    area = dialog_area(window)
+    inside_owner = area != available_geometry(window)
+    fraction = WINDOW_FRACTION if inside_owner else SCREEN_FRACTION
+    frame = DIALOG_FRAME_ALLOWANCE if inside_owner else 0
+    max_w = max(320, int(area.width() * fraction))
+    max_h = max(240, int(area.height() * fraction) - frame)
     minimum = window.minimumSize()
     window.setMinimumSize(min(minimum.width(), max_w), min(minimum.height(), max_h))
     hint = window.sizeHint()
@@ -1356,20 +1458,18 @@ def fit_window_to_screen(window: QWidget, *, center: bool = True) -> None:
     height = min(max(window.height(), hint.height(), window.minimumHeight()), max_h)
     window.resize(width, height)
     if isinstance(window, QDialog):
-        fit_wrapped_height(window)
+        fit_wrapped_height(window, limit=max_h)
     if not center:
         return
-    parent = window.parentWidget()
-    if parent is not None and parent.window().isVisible():
-        anchor = parent.window().frameGeometry().center()
-    else:
-        anchor = area.center()
+    anchor = area.center()
+    # move() places the frame (title bar included) of a top-level window
     x = min(anchor.x() - window.width() // 2, area.right() - window.width())
-    y = min(anchor.y() - window.height() // 2, area.bottom() - window.height())
+    y = min(anchor.y() - (window.height() + frame) // 2,
+            area.bottom() - window.height() - frame)
     window.move(max(x, area.left()), max(y, area.top()))
 
 
-def fit_wrapped_height(dialog: QDialog) -> None:
+def fit_wrapped_height(dialog: QDialog, limit: int | None = None) -> None:
     """Grow a dialog so wrapped labels are not clipped (up to the screen height).
 
     Top-level windows ignore height-for-width, so a long wrapped message would
@@ -1389,7 +1489,12 @@ def fit_wrapped_height(dialog: QDialog) -> None:
         if layout is None:
             return
         needed = layout.totalHeightForWidth(dialog.width())
-    limit = int(available_geometry(dialog).height() * SCREEN_FRACTION)
+    if limit is None:
+        # v2.13.0: inside the main window when there is one
+        area = dialog_area(dialog)
+        inside = area != available_geometry(dialog)
+        limit = int(area.height() * (WINDOW_FRACTION if inside else SCREEN_FRACTION)) - \
+            (DIALOG_FRAME_ALLOWANCE if inside else 0)
     if needed > dialog.height():
         dialog.resize(dialog.width(), min(needed, max(limit, dialog.minimumHeight())))
 

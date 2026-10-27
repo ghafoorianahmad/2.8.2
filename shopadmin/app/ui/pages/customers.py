@@ -340,7 +340,7 @@ class ApproveCustomerDialog(widgets.ResponsiveDialog):
 
         info = widgets.Panel("اطلاعات مشتری")
         form = QFormLayout()
-        form.setLabelAlignment(RIGHT)
+        form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
         form.setFormAlignment(RIGHT | Qt.AlignmentFlag.AlignTop)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(10)
@@ -401,7 +401,7 @@ class ApproveCustomerDialog(widgets.ResponsiveDialog):
         self.create_panel = widgets.Panel("نام شخص جدید در حسابداری")
         first, last = split_name(str(customer.get("name") or ""))
         name_form = QFormLayout()
-        name_form.setLabelAlignment(RIGHT)
+        name_form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
         self.first_name_input = QLineEdit(first)
         self.first_name_input.setMaxLength(MAX_NAME_PART)
         self.last_name_input = QLineEdit(last)

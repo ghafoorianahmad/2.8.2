@@ -568,6 +568,8 @@ class PriceListPage(BasePage):
             reason = str(item.get("reason") or "")
             table.set_cell(i, 7, reason_fa(reason), tooltip=reason)
             table.set_widget(i, 8, self._list_actions(item))
+        # the row buttons need a full button height (they were cut at the bottom)
+        table.resizeRowsToContents()
         table._refresh_states()
 
     def _list_actions(self, item: dict) -> QWidget:

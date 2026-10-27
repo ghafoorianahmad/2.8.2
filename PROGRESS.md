@@ -32,7 +32,13 @@ Owner's rules for this run: no admin rights (no service restart, no install, no 
 - also fixed from 2.12.0's log: «Internal C++ object (Toast) already deleted» (`widgets._alive`).
 Tests: shopapi 565, shoptg 87, shopsystem 80 ✓ (shopadmin running).
 
-**Next:** step 7 — UI (#9 glass buttons, #10 aligned text, #11 dialogs inside the main window) in all 9 looks; step 8 — all tests, three audits, version 2.13.0, build, Outputs.
+**Step 7 — #9 / #10 / #11 UI — DONE in code (audits in all 9 looks: see step 8)**
+- #9 `theme.glass_fills`: every normal / Tab button has a see-through fill (white glass in light, smoked glass in dark; «ساده» = flat but still see-through) with a light top edge; hover = lighter fill + accent frame + (جلوه‌ها: کامل) a soft accent halo made on enter and removed on leave (`theme._Effects._glow`, never on idle buttons or table cells); pressed = the thick edge moves to the top, the text 1 px down, darker fill (height unchanged, `button_audit`). Primary / Success / Danger stay coloured with a light sheen; their shadow turns into the accent glow on hover. The 3:1 frame (`BUTTON_BORDER`) stays.
+- #10 `widgets.KeyValueList` (captions in one column, values in the other, one spacing) for «جزئیات سفارش», «درخواست»، «کالا»; `widgets.keep_together` in every wrapped label: «(کد شخص ۴)», «hesab5 t», «۳۶ دقیقه» never split; every form's captions centred on their field (`setLabelAlignment(RIGHT | AlignVCenter)`, 7 files); «پایش سلامت» one check per line; the server page's archive row with its button under the path.
+- #11 `widgets.dialog_area` / `fit_window_to_screen`: a dialog of the main window is at most 94 % of that window (title bar included), opens centred on it and inside it, long content scrolls inside (`make_responsive`); dialogs from dialogs are bounded by the main window too; without a main window: the screen as before.
+- price-list lists table: rows as tall as their «خواندن دوباره» button.
+
+**Next:** step 8 — all tests, three audits in 9 looks, version 2.13.0 (done in code), commit, build, ProductVersion, Outputs + README_FA.
 
 **Decisions so far:** archive names use the receive date (Tehran, Jalali) — a list posted late on 08/04 for 08/05 would be `1405-08-04-n`; an identical file received again is not stored twice; «خواندن دوباره» on a list that was read before changes nothing (its rows and decisions stay); the automatic grant only for «دسترسی نیست» answers (never for a wrong password / missing server); the crash-loop Bale message of 2.9 was replaced by the one-per-incident alert.
 

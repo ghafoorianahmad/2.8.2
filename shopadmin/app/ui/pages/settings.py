@@ -88,7 +88,7 @@ class SettingsPage(BasePage):
         self.base_url_input.setPlaceholderText("http://192.168.1.10:8000")
         mark_ltr(self.base_url_input)
         form = QFormLayout()
-        form.setLabelAlignment(RIGHT)
+        form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
         form.addRow(widgets.label("آدرس سرور:"), self.base_url_input)
@@ -134,7 +134,7 @@ class SettingsPage(BasePage):
     def _build_general_panel(self) -> QWidget:
         panel = widgets.Panel("بازه‌های زمانی")
         form = QFormLayout()
-        form.setLabelAlignment(RIGHT)
+        form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
 
@@ -197,7 +197,7 @@ class SettingsPage(BasePage):
             panel.body.addWidget(check)
 
         form = QFormLayout()
-        form.setLabelAlignment(RIGHT)
+        form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
         self.poll_spin = QSpinBox()
         self.poll_spin.setRange(2, 600)
         self.poll_spin.setSuffix(" ثانیه")
@@ -215,7 +215,7 @@ class SettingsPage(BasePage):
     def _build_password_panel(self) -> QWidget:
         panel = widgets.Panel("تغییر گذرواژهٔ من")
         form = QFormLayout()
-        form.setLabelAlignment(RIGHT)
+        form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
 
