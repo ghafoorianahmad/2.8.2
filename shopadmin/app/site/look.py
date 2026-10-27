@@ -302,14 +302,16 @@ def snapshot(site: dict | None) -> dict:
     return {k: v for k, v in site.items() if k not in ("generated_at", "generator")}
 
 
-def diff_lines(old: dict | None, new: dict, names: dict[str, str] | None = None) -> list[str]:
+def diff_lines(old: dict | None, new: dict, names: dict[str, str] | None = None, *,
+               old_brand_order: list[str] | None = None) -> list[str]:
     """Short Persian lines of what changes in the look (``old`` / ``new``:
-    snapshots; ``old`` empty = never published -> compared with the defaults)."""
+    snapshots; ``old`` empty = never published -> compared with the defaults and
+    ``old_brand_order``, the brand order the site has now)."""
     names = names or {}
     if not old:
-        base = build_site_json(default_look(), new.get("brand_order") or [], [], {},
-                               generated_at="")
-        old = snapshot({**base, "brand_order": new.get("brand_order")})
+        base = build_site_json(default_look(), old_brand_order or new.get("brand_order") or [],
+                               [], {}, generated_at="")
+        old = snapshot(base)
 
     def same(key: str) -> bool:
         return json.dumps(old.get(key), sort_keys=True, ensure_ascii=False) == json.dumps(

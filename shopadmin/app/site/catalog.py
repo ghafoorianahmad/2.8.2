@@ -433,7 +433,13 @@ def diff(old: dict | None, new: dict) -> dict:
                             if p in old_images and old_images[p] != new["images"][p])
     return {"added": short(added), "removed": short(removed), "changed": short(changed),
             "images_new": new_images, "images_changed": changed_images,
-            "brands_changed": bool(old.get("brands")) and old.get("brands") != new.get("brands")}
+            # v2.12.0: a new brand order alone is a «ظاهر و چیدمان» change, not a text change
+            "brands_changed": bool(old.get("brands")) and _by_key(old.get("brands"))
+            != _by_key(new.get("brands"))}
+
+
+def _by_key(brands) -> list:
+    return sorted(brands or [], key=lambda b: str(b.get("key")) if isinstance(b, dict) else "")
 
 
 def has_changes(change: dict) -> bool:

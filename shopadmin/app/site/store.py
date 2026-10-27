@@ -368,7 +368,8 @@ class SiteStore:
             lines.append("↕ ترتیب کالاها در سایت عوض می‌شود.")
         names = {b["key"]: b.get("name") or b["key"] for b in catalog.get("brands") or []}
         names.update({c: i.get("name") or c for c, i in new["items"].items()})
-        look_lines = lk.diff_lines(old.get("look"), new["look"], names)
+        look_lines = lk.diff_lines(old.get("look"), new["look"], names,
+                                   old_brand_order=[b.get("key") for b in old.get("brands") or []])
         lines += look_lines
         if not lines:
             lines = cat.preview_lines(change)
