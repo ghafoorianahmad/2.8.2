@@ -45,4 +45,22 @@ def rollback(store: SiteStore, publisher: GitHubPublisher) -> dict:
     return {"commit": commit, "deploy_started": started, "note": note}
 
 
-__all__ = ["publish", "rollback", "GitHubError", "SiteDataError"]
+def seed_from_github(store: SiteStore, publisher: GitHubPublisher) -> dict:
+    """«خواندن از سایت»: the site repository's catalogue and photos to this
+    computer — its catalog.json when the site already uses one, otherwise its
+    built-in products.js + site.js. Items already here are kept."""
+    published = publisher.read_file(CATALOG_PATH)
+    if published:
+        return store.seed_from_catalog(
+            published, lambda name: publisher.read_file(f"{cat.SITE_CATALOG_DIR}/images/{name}"),
+            source="github")
+    products = publisher.read_file("assets/products.js")
+    if not products:
+        raise SiteDataError("در مخزن سایت فایل assets/products.js پیدا نشد.")
+    site = publisher.read_file("assets/site.js") or b""
+    return store.seed(products.decode("utf-8"), site.decode("utf-8"),
+                      lambda name: publisher.read_file(f"assets/products/{name}"),
+                      source="github")
+
+
+__all__ = ["publish", "rollback", "seed_from_github", "GitHubError", "SiteDataError"]

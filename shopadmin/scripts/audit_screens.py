@@ -129,14 +129,55 @@ def seed_more(fake) -> None:
     fake.add_catalog_model("iphone-17-pro", "iPhone 17 Pro", "Apple")
 
 
+def seed_site(root: Path) -> None:
+    """v2.11.0: the «سایت» data of this computer, with long mixed text and photos."""
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+    from PySide6.QtGui import QColor, QImage
+
+    from app.site.store import SiteStore
+
+    def photo(color: str) -> bytes:
+        image = QImage(400, 320, QImage.Format.Format_RGB32)
+        image.fill(QColor(color))
+        raw = QByteArray()
+        buffer = QBuffer(raw)
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        image.save(buffer, "PNG")
+        return bytes(raw.data())
+
+    store = SiteStore(root)
+    if not store.is_empty():
+        return
+    store.add_photo("galaxy-s26-ultra.jpg", photo("#5b4bb8"))
+    store.upsert({"code": "galaxy-s26-ultra", "category": "phone", "brand": "samsung",
+                  "name": "Galaxy S26 Ultra", "tier": "پرچمدار", "release_year": 2026,
+                  "image": "galaxy-s26-ultra.jpg",
+                  "colors": [{"name": "بنفش کبالت"}, {"name": "تیتانیوم آبی نقره‌ای"}],
+                  "specs": [["نمایشگر", "6.9 اینچ Dynamic AMOLED 2X، 120Hz"],
+                            ["پردازنده", "Snapdragon 8 Elite Gen 5 for Galaxy"]]})
+    store.upsert({"code": "iphone-17-pro", "category": "phone", "brand": "apple",
+                  "name": "iPhone 17 Pro", "colors": [{"name": "نارنجی کیهانی"}], "hidden": True})
+    store.upsert({"code": "anker-737-power-bank", "category": "accessory", "group": "powerbank",
+                  "name": "پاوربانک Anker 737 (PowerCore 24K) 140W", "brand_name": "Anker",
+                  "specs": [["ظرفیت", "24000 میلی‌آمپر ساعت"]],
+                  "description": "شارژ سریع لپ‌تاپ و گوشی با نمایشگر هوشمند"})
+
+
 def build_context(tmp: Path):
     context, store, fake = rs.build_context(tmp)
     seed_more(fake)
+    seed_site(Path(store.path).parent / "site")
     return context, store, fake
 
 
 def settle(app, rounds: int = 10) -> None:
     rs.settle(app, rounds)
+
+
+def _placeholder_pdf() -> bytes:
+    from tests.placeholder_pdf import PLACEHOLDER_PDF_PAGES, _pdf
+
+    return _pdf(PLACEHOLDER_PDF_PAGES)
 
 
 def _dialogs(context, fake, window) -> Iterator[tuple[str, object]]:
@@ -182,6 +223,16 @@ def _dialogs(context, fake, window) -> Iterator[tuple[str, object]]:
     yield "pick product", lambda: cm.PickProductDialog(context, model, parent=window)
     yield "text dialog", lambda: cm.TextDialog("نام‌های دیگر", "هر نام در یک خط", "Galaxy S26",
                                                 multiline=True, parent=window)
+    # v2.11.0 «سایت» (local data, no server)
+    from app.site.store import SiteStore
+    from app.ui import site_dialogs as sd
+
+    site = SiteStore(Path(context.store.path).parent / "site")
+    yield "site phone new", lambda: sd.PhoneDialog(site, parent=window)
+    yield "site phone edit", lambda: sd.PhoneDialog(site, site.get("galaxy-s26-ultra"), parent=window)
+    yield "site accessory", lambda: sd.AccessoryDialog(site, site.get("anker-737-power-bank"),
+                                                       parent=window)
+    yield "site accessory pdf", lambda: sd.AccessoryPdfDialog(site, _placeholder_pdf(), window)
     staff = [users_row for users_row in fake.staff.values()]
     yield "user form new", lambda: users.UserFormDialog(context, None, window)
     yield "user form edit", lambda: users.UserFormDialog(context, fake.staff_out(staff[1]), window)
@@ -266,6 +317,14 @@ def iter_screens(app, tmp: Path, *, roles=("manager", "sales"),
                     window.navigate(key)
                     settle(app)
                     yield f"{tag} {role} {width} {key}", window._pages[key]
+                    # v2.11.0: every tab of a page with tabs («سایت»)
+                    tabs = getattr(window._pages[key], "tabs", None)
+                    for index in range(1, tabs.count() if tabs is not None else 0):
+                        tabs.setCurrentIndex(index)
+                        settle(app)
+                        yield f"{tag} {role} {width} {key} tab {index}", window._pages[key]
+                    if tabs is not None:
+                        tabs.setCurrentIndex(0)
                 _close(window)
         if dialogs:
             context.principal = replace(context.principal, role="super_admin", permissions=None)

@@ -140,6 +140,19 @@ class SiteStore:
             parsed = cat.parse_site_files(products_js, site_js)
         except cat.JsLiteralError:
             raise SiteDataError("فایل products.js سایت خوانده نشد.") from None
+        return self._seed(parsed, fetch_photo, source=source)
+
+    def seed_from_catalog(self, catalog_json: bytes,
+                          fetch_photo: Callable[[str], Optional[bytes]], *, source: str) -> dict:
+        """The same from a published catalog.json (the site already uses one)."""
+        try:
+            parsed = cat.items_from_catalog(json.loads(catalog_json.decode("utf-8")))
+        except (ValueError, cat.JsLiteralError):
+            raise SiteDataError("فایل catalog.json سایت خوانده نشد.") from None
+        return self._seed(parsed, fetch_photo, source=source)
+
+    def _seed(self, parsed: dict, fetch_photo: Callable[[str], Optional[bytes]], *,
+              source: str) -> dict:
         if not parsed["items"]:
             raise SiteDataError("در فایل سایت مدلی پیدا نشد.")
         data = self.load()

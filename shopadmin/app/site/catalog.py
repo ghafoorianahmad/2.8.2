@@ -217,6 +217,28 @@ def parse_site_files(products_js: str, site_js: str = "") -> dict:
     return {"brands": brands, "items": [i for i in items if i["name"]]}
 
 
+def items_from_catalog(catalog: dict) -> dict:
+    """A published catalog.json back to working data (another computer, or
+    after a restore): ``{"brands", "items"}``. Photo names lose ``images/``."""
+    if not isinstance(catalog, dict) or catalog.get("format") != FORMAT:
+        raise JsLiteralError("not a site catalog")
+
+    def bare(path) -> str:
+        path = str(path or "")
+        return path[len(IMAGES_PREFIX):] if path.startswith(IMAGES_PREFIX) else ""
+
+    items = []
+    for raw in catalog.get("items") or []:
+        if not isinstance(raw, dict):
+            continue
+        items.append(clean_item({**raw, "image": bare(raw.get("image")),
+                                 "colors": [{**c, "image": bare(c.get("image"))}
+                                            for c in raw.get("colors") or [] if isinstance(c, dict)]}))
+    brands = [b for b in catalog.get("brands") or []
+              if isinstance(b, dict) and BRAND_KEY_RE.match(str(b.get("key") or ""))]
+    return {"brands": brands, "items": [i for i in items if i["code"] and i["name"]]}
+
+
 # ---- one item ------------------------------------------------------------------------------
 def text(value, limit: int) -> str:
     return " ".join(str(value).split())[:limit] if isinstance(value, (str, int, float)) else ""

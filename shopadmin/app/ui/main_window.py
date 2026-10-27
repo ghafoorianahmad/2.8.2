@@ -27,6 +27,7 @@ from ..persian import to_persian_digits
 from ..permissions import (
     ACTIVITY_VIEW,
     ARCHIVE_VIEW,
+    CATALOG_MANAGE,
     CATALOG_VIEW,
     CUSTOMERS_VIEW,
     DASHBOARD_VIEW,
@@ -58,6 +59,7 @@ from .pages.products import ProductsPage
 from .pages.reports import ReportsPage
 from .pages.server import ServerPage
 from .pages.settings import SettingsPage
+from .pages.site import SitePage
 from .pages.users import UsersPage
 
 # (key, Persian label, icon, permission)
@@ -71,6 +73,8 @@ NAV_ITEMS = (
     ("product_groups", "گروه‌های کالا", "box", GROUPS_VIEW),
     ("pricelist", "لیست قیمت", "receipt", PRICELIST_VIEW),
     ("catalog", "مدل‌های سایت", "link", CATALOG_VIEW),
+    # v2.11.0: the site's phones / accessories, kept on this computer, published to GitHub
+    ("site", "سایت", "globe", CATALOG_MANAGE),
     ("reports", "گزارش‌ها", "reports", REPORTS_VIEW),
     ("activity", "گزارش فعالیت", "activity", ACTIVITY_VIEW),
     # v2.8.2: this computer's settings (everyone) apart from the shop server's
@@ -415,6 +419,7 @@ class MainWindow(QMainWindow):
             "product_groups": ProductGroupsPage,
             "pricelist": PriceListPage,
             "catalog": CatalogModelsPage,
+            "site": SitePage,
             "reports": ReportsPage,
             "settings": SettingsPage,
             "password_requests": PasswordRequestsPage,
