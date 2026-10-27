@@ -15,10 +15,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from . import (archive, catalog_models, control, deps, monitor, order_timeout, site_catalog,
-               sql_errors, tracking)
+               site_export, sql_errors, tracking)
 from .db_own import OwnDB
 from .routers import (
-    admin, auth, catalog, pricelist, public, server_admin, shop_catalog, staff_admin,
+    admin, auth, catalog, pricelist, public, server_admin, shop_catalog, site_catalog_export,
+    staff_admin,
 )
 
 
@@ -66,6 +67,9 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(order_timeout.order_timeout_loop(settings, db_factory)),
         # v2.8.0: Thursday 23:30 (Tehran) -> finished orders / requests to «بایگانی».
         asyncio.create_task(archive.archive_loop(db_factory)),
+        # v2.10.0: optional daily «خروجی کاتالوگ برای سایت» into a server folder
+        asyncio.create_task(site_export.export_loop(
+            settings, db_factory, generator=f"ShopSystem {control.VERSION}")),
     ]
     try:
         yield
@@ -92,6 +96,7 @@ def create_app() -> FastAPI:
     application.include_router(pricelist.router)
     application.include_router(catalog.router)
     application.include_router(shop_catalog.router)
+    application.include_router(site_catalog_export.router)
 
     @application.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:

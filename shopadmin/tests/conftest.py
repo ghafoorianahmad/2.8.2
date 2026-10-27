@@ -7,6 +7,7 @@ fake server, exactly as they live in the real one.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -61,6 +62,11 @@ def memory_store() -> Store:
 # --------------------------------------------------------------------------
 # fake shopapi
 # --------------------------------------------------------------------------
+#: v2.10.0: an empty zip, and the first bytes of a JPEG / PNG (fake photo check)
+ZIP_EMPTY = bytes([0x50, 0x4B, 0x05, 0x06]) + bytes(18)
+IMAGE_MAGIC = (bytes([0xFF, 0xD8]), bytes([0x89]) + b"PNG")
+
+
 class FakeShopApi:
     """A small in-memory stand-in for shopapi, including staff sign-in."""
 
@@ -112,6 +118,16 @@ class FakeShopApi:
         self.site_models: list[dict] = []
         self.site_reads = 0
         self.site_read: dict | None = None
+        # ---- v2.10.0: «خروجی کاتالوگ برای سایت» ----
+        self.site_data: dict[int, dict] = {}
+        self.site_images: dict[str, bytes] = {}
+        self.site_schedule = {"enabled": False, "hour": 6, "folder": ""}
+        self.site_last_export: dict | None = None
+        self.site_exports: list[str] = []
+        self.site_seeds: list[dict] = []
+        self.site_seed_needs: list[str] = []
+        self.accessory_items: list[dict] = []
+        self.accessory_adds: list[list[str]] = []
         self.catalog_last_check: dict | None = None
         # ---- v2.4.0: forgot password ----
         self.pw_requests: dict[int, dict] = {}
@@ -594,6 +610,8 @@ class FakeShopApi:
 
         if path.startswith("/admin/catalog-models"):
             return self._catalog_admin(request, path, body, user, reply, detail)
+        if path.startswith("/admin/site-catalog"):
+            return self._site_catalog_admin(request, path, body, user, reply, detail)
 
         if path.startswith(("/admin/pricelists", "/admin/price-mappings", "/admin/proxies")):
             return self._pricelist_admin(request, path, body, user, reply, detail)
@@ -833,6 +851,90 @@ class FakeShopApi:
     def _catalog_detail(self, model: dict) -> dict:
         return {"model": self._catalog_out(model),
                 "items": [i for i in self.catalog_items if i["model_id"] == model["id"]]}
+
+    def site_preview(self) -> dict:
+        """v2.10.0: what the server would answer for «خروجی کاتالوگ برای سایت»."""
+        ready = [m for m in self.catalog_models if m["id"] in self.site_data]
+        return {"counts": {"phones": len(ready), "accessories": 0,
+                           "images": len(self.site_images),
+                           "skipped": len(self.catalog_models) - len(ready)},
+                "changes": {"first": self.site_last_export is None,
+                            "added": [{"code": m["slug"], "name": m["name"]} for m in ready],
+                            "changed": [], "removed": [], "images_new": [],
+                            "images_changed": [], "brands_changed": False},
+                "has_changes": self.site_last_export is None,
+                "warnings": [{"code": "no_photo", "slug": m["slug"],
+                              "text": f"«{m['name']}» هیچ عکسی ندارد"} for m in ready
+                             if not self.site_data[m["id"]].get("image")],
+                "problems": [] if ready else ["هیچ گوشی‌ای برای سایت آماده نیست"],
+                "last": self.site_last_export, "schedule": dict(self.site_schedule)}
+
+    def _site_catalog_admin(self, request, path, body, user, reply, detail):
+        method = request.method
+        parts = path.strip("/").split("/")
+        if method != "GET" and user["role"] not in ("super_admin", "admin"):
+            return detail(403, "Not permitted for this account")
+        if path == "/admin/site-catalog/preview":
+            return reply(200, self.site_preview())
+        if path == "/admin/site-catalog/export":
+            preview = self.site_preview()
+            if preview["problems"]:
+                return detail(422, "خروجی ساخته نشد: " + preview["problems"][0])
+            self.site_exports.append("zip")
+            self.site_last_export = {"ok": True, "at": TS, "where": "zip",
+                                     "items": preview["counts"]["phones"],
+                                     "images": len(self.site_images)}
+            return httpx.Response(200, content=ZIP_EMPTY,
+                                  headers={"content-type": "application/zip"}, request=request)
+        if path == "/admin/site-catalog/export-folder":
+            if not str(body.get("folder") or "").startswith(("C:\\", "D:\\", "E:\\")):
+                return detail(422, "نشانی کامل پوشه را بنویسید")
+            self.site_exports.append(body["folder"])
+            self.site_last_export = {"ok": True, "at": TS, "where": "folder", "items": 1,
+                                     "images": 0}
+            return reply(200, {**self.site_last_export, "images_written": 0})
+        if path == "/admin/site-catalog/schedule":
+            if method == "PUT":
+                self.site_schedule = {k: body[k] for k in ("enabled", "hour", "folder")}
+                return reply(200, self.site_schedule)
+            return reply(200, {"schedule": self.site_schedule, "last": self.site_last_export})
+        if path == "/admin/site-catalog/images" and method == "GET":
+            return reply(200, {"images": {n: {"bytes": len(d), "sha256": ""}
+                                          for n, d in self.site_images.items()}})
+        if len(parts) == 4 and parts[2] == "images" and method == "PUT":
+            data = base64.b64decode(body["data_b64"])
+            if not data.startswith(IMAGE_MAGIC):
+                return detail(422, "این فایل عکس سالم نیست")
+            self.site_images[parts[3]] = data
+            return reply(200, {"name": parts[3], "bytes": len(data), "sha256": ""})
+        if len(parts) == 4 and parts[2] == "models":
+            model = next((m for m in self.catalog_models if m["id"] == int(parts[3])), None)
+            if model is None:
+                return detail(404, "Model not found")
+            if method == "PUT":
+                self.site_data[model["id"]] = dict(body)
+            return reply(200, {"model": {k: model.get(k) for k in ("id", "slug", "name", "brand")},
+                               "site": self.site_data.get(model["id"]),
+                               "images": sorted(self.site_images),
+                               "groups": ["case", "charger", "headphones", "powerbank", "other"]})
+        if path == "/admin/site-catalog/seed":
+            self.site_seeds.append(body)
+            for m in self.site_models:
+                if not any(x["slug"] == m["slug"] for x in self.catalog_models):
+                    self.add_catalog_model(m["slug"], m["name"], m.get("brand", ""))
+            for model in self.catalog_models:
+                self.site_data.setdefault(model["id"], {"colors": [{"name": "مشکی"}],
+                                                        "image": f"{model['slug']}.jpg"})
+            return reply(200, {"models": len(self.catalog_models), "added": 0, "updated": 0,
+                               "filled": len(self.catalog_models), "kept": 0,
+                               "images_needed": list(self.site_seed_needs)})
+        if path == "/admin/site-catalog/accessory-pdf":
+            out = {"items": list(self.accessory_items)}
+            if body.get("codes"):
+                self.accessory_adds.append(list(body["codes"]))
+                out["result"] = {"added": len(body["codes"]), "updated": 0, "images": 1}
+            return reply(200, out)
+        return detail(404, "Not found")
 
     def _catalog_admin(self, request, path, body, user, reply, detail):
         method = request.method

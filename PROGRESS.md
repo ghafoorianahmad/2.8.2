@@ -2,6 +2,24 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## v2.10.0 — site audit + the site's catalogue from ShopSystem (2026-10-27, same branch) — DONE in code; site committed locally only; nothing published or installed
+
+Owner's two-part request. Decisions in `REQUIREMENTS.md` §7h; format and delivery options in `SITE_CATALOG.md`.
+
+**Part A — site audit** (GitHub `asr-ertebatat-2` `main` = live files, cloned in `E:\DSH-Workspace\asr-site-live`, push disabled; local commit `5e18fd4`):
+1. **Photos** — 66 models (Apple 15, Samsung 27, Xiaomi 24), 296 JPEGs: every referenced file exists, decodes (PIL) and loads in the browser; colour lists and photo slugs line up for all 63 mapped models. Checked by eye on contact sheets. Problems: `xiaomi-17-pro`, `redmi-15`, `redmi-14c` have only a 160×212 card and no colour photos; the `redmi-15` card is green, a colour the model does not list; `poco-f7-pro` photos are dark lifestyle shots; the `poco-c75` black photo shows a different camera module from green / gold; `galaxy-a57` card had a black box (now its own navy photo). No accessories on the site.
+2. **Fixed** — home featured cards' «مشخصات» / «ثبت سفارش» did nothing (no modals on `index.html`); dead `#store` / `#order` / `#about` links on brand / about / contact pages; the phone menu cut «تماس»; Bale missing in the floating menu; the map's pending message spoke of the bot; deep link now `?start=m_<code>`; detail photo eager; `MODEL_CAMS` keys of Fold 7 / Flip 7; duplicated theme / device code. No console errors; light / dark, RTL, 375 px without horizontal scroll checked in the browser.
+3. **Not changed (owner's call)** — `USE_UNLICENSED_PHOTOS = true` on the live site against its own licence comment.
+
+**Part B — catalogue from ShopSystem**:
+1. `shopapi/app/site_export.py` — format `asr-catalog` v1; `catalog_models.site_data` (JSON) + `site_images/`; a JS-literal reader seeds it from the site's `products.js` + `site.js` (data only, never executed); build / validate (no digits in the price label, image paths `images/…` only) / preview diff against the last export / zip / folder (photos first, `catalog.json` last) / daily schedule (`export_loop`, only on changes).
+2. `shopapi/app/accessory_pdf.py` — pdfplumber: «عنوان: مقدار» lines = specs, other lines = item titles, pictures (≥ 60 pt) to the nearest title above; group from words; code from Latin words. Placeholder PDFs generated in the tests.
+3. Endpoints `/admin/site-catalog/*` (`routers/site_catalog_export.py`): preview, export (zip), export-folder + schedule (`server.edit`), models/{id} site data, images, seed, accessory-pdf.
+4. ShopAdmin — «مدل‌های سایت» › «خروجی کاتالوگ برای سایت…» (preview, «ذخیرهٔ فایل خروجی…», schedule, «خواندن از پوشهٔ سایت…», «خواندن PDF لوازم جانبی…») and «اطلاعات سایت…» per model (`app/ui/site_export_dialog.py`); the three dialogs are in `audit_screens.py`.
+5. Site — `loadCatalog` / `applyCatalog` in `site.js` (2.5 s, then the built-in list); accessories in the home page's «لوازم جانبی». Checked in the browser with a catalogue built from the real 66 models + 296 photos and with an unknown version (fallback).
+
+Tests: shopapi 559, shopbots 287, shoptg 81, shopsystem 67, shopadmin 684 ✓; text-fit / RTL / button audits 0 in all 9 looks. Client code never names the server program (`test_client_code_never_mentions_the_server_program` caught «ShopSystem» in the new dialog).
+
 ## v2.9.4 — last release before the real server: database drop-down + precise errors tested as the service account, install folders on D:, owner on reinstall, eye on every password, live look, money input, Persian-only errors, real «بستن», backup root cause, cleanup tool, status-code helper (2026-10-26, same branch) — DONE in code; the new build NOT installed
 
 Owner's list after installing and testing 2.9.3 on this PC. Decisions in `REQUIREMENTS.md` §7g. Production steps: `E:\Outputs\ShopSystem\PRODUCTION_GUIDE_FA.txt`.

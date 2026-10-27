@@ -171,6 +171,8 @@ class Settings:
     #: v2.9.3: the live site's public model list, read every this many days (0 = off)
     site_catalog_url: str = "https://asrertebatat2.ir/assets/products.js"
     site_catalog_days: int = 30
+    #: v2.10.0: "" = a ``site_images`` folder next to the SQLite file (site photos).
+    site_images_dir: str = ""
     #: A renamed product stays visible (only "drifted") at or above this name similarity.
     model_drift_min_score: float = 0.7
     #: The bot accepts a fuzzy model-name match at or above this similarity.
@@ -269,6 +271,7 @@ class Settings:
             site_catalog_url=_env("SITE_CATALOG_URL",
                                   "https://asrertebatat2.ir/assets/products.js").strip(),
             site_catalog_days=max(0, _env_int("SITE_CATALOG_DAYS", 30)),
+            site_images_dir=_env("SITE_IMAGES_DIR", ""),
             model_drift_min_score=_env_float("MODEL_DRIFT_MIN_SCORE", 0.7),
             model_resolve_min_score=_env_float("MODEL_RESOLVE_MIN_SCORE", 0.75),
             pricelist_unit_rial=_env_int("PRICELIST_UNIT_RIAL", 10_000),
@@ -329,6 +332,15 @@ class Settings:
         if self.sqlite_path == ":memory:":
             return None
         return Path(self.sqlite_path).resolve().parent / "pricelists"
+
+    def site_images_path(self) -> Path | None:
+        """v2.10.0: photos of the site models (exported with catalog.json); a
+        ``site_images`` folder next to the SQLite file, None for in-memory DBs."""
+        if self.site_images_dir:
+            return Path(self.site_images_dir)
+        if self.sqlite_path == ":memory:":
+            return None
+        return Path(self.sqlite_path).resolve().parent / "site_images"
 
     def database_name(self) -> str:
         """The configured accounting database, as stored with every order."""

@@ -196,6 +196,11 @@ class CatalogModelsPage(BasePage):
         for b in (self.read_site_button, self.check_button):
             b.setEnabled(self.can_manage)
             bar.addWidget(b)
+        # v2.10.0: the site's catalogue (models, colours, specs, photos) from the shop server
+        self.site_export_button = widgets.button(
+            "خروجی کاتالوگ برای سایت…", icon_name="download", on_click=self._open_site_export,
+            tooltip="پیش‌نمایش تغییرات و ساخت فایل catalog.json با عکس‌ها برای سایت.")
+        bar.addWidget(self.site_export_button)
         self.body.addWidget(bar_holder)
 
         models_panel = widgets.Panel()
@@ -237,6 +242,9 @@ class CatalogModelsPage(BasePage):
                                             on_click=self._delete_item)
         self.aliases_button = widgets.button("نام‌های دیگر…", icon_name="edit",
                                              on_click=self._edit_aliases)
+        # v2.10.0: colours, specs and photos the site shows for this model
+        self.site_data_button = widgets.button("اطلاعات سایت…", icon_name="edit",
+                                               on_click=self._edit_site_data)
         self.confirm_button = widgets.button("تأیید و نمایش به مشتری", icon_name="eye",
                                              variant="success", on_click=self._confirm_model)
         # v2.9.3: an automatic match that waits for a manager
@@ -247,8 +255,8 @@ class CatalogModelsPage(BasePage):
                                                      on_click=self._dismiss_suggestion)
         self._detail_buttons = (self.accept_suggest_button, self.add_button,
                                 self.replace_button, self.accept_button, self.label_button,
-                                self.delete_button, self.aliases_button, self.confirm_button,
-                                self.dismiss_suggest_button)
+                                self.delete_button, self.aliases_button, self.site_data_button,
+                                self.confirm_button, self.dismiss_suggest_button)
         for b in self._detail_buttons:
             b.setEnabled(False)
             actions.addWidget(b)
@@ -535,6 +543,21 @@ class CatalogModelsPage(BasePage):
         model_id, aliases = int(self._detail["id"]), dialog.value[:1000]
         self.run(lambda: self.context.api.update_catalog_model(model_id, aliases=aliases),
                  on_success=self._after_change("نام‌های دیگر ذخیره شد."))
+
+    def _open_site_export(self) -> None:
+        """v2.10.0 «خروجی کاتالوگ برای سایت»."""
+        from ..site_export_dialog import SiteExportDialog
+
+        SiteExportDialog(self.context, parent=self).exec()
+        self.load()
+
+    def _edit_site_data(self) -> None:
+        if not self._detail:
+            return
+        from ..site_export_dialog import SiteModelDialog
+
+        if SiteModelDialog(self.context, int(self._detail["id"]), parent=self).exec():
+            self.notify_success("اطلاعات سایت ذخیره شد؛ در خروجی بعدی می‌آید.")
 
     def _confirm_model(self) -> None:
         if not self._detail:

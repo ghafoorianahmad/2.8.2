@@ -138,6 +138,17 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 - **Cleanup** (server settings, on the server, owner): backup first, typed «پاک‌سازی», only the shop's own data; owners, settings, mappings, site models, proxies and the Telegram session stay; the accounting database is never touched.
 - **Status-code helper** (read only): Status values and counts of `KalaOrder` and the latest orders «سازه حساب» made itself, to choose `ACCOUNTING_STATUS_CODE` on a separate copy of the real database before real writing is switched on.
 
+## 7h. v2.10.0 (decision 2026-10-27; site audit + the site's catalogue from ShopSystem)
+- **Source of the site**: only the GitHub repository `ghafoorianahmad/asr-ertebatat-2` (branch `main`, identical to the live files on 2026-10-27), cloned in `E:\DSH-Workspace\asr-site-live` (push disabled in that clone). Other site folders on this PC are old copies and are not used.
+- **Catalogue file**: ShopSystem exports `catalog.json` (format `asr-catalog`, version 1) + `images/`; the site reads `assets/catalog/catalog.json` and keeps its built-in `products.js` when the file is missing, invalid, of an unknown version or has no phone. Details: `SITE_CATALOG.md`.
+- **Never in the file**: prices (a fixed label only; a digit is refused), accounting codes, stock, customers, keys, server addresses. No connection from the site to the server.
+- **Site data** of each model lives in ShopSystem (`catalog_models.site_data`, photos in `site_images` next to the database); seeded once from the site's own files, then edited in ShopAdmin («اطلاعات سایت…»).
+- **Export**: a zip from ShopAdmin, or (optional, `server.edit`) daily into a folder on the server, only when something changed; photos first, `catalog.json` last; nothing else written or deleted.
+- **Accessory PDFs**: parser ready (`shopapi/app/accessory_pdf.py`), tested with generated placeholder PDFs; tuned when the owner sends real ones. Nothing is added without a manager's tick.
+- **Delivery to the live site**: not set up; options in `SITE_CATALOG.md` (recommended: commit to the site repo + the existing manual deploy workflow).
+- **Bot deep link from the site**: `?start=m_<code>` (was the bare code).
+- **Product photo licence**: `USE_UNLICENSED_PHOTOS` is `true` on the live site although its own comment says it must be false before a public deploy (manufacturer photos); left for the owner to decide.
+
 ## 8. Alerts to the owner
 - Bale message to the owner's chat (ChatId in .env) on every new order and pending customer.
 - Windows tray app: detects when the Sazeh Hesab program starts (process watch) → "X new orders, Y customers awaiting approval" + link to shopadmin.
@@ -146,7 +157,7 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 
 ## 9. Website
 - Hosted on **ArvanCloud** (static site on Arvan Object Storage + CDN; DNS to Arvan); published from the owner's GitHub repo.
-- **The live site is `E:\DSH-Workspace\projects\asr-ertebatat-2-redesign`** (GitHub `asr-ertebatat-2`, branch `redesign`; verified 2026-10-12 by matching the live files). It is plain HTML/JS with no build step.
+- **Since v2.10.0 (2026-10-27) the source of the live site is the GitHub repo `asr-ertebatat-2`, branch `main`, cloned in `E:\DSH-Workspace\asr-site-live`** (§7h). Older note: the live site was `E:\DSH-Workspace\projects\asr-ertebatat-2-redesign` (GitHub `asr-ertebatat-2`, branch `redesign`; verified 2026-10-12 by matching the live files). It is plain HTML/JS with no build step.
 - `projects\asr-ertebatat-shop` (GitHub `asr-ertebatat-shop`) is the older design and is not published. It gets the same changes; slugs are identical in both.
 - The Next.js prototype `E:\projects\mobile-shop` is not used.
 - Showcase only: product presentation and specs. **No prices, no stock, no live connection to the server, no data push, no order submission from the site.**
