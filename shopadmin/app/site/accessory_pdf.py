@@ -1,4 +1,5 @@
-"""v2.10.0: accessory catalogues (PDF from a supplier) -> site accessories.
+"""v2.10.0 (v2.11.0: runs in ShopAdmin, on this computer): accessory catalogues
+(PDF from a supplier) -> site accessories. An optional helper of «سایت › لوازم جانبی».
 
 The real PDFs are not here yet, so the reader is deliberately simple and
 tested with generated placeholder PDFs; once the owner sends real ones, only
@@ -10,8 +11,8 @@ the heuristics below should need tuning:
 * every picture on the page belongs to the item whose title is the nearest
   one above the picture's top (or the first item of the page).
 
-Nothing is added from here: ``read_pdf`` only returns candidates; ShopAdmin
-shows them and ``site_export``-side code adds the ones the manager ticks.
+Nothing is added from here: ``read_pdf`` only returns candidates; the «سایت»
+section shows them and adds the ones the manager ticks (``item_for``).
 """
 from __future__ import annotations
 
@@ -158,9 +159,8 @@ def read_pdf(data: bytes, *, taken_codes: set[str] | None = None) -> list[Access
     return items[:MAX_ITEMS]
 
 
-def site_data_for(item: AccessoryCandidate, image_names: list[str]) -> dict:
-    """site_data of a new accessory (the first picture is its card)."""
-    return {"published": True, "tier": "", "price_state": "استعلام قیمت",
-            "image": image_names[0] if image_names else "", "colors": [],
-            "specs": item.specs[:20], "group": item.group, "brand_key": "",
-            "brand_name": item.brand_name}
+def item_for(item: AccessoryCandidate, image_name: str = "") -> dict:
+    """A new accessory of the «سایت» data (its first picture is the card)."""
+    return {"code": item.code, "category": "accessory", "name": item.name,
+            "brand_name": item.brand_name, "group": item.group, "specs": item.specs[:20],
+            "image": image_name, "colors": [], "hidden": False}
