@@ -60,7 +60,13 @@ class BidiLabel(QLabel):
         super().setText(keep_together(str(shown or "")) if plain and self.wordWrap() else shown)
 
     def text(self) -> str:
-        return self._logical if self._logical is not None else super().text()
+        shown = super().text()
+        logical = self._logical
+        # the logical text only while it is what is drawn (QLabel.setText called
+        # directly, e.g. by an audit, shows its own text)
+        if logical is not None and shown in (logical, keep_together(str(logical))):
+            return logical
+        return shown
 
     def setWordWrap(self, on: bool) -> None:  # noqa: N802 - Qt naming
         changed = on != self.wordWrap()
