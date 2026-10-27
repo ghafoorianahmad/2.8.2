@@ -383,13 +383,6 @@ class ShopApiClient:
             "POST", "/purchase-requests", key=self._settings.bot_api_key, json_body=body
         )
 
-    async def create_cart_requests(self, platform: str, chat_id: str | int, code: str) -> dict | None:
-        """v2.11.0: the site's cart (``c_…``) -> one «درخواست خرید - استعلام قیمت» per line."""
-        return await self._request(
-            "POST", "/cart-requests", key=self._settings.bot_api_key,
-            json_body={"platform": platform, "chat_id": str(chat_id), "code": str(code)[:64]},
-        )
-
     async def admin_get_item_request(self, request_id: int) -> dict | None:
         return await self._request(
             "GET", f"/admin/item-requests/{int(request_id)}", key=self._settings.admin_api_key

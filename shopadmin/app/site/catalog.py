@@ -10,8 +10,6 @@
   code, a customer or a key.
 * **Preview**: what the site would show differently compared with what was
   published last (or, before the first publish, with the site as it was read).
-* **Cart code**: the same short model hash the site uses for the bot link
-  (FNV-1a, 30 bits, 5 base64url characters).
 """
 from __future__ import annotations
 
@@ -476,16 +474,3 @@ def photo_name(code: str, color: str = "", *, n: int = 0) -> str:
         return f"{code}-c{hashlib.sha1(color.encode('utf-8')).hexdigest()[:6]}.jpg"
     return f"{code}-{n}.jpg"
 
-
-# ---- cart code (same as site.js cartHash) --------------------------------------------------
-B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-
-
-def model_hash(code: str) -> str:
-    """FNV-1a 32 bits of the code, low 30 bits as 5 base64url characters."""
-    value = 0x811C9DC5
-    for byte in code.encode("utf-8"):
-        value ^= byte
-        value = (value * 0x01000193) & 0xFFFFFFFF
-    value &= (1 << 30) - 1
-    return "".join(B64URL[(value >> shift) & 63] for shift in (24, 18, 12, 6, 0))

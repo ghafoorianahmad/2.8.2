@@ -96,13 +96,6 @@ def test_clean_item_never_keeps_a_price():
     assert item["colors"] == [{"name": "سبز", "image": "", "hex": ""}]
 
 
-def test_model_hash_is_stable():
-    # the same value as site.js cartHash() (checked with node in the site repo)
-    assert cat.model_hash("iphone-17") == cat.model_hash("iphone-17")
-    assert len(cat.model_hash("galaxy-s26-ultra")) == 5
-    assert cat.model_hash("iphone-17") != cat.model_hash("iphone-17e")
-
-
 # ---- photos ------------------------------------------------------------------------------
 def test_photo_is_made_1280_by_1024_on_the_light_background(admin_qapp):
     jpeg, notes = ph.normalize(image_bytes(300, 200))

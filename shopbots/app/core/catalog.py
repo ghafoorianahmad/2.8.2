@@ -161,15 +161,6 @@ _MODEL_SLUG = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$")
 MAX_MODEL_TEXT = 400
 
 
-#: v2.11.0: the site's cart: ``c_`` + 7 characters per line, at most 8 lines
-#: (the start parameter holds 64 characters); shopapi decodes it.
-_CART_REF = re.compile(r"^c_(?:[A-Za-z0-9_-]{7}){1,8}$")
-
-
-def looks_like_cart_ref(text: str | None) -> bool:
-    return bool(_CART_REF.match(str(text or "").strip()))
-
-
 def looks_like_model_ref(text: str | None) -> bool:
     value = normalize_digits(text).strip()
     if not value or len(value) > MAX_MODEL_TEXT:
