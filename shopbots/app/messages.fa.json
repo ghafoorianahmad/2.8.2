@@ -262,7 +262,14 @@
     "PAYMENT_INFO_HOLDER": "به نام: {value}",
     "PAYMENT_INFO_BANK": "بانک: {value}",
     "PAYMENT_INFO_NOTE": "توضیح: {value}",
-    "PHONE_LOW_STOCK": "⚠️ از «{name}» الان فقط {stock} عدد برای سفارش مستقیم موجود است؛ تعداد را کمتر کنید یا «🛍 درخواست خرید - استعلام قیمت» بزنید."
+    "PHONE_LOW_STOCK": "⚠️ از «{name}» الان فقط {stock} عدد برای سفارش مستقیم موجود است؛ تعداد را کمتر کنید یا «🛍 درخواست خرید - استعلام قیمت» بزنید.",
+    "SITE_CART_SENT": "☑ سبد خرید شما از سایت ثبت شد (درخواست خرید - استعلام قیمت):\n{lines}\n\nفروشگاه موجودی و قیمت هر کالا را بررسی می‌کند و قیمت را همین‌جا برایتان می‌فرستد؛ با «✅ تأیید و خرید» سفارش ثبت می‌شود.",
+    "SITE_CART_LINE": "• {name}{color} — {qty} عدد",
+    "SITE_CART_COLOR": "، رنگ {color}",
+    "SITE_CART_UNKNOWN": "⚠️ {count} کالای سبد دیگر در سایت نیست و ثبت نشد.",
+    "SITE_CART_REPEATED": "این سبد خرید قبلاً ثبت شده است؛ فروشگاه به‌زودی قیمت‌ها را همین‌جا می‌فرستد.",
+    "SITE_CART_FAILED": "این سبد خرید خوانده نشد. لطفاً دوباره در سایت «ثبت از طریق ربات» را بزنید یا نام کالا را بنویسید.",
+    "SITE_CART_AFTER_CONTACT": "سبد خرید شما از سایت محفوظ است؛ با دکمهٔ پایین شماره‌تان را بفرستید تا خودکار ثبت شود."
   },
 
   "order_status": {
@@ -297,6 +304,10 @@
     "PHONE_SEARCH_MODELS / PHONE_SEARCH_NONE": "{text}",
     "PHONE_SEARCH_COLORS / PHONE_SEARCH_PARTS / PHONE_SEARCH_ROW": "{model} {color} {part} {price}",
     "PURCHASE_REQUEST_SENT": "{name}",
+    "SITE_CART_SENT": "{lines}",
+    "SITE_CART_LINE": "{name} {color} {qty}",
+    "SITE_CART_COLOR": "{color}",
+    "SITE_CART_UNKNOWN": "{count}",
     "PURCHASE_ORDER_READY": "{name} {order_id} {total}",
     "PURCHASE_OFFER": "{name} {qty} {price} {total} {currency} {qty_line} {note}",
     "PURCHASE_OFFER_QTY": "{qty} {total} {currency}",

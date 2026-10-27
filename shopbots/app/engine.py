@@ -30,6 +30,7 @@ from .core import (
     CustomerService,
     OrderService,
     ReceiptOutcome,
+    looks_like_cart_ref,
     looks_like_model_ref,
     parse_product_ref,
 )
@@ -690,18 +691,31 @@ class BotEngine:
             self.store.clear_conversation(platform, chat_id)
             self._nav_save(platform, chat_id, [])          # v2.8.3: a fresh history
             args = text.split()[1:]
-            model_ref = args[0] if args and looks_like_model_ref(args[0]) else None
+            # v2.11.0: the site's cart (c_…) -> purchase requests
+            cart_ref = args[0] if args and looks_like_cart_ref(args[0]) else None
+            model_ref = args[0] if args and not cart_ref and looks_like_model_ref(args[0]) else None
             product_code = (
-                parse_product_ref(args[0], allow_bare_code=True) if args and not model_ref else None
+                parse_product_ref(args[0], allow_bare_code=True)
+                if args and not model_ref and not cart_ref else None
             )
             await self._customer_entry(
                 adapter, platform, chat_id, welcome=command == "/start",
-                product_code=product_code, model_ref=model_ref,
+                product_code=product_code, model_ref=model_ref, cart_ref=cart_ref,
             )
             return
 
         # registration (the user may not exist in shopapi yet): contact only
         if state == STATE_AWAIT_CONTACT or state in LEGACY_REGISTRATION_STATES:
+            if not event.get("contact") and looks_like_cart_ref(text):
+                # the site's cart code, typed before registering: keep it
+                self.store.set_conversation(
+                    platform, chat_id, STATE_AWAIT_CONTACT, {**(data or {}), "cart": text.strip()}
+                )
+                await self._send_text(
+                    adapter, chat_id, texts.SITE_CART_AFTER_CONTACT,
+                    contact_keyboard(texts.BTN_SHARE_CONTACT),
+                )
+                return
             if not event.get("contact") and looks_like_model_ref(text):
                 # a site model code, typed before registering: keep it
                 self.store.set_conversation(
@@ -735,14 +749,21 @@ class BotEngine:
         user = await self.api.get_user(platform, chat_id)
         status = self.customers.status_of(user)
         if status == STATUS_NEW:
-            model_ref = text if looks_like_model_ref(text) else None
-            product_code = None if model_ref else parse_product_ref(text, allow_bare_code=True)
+            cart_ref = text.strip() if looks_like_cart_ref(text) else None
+            model_ref = text if not cart_ref and looks_like_model_ref(text) else None
+            product_code = None if model_ref or cart_ref else parse_product_ref(
+                text, allow_bare_code=True)
             await self._begin_registration(
-                adapter, platform, chat_id, product_code=product_code, model_ref=model_ref
+                adapter, platform, chat_id, product_code=product_code, model_ref=model_ref,
+                cart_ref=cart_ref,
             )
             return
         if status == STATUS_REJECTED:
             await self._show_not_approved(adapter, platform, chat_id, status)
+            return
+        if looks_like_cart_ref(text):
+            # the cart code typed or pasted (a deep link that lost its parameter)
+            await self._site_cart(adapter, platform, chat_id, text.strip())
             return
 
         if state == STATE_AWAIT_ITEM_REQUEST and text and not photo and not document:
@@ -787,17 +808,21 @@ class BotEngine:
     async def _customer_entry(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, *, welcome: bool = True,
         product_code: int | None = None, model_ref: str | None = None,
+        cart_ref: str | None = None,
     ) -> None:
         intro = texts.WELCOME if welcome else None
         status = await self.customers.status(platform, chat_id)
         if status == STATUS_NEW:
             await self._begin_registration(
                 adapter, platform, chat_id, intro=intro, product_code=product_code,
-                model_ref=model_ref,
+                model_ref=model_ref, cart_ref=cart_ref,
             )
             return
         if status == STATUS_REJECTED:
             await self._show_not_approved(adapter, platform, chat_id, status, intro=intro)
+            return
+        if cart_ref:
+            await self._site_cart(adapter, platform, chat_id, cart_ref)
             return
         if product_code is not None:
             await self._show_product_by_code(adapter, platform, chat_id, product_code)
@@ -838,13 +863,16 @@ class BotEngine:
     async def _begin_registration(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, *,
         intro: str | None = None, product_code: int | None = None,
-        model_ref: str | None = None,
+        model_ref: str | None = None, cart_ref: str | None = None,
     ) -> None:
         """Ask for the contact - only the share-contact button is accepted.
-        A deep-linked product or site model is remembered and shown after registration."""
+        A deep-linked product, site model or site cart is remembered and handled
+        after registration."""
         data = {"product": int(product_code)} if product_code else {}
         if model_ref:
             data = {"model": str(model_ref)}
+        if cart_ref:
+            data = {"cart": str(cart_ref)}
         self.store.set_conversation(platform, chat_id, STATE_AWAIT_CONTACT, data)
         body = f"{intro}\n\n{texts.ASK_CONTACT}" if intro else texts.ASK_CONTACT
         await self._send_text(adapter, chat_id, body, contact_keyboard(texts.BTN_SHARE_CONTACT))
@@ -876,6 +904,10 @@ class BotEngine:
             return
         done = texts.REGISTERED_APPROVED if status == STATUS_APPROVED else texts.REGISTERED_PENDING
         await self._send_text(adapter, chat_id, done, remove_keyboard())
+        cart_ref = (data or {}).get("cart")
+        if isinstance(cart_ref, str) and looks_like_cart_ref(cart_ref):
+            await self._site_cart(adapter, platform, chat_id, cart_ref)
+            return
         product_code = (data or {}).get("product")
         if isinstance(product_code, int) and product_code > 0:
             await self._show_product_by_code(adapter, platform, chat_id, product_code)
@@ -2154,6 +2186,40 @@ class BotEngine:
         await self._send_options(adapter, platform, chat_id, body, buttons, state=STATE_NONE,
                                  data=data, edit_message_id=edit_message_id,
                                  screen=("ps:row", f"psr:{int(index)}"))
+
+    async def _site_cart(
+        self, adapter: PlatformAdapter, platform: str, chat_id: str, code: str,
+    ) -> None:
+        """v2.11.0: the site's cart (``c_…``) -> one «درخواست خرید - استعلام قیمت»
+        per line (shopapi decodes it); the customer sees what was registered."""
+        menu = [[(texts.BTN_MENU, "menu")]]
+        try:
+            result = await self.api.create_cart_requests(platform, chat_id, code)
+        except ShopApiRejected as exc:
+            message = {429: texts.ITEM_REQUEST_TOO_MANY,
+                       422: texts.SITE_CART_FAILED}.get(exc.status or 0, exc.message_fa)
+            await self._send_options(adapter, platform, chat_id, message, menu,
+                                     state=STATE_NONE, data={})
+            return
+        except ShopApiError:
+            await self._send_text(adapter, chat_id, texts.SERVICE_UNAVAILABLE)
+            return
+        result = result if isinstance(result, dict) else {}
+        created = [c for c in result.get("created") or [] if isinstance(c, dict)]
+        if result.get("repeated"):
+            body = texts.SITE_CART_REPEATED
+        elif not created:
+            body = texts.SITE_CART_FAILED
+        else:
+            lines = "\n".join(texts.SITE_CART_LINE.format(
+                name=shorten(str(c.get("name") or ""), 60),
+                color=texts.SITE_CART_COLOR.format(color=c["color"]) if c.get("color") else "",
+                qty=int(c.get("qty") or 1)) for c in created)
+            body = texts.SITE_CART_SENT.format(lines=lines)
+        if result.get("unknown") and not result.get("repeated"):
+            body += "\n" + texts.SITE_CART_UNKNOWN.format(
+                count=int(result["unknown"]))
+        await self._send_options(adapter, platform, chat_id, body, menu, state=STATE_NONE, data={})
 
     async def _purchase_request(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, callback_id=None, *,

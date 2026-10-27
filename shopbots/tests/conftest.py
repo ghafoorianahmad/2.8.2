@@ -209,6 +209,13 @@ class FakeShopApi:
         self.phone_rows: list[dict] = []
         self.phone_sales_open = True
         self.purchase_requests: list[dict] = []
+        #: v2.11.0: the site's cart codes received and what shopapi answers
+        self.cart_codes: list[str] = []
+        self.cart_answer: dict = {"created": [
+            {"id": 1, "name": "Galaxy S26 Ultra", "color": "مشکی", "qty": 2},
+            {"id": 2, "name": "پاوربانک Anker 737", "color": "", "qty": 1}],
+            "unknown": 1, "repeated": False}
+        self.cart_status: int | None = None
         #: v2.9.2: answers to offered prices, the order an accept returns, an error
         self.offer_answers: list[dict] = []
         self.offer_order_id: int | None = None
@@ -350,6 +357,16 @@ class FakeShopApi:
             return httpx.Response(201, json={"id": len(self.purchase_requests), "kind": "purchase",
                                              "user_id": user["id"], "status": "new",
                                              "created_at": "t"})
+
+        if method == "POST" and path == "/cart-requests":
+            # v2.11.0: the site's cart -> purchase requests (decoded by shopapi)
+            user = self.users.get((str(body.get("platform")), str(body.get("chat_id"))))
+            if user is None:
+                return self._err(404, "User not found")
+            if self.cart_status is not None:
+                return self._err(self.cart_status, "refused")
+            self.cart_codes.append(body.get("code"))
+            return httpx.Response(201, json=self.cart_answer)
 
         if method == "GET" and path == "/item-requests/search":
             q = str(params.get("q") or "")

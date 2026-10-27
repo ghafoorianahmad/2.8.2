@@ -412,6 +412,13 @@ class PurchaseRequestIn(BaseModel):
     qty: int = Field(1, ge=1, le=20)
 
 
+class CartRequestIn(BaseModel):
+    """v2.11.0: the site's cart as the bot received it (``/start c_…``)."""
+    platform: Platform
+    chat_id: str = Field(min_length=1)
+    code: str = Field(min_length=9, max_length=64, pattern=r"^c_[A-Za-z0-9_-]{7,62}$")
+
+
 class AssignIn(BaseModel):
     staff_id: int = Field(gt=0)
 

@@ -8,13 +8,14 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 
 from .. import deps, groups as group_config, order_timeout, phone_search, purchase, receipts
-from .. import sales, security_watch
+from .. import sales, security_watch, site_cart
 from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
 from ..pricelist import catalog as phone_catalog
 from ..pricelist.repo import PriceListRepo
 from ..schemas import (
+    CartRequestIn,
     GroupOut,
     InquiryIn,
     InquiryOut,
@@ -861,6 +862,29 @@ def create_purchase_request(
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many requests today")
     created = purchase.request_from_row(db, settings, row, user, payload.qty, role)
     return {**created, "customer_name": None, "person_code": None, "customer_phone": None}
+
+
+@router.post("/cart-requests", status_code=status.HTTP_201_CREATED)
+def create_cart_requests(
+    payload: CartRequestIn,
+    role: str = Depends(get_api_identity),
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+) -> dict:
+    """v2.11.0: the site's cart (``/start c_…`` in the bot) -> one «درخواست خرید -
+    استعلام قیمت» per line; staff answer each one as usual. Returns
+    {"created": [{id, name, color, qty}], "unknown": n, "repeated": bool}."""
+    if role not in ("bot", "admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not available on this channel")
+    user = _requesting_user(db, payload.platform, payload.chat_id)
+    try:
+        site_cart.decode(payload.code)
+    except ValueError:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Not a cart code") from None
+    since = (now_utc() - timedelta(days=1)).isoformat(timespec="seconds")
+    if db.count_item_requests_since(user["id"], since) >= ITEM_REQUESTS_PER_DAY:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many requests today")
+    return site_cart.create_requests(db, settings, user, payload.code, role)
 
 
 @router.post("/security/report", status_code=status.HTTP_204_NO_CONTENT)
