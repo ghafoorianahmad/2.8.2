@@ -238,6 +238,8 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"not a pdf file", re.I), "این فایل PDF نیست."),
     (re.compile(r"not a mobile number", re.I), "شمارهٔ موبایل درست نیست (مثل ۰۹۱۲۳۴۵۶۷۸۹)."),
     (re.compile(r"not available on this channel", re.I), "این کار از این راه در دسترس نیست."),
+    # v2.11.0: the site's cart code (bot)
+    (re.compile(r"not a cart code", re.I), "کد سبد خرید سایت درست نیست."),
     (re.compile(r"not permitted for this key", re.I), MSG_FORBIDDEN),
     (re.compile(r"only a super admin may decide this", re.I), "این تصمیم فقط با «مدیر کل» است."),
     (re.compile(r"only staff can offer a price", re.I), "فقط کارکنان می‌توانند قیمت بفرستند."),

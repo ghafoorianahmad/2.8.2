@@ -2,6 +2,19 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## v2.11.0 — «سایت» only in ShopAdmin (no server) + site cart -> bot (2026-10-27, same branch) — DONE in code; site committed locally only; nothing published or installed
+
+Owner's request after 2.10.0; step-by-step log in `PROGRESS_SITE.md`, decisions in `REQUIREMENTS.md` §7i, format / token guide in `SITE_CATALOG.md`.
+
+1. **Security check** (report only) — bots inside ShopServer, outbound only; shopapi for the LAN only (firewall local subnet, service keys loopback); the site never talks to the server.
+2. **Server parts of 2.10.0 removed** — `site_export.py`, `routers/site_catalog_export.py`, `site_data`, `SITE_IMAGES_DIR`, the schedule; the accessory-PDF reader moved to ShopAdmin (`app/site/accessory_pdf.py`; ShopAdmin bundles pdfplumber + Pillow).
+3. **ShopAdmin «سایت»** (`app/site/` logic, `app/ui/pages/site.py`, `app/ui/site_dialogs.py`): data in `<data>\site\`, phones / accessories / show-hide / new phone with a photo per colour / photos to 1280×1024 on #FBFCFF (Qt) / preview / backup-restore / «خواندن از سایت» (GitHub) or «خواندن از پوشهٔ سایت…».
+4. **«انتشار در سایت»** — GitHub Git Data API commit (`app/site/github.py`, `publish.py`), token with DPAPI (`app/site/token.py`), «آزمایش اتصال», deploy workflow dispatch, 48-hour rollback; tested only against `tests/fake_github.py`.
+5. **Site cart** (site commits `22056b7`, `c457494`) — «افزودن به سبد», `cart.html`, top-bar cart, `?start=c_<code>`, the code shown on the cart page as a fallback.
+6. **Bots** — `/start c_…`, a pasted code, kept through registration -> `POST /cart-requests` (`shopapi/app/site_cart.py`) -> one purchase request per line.
+
+Tests: shopapi 550, shopbots 292, shoptg 81, shopsystem 67, shopadmin 699 ✓; text-fit / RTL / button audits 0 in all 9 looks (the «سایت» page with its three tabs and the four new dialogs included).
+
 ## v2.10.0 — site audit + the site's catalogue from ShopSystem (2026-10-27, same branch) — DONE in code; site committed locally only; nothing published or installed
 
 Owner's two-part request. Decisions in `REQUIREMENTS.md` §7h; format and delivery options in `SITE_CATALOG.md`.
