@@ -19,7 +19,7 @@ import io
 import re
 from dataclasses import dataclass, field
 
-from .catalog_models import valid_slug
+from .catalog import valid_code as valid_slug
 
 MAX_PDF_BYTES = 20 * 1024 * 1024
 MAX_PAGES = 60

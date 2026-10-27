@@ -127,22 +127,6 @@ def seed_more(fake) -> None:
     model = fake.add_catalog_model("galaxy-s26-ultra", "Galaxy S26 Ultra", "Samsung")
     fake.add_catalog_item(model["id"], 5012, LONG_NAME, label="512 گیگ")
     fake.add_catalog_model("iphone-17-pro", "iPhone 17 Pro", "Apple")
-    # v2.10.0: site data, photos, an export and an accessory PDF (long mixed text)
-    fake.site_images.update({"galaxy-s26-ultra.jpg": b"", "galaxy-s26-ultra-cobaltviolet.jpg": b""})
-    fake.site_data[model["id"]] = {
-        "published": True, "tier": "پرچمدار", "release_year": 2026, "price_state": "استعلام قیمت",
-        "image": "galaxy-s26-ultra.jpg", "group": "", "brand_key": "samsung", "brand_name": "",
-        "colors": [{"name": "بنفش کبالت", "image": "galaxy-s26-ultra-cobaltviolet.jpg",
-                    "hex": "#5b4bb8"}, {"name": "تیتانیوم آبی نقره‌ای", "image": "", "hex": ""}],
-        "specs": [["نمایشگر", "6.9 اینچ Dynamic AMOLED 2X، 120Hz"],
-                  ["پردازنده", "Snapdragon 8 Elite Gen 5 for Galaxy"]]}
-    fake.site_last_export = {"ok": True, "at": TS, "where": "folder", "items": 66, "images": 296}
-    fake.site_schedule = {"enabled": True, "hour": 6, "folder": "D:\\ShopServerData\\SiteCatalog"}
-    fake.accessory_items = [
-        {"code": "anker-737-power-bank", "name": "Anker 737 Power Bank (PowerCore 24K) 140W",
-         "group": "powerbank", "page": 1, "specs": [["Capacity", "24000 mAh"]], "image_count": 2},
-        {"code": "clear-case-iphone-17", "name": "قاب شفاف مگ‌سیف iPhone 17 Pro Max",
-         "group": "case", "page": 12, "specs": [], "image_count": 1}]
 
 
 def build_context(tmp: Path):
@@ -198,12 +182,6 @@ def _dialogs(context, fake, window) -> Iterator[tuple[str, object]]:
     yield "pick product", lambda: cm.PickProductDialog(context, model, parent=window)
     yield "text dialog", lambda: cm.TextDialog("نام‌های دیگر", "هر نام در یک خط", "Galaxy S26",
                                                 multiline=True, parent=window)
-    # v2.10.0 «خروجی کاتالوگ برای سایت»
-    from app.ui import site_export_dialog as sx
-
-    yield "site export", lambda: sx.SiteExportDialog(context, window)
-    yield "site model data", lambda: sx.SiteModelDialog(context, int(model["id"]), window)
-    yield "accessory pdf", lambda: sx.AccessoryPdfDialog(context, b"%PDF-1.4", window)
     staff = [users_row for users_row in fake.staff.values()]
     yield "user form new", lambda: users.UserFormDialog(context, None, window)
     yield "user form edit", lambda: users.UserFormDialog(context, fake.staff_out(staff[1]), window)

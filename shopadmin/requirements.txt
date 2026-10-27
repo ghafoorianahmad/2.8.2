@@ -5,6 +5,7 @@ bcrypt>=4.1
 python-dotenv>=1.0
 openpyxl>=3.1
 keyring>=24.0 ; sys_platform == "win32"
+pdfplumber==0.11.10   # v2.11.0: accessory PDFs in the «سایت» section (brings Pillow)
 
 # --- build & test only ---
 pytest>=8.0

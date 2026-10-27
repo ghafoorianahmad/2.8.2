@@ -435,9 +435,6 @@ MIGRATIONS = (
     ("catalog_models", "auto_suggest", "TEXT NOT NULL DEFAULT ''"),
     ("catalog_models", "source", "TEXT NOT NULL DEFAULT ''"),
     ("catalog_models", "kind", "TEXT NOT NULL DEFAULT 'phone'"),
-    # v2.10.0: what the public site shows of a model (JSON: tier, year, colours,
-    # specs, image files, published); exported as catalog.json (site_export.py)
-    ("catalog_models", "site_data", "TEXT NOT NULL DEFAULT ''"),
 )
 
 #: Item request kinds (v2.6.1).

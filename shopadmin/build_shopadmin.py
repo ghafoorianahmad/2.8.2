@@ -37,8 +37,9 @@ EXCLUDED_QT_MODULES = (
     "PySide6.QtTextToSpeech", "PySide6.QtWebChannel", "PySide6.QtWebSockets",
     "PySide6.QtOpenGL", "PySide6.QtOpenGLWidgets",
     "shiboken6.support",
-    # Scientific stack should never be pulled in by a hook.
-    "numpy", "pandas", "matplotlib", "scipy", "PIL", "tkinter", "unittest",
+    # Scientific stack should never be pulled in by a hook. v2.11.0: PIL stays in
+    # (pdfplumber needs it for the accessory-PDF reader of the «سایت» section).
+    "numpy", "pandas", "matplotlib", "scipy", "tkinter", "unittest",
     "pytest", "setuptools", "pip",
 )
 
@@ -51,7 +52,7 @@ SERVER_ONLY_MODULES = ("app.server_setup", "app.ui.server_setup_wizard", "app.ui
 
 def check_environment() -> None:
     missing: list[str] = []
-    for module in ("PySide6", "httpx", "bcrypt", "dotenv", "openpyxl"):
+    for module in ("PySide6", "httpx", "bcrypt", "dotenv", "openpyxl", "pdfplumber"):
         try:
             __import__(module)
         except ImportError:
@@ -134,6 +135,12 @@ def build(clean: bool, console: bool, variant: str = "full") -> int:
         "--hidden-import", "keyring.backends.chainer",
         "--collect-submodules", "keyring",
         "--collect-submodules", "openpyxl",
+        # v2.11.0: the accessory-PDF reader of the «سایت» section (runs on this PC)
+        "--hidden-import", "pdfplumber",
+        "--collect-submodules", "pdfplumber",
+        "--collect-submodules", "pdfminer",
+        "--collect-data", "pypdfium2_raw",
+        "--collect-binaries", "pypdfium2_raw",
         *[f"--exclude-module={module}" for module in EXCLUDED_QT_MODULES],
         *([f"--exclude-module={module}" for module in SERVER_ONLY_MODULES] if client else []),
         *add_data,
