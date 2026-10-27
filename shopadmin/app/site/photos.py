@@ -68,3 +68,52 @@ def to_jpeg(image: QImage) -> bytes:
     image.save(buffer, "JPG", QUALITY)
     buffer.close()
     return bytes(raw.data())
+
+
+# ---- v2.12.0 «ظاهر و چیدمان»: logo and banner pictures ---------------------------------------
+LOGO_SIZE = 256
+BANNER_WIDTH, BANNER_HEIGHT = 1200, 600
+
+
+def to_png(image: QImage) -> bytes:
+    raw = QByteArray()
+    buffer = QBuffer(raw)
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buffer, "PNG")
+    buffer.close()
+    return bytes(raw.data())
+
+
+def normalize_logo(data: bytes) -> bytes:
+    """A square 256×256 PNG, the logo centred on a transparent background."""
+    image = load(data)
+    canvas = QImage(LOGO_SIZE, LOGO_SIZE, QImage.Format.Format_ARGB32)
+    canvas.fill(Qt.GlobalColor.transparent)
+    scaled = image.scaled(LOGO_SIZE, LOGO_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
+                          Qt.TransformationMode.SmoothTransformation)
+    painter = QPainter(canvas)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.drawImage(QRect((LOGO_SIZE - scaled.width()) // 2,
+                                (LOGO_SIZE - scaled.height()) // 2,
+                                scaled.width(), scaled.height()), scaled)
+    finally:
+        painter.end()
+    return to_png(canvas)
+
+
+def normalize_banner(data: bytes) -> tuple[bytes, list[str]]:
+    """A 1200×600 JPEG (2:1, like the brand pictures of the banner): the picture
+    fills the frame, the middle is kept. Returns (JPEG, Persian notes)."""
+    image = load(data)
+    notes = []
+    if image.width() < BANNER_WIDTH // 2:
+        notes.append("عکس بنر کوچک است و در سایت کمی تار دیده می‌شود.")
+    scaled = image.scaled(BANNER_WIDTH, BANNER_HEIGHT,
+                          Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                          Qt.TransformationMode.SmoothTransformation)
+    x = (scaled.width() - BANNER_WIDTH) // 2
+    y = (scaled.height() - BANNER_HEIGHT) // 2
+    canvas = scaled.copy(x, y, BANNER_WIDTH, BANNER_HEIGHT).convertToFormat(
+        QImage.Format.Format_RGB32)
+    return to_jpeg(canvas), notes

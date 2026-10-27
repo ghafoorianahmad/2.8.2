@@ -177,7 +177,9 @@ def test_publish_commits_catalog_and_photos_then_only_changes(store, site_folder
     catalog = json.loads(files["assets/catalog/catalog.json"])
     assert catalog["format"] == "asr-catalog" and len(catalog["items"]) == 2
     assert "assets/catalog/images/iphone-17-black.jpg" in files and files["index.html"] == b"<html>"
-    assert out["written"] == 4 and out["deploy_started"] and fake.dispatches == ["main"]
+    # v2.12.0: + assets/catalog/site.json (the look) in the same commit
+    assert out["written"] == 5 and out["deploy_started"] and fake.dispatches == ["main"]
+    assert json.loads(files["assets/catalog/site.json"])["format"] == "asr-site-look"
     assert fake.messages()[0] == pub.COMMIT_MESSAGE
     text = files["assets/catalog/catalog.json"].decode("utf-8")
     assert TOKEN not in text and "kala_code" not in text

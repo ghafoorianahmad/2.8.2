@@ -103,6 +103,11 @@ class FakeGitHub:
                 return reply(404, {"message": "Not Found"})
             return reply(200, {"encoding": "base64", "content": base64.b64encode(data).decode(),
                                "sha": _sha(data)})
+        if rest.startswith("/git/blobs/") and request.method == "GET":
+            data = self.blobs.get(rest.rsplit("/", 1)[1])
+            if data is None:
+                return reply(404, {})
+            return reply(200, {"encoding": "base64", "content": base64.b64encode(data).decode()})
         if not self.can_write and request.method != "GET":
             return reply(403, {"message": "Resource not accessible by personal access token"})
         if rest == "/git/blobs" and request.method == "POST":

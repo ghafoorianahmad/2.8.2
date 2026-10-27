@@ -5,9 +5,12 @@
     <data>/site/published.json   what the site shows now (the preview compares with it)
     <data>/site/history/         one record per publish, for «برگرداندن انتشار قبلی»
                                  (48 hours, then deleted automatically)
+    <data>/site/look/            v2.12.0 logo and banner pictures of «ظاهر و چیدمان»
+                                 (the look itself is ``look`` in site_data.json)
 
-Nothing of it is sent to the shop server. A backup is one zip of the three
-first parts; a restore first keeps a copy of the current data.
+Nothing of it is sent to the shop server. A backup is one zip of the data, the
+photos, the look pictures and the published state; a restore first keeps a
+copy of the current data.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import catalog as cat
+from . import look as lk
 from . import photos as ph
 
 ROLLBACK_HOURS = 48
@@ -49,6 +53,7 @@ class SiteStore:
         self.root = Path(root)
         self.photos_dir = self.root / "photos"
         self.history_dir = self.root / "history"
+        self.look_dir = self.root / "look"
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     # ---- working data ------------------------------------------------------------------
@@ -110,6 +115,76 @@ class SiteStore:
                 row["hidden"] = bool(hidden)
         self.save(data)
 
+    # ---- v2.12.0 «ظاهر و چیدمان» -----------------------------------------------------
+    def look(self) -> dict:
+        return lk.clean_look(self.load().get("look"))
+
+    def save_look(self, look: dict) -> dict:
+        data = self.load()
+        data["look"] = lk.clean_look(look)
+        data["look_updated_at"] = cat.now_iso()
+        self.save(data)
+        return data["look"]
+
+    def update_look(self, change: Callable[[dict], None]) -> dict:
+        """``change(look)`` edits a copy in place; the result is cleaned and saved."""
+        look = self.look()
+        change(look)
+        return self.save_look(look)
+
+    def brands(self) -> list[dict]:
+        return self.load()["brands"]
+
+    def set_brand_order(self, keys: list[str]) -> None:
+        data = self.load()
+        rank = {k: n for n, k in enumerate(keys)}
+        data["brands"] = sorted(data["brands"], key=lambda b: rank.get(b["key"], len(rank)))
+        data["look_updated_at"] = cat.now_iso()
+        self.save(data)
+
+    def reorder(self, codes: list[str]) -> None:
+        """Put these items (e.g. the phones of one brand) in this order; every
+        other item keeps its place."""
+        data = self.load()
+        by_code = {row["code"]: row for row in data["items"]}
+        wanted = [c for c in dict.fromkeys(codes) if c in by_code]
+        slots = [n for n, row in enumerate(data["items"]) if row["code"] in set(wanted)]
+        for slot, code in zip(slots, wanted):
+            data["items"][slot] = by_code[code]
+        self.save(data)
+
+    def sort_phones_newest(self) -> None:
+        """The order the site uses by itself (newest first, then tier, then name);
+        the phone order becomes «خودکار» again."""
+        tiers = {"پرفروش": 1, "پرچم‌دار": 2, "پرچمدار": 2, "متعادل": 3, "میان‌رده": 4,
+                 "میانرده": 4, "اقتصادی‌تر": 5, "اقتصادی‌ترین": 6, "اقتصادی": 7}
+        phones = sorted(self.items(cat.KIND_PHONE), key=lambda i: (
+            -(i["release_year"] or 0), tiers.get(i["tier"], 99), i["name"].lower()))
+        self.reorder([p["code"] for p in phones])
+        self.update_look(lambda look: look.update(phone_order=lk.PHONE_ORDER_AUTO))
+
+    def look_photo_hashes(self) -> dict[str, str]:
+        if not self.look_dir.is_dir():
+            return {}
+        return {p.name: cat.sha256(p.read_bytes()) for p in sorted(self.look_dir.iterdir())
+                if p.is_file() and lk.LOOK_IMAGE_RE.match(p.name)}
+
+    def look_photo_path(self, name: str) -> Path:
+        return self.look_dir / name
+
+    def add_look_photo(self, kind: str, data: bytes) -> tuple[str, list[str]]:
+        """A logo (``kind="logo"``) or a banner picture in the site standard.
+        Returns (file name, Persian notes); the name changes with the content, so
+        the site's CDN never shows an old copy."""
+        if kind == "logo":
+            raw, notes, ext = ph.normalize_logo(data), [], "png"
+        else:
+            (raw, notes), ext = ph.normalize_banner(data), "jpg"
+        prefix = "logo" if kind == "logo" else "banner"
+        name = f"{prefix}-{cat.sha256(raw)[:12]}.{ext}"
+        _write_atomic(self.look_dir / name, raw)
+        return name, notes
+
     # ---- photos ------------------------------------------------------------------------
     def photo_hashes(self) -> dict[str, str]:
         if not self.photos_dir.is_dir():
@@ -160,7 +235,10 @@ class SiteStore:
         added = [i for i in parsed["items"] if i["code"] not in have]
         data["items"].extend(added)
         if parsed["brands"]:
-            data["brands"] = parsed["brands"]
+            # v2.12.0: a brand order arranged here is kept
+            rank = {b["key"]: n for n, b in enumerate(data["brands"])}
+            data["brands"] = sorted(parsed["brands"],
+                                    key=lambda b: rank.get(b["key"], len(rank)))
         data["seeded"] = source
         photos = missing = 0
         for item in added:
@@ -179,9 +257,43 @@ class SiteStore:
         self.save(data)
         if not (self.root / "published.json").is_file():
             # the site as it is now: the first preview shows only real changes
-            self.mark_published(self.build()[0], commit="", note="site as read")
+            self.mark_published(self.build()[0], commit="", note="site as read",
+                                site=self.build_look()[0] if "look" in data else None)
         return {"models": len(parsed["items"]), "added": len(added), "photos": photos,
                 "missing_photos": missing}
+
+    def import_look(self, site_json: Optional[bytes],
+                    fetch_picture: Callable[[str], Optional[bytes]]) -> bool:
+        """v2.12.0: the look the site already has (its site.json) becomes the look
+        here — only while nothing was arranged on this computer. True = imported."""
+        if not site_json or "look" in self.load():
+            return False
+        try:
+            raw = json.loads(site_json.decode("utf-8"))
+        except ValueError:
+            return False
+        if not isinstance(raw, dict) or raw.get("format") != lk.FORMAT:
+            return False
+
+        def bare(path) -> str:
+            path = str(path or "")
+            return path[len(lk.LOOK_PREFIX):] if path.startswith(lk.LOOK_PREFIX) else ""
+
+        hero = raw.get("hero") if isinstance(raw.get("hero"), dict) else {}
+        look = lk.clean_look({**raw, "logo": bare(raw.get("logo")),
+                              "hero": {**hero, "images": [bare(p) for p in hero.get("images")
+                                                          or []]}})
+        for name in lk.image_refs(look):
+            picture = fetch_picture(name)
+            if picture:
+                _write_atomic(self.look_dir / name, picture)
+        look["logo"] = look["logo"] if (self.look_dir / look["logo"]).is_file() else ""
+        look["hero"]["images"] = [n for n in look["hero"]["images"]
+                                  if (self.look_dir / n).is_file()]
+        self.save_look(look)
+        if isinstance(raw.get("brand_order"), list):
+            self.set_brand_order([str(k) for k in raw["brand_order"]])
+        return True
 
     def seed_from_folder(self, folder: Path | str) -> dict:
         root = Path(folder)
@@ -190,6 +302,13 @@ class SiteStore:
             raise SiteDataError("در این پوشه assets/products.js نیست؛ پوشهٔ اصلی سایت را "
                                 "انتخاب کنید.")
         site = root / "assets" / "site.js"
+        look_file = root / cat.SITE_CATALOG_DIR / lk.LOOK_FILE
+        if look_file.is_file():
+            def picture(name: str) -> Optional[bytes]:
+                path = root / cat.SITE_CATALOG_DIR / "look" / name
+                return path.read_bytes() if path.is_file() else None
+
+            self.import_look(look_file.read_bytes(), picture)
 
         def fetch(name: str) -> Optional[bytes]:
             for path in (root / "assets" / "products" / name,
@@ -211,26 +330,64 @@ class SiteStore:
                  for path in catalog["images"]}
         return catalog, files
 
+    def build_look(self, generator: str = "ShopAdmin") -> tuple[dict, dict[str, Path]]:
+        """(site.json, {path in the site repository: picture file})."""
+        data = self.load()
+        visible = [i["code"] for i in data["items"]
+                   if i["category"] == cat.KIND_PHONE and not i["hidden"] and i["code"]]
+        site = lk.build_site_json(
+            data.get("look"), [b["key"] for b in data["brands"]], visible,
+            self.look_photo_hashes(), generator=generator,
+            generated_at=str(data.get("look_updated_at") or data.get("updated_at") or ""))
+        files = {f"{cat.SITE_CATALOG_DIR}/{path}": self.look_dir / path[len(lk.LOOK_PREFIX):]
+                 for path in site["images"]}
+        return site, files
+
+    @staticmethod
+    def snapshot(catalog: dict, site: Optional[dict]) -> dict:
+        return {**cat.snapshot(catalog), "order": [i["code"] for i in catalog.get("items") or []],
+                "look": lk.snapshot(site)}
+
     def published(self) -> Optional[dict]:
         value = _json(self.root / "published.json", None)
         return value if isinstance(value, dict) else None
 
     def preview(self) -> dict:
         catalog, _files = self.build()
-        old = (self.published() or {}).get("snapshot")
-        change = cat.diff(old, cat.snapshot(catalog))
-        return {"change": change, "lines": cat.preview_lines(change),
-                "has_changes": cat.has_changes(change),
+        site, _look_files = self.build_look()
+        old = (self.published() or {}).get("snapshot") or {}
+        new = self.snapshot(catalog, site)
+        change = cat.diff(old or None, new)
+        lines = cat.preview_lines(change) if cat.has_changes(change) else []
+        order_changed = False
+        if old.get("order") is not None:
+            kept = set(old["order"]) & set(new["order"])
+            order_changed = ([c for c in old["order"] if c in kept]
+                             != [c for c in new["order"] if c in kept])
+        if order_changed:
+            lines.append("↕ ترتیب کالاها در سایت عوض می‌شود.")
+        names = {b["key"]: b.get("name") or b["key"] for b in catalog.get("brands") or []}
+        names.update({c: i.get("name") or c for c, i in new["items"].items()})
+        look_lines = lk.diff_lines(old.get("look"), new["look"], names)
+        lines += look_lines
+        if not lines:
+            lines = cat.preview_lines(change)
+        return {"change": change, "lines": lines,
+                "has_changes": cat.has_changes(change) or bool(look_lines) or order_changed,
+                "look_lines": look_lines,
                 "problems": cat.validate_catalog(catalog),
+                "look_problems": lk.look_problems(self.look()),
                 "phones": sum(1 for i in catalog["items"] if i["category"] == cat.KIND_PHONE),
                 "accessories": sum(1 for i in catalog["items"]
                                    if i["category"] == cat.KIND_ACCESSORY),
                 "images": len(catalog["images"]),
                 "last": self.published()}
 
-    def mark_published(self, catalog: dict, *, commit: str, note: str = "") -> None:
+    def mark_published(self, catalog: dict, *, commit: str, note: str = "",
+                       site: Optional[dict] = None) -> None:
+        """``site``: the site.json published with it (None = the site's own look)."""
         record = {"at": self.clock().isoformat(timespec="seconds"), "commit": commit,
-                  "note": note, "snapshot": cat.snapshot(catalog)}
+                  "note": note, "snapshot": self.snapshot(catalog, site)}
         _write_atomic(self.root / "published.json",
                       json.dumps(record, ensure_ascii=False).encode("utf-8"))
 
@@ -311,6 +468,10 @@ class SiteStore:
                 archive.write(self.photos_dir / name, f"photos/{name}",
                               compress_type=zipfile.ZIP_STORED)
                 count += 1
+            for name in self.look_photo_hashes():
+                archive.write(self.look_dir / name, f"look/{name}",
+                              compress_type=zipfile.ZIP_STORED)
+                count += 1
         return count
 
     def restore(self, source: Path | str) -> dict:
@@ -330,6 +491,8 @@ class SiteStore:
                 raise SiteDataError("این فایل پشتیبانِ بخش «سایت» نیست.")
             photos = [n for n in names if n.startswith("photos/")
                       and cat.IMAGE_NAME_RE.match(n[len("photos/"):])]
+            look_photos = [n for n in names if n.startswith("look/")
+                           and lk.LOOK_IMAGE_RE.match(n[len("look/"):])]
             if self.root.is_dir():
                 keep = self.root.parent / f"site_before_restore_{self.clock():%Y%m%d%H%M%S}"
                 shutil.copytree(self.root, keep, ignore=shutil.ignore_patterns("history"))
@@ -337,7 +500,11 @@ class SiteStore:
                 shutil.rmtree(self.photos_dir)
             for name in photos:
                 _write_atomic(self.photos_dir / name[len("photos/"):], archive.read(name))
+            if self.look_dir.is_dir():
+                shutil.rmtree(self.look_dir)
+            for name in look_photos:
+                _write_atomic(self.look_dir / name[len("look/"):], archive.read(name))
             _write_atomic(self.data_path, archive.read("site_data.json"))
             if "published.json" in names:
                 _write_atomic(self.root / "published.json", archive.read("published.json"))
-        return {"items": len(data.get("items") or []), "photos": len(photos)}
+        return {"items": len(data.get("items") or []), "photos": len(photos) + len(look_photos)}
