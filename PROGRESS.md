@@ -2,6 +2,23 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## v2.13.0 — owner's 11-point list after testing the installed 2.12.0 (2026-10-27, same branch) — IN PROGRESS (unattended)
+
+Owner's rules for this run: no admin rights (no service restart, no install, no helper task), test the running ShopAdmin as it is, DB writes only in «hesab5 t», no «پاک‌سازی», no site publish, no push, never message customers. Build goes to `E:\Outputs\ShopSystem\`; the owner installs and re-tests.
+
+**Step 1 — real test of the running 2.12.0 (ShopAdmin driven through UI Automation, `pywinauto`; computer-use tools were not available) — DONE**
+- «تنظیمات سرور فروشگاه»: server up 36 min (restarted by «تنظیمات سرور» at 17:56), Telegram reader connected via 135.181.74.178:443 and reporting today; «لیست قیمت کانال — آخرین فایل: ۱۴۰۵/۰۸/۰۵ — خوانده نشد (قالب ناشناخته)»; «پشتیبان‌گیری روزانه: ناموفق در ۱۴۰۵/۰۸/۰۵ (PermissionError: Access is denied) — آخرین پشتیبان موفق: ۱۴۰۵/۰۸/۰۳». `D:\ShopServerData` (logs, status.json) is admin-only: not read.
+- **#6 cause (confirmed):** the 1405/08/05 PDF has a second نقد/روال header row lower in the middle block (sub-section «TABLET XIAOMI», y=430); the parser refused any header below the top line ("price headers are not on one line").
+- **#5 cause (confirmed by running the installed `ShopSystem.exe --list-dbs` against a non-existing server):** the frozen exe prints its JSON answer with Persian text through a cp1252 stdout (PyInstaller ignores `PYTHONIOENCODING`) → `UnicodeEncodeError` (also in ShopAdmin's `app.log` at 17:50) → ShopAdmin gets no kind (`db_access`) → never offers/does the grant; every DB whose check answers in Persian (no access, missing, …) fails. «hesab5 t» worked only because its success answer has no Persian.
+- **#3 cause (confirmed):** the off-server folder `\\192.168.20.150\E` is NOT this PC (this PC = 192.168.40.100, its shares are only `work` and `users`); it is another computer the owner reaches with saved credentials (`Z:`). The service runs as `NT SERVICE\ShopServer`, which reaches another computer's share without any user name → "Access is denied". 2.9.4 assumed it was this PC's own E: drive. `\\192.168.20.150\E\ShopServerBackup` was created today 17:55 by the owner's own test and is empty. The last good backup (1405/08/03) was before the off-server copy was configured.
+- **#2 (likely cause, logs not readable without admin):** the worker loop pauses EVERY job during a Telegram FloodWait and does not publish its status while paused, and the supervisor only restarts a process that exits — a worker that stays alive but stops working (long FloodWait on a channel lookup, or a hang) shows as «stopped» until someone restarts the service (which is what «تنظیمات سرور» did today). Fix = watchdog + status while paused + cached channel lookup (step 3).
+
+**Step 2 — #6 PDF reader — DONE** `shopapi/app/pricelist/parser.py`: the column headers are the top line; a lower نقد/روال pair is accepted only as a sub-section header (a نقد then روال pair on one line, inside one block, within 20 pt of that block's price columns) and skipped, anything else is still a layout change. Today's list: 208 rows, no warnings. Sample `samples/price_list_1405-08-05.pdf`; tests `shopapi/tests/test_v2130.py`.
+
+**Next:** step 3 — worker watchdog + auto-restart + one alert (#2, #4); step 4 — backup to another computer's share (#3); step 5 — DB auto-grant (#5); step 6 — PDF archive, «دریافت لیست اکنون», «خواندن دوباره», rejected-file alert (#1, #6, #7, #8); step 7 — UI (#9–#11); step 8 — tests, audits, version, build, Outputs.
+
+**Decisions so far:** archive names use the receive date (Tehran, Jalali) — a list posted late on 08/04 for 08/05 would be `1405-08-04-n`; an identical file received again is not stored twice.
+
 ## v2.12.0 — the site is a showcase only (no cart) + «ظاهر و چیدمان» in ShopAdmin (2026-10-27, same branch) — DONE in code; site committed locally only; nothing published or installed
 
 Owner's decision change after 2.11.0; step-by-step log in `PROGRESS_SITE.md`, decisions in `REQUIREMENTS.md` §7j, format and how-to in `SITE_CATALOG.md`.

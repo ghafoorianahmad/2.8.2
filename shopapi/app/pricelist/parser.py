@@ -161,17 +161,25 @@ def _find_date(words: list[dict]) -> str:
     raise ParseError("no date found")
 
 
+def _header_words(words: list[dict]) -> list[dict]:
+    return [w for w in words if letter_signature(w["text"]) in (_SIG_NAGHD, _SIG_RAVAL)]
+
+
 def _find_blocks(words: list[dict], page_width: float) -> tuple[list[_Block], float]:
-    naghd = sorted((w for w in words if letter_signature(w["text"]) == _SIG_NAGHD),
+    headers = _header_words(words)
+    if not headers:
+        raise ParseError("price headers (نقد/روال) not found")
+    header_top = min(w["top"] for w in headers)
+    # The column headers are the top line. A sub-section lower down (e.g.
+    # "XIAOMI TABLET", 1405/08/05) may repeat its own نقد/روال pair: those are
+    # checked in parse_words and skipped, they never define new blocks.
+    top_line = [w for w in headers if w["top"] - header_top <= 6]
+    naghd = sorted((w for w in top_line if letter_signature(w["text"]) == _SIG_NAGHD),
                    key=lambda w: w["x0"])
-    raval = sorted((w for w in words if letter_signature(w["text"]) == _SIG_RAVAL),
+    raval = sorted((w for w in top_line if letter_signature(w["text"]) == _SIG_RAVAL),
                    key=lambda w: w["x0"])
     if not naghd or len(naghd) != len(raval):
         raise ParseError("price headers (نقد/روال) not found")
-    header_top = min(w["top"] for w in naghd + raval)
-    # Headers lower down the page would be a different layout.
-    if any(w["top"] - header_top > 6 for w in naghd + raval):
-        raise ParseError("price headers are not on one line")
     blocks: list[_Block] = []
     left = 0.0
     for n, r in zip(naghd, raval):
@@ -182,6 +190,28 @@ def _find_blocks(words: list[dict], page_width: float) -> tuple[list[_Block], fl
         left = right
     blocks[-1].right = max(blocks[-1].right, page_width)
     return blocks, header_top
+
+
+def _check_sub_headers(blocks: list[_Block], header_top: float,
+                       words: list[dict]) -> set[int]:
+    """ids of نقد/روال cells below the top line, after checking they are a
+    sub-section's header: a نقد then روال pair on one line, inside one block,
+    over that block's price columns. Anything else is a different layout."""
+    lower = [w for w in _header_words(words) if w["top"] - header_top > 6]
+    found: set[int] = set()
+    for line in _lines(lower, tolerance=3):
+        if len(line) % 2:
+            raise ParseError("price headers are not on one line")
+        for n, r in zip(line[::2], line[1::2]):
+            index = _block_of(blocks, n["x0"])
+            if (letter_signature(n["text"]) != _SIG_NAGHD
+                    or letter_signature(r["text"]) != _SIG_RAVAL
+                    or index is None or _block_of(blocks, r["x0"]) != index
+                    or abs(n["x0"] - blocks[index].naghd_x) > 20
+                    or abs(r["x0"] - blocks[index].raval_x) > 20):
+                raise ParseError("price headers are not on one line")
+            found.update((id(n), id(r)))
+    return found
 
 
 def _block_of(blocks: list[_Block], x0: float) -> int | None:
@@ -215,9 +245,12 @@ def parse_words(words: list[dict], page_width: float) -> ParsedList:
         raise ParseError("the PDF has no text")
     list_date = _find_date(words)
     blocks, header_top = _find_blocks(words, page_width)
+    sub_headers = _check_sub_headers(blocks, header_top, words)
 
     per_block: list[list[dict]] = [[] for _ in blocks]
     for word in words:
+        if id(word) in sub_headers:
+            continue                     # a sub-section's own نقد/روال cells
         index = _block_of(blocks, word["x0"])
         if index is None:
             continue
@@ -295,7 +328,8 @@ def _parse_block(index: int, block: _Block, words: list[dict], warnings: list[st
         # Every data row has a price cell (a number or "..."); a title such as
         # "APPLE WATCH" may reach into the color column but has no price/type.
         if not (anchor["kind"] or anchor["naghd"] or anchor["raval"]):
-            headers.append((anchor["top"], _join(anchor["desc"] + anchor["color"])))
+            headers.append((anchor["top"], _join(sorted(
+                anchor["desc"] + anchor["color"], key=lambda w: w["x0"]))))
         else:
             data.append(anchor)
     for top, line in orphans:
