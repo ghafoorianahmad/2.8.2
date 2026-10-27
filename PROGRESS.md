@@ -2,6 +2,16 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## v2.12.0 — the site is a showcase only (no cart) + «ظاهر و چیدمان» in ShopAdmin (2026-10-27, same branch) — DONE in code; site committed locally only; nothing published or installed
+
+Owner's decision change after 2.11.0; step-by-step log in `PROGRESS_SITE.md`, decisions in `REQUIREMENTS.md` §7j, format and how-to in `SITE_CATALOG.md`.
+
+1. **Site cart removed before it was ever published** — site commit `1d7d23c` reverts `22056b7` + `c457494` (the accessory description stays); server and bots: the code of `df7f19a` reversed (`site_cart.py`, `POST /cart-requests`, `/start c_…`, `SITE_CART_*`, tests); `shopbots/` is byte-identical to v2.10.0; ShopAdmin's cart hash and its error text removed. Selling = only the bots' own cart / order flow; per-model «buy via bot» links (`?start=m_`) stay.
+2. **«ظاهر و چیدمان»** (`app/site/look.py`, `app/ui/site_look.py`): brand / phone / accessory order (drag or «بالاتر/پایین‌تر», «ترتیب خودکار»), «تازه‌ترین گوشی‌ها» (≤ 8, empty = 4 newest), six colour presets, logo (256×256 PNG), banner texts + 3 badges + ≤ 3 pictures (1200×600), home section order / show-hide, store address / phone / hours / about / bot, channel and map links (checked). Published as `assets/catalog/site.json` (`asr-site-look` v1) + `look/` pictures in the same commit as catalog.json, so the 48-hour rollback undoes both; backup / restore and «خواندن از سایت» carry it.
+3. **Browser preview** (`app/site/preview.py`): the site's own code (the folder of «خواندن از پوشهٔ سایت…» or a cached copy from GitHub) + this computer's catalog.json / site.json, served on 127.0.0.1 and opened in the computer's browser.
+4. **Site** (commit `25ad4f2`): `site.js` reads site.json (checked again, textContent only, safe fallback, palette before first paint, a removed file reloads once to the built-in look); `data-look` / `data-store` marks; palette CSS in `theme.css`.
+5. **End to end** — `shopadmin/scripts/e2e_site_mock.py` against a fake GitHub holding the real site's 318 files: 30/30 checks; the published, rolled-back and a tampered site.json checked in a browser.
+
 ## v2.11.0 — «سایت» only in ShopAdmin (no server) + site cart -> bot (2026-10-27, same branch) — DONE in code; site committed locally only; nothing published or installed
 
 Owner's request after 2.10.0; step-by-step log in `PROGRESS_SITE.md`, decisions in `REQUIREMENTS.md` §7i, format / token guide in `SITE_CATALOG.md`.
