@@ -2,7 +2,7 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
-## v2.13.0 — owner's 11-point list after testing the installed 2.12.0 (2026-10-27, same branch) — IN PROGRESS (unattended)
+## v2.13.0 — owner's 11-point list after testing the installed 2.12.0 (2026-10-27, same branch) — DONE in code, built (not installed: no admin rights)
 
 Owner's rules for this run: no admin rights (no service restart, no install, no helper task), test the running ShopAdmin as it is, DB writes only in «hesab5 t», no «پاک‌سازی», no site publish, no push, never message customers. Build goes to `E:\Outputs\ShopSystem\`; the owner installs and re-tests.
 
@@ -38,7 +38,13 @@ Tests: shopapi 565, shoptg 87, shopsystem 80 ✓ (shopadmin running).
 - #11 `widgets.dialog_area` / `fit_window_to_screen`: a dialog of the main window is at most 94 % of that window (title bar included), opens centred on it and inside it, long content scrolls inside (`make_responsive`); dialogs from dialogs are bounded by the main window too; without a main window: the screen as before.
 - price-list lists table: rows as tall as their «خواندن دوباره» button.
 
-**Next:** step 8 — all tests, three audits in 9 looks, version 2.13.0 (done in code), commit, build, ProductVersion, Outputs + README_FA.
+**Step 8 — tests, audits, build, Outputs — DONE**
+- Tests (build): shopapi 560, shopbots 287, shoptg 87, shopsystem 80, shopadmin 754 ✓. Audits in all 9 looks: buttons 0, cut text 0, RTL 0; contrast_audit 420/420 AA.
+- Build from commit `d6010c7`: both installers ProductVersion 2.13.0; the built `ShopSystem.exe --list-dbs` now answers in (escaped) Persian through a pipe (2.12.0: UnicodeEncodeError); `netshare` is in the build.
+- `E:\Outputs\ShopSystem\`: `ShopServerSetup_2.13.0_2026-10-27.exe` (SHA-256 6EA20656…4DE6), `ShopAdminSetup_2.13.0_2026-10-27.exe` (AB395C59…9774), copies verified, the 2.12.0 pair removed, README_FA.txt + `E:\Outputs\README_FA.txt` row updated. Screenshots of every screen in 4 looks: `shopadmin/docs/screens_2.13.0/` (not committed, 20 MB).
+- Fixed along the way: a parametrised look test that re-applied the theme to the test app took ~10 min per look (now builds the style sheet only); `existing_config_port` no longer crashes without admin rights; label `text()` = the text itself (no-break spaces are display-only).
+
+**Waiting on the owner (admin rights):** install 2.13.0 on this PC; `shoptg.log` / `supervisor.log` for the exact cause of the 1405/08/04 stop; the backup share's user name / password + «آزمایش»; pick «hesab5» once (auto-grant needs a sysadmin Windows account); «دریافت لیست اکنون» once.
 
 **Decisions so far:** archive names use the receive date (Tehran, Jalali) — a list posted late on 08/04 for 08/05 would be `1405-08-04-n`; an identical file received again is not stored twice; «خواندن دوباره» on a list that was read before changes nothing (its rows and decisions stay); the automatic grant only for «دسترسی نیست» answers (never for a wrong password / missing server); the crash-loop Bale message of 2.9 was replaced by the one-per-incident alert.
 
