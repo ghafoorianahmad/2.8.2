@@ -2,6 +2,9 @@
 
 * «گوشی‌ها»: فهرست با «نمایش/پنهان در سایت»، «افزودن گوشی جدید»، «ویرایش».
 * «لوازم جانبی»: افزودن / ویرایش / پنهان؛ «خواندن از PDF…» کمکی است.
+* v2.12.0 «ظاهر و چیدمان» (``app.ui.site_look``): ترتیب برندها و کالاها، «تازه‌ترین گوشی‌ها»،
+  رنگ‌بندی آماده، لوگو، بنر، بخش‌های صفحهٔ اصلی، اطلاعات فروشگاه — بدون کد؛ و «پیش‌نمایش در
+  مرورگر» (همان سایت با دادهٔ این رایانه، روی 127.0.0.1).
 * «انتشار و پشتیبان»: «پیش‌نمایش» (دقیقاً چه چیزی در سایت عوض می‌شود)، «انتشار در سایت»
   (یک commit در مخزن GitHub سایت با توکنی که خود مالک وارد می‌کند)، «برگرداندن انتشار
   قبلی» (فقط تا ۴۸ ساعت)، توکن (رمزگذاری‌شده با ویندوز)، «آزمایش اتصال»، خواندن داده از سایت،
@@ -13,7 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -30,6 +34,7 @@ from ...permissions import CATALOG_MANAGE
 from ...persian import format_int, format_shamsi
 from ...site import catalog as cat
 from ...site import github as gh_mod
+from ...site import preview as pv
 from ...site import publish as pub
 from ...site import token as tk
 from ...site.store import SiteDataError, SiteStore
@@ -38,10 +43,13 @@ from ..async_utils import run_async
 from ..base_page import BasePage
 from ..rtl import mark_ltr
 from ..site_dialogs import AccessoryDialog, AccessoryPdfDialog, PhoneDialog
+from ..site_look import LookTab
 
 NL = chr(10)
 PHONE_HEADERS = ("برند", "گوشی", "رنگ‌ها", "عکس", "در سایت")
 ACCESSORY_HEADERS = ("نوع", "عنوان", "عکس", "در سایت")
+#: v2.12.0: the site folder of «خواندن از پوشهٔ سایت…» = the code of the browser preview
+PREVIEW_FOLDER_SETTING = "site_preview_folder"
 
 
 # ---- pure helpers (tested without a window) ------------------------------------------
@@ -90,6 +98,8 @@ class SitePage(BasePage):
 
     #: tests replace this with a fake GitHub transport (never the real repository)
     github_transport = None
+    #: tests replace this (no browser is opened)
+    open_url = staticmethod(lambda url: QDesktopServices.openUrl(QUrl(url)))
 
     def build_body(self) -> None:
         self.can_manage = self.context.can(CATALOG_MANAGE)
@@ -99,6 +109,16 @@ class SitePage(BasePage):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._phones_tab(), "گوشی‌ها")
         self.tabs.addTab(self._accessories_tab(), "لوازم جانبی")
+        self.look_tab = LookTab(self.store, can_manage=self.can_manage,
+                                notify=self.notify_success, parent=self)
+        self.look_tab.changed.connect(self.render)
+        self.look_tab.add_action(widgets.button("پیش‌نمایش در مرورگر", icon_name="globe",
+                                                on_click=self._preview_browser))
+        look_publish = widgets.button("انتشار در سایت", icon_name="check", variant="primary",
+                                      on_click=self._publish)
+        look_publish.setEnabled(self.can_manage)
+        self.look_tab.add_action(look_publish)
+        self.tabs.addTab(self.look_tab, "ظاهر و چیدمان")
         self.tabs.addTab(self._publish_tab(), "انتشار و پشتیبان")
         self.body.addWidget(self.tabs, 1)
 
@@ -181,11 +201,14 @@ class SitePage(BasePage):
         actions = QWidget()
         flow = widgets.FlowLayout(actions, spacing=8)
         self.preview_button = widgets.button("پیش‌نمایش", icon_name="eye", on_click=self.render)
+        self.browser_button = widgets.button("پیش‌نمایش در مرورگر", icon_name="globe",
+                                             on_click=self._preview_browser)
         self.publish_button = widgets.button("انتشار در سایت", icon_name="check",
                                              variant="primary", on_click=self._publish)
         self.rollback_button = widgets.button("برگرداندن انتشار قبلی", icon_name="refresh",
                                               on_click=self._rollback)
-        for b in (self.preview_button, self.publish_button, self.rollback_button):
+        for b in (self.publish_button, self.preview_button, self.browser_button,
+                  self.rollback_button):
             flow.addWidget(b)
         box.addWidget(actions)
 
@@ -252,6 +275,7 @@ class SitePage(BasePage):
     # ---- data ------------------------------------------------------------------------
     def load(self) -> None:
         self.store.purge_history()
+        self.look_tab.fill()
         self.render()
 
     def soft_refresh(self) -> None:
@@ -289,10 +313,11 @@ class SitePage(BasePage):
         shown = sum(1 for p in phones if not p["hidden"])
         self.phones_summary.setText(f"{format_int(len(phones))} گوشی؛ "
                                     f"{format_int(shown)} در سایت نمایش داده می‌شود")
+        self.look_tab.fill_lists()
         preview = self.store.preview()
         lines = list(preview["lines"])
-        if preview["problems"]:
-            lines = ["⚠ " + p for p in preview["problems"]] + lines
+        if preview["problems"] or preview["look_problems"]:
+            lines = ["⚠ " + p for p in preview["problems"] + preview["look_problems"]] + lines
         self.preview_box.setPlainText(NL.join(lines))
         self.publish_state.setText(last_publish_text(self.store) + NL + rollback_text(self.store))
         self.rollback_button.setEnabled(self.can_manage and self.store.last_rollback() is not None)
@@ -394,6 +419,8 @@ class SitePage(BasePage):
 
     # ---- publish -----------------------------------------------------------------------
     def _publish(self) -> None:
+        if not self.look_tab.save_pending():
+            return
         preview = self.store.preview()
         if preview["problems"]:
             widgets.error(self, "انتشار", "، ".join(preview["problems"]))
@@ -471,14 +498,67 @@ class SitePage(BasePage):
         except SiteDataError as exc:
             widgets.error(self, "خواندن از پوشهٔ سایت", str(exc))
             return
+        self.context.store.set_setting(PREVIEW_FOLDER_SETTING, str(folder))
         self._seeded(out)
         self.render()
+
+    # ---- v2.12.0 browser preview --------------------------------------------------------
+    def _preview_folder(self) -> Optional[Path]:
+        folder = str(self.context.store.get_setting(PREVIEW_FOLDER_SETTING, "") or "")
+        if folder:
+            try:
+                return pv.base_from_folder(folder)
+            except SiteDataError:
+                return None
+        return None
+
+    def _preview_browser(self) -> None:
+        """The real site with this computer's data, in the computer's browser."""
+        if not self.look_tab.save_pending():
+            return
+        from ... import paths as _paths
+
+        generator = f"ShopAdmin {_paths.APP_VERSION}"
+        base = self._preview_folder()
+        if base is not None:
+            try:
+                self._open_preview(pv.build(self.store, base, self.store.root / "preview",
+                                            generator=generator))
+            except (OSError, SiteDataError) as exc:
+                widgets.error(self, "پیش‌نمایش", str(exc) if isinstance(exc, SiteDataError)
+                              else "پوشهٔ پیش‌نمایش ساخته نشد.")
+            return
+        if not tk.has_token(self.context.store):
+            widgets.error(self, "پیش‌نمایش در مرورگر",
+                          "برای پیش‌نمایش کد خود سایت لازم است: یک بار در «انتشار و پشتیبان» "
+                          "«خواندن از پوشهٔ سایت…» را بزنید یا توکن GitHub را ذخیره کنید.")
+            return
+
+        def work():
+            with self._publisher() as gh:
+                base_dir = pv.base_from_github(gh, self.store.root / "site_base")
+            return pv.build(self.store, base_dir, self.store.root / "preview", generator=generator)
+
+        self._background(work, self._open_preview, "در حال آماده کردن پیش‌نمایش…")
+
+    def _open_preview(self, out: dict) -> None:
+        url = pv.PreviewServer.url(out["dir"])
+        self.last_preview_url = url
+        self.open_url(url)
+        if out["look_supported"]:
+            self.notify_success("پیش‌نمایش در مرورگر باز شد (فقط روی همین رایانه).")
+        else:
+            widgets.info(self, "پیش‌نمایش در مرورگر",
+                         "پیش‌نمایش باز شد، ولی این نسخهٔ کد سایت «ظاهر و چیدمان» را نمی‌شناسد؛ "
+                         "گوشی‌ها و لوازم جانبی درست دیده می‌شوند ولی رنگ، بنر و چیدمان نه. "
+                         "نسخهٔ تازهٔ سایت باید در GitHub (یا پوشهٔ سایت) باشد.", kind="warning")
 
     def _seeded(self, out: dict) -> None:
         text = (f"{format_int(out['models'])} کالا خوانده شد ({format_int(out['added'])} تازه)، "
                 f"{format_int(out['photos'])} عکس.")
         if out.get("missing_photos"):
             text += f" {format_int(out['missing_photos'])} عکس پیدا نشد."
+        self.look_tab.fill()
         widgets.success(self, "خواندن از سایت", text)
 
     def _backup(self) -> None:
@@ -507,6 +587,7 @@ class SitePage(BasePage):
         except SiteDataError as exc:
             widgets.error(self, "بازگردانی", str(exc))
             return
+        self.look_tab.fill()
         widgets.success(self, "بازگردانی", f"{format_int(out['items'])} کالا و "
                                           f"{format_int(out['photos'])} عکس بازگردانده شد.")
         self.render()

@@ -161,6 +161,17 @@ def seed_site(root: Path) -> None:
                   "name": "پاوربانک Anker 737 (PowerCore 24K) 140W", "brand_name": "Anker",
                   "specs": [["ظرفیت", "24000 میلی‌آمپر ساعت"]],
                   "description": "شارژ سریع لپ‌تاپ و گوشی با نمایشگر هوشمند"})
+    # v2.12.0 «ظاهر و چیدمان»: a logo, a banner picture, featured phones, long store text
+    logo, _n = store.add_look_photo("logo", photo("#ff8800"))
+    banner, _n = store.add_look_photo("banner", photo("#118866"))
+
+    def look(value):
+        value.update(palette="emerald", logo=logo, featured=["galaxy-s26-ultra", "iphone-17-pro"])
+        value["hero"]["images"] = [banner]
+        value["sections"][5]["show"] = False
+        value["store"]["map"] = "https://nshn.ir/abcdefghijkl"
+
+    store.update_look(look)
 
 
 def build_context(tmp: Path):
@@ -233,6 +244,10 @@ def _dialogs(context, fake, window) -> Iterator[tuple[str, object]]:
     yield "site accessory", lambda: sd.AccessoryDialog(site, site.get("anker-737-power-bank"),
                                                        parent=window)
     yield "site accessory pdf", lambda: sd.AccessoryPdfDialog(site, _placeholder_pdf(), window)
+    from app.ui import site_look as sl
+
+    yield "site pick featured", lambda: sl.PickPhonesDialog(
+        [p for p in site.items("phone")] + [{"code": "x-long", "name": LONG_NAME}], 8, window)
     staff = [users_row for users_row in fake.staff.values()]
     yield "user form new", lambda: users.UserFormDialog(context, None, window)
     yield "user form edit", lambda: users.UserFormDialog(context, fake.staff_out(staff[1]), window)
@@ -323,6 +338,15 @@ def iter_screens(app, tmp: Path, *, roles=("manager", "sales"),
                         tabs.setCurrentIndex(index)
                         settle(app)
                         yield f"{tag} {role} {width} {key} tab {index}", window._pages[key]
+                        # v2.12.0: the inner tabs of «ظاهر و چیدمان»
+                        inner = getattr(tabs.currentWidget(), "tabs", None)
+                        for sub in range(1, inner.count() if inner is not None else 0):
+                            inner.setCurrentIndex(sub)
+                            settle(app)
+                            yield (f"{tag} {role} {width} {key} tab {index}.{sub}",
+                                   window._pages[key])
+                        if inner is not None:
+                            inner.setCurrentIndex(0)
                     if tabs is not None:
                         tabs.setCurrentIndex(0)
                 _close(window)
