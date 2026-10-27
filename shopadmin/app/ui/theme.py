@@ -563,9 +563,9 @@ def mix(color: str, other: str, amount: float) -> str:
 
 
 def _sheen(fill: str, dark: str) -> str:
-    """A coloured (prominent) button: its own colour with a soft light top edge."""
-    return (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {mix(fill, '#FFFFFF', 0.16)}, "
-            f"stop:0.45 {fill}, stop:1 {dark})")
+    """A coloured (prominent) button stays its own colour, deepening downwards
+    (never lighter than ``fill``: white text keeps WCAG AA, contrast_audit)."""
+    return f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {fill}, stop:1 {dark})"
 
 
 def glass_fills(simple: bool) -> dict[str, str]:

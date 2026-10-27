@@ -782,11 +782,12 @@ def existing_config_port() -> Optional[int]:
     from dotenv import dotenv_values
 
     env = data_dir() / ".env"
-    if not env.exists():
-        return None
     try:
+        # v2.13.0: without administrator rights even exists() is «Access is denied»
+        if not env.exists():
+            return None
         return int(dotenv_values(env).get("API_PORT") or DEFAULT_PORT)
-    except (ValueError, PermissionError):
+    except (ValueError, OSError):
         return None
 
 

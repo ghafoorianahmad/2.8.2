@@ -49,17 +49,24 @@ class BidiLabel(QLabel):
     را لغو کرد»): ``rtl.fix_mixed`` puts a right-to-left mark in front, so the words
     never come out in the wrong order (scripts/rtl_audit.py)."""
 
+    _logical: str | None = None
+
     def setText(self, text: str) -> None:  # noqa: N802 - Qt naming
         plain = self.textFormat() == Qt.TextFormat.PlainText or "<" not in str(text or "")
-        if plain and self.wordWrap():
-            text = keep_together(str(text or ""))
-        super().setText(fix_mixed(text) if plain else text)
+        shown = fix_mixed(text) if plain else text
+        # v2.13.0: what is drawn keeps short groups together; text() stays the text
+        # itself (no no-break spaces for callers, copies or tests)
+        self._logical = shown
+        super().setText(keep_together(str(shown or "")) if plain and self.wordWrap() else shown)
+
+    def text(self) -> str:
+        return self._logical if self._logical is not None else super().text()
 
     def setWordWrap(self, on: bool) -> None:  # noqa: N802 - Qt naming
         changed = on != self.wordWrap()
         super().setWordWrap(on)
-        if changed and on and self.text():
-            self.setText(self.text())
+        if changed and self._logical:
+            self.setText(self._logical)
 
 
 #: v2.13.0: short groups that must never be split over two lines

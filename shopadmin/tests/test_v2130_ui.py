@@ -9,7 +9,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, QRect  # noqa: E402
 from PySide6.QtGui import QEnterEvent  # noqa: E402
-from PySide6.QtWidgets import QDialog, QMainWindow, QVBoxLayout  # noqa: E402
+from PySide6.QtWidgets import QDialog, QLabel, QMainWindow, QVBoxLayout  # noqa: E402
 
 from app.ui import theme, widgets  # noqa: E402
 from app.ui.pages import pricelist as pl  # noqa: E402
@@ -19,8 +19,11 @@ from app.ui.pages import server as server_page  # noqa: E402
 @pytest.mark.parametrize("palette", theme.PALETTE_NAMES)
 @pytest.mark.parametrize("mode", ("light", "dark"))
 @pytest.mark.parametrize("effects", ("full", "simple"))
-def test_every_look_has_glass_buttons(admin_qapp, palette, mode, effects):
-    theme.apply_theme(admin_qapp, mode, palette=palette, effects=effects)
+def test_every_look_has_glass_buttons(admin_qapp, palette, mode, effects, monkeypatch):
+    # only the style sheet text (applying it to the test app's many widgets is slow)
+    old_mode, old_palette = theme.MODE, theme.PALETTE
+    theme.set_mode(mode, palette)
+    monkeypatch.setattr(theme, "EFFECTS", effects)
     try:
         sheet = theme.stylesheet()
         rule = sheet.split("QPushButton {", 1)[1].split("}", 1)[0]
@@ -31,35 +34,33 @@ def test_every_look_has_glass_buttons(admin_qapp, palette, mode, effects):
         primary = sheet.split("QPushButton#Primary {", 1)[1].split("}", 1)[0]
         assert "rgba(" not in primary                       # prominent stays coloured
     finally:
-        theme.apply_theme(admin_qapp, "light", palette="ocean", effects="full")
+        theme.set_mode(old_mode, old_palette)
 
 
-def test_glow_on_hover_only(admin_qapp):
-    theme.apply_theme(admin_qapp, "light", palette="ocean", effects="full")
+def test_glow_on_hover_only(admin_qapp, monkeypatch):
+    # the effects filter on its own (applying the theme to the test app is slow)
+    monkeypatch.setattr(theme, "EFFECTS", "full")
+    fx = theme._Effects()
     button = widgets.button("بستن")
-    button.show()
-    admin_qapp.processEvents()
-    # (a window shown under the pointer may get an «enter» at once)
-    theme._EFFECTS_FILTER.eventFilter(button, QEvent(QEvent.Type.Leave))
-    assert button.graphicsEffect() is None
-    theme._EFFECTS_FILTER.eventFilter(button, QEvent(QEvent.Type.Enter))
+    fx.eventFilter(button, QEvent(QEvent.Type.Polish))
+    assert button.graphicsEffect() is None                 # idle: nothing drawn
+    fx.eventFilter(button, QEvent(QEvent.Type.Enter))
     glow = button.graphicsEffect()
     assert glow is not None and glow.offset().y() == 0
     assert glow.color().name().upper() == theme.ACCENT.upper()
-    theme._EFFECTS_FILTER.eventFilter(button, QEvent(QEvent.Type.Leave))
+    fx.eventFilter(button, QEvent(QEvent.Type.Leave))
     assert button.graphicsEffect() is None
     # a coloured button: its shadow becomes a glow, and back
     primary = widgets.button("ذخیره", variant="primary")
-    primary.show()
-    admin_qapp.processEvents()
+    fx.eventFilter(primary, QEvent(QEvent.Type.Polish))
     effect = primary.graphicsEffect()
     assert effect is not None
-    theme._EFFECTS_FILTER.eventFilter(primary, QEvent(QEvent.Type.Enter))
+    fx.eventFilter(primary, QEvent(QEvent.Type.Enter))
     assert effect.color().name().upper() == theme.ACCENT.upper()
-    theme._EFFECTS_FILTER.eventFilter(primary, QEvent(QEvent.Type.Leave))
+    fx.eventFilter(primary, QEvent(QEvent.Type.Leave))
     assert effect.color().name().upper() == theme.SHADOW.upper()
-    button.close()
-    primary.close()
+    button.deleteLater()
+    primary.deleteLater()
 
 
 def test_keep_together():
@@ -69,8 +70,9 @@ def test_keep_together():
     assert "۳۶\u00a0دقیقه" in text
     assert "مریم حسینی" in text                          # ordinary words still wrap
     label = widgets.label("مشتری (کد شخص ۴)", wrap=True)
-    assert "\u00a0" in label.text()
-    assert "\u00a0" not in widgets.label("مشتری (کد شخص ۴)").text()
+    assert "\u00a0" in QLabel.text(label)      # drawn together
+    assert label.text() == "مشتری (کد شخص ۴)"     # the text itself unchanged
+    assert "\u00a0" not in QLabel.text(widgets.label("مشتری (کد شخص ۴)"))
 
 
 def test_key_value_list_is_two_aligned_columns(admin_qapp):
@@ -146,3 +148,75 @@ def test_archive_and_backup_rows():
     _, text, color = server_page.telegram_text({"at": "2026-10-27T10:00:00+00:00",
                                                 "paused_until": "2026-10-27T12:00:00+00:00"})
     assert "صبر" in text and color == theme.WARNING_TEXT
+
+
+# ---- v2.13.0: picking a database grants the service access by itself ------------------------
+from .test_v294 import _pump, server_folder  # noqa: E402,F401
+from app import server_setup as setup  # noqa: E402
+
+
+def test_picking_a_database_grants_access_and_connects(server_folder, admin_qapp,  # noqa: F811
+                                                      monkeypatch):
+    from app.ui import server_setup_wizard as wiz
+
+    monkeypatch.setattr(setup, "harden_data_dir", lambda *a, **k: None)
+    monkeypatch.setattr(setup, "write_config", lambda *a, **k: {"ok": True})
+    granted = []
+
+    def check():
+        if not granted:
+            raise setup.database_error({"ok": False, "kind": "no_access",
+                                        "title_fa": "دسترسی نیست", "fix_fa": "دسترسی بدهید.",
+                                        "error_code": "4060"})
+        return {"ok": True, "groups": 3}
+
+    def grant():
+        granted.append(1)
+        return {"ok": True, "login": "NT SERVICE\\ShopServer", "database": "hesab2",
+                "steps": ["login_created", "user_ready", "role_granted"], "check_ok": True,
+                "as_service": True}
+
+    monkeypatch.setattr(setup, "check_database", check)
+    monkeypatch.setattr(setup, "service_db_check", lambda *a: None)
+    monkeypatch.setattr(setup, "grant_database_access", grant)
+    confirms = []
+    monkeypatch.setattr(wiz.widgets, "confirm", lambda *a, **k: confirms.append(1) or True)
+    wizard = wiz.ServerSetupWizard(mode=wiz.MODE_SETTINGS)
+    try:
+        wizard.auth_windows.setChecked(True)
+        wizard.db_name.set_names(["hesab2", "hesab5", "hesab5 t"])
+        wizard.db_name.setText("hesab2")
+        wizard._db_picked()
+        _pump(400, until=lambda: wizard._db_ok)
+        assert granted == [1] and wizard._db_ok
+        assert confirms == []                                # no question asked
+        assert "داده شد" in wizard.db_result.text()
+    finally:
+        wizard.close()
+
+
+def test_automatic_grant_failure_still_says_no_access(server_folder, admin_qapp,  # noqa: F811
+                                                       monkeypatch):
+    from app.ui import server_setup_wizard as wiz
+
+    monkeypatch.setattr(setup, "harden_data_dir", lambda *a, **k: None)
+    monkeypatch.setattr(setup, "write_config", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(setup, "check_database", lambda: (_ for _ in ()).throw(
+        setup.database_error({"ok": False, "kind": "no_access", "title_fa": "دسترسی نیست",
+                              "fix_fa": "x", "error_code": "4060"})))
+
+    def refused():
+        raise setup.SetupError("حساب ویندوز شما در SQL Server «sysadmin» نیست.")
+
+    monkeypatch.setattr(setup, "grant_database_access", refused)
+    wizard = wiz.ServerSetupWizard(mode=wiz.MODE_SETTINGS)
+    try:
+        wizard.auth_windows.setChecked(True)
+        wizard.db_name.set_names(["hesab2"])
+        wizard.db_name.setText("hesab2")
+        wizard._db_picked()
+        _pump(400, until=lambda: "sysadmin" in wizard.db_result.text())
+        assert "دسترسی نیست" in wizard.db_result_title.text()
+        assert "sysadmin" in wizard.db_result.text() and not wizard._db_ok
+    finally:
+        wizard.close()

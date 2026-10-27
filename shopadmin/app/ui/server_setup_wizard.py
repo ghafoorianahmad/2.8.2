@@ -1294,7 +1294,9 @@ class ServerSetupWizard(QWidget):
             return
         self._test_database(auto_grant=True)
 
-    def _test_database(self, auto_grant: bool = True) -> None:
+    def _test_database(self, auto_grant: bool = False) -> None:
+        """«ذخیره و آزمایش اتصال» (the button: test only); ``auto_grant`` (v2.13.0, a
+        database picked from the list): «دسترسی نیست» is answered with the grant."""
         db = self._db_config()
         problem = self._db_input_problem(db)
         if problem:
@@ -1395,7 +1397,11 @@ class ServerSetupWizard(QWidget):
             self.grant_button.setVisible(not self._db_ok)
 
         def fail(message: str, _kind: str) -> None:
-            self._db_message(message, False, title="دسترسی داده نشد")
+            if confirm:
+                self._db_message(message, False, title="دسترسی داده نشد")
+            else:
+                self._db_message("دادن خودکار دسترسی ممکن نشد: " + message, False,
+                                 title="دسترسی نیست")
 
         def done() -> None:
             self.grant_button.setEnabled(True)
