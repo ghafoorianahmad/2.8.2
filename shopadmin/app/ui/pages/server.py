@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import os
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
@@ -152,13 +154,23 @@ class ServerPage(BasePage):
             ("telegram", "خوانندهٔ تلگرام"),
             ("health", "پایش سلامت"),
             ("backup", "پشتیبان‌گیری روزانه"),
+            # v2.13.0: every received price list is kept (never deleted automatically)
+            ("archive", "بایگانی لیست‌های قیمت"),
             ("counts", "در انتظار رسیدگی"),
         )
         for index, (key, caption) in enumerate(rows):
-            grid.addWidget(widgets.label(caption + ":", name="Muted"), index, 0)
+            grid.addWidget(widgets.label(caption + ":", name="Muted"), index, 0,
+                           Qt.AlignmentFlag.AlignTop)
             value = widgets.label("—", wrap=True)
             grid.addWidget(value, index, 1)
             self.status_labels[key] = value
+        self.archive_open_button = widgets.button(
+            "باز کردن پوشه", icon_name="folder", on_click=self._open_archive,
+            tooltip="پوشهٔ بایگانی PDFها در «پروندهٔ ویندوز» (فقط روی خود رایانهٔ سرور)")
+        self.archive_open_button.setEnabled(False)
+        grid.addWidget(self.archive_open_button, rows.index(("archive", "بایگانی لیست‌های قیمت")),
+                       2, Qt.AlignmentFlag.AlignTop)
+        self._archive_path = ""
         grid.setColumnStretch(1, 1)
         panel.body.addLayout(grid)
 
@@ -380,6 +392,13 @@ class ServerPage(BasePage):
         self._show_telegram(status)
         self._set(*health_text(status.get("health")))
         self._set(*backup_text(status.get("backup")))
+        self._set(*archive_text(status.get("pricelist_archive")))
+        self._archive_path = str((status.get("pricelist_archive") or {}).get("path") or "")
+        local = self._server_is_this_computer()
+        self.archive_open_button.setEnabled(bool(self._archive_path) and local)
+        self.archive_open_button.setToolTip(
+            "پوشهٔ بایگانی در پروندهٔ ویندوز باز می‌شود." if local else
+            "این پوشه روی رایانهٔ سرور است؛ «باز کردن پوشه» فقط روی خود سرور کار می‌کند.")
 
         counts = status.get("counts") or {}
         self._set("counts",
@@ -398,6 +417,24 @@ class ServerPage(BasePage):
                                        and self.context.can(SERVER_MANAGE))
         self.restart_button.setToolTip("" if status.get("restart_available") else
                                        "سرور در حالت سرویس اجرا نمی‌شود")
+
+    def _server_is_this_computer(self) -> bool:
+        from urllib.parse import urlparse
+
+        host = (urlparse(str(getattr(self.context.api, "base_url", "") or "")).hostname or "")
+        return host.lower() in ("127.0.0.1", "localhost", "::1")
+
+    def _open_archive(self) -> None:
+        """v2.13.0: the archive folder in Explorer (on the server computer)."""
+        path = self._archive_path
+        try:
+            os.startfile(path)  # noqa: S606 - a folder path from our own server
+        except OSError as exc:
+            log.warning("archive folder not opened: %s", type(exc).__name__)
+            widgets.error(self, "بایگانی لیست‌های قیمت",
+                          f"پوشهٔ «{path}» باز نشد. اگر پیام «دسترسی» آمد، یک بار «تنظیمات سرور» "
+                          "را باز و ذخیره کنید تا اجازهٔ خواندن این پوشه برای کاربران ویندوز داده "
+                          "شود.")
 
     def _set(self, key: str, text: str, color: str | None = None) -> None:
         label = self.status_labels[key]
@@ -572,16 +609,33 @@ def backup_text(backup: dict | None) -> tuple[str, str, str | None]:
         return "backup", "هنوز انجام نشده (روزانه، ساعت ۳ بامداد؛ README_FA بخش پشتیبان)", None
     when = format_shamsi(backup["at"]) if backup.get("at") else "—"
     if not backup.get("ok"):
-        reason = backup.get("offsite_error") or backup.get("error") or "نامشخص"
+        # v2.13.0: the reason in Persian, and the copy on the server kept apart
+        reason = (backup.get("offsite_reason_fa") or backup.get("offsite_error")
+                  or backup.get("error") or "نامشخص")
+        lines = [f"ناموفق در {when}", f"علت: {reason}"]
+        if backup.get("local_ok"):
+            lines.append("پشتیبان روی خود سرور: سالم (فقط نسخهٔ بیرون از سرور نوشته نشد)")
         last = backup.get("last_success_at")
-        tail = f" — آخرین پشتیبان موفق: {format_shamsi(last)}" if last else ""
-        return "backup", f"ناموفق در {when} ({reason}){tail}", theme.DANGER
+        if last:
+            lines.append(f"آخرین پشتیبان کامل موفق: {format_shamsi(last)}")
+        return "backup", "\n".join(lines), theme.DANGER
     if backup.get("offsite_configured"):
         where = "نسخهٔ رمزگذاری‌شدهٔ بیرون از سرور: سالم"
     else:
         where = "نسخهٔ بیرون از سرور تنظیم نشده (BACKUP_COPY_DIR)"
     text = f"موفق و آزموده — {when}\n{where}"
     return "backup", text, theme.SUCCESS_DARK if backup.get("offsite_configured") else theme.WARNING_TEXT
+
+
+def archive_text(info: dict | None) -> tuple[str, str, str | None]:
+    """v2.13.0: where every received price list is kept, how many, how big."""
+    if not info or not info.get("path"):
+        return "archive", "—", None
+    size_mb = float(info.get("bytes") or 0) / (1024 * 1024)
+    return ("archive",
+            f"{info['path']}\n{to_persian_digits(info.get('files') or 0)} فایل، "
+            f"{to_persian_digits(f'{size_mb:.1f}')} مگابایت — هیچ فایلی خودکار پاک نمی‌شود "
+            "(یادآوری خالی کردن: اول فروردین و هر سه ماه)", None)
 
 
 #: v2.9.2: after «جمع‌آوری اکنون» the page reads the result again this much later
@@ -682,6 +736,10 @@ def telegram_text(worker: dict | None) -> tuple[str, str, str | None]:
     if not worker:
         return "telegram", "روشن نشده یا هنوز گزارشی نداده است («تنظیمات سرور» › تلگرام)", None
     when = format_shamsi(worker["at"]) if worker.get("at") else "—"
+    if worker.get("paused_until"):
+        # v2.13.0: Telegram asked the reader to wait (every job paused until then)
+        return ("telegram", f"تلگرام خواسته تا {format_shamsi(worker['paused_until'])} صبر کند؛ "
+                f"پس از آن خودکار ادامه می‌دهد — آخرین گزارش: {when}", theme.WARNING_TEXT)
     if worker.get("login_required"):
         return ("telegram", "نیاز به ورود به حساب تلگرام («تنظیمات سرور» روی خود سرور › "
                 f"تلگرام › ورود به حساب تلگرام) — {when}", theme.DANGER)
@@ -708,7 +766,8 @@ def health_text(health: dict | None) -> tuple[str, str, str | None]:
             parts.append(f"{name}: سالم")
         else:
             parts.append(f"{name}: خطا ({to_persian_digits(check.get('fails', 0))} بار)")
-    text = "، ".join(parts) or "—"
+    # v2.13.0: one check per line (a comma list broke in the middle of a name)
+    text = "\n".join(parts) or "—"
     if health.get("checked_at"):
         text += f"\nآخرین بررسی: {format_shamsi(health['checked_at'])}"
     return "health", text, theme.DANGER if bad else theme.SUCCESS_DARK

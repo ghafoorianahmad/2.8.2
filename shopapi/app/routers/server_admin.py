@@ -13,6 +13,7 @@ from .. import control, deps, monitor, sql_errors
 from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
+from ..pricelist import pdf_archive
 from ..security import Identity, get_identity, require_permission
 from ..staff import P_SERVER_MANAGE, P_SERVER_VIEW
 from ..util import now_utc
@@ -71,6 +72,8 @@ def server_status(
         "telegram_worker": _tg_status(db),
         "proxy_pool": _pool_status(db),
         "backup": _backup_status(),
+        # v2.13.0: every received price list is kept here (never deleted automatically)
+        "pricelist_archive": pdf_archive.archive_info(settings),
         "counts": counts,
     }
 
@@ -93,6 +96,11 @@ def _backup_status() -> dict | None:
         "offsite_configured": bool(offsite.get("configured")),
         "offsite_ok": offsite.get("ok"),
         "offsite_error": offsite.get("error"),
+        # v2.13.0: the copy on the server itself, apart from the off-server one
+        "local_ok": raw.get("local_ok"),
+        "last_local_success_at": raw.get("last_local_success_at"),
+        "offsite_network": bool(offsite.get("network")),
+        "offsite_reason_fa": monitor.backup_reason_fa(raw),
     }
 
 
@@ -107,7 +115,7 @@ def _tg_status(db: OwnDB) -> dict | None:
         return None
     if not isinstance(value, dict):
         return None
-    keep = ("connected", "proxy", "login_required", "error", "at",
+    keep = ("connected", "proxy", "login_required", "error", "at", "paused_until",
             # v2.9.0
             "api_preset", "price_channel", "pool_size")
     out = {key: value.get(key) for key in keep}
@@ -187,6 +195,10 @@ def restart(db: OwnDB = Depends(deps.get_db), who: Identity = CAN_MANAGE) -> dic
 # ---- v2.9.1: off-server backup folder ---------------------------------------------------
 class BackupFolderIn(BaseModel):
     folder: str
+    #: v2.13.0: an account of the computer behind a network folder; an empty
+    #: password with the saved user name = the saved password
+    user: str = ""
+    password: str = ""
 
 
 def _can_test_backup(identity: Identity = Depends(get_identity)) -> Identity:
@@ -197,10 +209,24 @@ def _can_test_backup(identity: Identity = Depends(get_identity)) -> Identity:
     raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this account")
 
 
-def check_backup_folder(folder: str) -> dict:
+def _share_session(folder: str, user: str, password: str):
+    """v2.13.0: the ShopSystem helper that signs the service in to a share of
+    another computer (a no-op outside ShopSystem, e.g. plain uvicorn / tests)."""
+    import contextlib
+
+    try:
+        import netshare
+    except ImportError:
+        return contextlib.nullcontext(False)
+    return netshare.session(folder, user, password)
+
+
+def check_backup_folder(folder: str, user: str = "", password: str = "") -> dict:
     """Write, read back and delete a small file in ``folder`` as THIS process (the
     service account NT SERVICE/ShopServer on the server: a network share must
-    allow it). Never lists or touches anything else there."""
+    allow it). Never lists or touches anything else there. v2.13.0: with
+    ``user`` / ``password`` (an account of the computer behind a network folder)
+    the service signs in to that share first, as the nightly backup does."""
     import os
     import secrets
     from pathlib import Path
@@ -212,23 +238,34 @@ def check_backup_folder(folder: str) -> dict:
     if not path.is_absolute():
         return {"ok": False, "error": "relative",
                 "message_fa": r"مسیر کامل لازم است (مثل D:\Backups یا \\PC\Share)."}
+    network = raw[:2] in ("\\\\", "//")
     probe = path / f".shopserver_test_{secrets.token_hex(4)}.tmp"
     try:
-        path.mkdir(parents=True, exist_ok=True)
-        probe.write_bytes(b"ShopServer backup test")
-        ok = probe.read_bytes() == b"ShopServer backup test"
+        with _share_session(raw, user, password):
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+                probe.write_bytes(b"ShopServer backup test")
+                ok = probe.read_bytes() == b"ShopServer backup test"
+            finally:
+                try:
+                    if probe.exists():
+                        os.remove(probe)
+                except OSError:
+                    pass
     except OSError as exc:
         reason = type(exc).__name__
-        message = ("دسترسی نوشتن نیست؛ برای پوشهٔ اشتراکی به رایانهٔ سرور (یا Everyone) اجازهٔ "
-                   "نوشتن بدهید." if isinstance(exc, PermissionError) else
-                   "پوشه پیدا یا ساخته نشد (نشانی شبکه، روشن بودن رایانهٔ مقصد).")
+        message_fa = getattr(exc, "message_fa", "")
+        if message_fa:
+            message = message_fa
+        elif isinstance(exc, PermissionError) and network and not user:
+            message = ("دسترسی نیست: این پوشه روی رایانهٔ دیگری است و سرویس سرور آن‌جا نام "
+                       "کاربری ندارد. نام کاربری و گذرواژهٔ همان رایانه را وارد کنید.")
+        elif isinstance(exc, PermissionError):
+            message = ("دسترسی نوشتن نیست؛ به این حساب روی رایانهٔ مقصد اجازهٔ نوشتن بدهید."
+                       if network else "دسترسی نوشتن نیست.")
+        else:
+            message = "پوشه پیدا یا ساخته نشد (نشانی شبکه، روشن بودن رایانهٔ مقصد)."
         return {"ok": False, "error": reason, "message_fa": message}
-    finally:
-        try:
-            if probe.exists():
-                os.remove(probe)
-        except OSError:
-            pass
     return {"ok": bool(ok), "error": None if ok else "readback",
             "message_fa": "نوشتن، خواندن و پاک کردن فایل آزمایشی با حساب سرویس سرور موفق بود."
             if ok else "فایل آزمایشی درست خوانده نشد."}
@@ -236,7 +273,14 @@ def check_backup_folder(folder: str) -> dict:
 
 @router.post("/backup-test")
 def backup_test(payload: BackupFolderIn, _: Identity = Depends(_can_test_backup)) -> dict:
-    return check_backup_folder(payload.folder)
+    import os
+
+    user = payload.user.strip()
+    password = payload.password
+    saved_user = os.environ.get("BACKUP_SHARE_USER", "").strip()
+    if user and not password and user.lower() == saved_user.lower():
+        password = os.environ.get("BACKUP_SHARE_PASSWORD", "")   # «خالی = بدون تغییر»
+    return check_backup_folder(payload.folder, user, password)
 
 
 # ---- v2.9.4: «تنظیمات سرور» on the server itself ----------------------------------------

@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -29,6 +28,7 @@ from ..config import Settings
 from ..db_own import OwnDB
 from ..util import now_utc
 from .matching import auto_match, smart_key
+from . import pdf_archive
 from .notes import learn_diffs
 from .parser import ParseError, parse_pdf
 from .pricing import change_pct, customer_price_rial
@@ -53,20 +53,11 @@ class ImportResult:
     held_rows: int = 0
 
 
-def _store_pdf(settings: Settings, list_id: int, list_date: str, data: bytes) -> str | None:
-    folder = settings.pricelists_path()
-    if folder is None:
-        return None
-    try:
-        folder.mkdir(parents=True, exist_ok=True)
-        name = f"pricelist_{list_id}_{(list_date or 'unknown').replace('/', '-')}.pdf"
-        tmp = folder / (name + ".tmp")
-        tmp.write_bytes(data)
-        os.replace(tmp, folder / name)
-        return name
-    except OSError as exc:  # a copy is for diagnosis only; never fail the import
-        logger.warning("price list copy not stored: %s", type(exc).__name__)
-        return None
+def _store_pdf(settings: Settings, repo: PriceListRepo, list_id: int, data: bytes) -> None:
+    """v2.13.0: every received file goes to the archive (``1405-08-05-1.pdf``)."""
+    name = pdf_archive.store_pdf(settings, data)
+    if name:
+        repo.set_file_name(list_id, name)
 
 
 def _is_older(list_date: str, posted_at: str | None, active: dict) -> bool:
@@ -152,6 +143,11 @@ def import_pdf(
     sha = hashlib.sha256(data).hexdigest()
     existing = repo.get_by_sha(sha)
     if existing is not None:
+        if existing["status"] == "failed":
+            # v2.13.0: a file rejected before is read again (a newer reader may know
+            # its layout); a second failure stays quiet (one alert per file)
+            return reread_list(db, settings, int(existing["id"]), actor=actor or source,
+                               data=data)
         if latest and _reactivate(db, repo, existing, actor or source):
             return ImportResult("active", existing["id"], existing["list_date"],
                                 existing["row_count"], ["the newer list post was removed"])
@@ -166,12 +162,31 @@ def import_pdf(
             list_date="", sha256=sha, source=source, source_ref=source_ref,
             posted_at=posted_at, status="failed", reason=reason, rows=[],
         )
-        name = _store_pdf(settings, list_id, "", data)
-        if name:
-            repo.set_file_name(list_id, name)
+        _store_pdf(settings, repo, list_id, data)
         db.audit(actor or source, "pricelist_failed", f"list id={list_id}")
+        # one notification per rejected file (ShopAdmin + the bot's Bale message)
         db.add_event("pricelist_failed", list_id, actor or source)
         return ImportResult("failed", list_id, reasons=[reason])
+    return _apply(db, settings, repo, parsed, sha=sha, source=source, source_ref=source_ref,
+                  posted_at=posted_at, actor=actor or source, data=data)
+
+
+def _apply(db: OwnDB, settings: Settings, repo: PriceListRepo, parsed, *, sha: str,
+           source: str, source_ref: str, posted_at: str | None, actor: str,
+           data: bytes | None = None, list_id: int | None = None) -> ImportResult:
+    """A readable list: older / held / active. ``list_id`` (v2.13.0 «خواندن دوباره»):
+    the stored record of a file that failed before is filled in place."""
+    def save(status_value: str, reason: str, rows: list[dict]) -> int:
+        if list_id is not None:
+            repo.fill_list(list_id, list_date=parsed.list_date, status=status_value,
+                           reason=reason, rows=rows)
+            return list_id
+        new_id = repo.insert_list(
+            list_date=parsed.list_date, sha256=sha, source=source, source_ref=source_ref,
+            posted_at=posted_at, status=status_value, reason=reason, rows=rows)
+        if data is not None:
+            _store_pdf(settings, repo, new_id, data)
+        return new_id
 
     rows = [
         {
@@ -187,44 +202,99 @@ def import_pdf(
     ]
     active = repo.active_list()
     if active is not None and _is_older(parsed.list_date, posted_at, active):
-        list_id = repo.insert_list(
-            list_date=parsed.list_date, sha256=sha, source=source, source_ref=source_ref,
-            posted_at=posted_at, status="superseded", reason="older than the active list",
-            rows=rows,
-        )
-        return ImportResult("older", list_id, parsed.list_date, len(rows))
+        stored_id = save("superseded", "older than the active list", rows)
+        return ImportResult("older", stored_id, parsed.list_date, len(rows))
 
     by_key = {r["row_key"]: r for r in rows}
     reasons = safety_reasons(repo, active, by_key)
     guarded = [] if reasons else big_changes(repo, active, by_key, settings.price_guard_pct)
     status_value = "held" if reasons else "active"
-    list_id = repo.insert_list(
-        list_date=parsed.list_date, sha256=sha, source=source, source_ref=source_ref,
-        posted_at=posted_at, status=status_value,
-        reason="; ".join(reasons)[:2000], rows=rows,
-    )
-    name = _store_pdf(settings, list_id, parsed.list_date, data)
-    if name:
-        repo.set_file_name(list_id, name)
-    auto = auto_match(repo, list_id)
+    stored_id = save(status_value, "; ".join(reasons)[:2000], rows)
+    auto = auto_match(repo, stored_id)
     if auto:
-        db.audit(actor or source, "price_mapping_auto", f"list id={list_id} rows={auto}")
+        db.audit(actor, "price_mapping_auto", f"list id={stored_id} rows={auto}")
     if status_value == "active":
         for old, new, _pct in guarded:
-            hold_new_row(db, list_id, old, new)
-        learn_diffs(db, list_id, rows)
-        repo.activate(list_id)
-        db.audit(actor or source, "pricelist_import", f"list id={list_id} date={parsed.list_date}")
-        db.add_event("pricelist_imported", list_id, actor or source)
+            hold_new_row(db, stored_id, old, new)
+        learn_diffs(db, stored_id, rows)
+        repo.activate(stored_id)
+        db.audit(actor, "pricelist_import", f"list id={stored_id} date={parsed.list_date}")
+        db.add_event("pricelist_imported", stored_id, actor)
         if guarded:
-            db.audit(actor or source, "price_held", f"list id={list_id} rows={len(guarded)}")
-            db.add_event("price_held", list_id, actor or source)
+            db.audit(actor, "price_held", f"list id={stored_id} rows={len(guarded)}")
+            db.add_event("price_held", stored_id, actor)
     else:
-        db.audit(actor or source, "pricelist_held", f"list id={list_id} date={parsed.list_date}")
-        db.add_event("pricelist_held", list_id, actor or source)
-    result = ImportResult(status_value, list_id, parsed.list_date, len(rows), reasons, auto)
+        db.audit(actor, "pricelist_held", f"list id={stored_id} date={parsed.list_date}")
+        db.add_event("pricelist_held", stored_id, actor)
+    result = ImportResult(status_value, stored_id, parsed.list_date, len(rows), reasons, auto)
     result.held_rows = len(guarded)
     return result
+
+
+#: v2.13.0 «خواندن دوباره»: outcomes besides those of an import
+#: ``read`` = a list that was read before is still read the same way (nothing changed);
+#: ``missing`` = the file of this list was never kept (before 2.13.0 a list that was
+#: older than the active one was not stored)
+REREAD_UNCHANGED = "read"
+REREAD_MISSING = "missing"
+
+
+def reread_list(db: OwnDB, settings: Settings, list_id: int, *, actor: str,
+                data: bytes | None = None) -> ImportResult:
+    """Read a received list again from its archived PDF (or ``data``). A list that
+    failed before becomes a normal import when it reads now (in place: same id,
+    same file); a failure again only updates the reason (no new alert). A list
+    that was read before is only checked (its rows and decisions stay)."""
+    repo = PriceListRepo(db)
+    plist = repo.get_list(list_id)
+    if plist is None:
+        raise LookupError(list_id)
+    if data is None:
+        path = pdf_archive.stored_path(settings, plist.get("file_name"))
+        try:
+            data = path.read_bytes() if path is not None else None
+        except OSError:
+            data = None
+        if data is None:
+            return ImportResult(REREAD_MISSING, list_id, plist.get("list_date") or "",
+                                reasons=["the PDF of this list was not kept"])
+    try:
+        parsed = parse_pdf(data)
+    except ParseError as exc:
+        reason = f"parse failed: {exc}"
+        if plist["status"] == "failed":
+            repo.set_reason(list_id, reason)
+        db.audit(actor, "pricelist_reread", f"list id={list_id} failed")
+        return ImportResult("failed", list_id, reasons=[reason])
+    if plist["status"] != "failed":
+        db.audit(actor, "pricelist_reread", f"list id={list_id} rows={len(parsed.rows)}")
+        return ImportResult(REREAD_UNCHANGED, list_id, parsed.list_date, len(parsed.rows))
+    db.audit(actor, "pricelist_reread", f"list id={list_id} now readable")
+    return _apply(db, settings, repo, parsed, sha=plist["sha256"], source=plist["source"],
+                  source_ref=plist.get("source_ref") or "", posted_at=plist.get("posted_at"),
+                  actor=actor, list_id=list_id)
+
+
+#: failed lists younger than this are read again once after an upgrade
+RETRY_FAILED_DAYS = 3
+RETRY_STATE_KEY = "pricelist:failed_retried_for"
+
+
+def retry_recent_failed(db: OwnDB, settings: Settings, version: str) -> list[ImportResult]:
+    """v2.13.0: once per server version, the rejected lists of the last days are
+    read again (the new reader may know their layout: 1405/08/05)."""
+    if db.get_state(RETRY_STATE_KEY, "") == version:
+        return []
+    db.set_state(RETRY_STATE_KEY, version, "system")
+    since = (now_utc() - timedelta(days=RETRY_FAILED_DAYS)).isoformat(timespec="seconds")
+    out = []
+    for plist in sorted(PriceListRepo(db).list_lists(200), key=lambda p: int(p["id"])):
+        if plist["status"] == "failed" and (plist.get("created_at") or "") >= since:
+            try:
+                out.append(reread_list(db, settings, int(plist["id"]), actor="system:retry"))
+            except Exception as exc:  # noqa: BLE001 - one bad file must not stop the rest
+                logger.warning("retry of list %s failed: %s", plist["id"], type(exc).__name__)
+    return out
 
 
 def _reactivate(db: OwnDB, repo: PriceListRepo, existing: dict, actor: str) -> bool:

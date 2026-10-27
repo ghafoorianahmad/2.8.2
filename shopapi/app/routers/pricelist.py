@@ -14,11 +14,11 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from .. import deps
+from .. import deps, owner_alerts
 from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
-from ..pricelist.importer import ImportResult, import_pdf
+from ..pricelist.importer import ImportResult, import_pdf, reread_list
 from .. import groups as group_config
 from ..pricelist.matching import SUGGESTIONS, auto_match, confident, name_candidates, name_match
 from ..pricelist import notes
@@ -49,14 +49,33 @@ WORKER_STATE_KEYS = frozenset({
     "tg_price_version", "tg_price_notes",
     # v2.9.2: the last proxy collection, and «جمع‌آوری اکنون» (asked / handled)
     "tg_collect_info", "tg_collect_request", "tg_collect_done",
+    # v2.13.0: «دریافت لیست اکنون» (asked / handled)
+    "tg_price_request", "tg_price_done",
 })
 #: v2.9.2: ShopAdmin «جمع‌آوری اکنون» -> the worker collects within seconds
 COLLECT_REQUEST_KEY = WORKER_STATE_PREFIX + "tg_collect_request"
+#: v2.13.0: ShopAdmin «دریافت لیست اکنون» -> the worker reads the price channel now
+PRICE_REQUEST_KEY = WORKER_STATE_PREFIX + "tg_price_request"
+PRICE_DONE_KEY = WORKER_STATE_PREFIX + "tg_price_done"
+#: v2.13.0: «خواندن دوباره» never keeps ShopAdmin waiting longer than this
+REREAD_TIMEOUT_SEC = 60
 #: Alerts the worker may raise (each at most once per ALERT_REPEAT).
 WORKER_ALERTS = frozenset({"telegram_login_required", "telegram_unreachable",
                            # v2.9.0: a price-list PDF of the channel could not be downloaded
-                           "telegram_pricelist_error"})
+                           "telegram_pricelist_error",
+                           # v2.13.0: Telegram paused the reader for an hour or more;
+                           # the supervisor started a part of the server again
+                           "telegram_flood_wait", "worker_restarted"})
 ALERT_REPEAT = timedelta(hours=6)
+#: v2.13.0: these also go straight to the owner's Bale chat (the bot does not know
+#: them, and the bot may be the part that was restarted)
+DIRECT_ALERTS = {
+    "telegram_flood_wait": "⚠️ هشدار سرور: تلگرام خوانندهٔ لیست قیمت را برای مدتی طولانی "
+                           "متوقف کرده است (FloodWait). پس از پایان زمان انتظار خودکار ادامه "
+                           "می‌دهد؛ تا آن زمان لیست تازه را با «بارگذاری PDF» بدهید.",
+    "worker_restarted": "⚠️ هشدار سرور: «{detail}» از کار افتاده بود و خودکار دوباره "
+                        "راه‌اندازی شد. اگر تکرار شد، گزارش سرور را بررسی کنید.",
+}
 
 
 # ---- models -----------------------------------------------------------------
@@ -163,6 +182,8 @@ class WorkerStateIn(BaseModel):
 
 class WorkerAlertIn(BaseModel):
     kind: str
+    #: v2.13.0 ``worker_restarted``: which part (a Persian label from the supervisor)
+    detail: str = Field(default="", max_length=120)
 
 
 # ---- helpers ----------------------------------------------------------------
@@ -274,6 +295,55 @@ def upload_pricelist(
         out.auto_mapped += _name_match(db, PriceListRepo(db), reader, settings, result.list_id,
                                        who.actor)
     return out
+
+
+@router.post("/admin/pricelists/fetch")
+def fetch_pricelist_now(db: OwnDB = Depends(deps.get_db), who: Identity = CAN_PRICELIST) -> dict:
+    """v2.13.0 «دریافت لیست اکنون»: the Telegram reader reads the price channel at
+    once and sends its newest list again (it looks for this every 20 seconds); the
+    server decides as for any list (duplicate / older / new; a file rejected before
+    is read again)."""
+    ts = now_utc().isoformat(timespec="seconds")
+    db.set_state(PRICE_REQUEST_KEY, ts, who.actor)
+    db.audit(who.actor, "pricelist_fetch_now", "")
+    return {"requested_at": ts}
+
+
+@router.get("/admin/pricelists/fetch")
+def fetch_pricelist_state(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_VIEW) -> dict:
+    """Whether the last «دریافت لیست اکنون» was handled by the reader yet."""
+    asked = db.get_state(PRICE_REQUEST_KEY, "")
+    done = db.get_state(PRICE_DONE_KEY, "")
+    return {"requested_at": asked or None, "handled": bool(asked) and done == asked}
+
+
+@router.post("/admin/pricelists/{list_id}/reread")
+def reread_pricelist(
+    list_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    settings: Settings = Depends(deps.get_settings),
+    who: Identity = CAN_PRICELIST,
+) -> dict:
+    """v2.13.0 «خواندن دوباره»: read the archived PDF of a received list again.
+    Answers within REREAD_TIMEOUT_SEC whatever the file does (``timeout``)."""
+    import concurrent.futures
+
+    if PriceListRepo(db).get_list(list_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "List not found")
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(reread_list, db, settings, list_id, actor=who.actor)
+    try:
+        result = future.result(timeout=REREAD_TIMEOUT_SEC)
+    except concurrent.futures.TimeoutError:
+        return {"outcome": "timeout", "list_id": list_id, "reasons": []}
+    finally:
+        pool.shutdown(wait=False)
+    out = _import_out(result)
+    if result.outcome in ("active", "held", "older") and result.list_id:
+        out.auto_mapped += _name_match(db, PriceListRepo(db), reader, settings, result.list_id,
+                                       who.actor)
+    return out.model_dump()
 
 
 @router.get("/admin/pricelists/rows")
@@ -855,5 +925,13 @@ def worker_alert(
 ) -> dict:
     if payload.kind not in WORKER_ALERTS:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown alert")
-    return {"sent": _alert_once(db, payload.kind, "worker")}
+    sent = _alert_once(db, payload.kind, "worker")
+    text = DIRECT_ALERTS.get(payload.kind)
+    if sent and text:
+        detail = " ".join(payload.detail.split())[:120] or "یکی از بخش‌های سرور"
+        try:
+            owner_alerts.send_owner_alert(text.replace("{detail}", detail))
+        except Exception:  # noqa: BLE001 - the ShopAdmin notification stands
+            pass
+    return {"sent": sent}
 

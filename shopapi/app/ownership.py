@@ -125,7 +125,12 @@ _SECTION_EVENTS = {"password_request": "passwords.view", "pricelist_imported": "
                    # v2.9.1: price-channel posts, price guard, joined channels
                    "pricelist_corrected": "pricelist.view", "price_held": "pricelist.view",
                    "price_correction_unmatched": "pricelist.view",
-                   "telegram_channel_new": "server.view"}
+                   "telegram_channel_new": "server.view",
+                   # v2.13.0: «empty the price-list archive» (new year / every 3 months),
+                   # a Telegram worker that died and was started again
+                   "pricelist_archive_reminder": "server.view",
+                   "telegram_flood_wait": "server.view",
+                   "worker_restarted": "server.view"}
 
 
 def event_visible(db: OwnDB, who: Identity, event: dict) -> bool:

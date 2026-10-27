@@ -76,6 +76,14 @@ SERVER_WARNINGS = {
     # v2.6.2: the customer cancelled an order that already exists in the accounting DB
     "order_cancel_written": "مشتری سفارشی را لغو کرد که قبلاً در «سازه حساب» ثبت شده بود؛ "
                             "در حسابداری چیزی تغییر نکرد. آنجا دستی بررسی کنید.",
+    # v2.13.0
+    "pricelist_archive_reminder": "یادآوری: پوشهٔ بایگانی لیست‌های قیمت را در صورت نیاز خالی "
+                                  "کنید (هیچ فایلی خودکار پاک نمی‌شود). نشانی در «تنظیمات سرور "
+                                  "فروشگاه».",
+    "worker_restarted": "بخشی از سرور (خوانندهٔ تلگرام یا سرور و ربات) از کار افتاده بود و خودکار "
+                        "دوباره راه‌اندازی شد.",
+    "telegram_flood_wait": "تلگرام خوانندهٔ لیست قیمت را برای مدتی طولانی متوقف کرده است؛ پس از "
+                           "آن خودکار ادامه می‌دهد. تا آن زمان PDF را دستی بارگذاری کنید.",
 }
 
 #: Sales window changes (v2.5.0): informational, no counter.
@@ -128,6 +136,9 @@ TARGETS = {
     "telegram_pricelist_error": ("pricelist", ""),
     "telegram_login_required": ("server", ""),
     "telegram_unreachable": ("server", ""),
+    "pricelist_archive_reminder": ("server", ""),
+    "worker_restarted": ("server", ""),
+    "telegram_flood_wait": ("pricelist", ""),
     "model_review": ("catalog", "review"),
     KIND_SITE_MODELS_NEW: ("catalog", "all"),
     KIND_AUTO_CANCELLED: ("orders", "cancelled"),

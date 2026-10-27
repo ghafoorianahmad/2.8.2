@@ -139,6 +139,9 @@ class Settings:
     first_run_scan: int = 30
     #: log file (ShopSystem: in the server's data folder, where the service may write)
     log_file: str = ""
+    #: v2.13.0: touched every 30 s while the reader runs; ShopSystem's supervisor
+    #: restarts a reader whose file stops changing (empty = no heartbeat)
+    heartbeat_file: str = ""
 
     @property
     def session_file(self) -> Path:
@@ -210,6 +213,7 @@ class Settings:
             proxy_test_max=min(200, max(1, _env_int("TG_PROXY_TEST_MAX", 40))),
             web_preview=_env("TG_PROXY_WEB_PREVIEW", "true").lower() in ("1", "true", "yes", "on"),
             log_file=_env("TG_LOG_FILE"),
+            heartbeat_file=_env("TG_HEARTBEAT_FILE"),
             health_interval_sec=max(30, _env_int("TG_HEALTH_INTERVAL_SEC", 180)),
             probe_interval_sec=max(600, _env_int("TG_PROBE_INTERVAL_MIN", 60) * 60),
             probe_max=max(1, _env_int("TG_PROBE_MAX", 15)),

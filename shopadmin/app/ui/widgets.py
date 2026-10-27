@@ -1267,6 +1267,16 @@ class Toast(QFrame):
         self._animation.start()
 
 
+def _alive(widget) -> bool:
+    """False once Qt deleted the C++ object behind ``widget``."""
+    try:
+        import shiboken6
+
+        return shiboken6.isValid(widget)
+    except ImportError:  # pragma: no cover - PySide6 always ships shiboken6
+        return True
+
+
 class ToastHost(QWidget):
     """Mix-in style helper: ``toast.show_success("...")``."""
 
@@ -1278,7 +1288,9 @@ class ToastHost(QWidget):
     def show(self, message: str, kind: str = "success", duration_ms: int = 3800) -> None:
         toast = Toast(self._parent, message, kind, duration_ms)
         toast.show()
-        self._active = [t for t in self._active if t.isVisible()]
+        # v2.13.0: a dismissed toast may already be deleted on the C++ side
+        # ("Internal C++ object (Toast) already deleted" in 2.12.0's log)
+        self._active = [t for t in self._active if _alive(t) and t.isVisible()]
         self._active.append(toast)
         self._reposition()
         # A toast shown before the window finished its first layout would land
@@ -1297,6 +1309,7 @@ class ToastHost(QWidget):
     def _reposition(self) -> None:
         margin = 24
         offset = 0
+        self._active = [t for t in self._active if _alive(t)]
         for toast in reversed(self._active):
             toast.adjustSize()
             toast.move(margin, self._parent.height() - toast.height() - margin - offset)

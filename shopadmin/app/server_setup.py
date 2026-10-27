@@ -586,11 +586,13 @@ class CurrentConfig:
     #: v2.9.1: the encrypted off-server backup copy (the passphrase is a secret)
     backup_copy_dir: str = ""
     backup_keep_days: int = 14
+    #: v2.13.0: the account of the computer behind a network backup folder
+    backup_share_user: str = ""
 
 
 #: v2.9.0: TG_PROXY (the manual first proxy) carries a proxy secret: never shown
 SECRET_KEYS = ("BALE_TOKEN", "TELEGRAM_BOT_TOKEN", "TG_API_ID", "TG_API_HASH", "TG_PROXY",
-               "BACKUP_PASSPHRASE")
+               "BACKUP_PASSPHRASE", "BACKUP_SHARE_PASSWORD")
 
 
 def read_current_config() -> Optional[CurrentConfig]:
@@ -637,6 +639,7 @@ def read_current_config() -> Optional[CurrentConfig]:
         tg_price_channel=get("TG_PRICE_CHANNEL"),
         backup_copy_dir=get("BACKUP_COPY_DIR"),
         backup_keep_days=int(get("BACKUP_KEEP_DAYS")) if get("BACKUP_KEEP_DAYS").isdigit() else 14,
+        backup_share_user=get("BACKUP_SHARE_USER"),
     )
 
 

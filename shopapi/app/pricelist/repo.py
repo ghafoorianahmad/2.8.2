@@ -81,6 +81,28 @@ class PriceListRepo:
             self.db._commit()
             return list_id
 
+    def fill_list(self, list_id: int, *, list_date: str, status: str, reason: str,
+                  rows: list[dict]) -> None:
+        """v2.13.0 «خواندن دوباره»: a list that failed before, now read: its rows,
+        date and status (same record, same file)."""
+        with self.db._lock:
+            self.db._conn.execute("DELETE FROM price_list_rows WHERE list_id=?", (int(list_id),))
+            self.db._conn.execute(
+                "UPDATE price_lists SET list_date=?, status=?, reason=?, row_count=? WHERE id=?",
+                (list_date, status, reason, len(rows), int(list_id)))
+            self.db._conn.executemany(
+                "INSERT INTO price_list_rows (list_id, row_key, block, section, description, "
+                "kind, color, naghd, raval, price_rial) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                [(int(list_id), r["row_key"], r["block"], r["section"], r["description"],
+                  r["kind"], r["color"], r["naghd"], r["raval"], r["price_rial"]) for r in rows])
+            self.db._commit()
+
+    def set_reason(self, list_id: int, reason: str) -> None:
+        with self.db._lock:
+            self.db._conn.execute("UPDATE price_lists SET reason=? WHERE id=?",
+                                  (reason, int(list_id)))
+            self.db._commit()
+
     def set_file_name(self, list_id: int, file_name: str) -> None:
         with self.db._lock:
             self.db._conn.execute(

@@ -50,6 +50,9 @@ K_PRICE_NOTES = "tg_price_notes"
 K_COLLECT_INFO = "tg_collect_info"
 K_COLLECT_REQUEST = "tg_collect_request"
 K_COLLECT_DONE = "tg_collect_done"
+#: v2.13.0: «دریافت لیست اکنون» from ShopAdmin (request time / the request handled)
+K_PRICE_REQUEST = "tg_price_request"
+K_PRICE_DONE = "tg_price_done"
 
 ROLE_PRICELIST = "pricelist"
 ROLE_PROXY = "proxy"
@@ -77,6 +80,21 @@ PROXY_SCAN = 100
 #: Consecutive download failures of a price-list PDF before the owner is alerted.
 PRICE_FAIL_ALERT = 3
 ALERT_PRICELIST = "telegram_pricelist_error"
+#: v2.13.0: a FloodWait longer than this tells the owner (once; shopapi deduplicates)
+ALERT_FLOOD = "telegram_flood_wait"
+FLOOD_ALERT_SEC = 3600
+#: v2.13.0: while every job is paused the status is still published this often, so
+#: «سرور فروشگاه» shows «paused until …» instead of a worker that looks dead
+PAUSED_STATUS_SEC = 60
+#: v2.13.0 watchdog: one round of jobs taking longer than this means something hangs;
+#: the worker then exits and the supervisor starts it again (and tells the owner)
+STEP_TIMEOUT_SEC = 30 * 60
+#: v2.13.0: the heartbeat file is touched this often while the event loop runs
+HEARTBEAT_SEC = 30
+
+
+class WorkerStuck(RuntimeError):
+    """One round of jobs did not finish within STEP_TIMEOUT_SEC."""
 
 
 def flood_seconds(exc: BaseException) -> int:
@@ -123,6 +141,7 @@ class Worker:
         self._roles: list[dict] | None = None
         self._roles_at = 0.0
         self._paused_until = 0.0
+        self._paused_status_at = 0.0
         self._price_failures = 0
         self.last_error = ""
         #: v2.9.0: shown on «سرور فروشگاه» (no secrets: refs, counts, times)
@@ -304,12 +323,14 @@ class Worker:
         return len(found)
 
     # ---- price channel ------------------------------------------------------------
-    async def price_tick(self) -> int:
+    async def price_tick(self, *, force: bool = False) -> int:
         """v2.9.1: read the newest posts of the price channel every time (not only
         those after a cursor): the newest list PDF that still exists is sent again
         when it changed (an edited post, a replaced file, or a deleted newest post),
         and the text posts after it (corrections, «فروش بسته») go to shopapi once
-        per version. Returns how many lists were sent."""
+        per version. v2.13.0 ``force`` («دریافت لیست اکنون»): the newest list is sent
+        even when it did not change (shopapi answers «duplicate», or reads a file
+        it rejected before again). Returns how many lists were sent."""
         self.price_info["checked_at"] = self._now().isoformat(timespec="seconds")
         channel = await self.price_channel()
         self.price_info["channel"] = channel
@@ -324,7 +345,7 @@ class Worker:
             newest = max(pdfs, key=lambda m: m.id)
             after = newest.id
             version = f"{channel}:{newest.version}"
-            if version != (state.get(K_PRICE_VERSION) or ""):
+            if force or version != (state.get(K_PRICE_VERSION) or ""):
                 if not await self._send_pdf(channel, newest):
                     return 0             # shopapi down: retry next time
                 await self.api.put_state(K_PRICE_VERSION, version)
@@ -519,15 +540,26 @@ class Worker:
         return value if isinstance(value, dict) else {}
 
     async def request_tick(self) -> bool:
-        """v2.9.2 «جمع‌آوری اکنون» in ShopAdmin: collect now (each request once)."""
+        """v2.9.2 «جمع‌آوری اکنون» / v2.13.0 «دریافت لیست اکنون» in ShopAdmin: each
+        request once. The price list needs the account: without a connection the
+        request waits (it is not marked handled) until the reader is connected."""
         state = await self.api.get_state()
+        handled = False
+        price_wanted = state.get(K_PRICE_REQUEST) or ""
+        if price_wanted and price_wanted != (state.get(K_PRICE_DONE) or "") \
+                and self.tg.connected:
+            await self.api.put_state(K_PRICE_DONE, price_wanted)
+            log.info("price list requested from ShopAdmin")
+            self._next["price"] = self._clock() + self.price_interval()
+            await self.price_tick(force=True)
+            handled = True
         wanted = state.get(K_COLLECT_REQUEST) or ""
-        if not wanted or wanted == (state.get(K_COLLECT_DONE) or ""):
-            return False
-        await self.api.put_state(K_COLLECT_DONE, wanted)
-        log.info("proxy collection requested from ShopAdmin")
-        await self.collect_tick(force=True)
-        return True
+        if wanted and wanted != (state.get(K_COLLECT_DONE) or ""):
+            await self.api.put_state(K_COLLECT_DONE, wanted)
+            log.info("proxy collection requested from ShopAdmin")
+            await self.collect_tick(force=True)
+            handled = True
+        return handled
 
     async def _test_and_add(self, found: list[tuple[str, str]], healthy: int) -> tuple[int, int]:
         """Test links the server never saw, until the pool holds pool_size + spare
@@ -568,6 +600,7 @@ class Worker:
     # ---- status / loop ----------------------------------------------------------------
     async def publish_status(self) -> None:
         link = self.tg.proxy
+        paused = max(0.0, self._paused_until - self._clock())
         status = {
             "connected": self.tg.connected,
             "proxy": _where(link) if self.tg.connected else "",
@@ -575,6 +608,9 @@ class Worker:
             "login_required": self._login_missing,
             "error": self.last_error[:200],
             "at": self._now().isoformat(timespec="seconds"),
+            # v2.13.0: every job waits for Telegram until this time (FloodWait)
+            "paused_until": (self._now() + timedelta(seconds=paused)).isoformat(
+                timespec="seconds") if paused else None,
             # v2.9.0 (no secrets: which key kind, the channel, counts and times)
             "api_preset": self.s.api_preset,
             "price_channel": self.price_info.get("channel") or self.s.price_channel,
@@ -591,6 +627,10 @@ class Worker:
         """Run whatever is due (called every few seconds)."""
         now = self._clock()
         if now < self._paused_until:
+            # v2.13.0: still say so (before, a long wait looked like a dead worker)
+            if now - self._paused_status_at >= PAUSED_STATUS_SEC:
+                self._paused_status_at = now
+                await self.publish_status()
             return
         if now >= self._next["health"]:
             self._next["health"] = now + self.s.health_interval_sec
@@ -643,20 +683,50 @@ class Worker:
         if not seconds:
             return False
         self._paused_until = now + seconds + 5
+        self._paused_status_at = 0.0
         self.last_error = f"Telegram asked to wait {seconds} s"
         log.warning("Telegram asked to wait %d s: every job paused", seconds)
+        if seconds >= FLOOD_ALERT_SEC:
+            self._flood_alert = True
         return True
 
-    async def run(self, stop: asyncio.Event) -> None:
+    _flood_alert = False
+
+    async def run(self, stop: asyncio.Event, *, heartbeat: Callable[[], None] | None = None,
+                  step_timeout: float = STEP_TIMEOUT_SEC) -> None:
+        """v2.13.0: ``heartbeat`` is called every HEARTBEAT_SEC by its own task (the
+        supervisor restarts a worker whose event loop stops); one round of jobs
+        longer than ``step_timeout`` raises WorkerStuck (the process exits and the
+        supervisor starts it again)."""
         log.info("shoptg worker started (price channel @%s, %d proxy channels)",
                  self.s.price_channel, len(self.s.proxy_channels))
+        beat = asyncio.create_task(self._beat(heartbeat, stop)) if heartbeat else None
         try:
             while not stop.is_set():
-                await self.step()
+                try:
+                    await asyncio.wait_for(self.step(), step_timeout)
+                except asyncio.TimeoutError:
+                    log.error("one round of jobs took over %d s: restarting the reader",
+                              int(step_timeout))
+                    raise WorkerStuck() from None
+                if self._flood_alert:
+                    self._flood_alert = False
+                    await self._alert(ALERT_FLOOD)
                 try:
                     await asyncio.wait_for(stop.wait(), 5)
                 except asyncio.TimeoutError:
                     pass
         finally:
+            if beat is not None:
+                beat.cancel()
             await self.tg.disconnect()
             log.info("shoptg worker stopped")
+
+    @staticmethod
+    async def _beat(heartbeat: Callable[[], None], stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            try:
+                heartbeat()
+            except Exception:  # noqa: BLE001 - a missing heartbeat only means a restart
+                log.debug("heartbeat not written", exc_info=True)
+            await asyncio.sleep(HEARTBEAT_SEC)

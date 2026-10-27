@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from . import (archive, catalog_models, control, deps, monitor, order_timeout, site_catalog,
                sql_errors, tracking)
 from .db_own import OwnDB
+from .pricelist import importer, pdf_archive
 from .routers import (
     admin, auth, catalog, pricelist, public, server_admin, shop_catalog, staff_admin,
 )
@@ -46,6 +47,21 @@ def _json_safe(value):
     return value
 
 
+async def _retry_failed_lists(settings, db_factory) -> None:
+    try:
+        await asyncio.sleep(20)          # the API answers first
+        results = await asyncio.to_thread(importer.retry_recent_failed, db_factory(), settings,
+                                          control.VERSION)
+        if results:
+            logging.getLogger("shopapi.pricelist").info(
+                "rejected lists read again: %s", ", ".join(r.outcome for r in results))
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - never stops the server
+        logging.getLogger("shopapi.pricelist").warning("retry of rejected lists failed: %s",
+                                                       type(exc).__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Ensure the own SQLite database file/schema exists at startup.
@@ -66,6 +82,10 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(order_timeout.order_timeout_loop(settings, db_factory)),
         # v2.8.0: Thursday 23:30 (Tehran) -> finished orders / requests to «بایگانی».
         asyncio.create_task(archive.archive_loop(db_factory)),
+        # v2.13.0: «empty the price-list archive» at the new year and every 3 months
+        asyncio.create_task(pdf_archive.reminder_loop(settings, db_factory)),
+        # v2.13.0: once per version, lists rejected in the last days are read again
+        asyncio.create_task(_retry_failed_lists(settings, db_factory)),
     ]
     try:
         yield

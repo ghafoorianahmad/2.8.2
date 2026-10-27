@@ -46,6 +46,7 @@ from ..persian import to_english_digits, to_persian_digits
 from . import theme, widgets
 from .async_utils import run_async
 from .rtl import RIGHT, mark_ltr
+from ..localshare import is_network_path as setup_is_network
 
 log = get_logger("server_setup_ui")
 
@@ -500,6 +501,8 @@ class ServerSetupWizard(QWidget):
         # another SQL Server: its own databases
         self.db_server.editingFinished.connect(lambda: self._load_databases())
         self.db_name.textChanged.connect(self._update_access_status)
+        # v2.13.0: picking a database = save, test and (when access is missing) grant
+        self.db_name.activated.connect(lambda _i: self._db_picked())
         self.db_access.changed.connect(self._update_access_status)
         self._auth_changed()
         return holder
@@ -566,7 +569,24 @@ class ServerSetupWizard(QWidget):
         self.backup_keep.setRange(3, 60)
         self.backup_keep.setValue(14)
         form.addRow(widgets.label("تعداد نسخه‌های نگه‌داشته:"), self.backup_keep)
+        # v2.13.0: a share of ANOTHER computer needs one of its accounts: the service
+        # (NT SERVICE\ShopServer) has no user name there ("Access is denied")
+        self.backup_user = _line(r"PC\user یا user")
+        mark_ltr(self.backup_user)
+        self.backup_user_pass = _line(password=True)
+        self.backup_user_label = widgets.label("نام کاربری رایانهٔ مقصد:")
+        self.backup_user_pass_label = widgets.label("گذرواژهٔ رایانهٔ مقصد:")
+        form.addRow(self.backup_user_label, self.backup_user)
+        form.addRow(self.backup_user_pass_label, self.backup_user_pass)
         panel.body.addLayout(form)
+        self.backup_user_hint = widgets.label(
+            "این پوشه روی رایانهٔ دیگری است. سرویس سرور در آن رایانه نام کاربری ندارد؛ نام کاربری "
+            "و گذرواژهٔ یک حساب همان رایانه را که اجازهٔ نوشتن در این پوشه دارد وارد کنید (همان "
+            "که خودتان برای باز کردن پوشه به کار می‌برید). گذرواژه فقط در پوشهٔ محافظت‌شدهٔ "
+            "سرور نگه داشته می‌شود.", name="Muted", wrap=True)
+        panel.body.addWidget(self.backup_user_hint)
+        self.backup_dir.textChanged.connect(lambda _t: self._backup_folder_changed())
+        self._backup_folder_changed()
         row = QHBoxLayout()
         self.backup_test_button = widgets.button("آزمایش", icon_name="check", variant="primary",
                                                  on_click=self._test_backup_folder)
@@ -579,6 +599,13 @@ class ServerSetupWizard(QWidget):
             "عبارت را روی کاغذ بنویسید و دور از سرور نگه دارید؛ بدون آن نسخه‌ها باز نمی‌شوند.",
             name="Muted", wrap=True))
         return panel
+
+    def _backup_folder_changed(self) -> None:
+        """The account fields only for a network folder (\\\\PC\\Share)."""
+        network = setup_is_network(self.backup_dir.text())
+        for widget in (self.backup_user, self.backup_user_pass, self.backup_user_label,
+                       self.backup_user_pass_label, self.backup_user_hint):
+            widget.setVisible(network)
 
     def _new_backup_passphrase(self) -> None:
         phrase = setup.new_backup_passphrase()
@@ -622,6 +649,11 @@ class ServerSetupWizard(QWidget):
             self._backup_message(
                 f"این پوشهٔ اشتراکی روی همین رایانهٔ سرور است؛ مسیر محلی «{target}» گذاشته شد تا "
                 "حساب سرویس سرور بتواند در آن بنویسد (دسترسی خودکار داده می‌شود).", None)
+        elif setup_is_network(target):
+            # v2.13.0: another computer's share: the service needs one of its accounts
+            self._backup_message(
+                f"نسخه‌ها در پوشهٔ اختصاصی «{target}» روی رایانهٔ دیگری نوشته می‌شوند؛ نام کاربری "
+                "و گذرواژهٔ همان رایانه را وارد و «آزمایش» کنید.", None)
         else:
             self._backup_message(
                 f"نسخه‌ها در پوشهٔ اختصاصی «{target}» نوشته می‌شوند (هرگز مستقیم در ریشهٔ درایو یا "
@@ -636,6 +668,9 @@ class ServerSetupWizard(QWidget):
             return
         port = self.port.value()
         settings_mode = self.settings_mode
+        network = setup_is_network(folder)
+        user = self.backup_user.text().strip() if network else ""
+        password = self.backup_user_pass.text() if network else ""
         self.backup_test_button.setEnabled(False)
         self._backup_message("در حال آزمایش…", None)
 
@@ -648,7 +683,9 @@ class ServerSetupWizard(QWidget):
             if settings_mode and mine.get("ok"):
                 client = setup.local_server_client(port)
                 try:
-                    service = client.backup_folder_test(folder, setup.service_key())
+                    # v2.13.0: with the account of the computer behind a network folder
+                    service = client.backup_folder_test(folder, setup.service_key(),
+                                                        user=user, password=password)
                 except Exception as exc:  # noqa: BLE001 - the server may be stopped
                     service = {"ok": None, "message_fa": "سرور در دسترس نبود؛ آزمایش با حساب "
                                                          f"سرویس انجام نشد ({type(exc).__name__})."}
@@ -1024,6 +1061,8 @@ class ServerSetupWizard(QWidget):
         self.tg_channel.setText(current.tg_price_channel)
         self.backup_dir.setText(current.backup_copy_dir)
         self.backup_keep.setValue(current.backup_keep_days or 14)
+        self.backup_user.setText(current.backup_share_user)
+        self._backup_folder_changed()
         secrets = current.secrets_set or {}
         for key, field in self._secret_fields().items():
             if secrets.get(key):
@@ -1035,7 +1074,8 @@ class ServerSetupWizard(QWidget):
     def _secret_fields(self) -> dict[str, QLineEdit]:
         return {"BALE_TOKEN": self.bale_token, "TELEGRAM_BOT_TOKEN": self.telegram_token,
                 "TG_API_ID": self.tg_api_id, "TG_API_HASH": self.tg_api_hash,
-                "TG_PROXY": self.tg_proxy, "BACKUP_PASSPHRASE": self.backup_pass}
+                "TG_PROXY": self.tg_proxy, "BACKUP_PASSPHRASE": self.backup_pass,
+                "BACKUP_SHARE_PASSWORD": self.backup_user_pass}
 
     # ------------------------------------------------------------------ telegram (v2.9.0)
     def tg_preset(self) -> str:
@@ -1245,7 +1285,16 @@ class ServerSetupWizard(QWidget):
         run_async(setup.list_databases, server, user=user, password=password, on_success=ok,
                   on_error=fail, on_done=lambda: self.db_list_button.setEnabled(True))
 
-    def _test_database(self) -> None:
+    def _db_picked(self) -> None:
+        """v2.13.0: a database chosen from the list is saved and tested at once; if
+        the shop's account may not open it, access is given automatically (the
+        2.9.4 drop-down only tested, and with a Persian answer not even that)."""
+        db = self._db_config()
+        if not db.database or self._db_input_problem(db):
+            return
+        self._test_database(auto_grant=True)
+
+    def _test_database(self, auto_grant: bool = True) -> None:
         db = self._db_config()
         problem = self._db_input_problem(db)
         if problem:
@@ -1275,6 +1324,8 @@ class ServerSetupWizard(QWidget):
                     + str(live.get("message_fa") or ""), False,
                     title="دسترسی نیست")
                 self.grant_button.setVisible(True)
+                if auto_grant:
+                    self._grant_access(confirm=False)
                 return
             self._db_ok = True
             groups = to_persian_digits(result.get("groups", 0))
@@ -1291,6 +1342,8 @@ class ServerSetupWizard(QWidget):
         def fail(message: str, kind: str) -> None:
             self._db_ok = False
             self._show_db_error(message, kind)
+            if auto_grant and kind == setup.DatabaseAccessError.kind:
+                self._grant_access(confirm=False)
 
         self.grant_button.setVisible(False)
         run_async(work, on_success=ok, on_error=fail,
@@ -1317,10 +1370,11 @@ class ServerSetupWizard(QWidget):
             return setup.SERVICE_ACCOUNT
         return self.db_user.text().strip()
 
-    def _grant_access(self) -> None:
+    def _grant_access(self, confirm: bool = True) -> None:
+        """``confirm=False`` (v2.13.0): the automatic grant after picking a database."""
         database = self.db_name.text().strip()
         login = self.shop_login_name()
-        if not widgets.confirm(
+        if confirm and not widgets.confirm(
                 self, "دادن دسترسی به این دیتابیس",
                 f"با حساب مدیر ویندوز همین برنامه، به «{login}» روی «{database}» همان دسترسی "
                 "محدودی داده می‌شود که grant_shop_app.ps1 می‌دهد (نقش shop_app: خواندن کالا و "
@@ -1330,7 +1384,9 @@ class ServerSetupWizard(QWidget):
             return
         self.grant_button.setEnabled(False)
         self.db_test_button.setEnabled(False)
-        self._db_message("در حال دادن دسترسی…", None)
+        self._db_message(f"حساب «{login}» به «{database}» دسترسی ندارد؛ در حال دادن خودکار "
+                         "دسترسی محدود (نقش shop_app) و آزمایش دوباره…" if not confirm else
+                         "در حال دادن دسترسی…", None)
 
         def ok(result: dict) -> None:
             self._db_ok = bool(result.get("check_ok"))
@@ -1473,6 +1529,11 @@ class ServerSetupWizard(QWidget):
         extra["backup_copy_dir"] = self.backup_dir.text().strip()
         extra["backup_keep_days"] = str(self.backup_keep.value())
         extra["backup_passphrase"] = self.backup_pass.text().strip() or None
+        # v2.13.0: the account of the computer behind a network folder (an untouched
+        # password = keep the saved one; a local folder clears both)
+        network = setup_is_network(self.backup_dir.text())
+        extra["backup_share_user"] = self.backup_user.text().strip() if network else ""
+        extra["backup_share_password"] = (self.backup_user_pass.text() or None) if network else ""
         return extra
 
     def _execute(self) -> None:

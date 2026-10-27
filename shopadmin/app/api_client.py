@@ -529,6 +529,7 @@ class ShopApiClient:
         json_body: Any = None,
         with_auth: bool = True,
         headers: dict[str, str] | None = None,
+        timeout: float | None = None,
     ) -> Any:
         if not self.base_url:
             raise ApiConnectionError("آدرس سرور فروشگاه تنظیم نشده است. به صفحهٔ تنظیمات بروید.")
@@ -543,6 +544,7 @@ class ShopApiClient:
                 params=clean_params or None,
                 json=json_body,
                 headers=all_headers,
+                **({"timeout": timeout} if timeout else {}),
             )
         except httpx.TimeoutException as exc:
             log.warning("shopapi timeout: %s %s", method, path)
@@ -828,11 +830,29 @@ class ShopApiClient:
         ) or {}
 
     # ---- v2.9.1: price guard, channel posts, joined channels ------------------
-    def backup_folder_test(self, folder: str, service_key: str = "") -> dict:
-        """The server writes / deletes a test file there with ITS account."""
+    def backup_folder_test(self, folder: str, service_key: str = "", *, user: str = "",
+                           password: str = "") -> dict:
+        """The server writes / deletes a test file there with ITS account (v2.13.0:
+        signed in to a network folder with ``user`` / ``password`` first)."""
         headers = {API_KEY_HEADER: service_key} if service_key else None
-        return self._request("POST", "/admin/server/backup-test", json_body={"folder": folder},
+        body = {"folder": folder}
+        if user:
+            body.update(user=user, password=password)
+        return self._request("POST", "/admin/server/backup-test", json_body=body,
                              headers=headers, with_auth=not service_key) or {}
+
+    # ---- v2.13.0: the price list now / again --------------------------------------
+    def fetch_pricelist_now(self) -> dict:
+        """«دریافت لیست اکنون»: the Telegram reader reads the channel within seconds."""
+        return self._request("POST", "/admin/pricelists/fetch") or {}
+
+    def fetch_pricelist_state(self) -> dict:
+        return self._request("GET", "/admin/pricelists/fetch") or {}
+
+    def reread_pricelist(self, list_id: int) -> dict:
+        """«خواندن دوباره»: the server reads the archived PDF of a list again."""
+        return self._request("POST", f"/admin/pricelists/{int(list_id)}/reread",
+                             timeout=90) or {}
 
     # ---- v2.9.4: «تنظیمات سرور» on the server (service key) and the status helper ----
     def _service_call(self, method: str, path: str, service_key: str, **kwargs) -> Any:

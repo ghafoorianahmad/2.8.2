@@ -6,6 +6,7 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from . import secure_store
 from .config import Settings
 from .gateway import TelegramGateway
 from .shopapi import ApiError, WorkerApi
-from .worker import Worker
+from .worker import Worker, WorkerStuck
 
 
 def setup_logging(settings: Settings, level: str) -> None:
@@ -83,10 +84,23 @@ async def run(settings: Settings) -> int:
         except (NotImplementedError, RuntimeError):
             signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop.set))
     try:
-        await Worker(settings, api, gateway).run(stop)
+        await Worker(settings, api, gateway).run(stop, heartbeat=heartbeat_writer(settings))
+    except WorkerStuck:
+        return 4                    # the supervisor starts the reader again (and alerts)
     finally:
         await api.aclose()
     return 0
+
+
+def heartbeat_writer(settings: Settings):
+    """v2.13.0: writes the time into TG_HEARTBEAT_FILE (None when not set)."""
+    if not settings.heartbeat_file:
+        return None
+    path = Path(settings.heartbeat_file)
+
+    def beat() -> None:
+        path.write_text(str(int(time.time())), encoding="ascii")
+    return beat
 
 
 def main(argv: list[str] | None = None) -> int:

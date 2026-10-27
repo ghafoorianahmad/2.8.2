@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -37,7 +37,8 @@ from ..rtl import mark_ltr
 
 NOTE_HEADERS = ("زمان", "نوع", "نتیجه", "متن پیام")
 ROW_HEADERS = ("بخش", "مدل", "نوع", "رنگ", "نقد", "روال", "قیمت مشتری (ریال)", "وضعیت", "کالا")
-LIST_HEADERS = ("شماره", "تاریخ لیست", "منبع", "وضعیت", "ردیف‌ها", "زمان دریافت", "توضیح")
+LIST_HEADERS = ("شماره", "تاریخ لیست", "منبع", "وضعیت", "ردیف‌ها", "زمان دریافت", "فایل",
+                "توضیح", "کار")
 PROXY_HEADERS = ("میزبان", "پورت", "نوع", "وضعیت", "پایداری", "روز خوب / بررسی", "آخرین اتصال موفق",
                  "الان")
 
@@ -53,6 +54,9 @@ FILTERS = (
 )
 #: Largest PDF accepted (same rule for the button and for drag & drop).
 MAX_PDF_BYTES = 10 * 1024 * 1024
+#: v2.13.0 «دریافت لیست اکنون»: how often / how many times the result is looked for
+FETCH_CHECK_MS = 5000
+FETCH_CHECKS = 12
 LIST_STATUS_FA = {
     "active": "فعال",
     "held": "نگه‌داشته (منتظر تأیید)",
@@ -70,7 +74,33 @@ OUTCOME_FA = {
     "failed": "PDF خوانده نشد (قالب ناشناخته). قیمت‌های قبلی فعال ماند.",
     "duplicate": "این فایل قبلاً دریافت شده بود.",
     "older": "این لیست از لیست فعال قدیمی‌تر است و اعمال نشد.",
+    # v2.13.0 «خواندن دوباره»
+    "read": "فایل دوباره خوانده شد و مثل قبل درست بود؛ چیزی تغییر نکرد.",
+    "missing": "فایل این لیست نگه داشته نشده است (لیست‌های قدیمی‌تر از نسخهٔ ۲٫۱۳٫۰).",
+    "timeout": "خواندن فایل بیش از یک دقیقه طول کشید و متوقف شد؛ فایل احتمالاً خراب است.",
 }
+#: v2.13.0: the reader's technical reason -> one Persian sentence
+PARSE_REASON_FA = (
+    ("not on one line", "جای سرستون‌های «نقد/روال» با لیست‌های قبلی فرق دارد."),
+    ("headers", "سرستون‌های «نقد/روال» در فایل پیدا نشد."),
+    ("no date", "تاریخ لیست در بالای فایل پیدا نشد."),
+    ("type column", "ستون «نوع» (شرکتی/ویتنام…) پیدا نشد."),
+    ("rows found", "ردیف‌های کمی خوانده شد؛ قالب فایل عوض شده است."),
+    ("without a price", "بیشتر ردیف‌ها قیمت ندارند."),
+    ("expected 1 page", "فایل بیش از یک صفحه است."),
+    ("unreadable PDF", "فایل PDF خراب است یا باز نمی‌شود."),
+    ("not a PDF", "فایل PDF نیست."),
+    ("was not kept", "فایل این لیست نگه داشته نشده است."),
+)
+
+
+def reason_fa(reason: str) -> str:
+    """The stored reason of a list in plain Persian (unknown text: as is)."""
+    text = str(reason or "")
+    for mark, sentence in PARSE_REASON_FA:
+        if mark in text:
+            return sentence
+    return text
 
 
 # ---- pure helpers (tested without a window) ----------------------------------------
@@ -292,19 +322,27 @@ class PriceListPage(BasePage):
                                          "file")
         self.lists_table.setMinimumHeight(300)
         panel.body.addWidget(self.lists_table, 1)
-        actions = QHBoxLayout()
+        actions_holder = QWidget()
+        actions = widgets.FlowLayout(actions_holder, spacing=10)
+        # v2.13.0: the newest list of the channel now (not only every 20 minutes)
+        self.fetch_button = widgets.button(
+            "دریافت لیست اکنون", icon_name="refresh", variant="primary",
+            on_click=self._fetch_now,
+            tooltip="خوانندهٔ تلگرام همین حالا کانال لیست قیمت را می‌خواند و آخرین فایل را می‌فرستد.")
         self.upload_button = widgets.button("بارگذاری PDF…", icon_name="download",
-                                            variant="primary", on_click=self._upload_pdf)
+                                            on_click=self._upload_pdf)
         self.upload_button.setToolTip("یا فایل PDF را روی همین صفحه بکشید و رها کنید.")
         self.approve_button = widgets.button("تأیید لیست نگه‌داشته", icon_name="check",
                                              variant="success", on_click=self._approve_list)
         self.reject_button = widgets.button("رد لیست", icon_name="close", variant="danger",
                                             on_click=self._reject_list)
-        for b in (self.upload_button, self.approve_button, self.reject_button):
+        for b in (self.fetch_button, self.upload_button, self.approve_button, self.reject_button):
             b.setEnabled(self.can_manage)
             actions.addWidget(b)
-        actions.addStretch(1)
-        panel.body.addLayout(actions)
+        panel.body.addWidget(actions_holder)
+        self.fetch_status = widgets.label("", name="Muted", wrap=True)
+        self.fetch_status.setVisible(False)
+        panel.body.addWidget(self.fetch_status)
         layout.addWidget(panel, 1)
         return tab
 
@@ -524,8 +562,75 @@ class PriceListPage(BasePage):
                 LIST_STATUS_FA.get(status, status), LIST_STATUS_COLOR.get(status, ""))))
             table.set_cell(i, 4, format_int(item.get("row_count") or 0))
             table.set_cell(i, 5, format_shamsi(item.get("created_at")))
-            table.set_cell(i, 6, str(item.get("reason") or ""))
+            file_name = str(item.get("file_name") or "")
+            table.set_cell(i, 6, to_persian_digits(file_name) if file_name else "—",
+                           tooltip=file_name)
+            reason = str(item.get("reason") or "")
+            table.set_cell(i, 7, reason_fa(reason), tooltip=reason)
+            table.set_widget(i, 8, self._list_actions(item))
         table._refresh_states()
+
+    def _list_actions(self, item: dict) -> QWidget:
+        """v2.13.0: «خواندن دوباره» on every received list whose file was kept."""
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(4, 2, 4, 2)
+        again = widgets.button("خواندن دوباره", icon_name="refresh",
+                               on_click=lambda i=item: self._reread(i),
+                               tooltip="فایل همین لیست دوباره خوانده می‌شود.")
+        again.setEnabled(self.can_manage and bool(item.get("file_name")))
+        row.addWidget(again)
+        row.addStretch(1)
+        return holder
+
+    def _reread(self, item: dict) -> None:
+        list_id = int(item["id"])
+
+        def done(result: dict) -> None:
+            outcome = str(result.get("outcome") or "")
+            text = OUTCOME_FA.get(outcome, outcome)
+            reasons = [reason_fa(r) for r in result.get("reasons") or []]
+            if outcome in ("active", "read"):
+                rows = to_persian_digits(int(result.get("row_count") or 0))
+                self.notify_success(f"{text} ({rows} ردیف)")
+            else:
+                widgets.info(self, "خواندن دوباره", text + ("\n" + "\n".join(reasons)
+                                                            if reasons else ""),
+                             kind="warning" if outcome in ("held", "failed", "timeout", "missing")
+                             else "info")
+            self.load()
+
+        self.run(lambda: self.context.api.reread_pricelist(list_id), on_success=done,
+                 busy_message="در حال خواندن دوبارهٔ لیست…")
+
+    def _fetch_now(self) -> None:
+        """v2.13.0 «دریافت لیست اکنون»: asks the reader, then looks for the result."""
+        def asked(_result: dict) -> None:
+            self.fetch_status.setText("درخواست فرستاده شد؛ خوانندهٔ تلگرام تا چند ثانیهٔ دیگر "
+                                      "کانال را می‌خواند. نتیجه در همین فهرست می‌آید.")
+            self.fetch_status.setVisible(True)
+            self._fetch_checks = 0
+            QTimer.singleShot(FETCH_CHECK_MS, self._check_fetch)
+
+        self.run(lambda: self.context.api.fetch_pricelist_now(), on_success=asked)
+
+    def _check_fetch(self) -> None:
+        self._fetch_checks = getattr(self, "_fetch_checks", 0) + 1
+
+        def seen(state: dict) -> None:
+            if state.get("handled"):
+                self.fetch_status.setText("کانال خوانده شد؛ آخرین لیست در فهرست زیر است.")
+                self._load_lists()
+            elif self._fetch_checks < FETCH_CHECKS:
+                QTimer.singleShot(FETCH_CHECK_MS, self._check_fetch)
+            else:
+                self.fetch_status.setText(
+                    "خوانندهٔ تلگرام هنوز پاسخ نداده است (وصل نیست یا تلگرام صبر خواسته). "
+                    "وضعیت آن در «تنظیمات سرور فروشگاه» است؛ فایل را با «بارگذاری PDF» هم "
+                    "می‌توانید بدهید.")
+
+        self.run(lambda: self.context.api.fetch_pricelist_state(), on_success=seen,
+                 on_error=lambda _m, _k: None)
 
     def _on_proxies(self, proxies: list) -> None:
         self.proxy_table.set_busy(False)

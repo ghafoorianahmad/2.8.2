@@ -60,7 +60,13 @@ TEXTS_UP = {
 #: v2.9.4: the reason of a failed backup in plain Persian (the status keeps the
 #: technical text; only these sentences reach the owner's Bale chat)
 BACKUP_REASONS = (
-    ("PermissionError", "حساب سرویس سرور اجازهٔ نوشتن در پوشهٔ پشتیبان را ندارد. «تنظیمات سرور» "
+    # v2.13.0: a share on ANOTHER computer: the service has no user name there
+    ("no user name for it", "پوشهٔ پشتیبان روی رایانهٔ دیگری است و سرویس سرور آن‌جا نام کاربری "
+                            "ندارد. در «تنظیمات سرور» › «پشتیبان بیرون از سرور» نام کاربری و "
+                            "گذرواژهٔ همان رایانه را وارد و «آزمایش» کنید."),
+    ("ShareLogin", "ورود سرویس سرور به پوشهٔ اشتراکی رایانهٔ مقصد ممکن نشد (نام کاربری یا "
+                   "گذرواژهٔ آن رایانه را در «تنظیمات سرور» بررسی کنید)."),
+    ("PermissionError","حساب سرویس سرور اجازهٔ نوشتن در پوشهٔ پشتیبان را ندارد. «تنظیمات سرور» "
                         "را روی سرور باز و ذخیره کنید تا پوشهٔ ShopServerBackup با دسترسی درست "
                         "ساخته شود؛ اگر پوشه روی رایانهٔ دیگری است، همان‌جا به رایانهٔ سرور اجازهٔ "
                         "نوشتن بدهید."),
@@ -71,15 +77,24 @@ BACKUP_REASONS = (
 )
 
 
+def backup_reason_fa(status: dict) -> str:
+    """v2.13.0: the reason of a failed backup run in plain Persian ("" = unknown)."""
+    if not status or status.get("ok"):
+        return ""
+    offsite = status.get("offsite") if isinstance(status.get("offsite"), dict) else {}
+    raw = str((offsite or {}).get("error") or status.get("error") or "")
+    return next((text for mark, text in BACKUP_REASONS if mark.lower() in raw.lower()), "")
+
+
 def backup_failure_text(status: dict) -> str:
     """The Bale alert of one failed backup run, with its reason in Persian."""
     offsite = status.get("offsite") if isinstance(status.get("offsite"), dict) else {}
-    raw = str((offsite or {}).get("error") or status.get("error") or "")
     where = ("نسخهٔ بیرون از سرور" if (offsite or {}).get("ok") is False
              else "پشتیبان روزانه روی خود سرور")
-    reason = next((text for mark, text in BACKUP_REASONS if mark.lower() in raw.lower()),
-                  "علت در صفحهٔ «سرور فروشگاه» (بخش پشتیبان) آمده است.")
-    return f"⚠️ هشدار سرور: پشتیبان‌گیری ناموفق بود ({where}). {reason}"
+    reason = backup_reason_fa(status) or "علت در صفحهٔ «سرور فروشگاه» (بخش پشتیبان) آمده است."
+    tail = (" پشتیبان روزانه روی خود سرور سالم است." if status.get("local_ok")
+            and (offsite or {}).get("ok") is False else "")
+    return f"⚠️ هشدار سرور: پشتیبان‌گیری ناموفق بود ({where}). {reason}{tail}"
 
 
 def _parse_time(raw: str | None) -> Optional[datetime]:

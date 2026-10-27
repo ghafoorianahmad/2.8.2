@@ -49,6 +49,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
+import netshare
+
 FILES = (".env", "messages.fa.json")
 DATABASES = ("shopapi.db", "shopbots.db")
 FOLDERS = ("receipts", "pricelists", "tls")
@@ -337,6 +339,10 @@ def offsite_dir(raw: Optional[str]) -> str:
         return text
 
 
+def is_network_folder(folder: Optional[str]) -> bool:
+    return str(folder or "").strip()[:2] in ("\\\\", "//")
+
+
 @dataclass
 class BackupConfig:
     hour: int = DEFAULT_HOUR
@@ -344,6 +350,10 @@ class BackupConfig:
     copy_dir: str = ""
     passphrase: str = ""
     enabled: bool = True
+    #: v2.13.0: an account of the computer behind a network ``copy_dir``
+    #: (``BACKUP_SHARE_USER`` / ``BACKUP_SHARE_PASSWORD``)
+    share_user: str = ""
+    share_password: str = ""
 
     @classmethod
     def from_values(cls, values: Mapping[str, str]) -> "BackupConfig":
@@ -358,7 +368,9 @@ class BackupConfig:
                    keep_days=number("BACKUP_KEEP_DAYS", DEFAULT_KEEP_DAYS, 1, 365),
                    copy_dir=offsite_dir(values.get("BACKUP_COPY_DIR")),
                    passphrase=str(values.get("BACKUP_PASSPHRASE", "") or ""),
-                   enabled=enabled)
+                   enabled=enabled,
+                   share_user=str(values.get("BACKUP_SHARE_USER", "") or "").strip(),
+                   share_password=str(values.get("BACKUP_SHARE_PASSWORD", "") or ""))
 
 
 def read_status(data_dir: Path) -> dict:
@@ -387,25 +399,37 @@ def run_backup(data_dir: Path, config: BackupConfig, *, now: Optional[datetime] 
     status: dict = {"at": now.isoformat(timespec="seconds"), "ok": False, "error": None,
                     "file": None, "size": None, "verify": None,
                     "offsite": {"configured": bool(config.copy_dir), "ok": None,
-                                "file": None, "error": None},
-                    "last_success_at": previous.get("last_success_at")}
+                                "file": None, "error": None,
+                                "network": is_network_folder(config.copy_dir),
+                                "signed_in": bool(config.share_user)},
+                    "last_success_at": previous.get("last_success_at"),
+                    # v2.13.0: the copy on the server itself, apart from the off-server one
+                    "local_ok": False,
+                    "last_local_success_at": previous.get("last_local_success_at")}
     try:
         zip_path = create_backup(data_dir, daily_dir(data_dir), now=now)
         status["file"], status["size"] = zip_path.name, zip_path.stat().st_size
         status["verify"] = verify_backup(zip_path)
         prune(daily_dir(data_dir), ".zip", config.keep_days)
+        status["local_ok"] = True
+        status["last_local_success_at"] = status["at"]
         ok = True
         if config.copy_dir:
             try:
                 if not config.passphrase:
                     raise BackupError("BACKUP_PASSPHRASE is not set - the off-server copy "
                                       "is never written unencrypted")
-                copy = copy_offsite(zip_path, Path(config.copy_dir), config.passphrase)
-                prune(Path(config.copy_dir), ".ssbk", config.keep_days)
+                with netshare.session(config.copy_dir, config.share_user, config.share_password):
+                    copy = copy_offsite(zip_path, Path(config.copy_dir), config.passphrase)
+                    prune(Path(config.copy_dir), ".ssbk", config.keep_days)
                 status["offsite"].update(ok=True, file=copy.name)
             except (BackupError, OSError) as exc:
                 ok = False
                 status["offsite"].update(ok=False, error=_describe(exc))
+                if isinstance(exc, PermissionError) and status["offsite"]["network"] \
+                        and not config.share_user:
+                    # the service has no user name on another computer
+                    status["offsite"]["error"] += " (network share: no user name for it)"
         status["ok"] = ok
         if not ok:
             status["error"] = "off-server copy failed"
@@ -421,6 +445,8 @@ def _describe(exc: Exception) -> str:
     """Error text without paths' contents or secrets (only our own messages)."""
     if isinstance(exc, BackupError):
         return str(exc)[:300]
+    if isinstance(exc, netshare.ShareLoginError):
+        return f"ShareLogin {exc.code}: {exc.message_fa}"[:300]
     if isinstance(exc, OSError):
         return f"{type(exc).__name__}: {exc.strerror or ''}".strip()[:300]
     return type(exc).__name__

@@ -124,6 +124,8 @@ class TelegramGateway:
         self._clock = clock
         self._client: Any = None
         self.proxy: ProxyLink | None = None
+        #: v2.13.0: channel -> InputPeer, kept across reconnects (same account)
+        self._peers: dict[str, Any] = {}
 
     def make_client(self, session: str, link: ProxyLink | None):
         with warnings.catch_warnings():
@@ -191,13 +193,33 @@ class TelegramGateway:
         if self._client is None:
             raise ConnectionError("not connected")
 
-        target = channel_target(channel)
+        target = await self._peer(channel)
 
         async def collect():
             return [to_message(m) async for m in
                     self._client.iter_messages(target, min_id=min_id, limit=limit)]
-        out = await asyncio.wait_for(collect(), self._timeout * 3)
+        try:
+            out = await asyncio.wait_for(collect(), self._timeout * 3)
+        except BaseException:
+            self._peers.pop(str(channel).lower(), None)
+            raise
         return sorted(out, key=lambda m: m.id)
+
+    async def _peer(self, channel: str):
+        """v2.13.0: the channel is looked up (ResolveUsername) once and kept across
+        reconnects: every lookup counts against Telegram's limits, and a reader
+        that reconnected often was told to wait for hours (all jobs paused)."""
+        key = str(channel).lower()
+        peer = self._peers.get(key)
+        if peer is not None:
+            return peer
+        target = channel_target(channel)
+        resolve = getattr(self._client, "get_input_entity", None)
+        if resolve is None:
+            return target
+        peer = await asyncio.wait_for(resolve(target), self._timeout)
+        self._peers[key] = peer
+        return peer
 
     async def channels(self, limit: int = 300) -> list[TgChannel]:
         """v2.9.1: channels and groups the account has joined (read only: the

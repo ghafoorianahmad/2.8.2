@@ -76,6 +76,10 @@ ALIASES = {
 logger = logging.getLogger("shopsystem")
 _SERVERS: list = []          # running uvicorn servers, so Ctrl+C can stop them
 _STOP = threading.Event()
+#: v2.13.0: the API or the bots gave up after their restarts: under the supervisor the
+#: whole server process exits so it is started again (and the owner is told)
+_GAVE_UP = threading.Event()
+EXIT_GAVE_UP = 5
 
 
 # --------------------------------------------------------------------------
@@ -341,6 +345,7 @@ def start_api(info: dict, max_restarts: int = 5) -> threading.Thread:
                     logger.error(
                         "API: giving up after %s attempts - the bots keep running", attempt
                     )
+                    _GAVE_UP.set()
                     return
                 _STOP.wait(min(5 * attempt, 30))
 
@@ -434,6 +439,7 @@ def start_bots(max_restarts: int = 10) -> threading.Thread:
                     logger.error(
                         "bots: giving up after %s attempts - the API keeps running", attempt
                     )
+                    _GAVE_UP.set()
                     return
                 _STOP.wait(min(5 * attempt, 30))
 
@@ -500,11 +506,17 @@ def run_worker(args: list[str], *, console: bool) -> int:
         print("=" * 74)
         print()
 
+    exit_code = EXIT_OK
     try:
         while True:
             alive = [t for t in (api_thread, bots_thread) if t is not None and t.is_alive()]
             if not alive:
                 logger.error("all subsystems have stopped - nothing left to supervise")
+                break
+            if supervised and _GAVE_UP.is_set():
+                logger.error("a subsystem gave up - exiting so the supervisor starts "
+                             "the server again")
+                exit_code = EXIT_GAVE_UP
                 break
             time.sleep(1.0)
     except KeyboardInterrupt:
@@ -524,7 +536,7 @@ def run_worker(args: list[str], *, console: bool) -> int:
     if console:
         print("\nShop server stopped. See app.log for details.")
         _pause()
-    return EXIT_OK
+    return exit_code
 
 
 # --------------------------------------------------------------------------
@@ -601,9 +613,12 @@ class ChildSpec:
     for a fresh environment at every start, so a restart sees new settings."""
 
     def __init__(self, name: str, label: str, command: list[str], *,
-                 env: dict, cwd: str | None = None, env_factory=None) -> None:
+                 env: dict, cwd: str | None = None, env_factory=None,
+                 heartbeat: Path | None = None) -> None:
         self.name, self.label, self.command, self.env, self.cwd = name, label, command, env, cwd
         self.env_factory = env_factory
+        #: v2.13.0: a file the child touches while it runs (watchdog), or None
+        self.heartbeat = heartbeat
 
     def current_env(self) -> dict:
         if self.env_factory is not None:
@@ -665,7 +680,13 @@ def shoptg_env(values: dict[str, str], *, run_mode: str, bundled: bool) -> dict[
         # the service may write here (the session folder is read-only for it)
         env["TG_LOG_FILE"] = str(Paths.data_dir / "shoptg.log")
         env["SHOPTG_NO_DOTENV"] = "1"
+    # v2.13.0: the supervisor restarts a reader that stops touching this file
+    env["TG_HEARTBEAT_FILE"] = str(tg_heartbeat_file())
     return env
+
+
+def tg_heartbeat_file() -> Path:
+    return Paths.data_dir / "shoptg.heartbeat"
 
 
 def shoptg_spec(values: dict[str, str], *, run_mode: str) -> ChildSpec | None:
@@ -681,14 +702,15 @@ def shoptg_spec(values: dict[str, str], *, run_mode: str) -> ChildSpec | None:
             return None
         env = shoptg_env(values, run_mode=run_mode, bundled=False)
         return ChildSpec("shoptg", "کارگر تلگرام", [str(python), "-m", "app.main"], env=env,
-                         cwd=root)
+                         cwd=root, heartbeat=tg_heartbeat_file())
     if not tg_reader_enabled(values):
         return None
     env = shoptg_env(values, run_mode=run_mode, bundled=True)
     return ChildSpec("shoptg", "کارگر تلگرام",
                      [*self_command(), "--tg-worker", "--data-dir", str(Paths.data_dir)], env=env,
                      env_factory=lambda: shoptg_env(read_env_values(), run_mode=run_mode,
-                                                    bundled=True))
+                                                    bundled=True),
+                     heartbeat=tg_heartbeat_file())
 
 
 def _shoptg(module: str):
@@ -768,8 +790,42 @@ class CrashTracker:
 
 
 def crash_alert_text(label: str) -> str:
-    return (f"⚠️ هشدار سرور: «{label}» پشت‌سرهم از کار می‌افتد و خودکار دوباره "
-            "راه‌اندازی می‌شود. گزارش‌ها: supervisor.log و app.log در پوشهٔ دادهٔ سرور.")
+    return (f"⚠️ هشدار سرور: «{label}» از کار افتاده بود و خودکار دوباره راه‌اندازی شد. "
+            "اگر تکرار شد: supervisor.log و app.log در پوشهٔ دادهٔ سرور.")
+
+
+def post_restart_event(label: str, values: dict[str, str], *, post=None) -> bool:
+    """v2.13.0: tell shopapi (ShopAdmin notification + one Bale message, at most one
+    per 6 hours). False when the API does not answer (the API itself may be the
+    part that died): the caller then sends the Bale message directly."""
+    key = (values.get("WORKER_API_KEY") or "").strip()
+    if not key:
+        return False
+    tls = _truthy(values.get("API_TLS", "false"))
+    port = (values.get("API_PORT") or "").strip() or "8000"
+    url = f"{'https' if tls else 'http'}://127.0.0.1:{port}/worker/alerts"
+    try:
+        if post is None:
+            import httpx
+
+            verify: object = True
+            if tls:
+                import ssl
+
+                from server_tls import CERT_NAME
+                verify = ssl.create_default_context(cafile=str(Paths.tls_dir / CERT_NAME))
+            response = httpx.post(url, json={"kind": "worker_restarted", "detail": label},
+                                  headers={"X-API-Key": key}, timeout=20, verify=verify,
+                                  trust_env=False)
+            return response.status_code == 200
+        return bool(post(url, label, key))
+    except Exception:  # noqa: BLE001 - fall back to the direct Bale message
+        return False
+
+
+def alert_restart(label: str, values: dict[str, str]) -> None:
+    if not post_restart_event(label, values):
+        send_crash_alert(label, values)
 
 
 def send_crash_alert(label: str, values: dict[str, str]) -> None:
@@ -784,42 +840,107 @@ def send_crash_alert(label: str, values: dict[str, str]) -> None:
                                                            type(exc).__name__)
 
 
-def supervise_child(spec: ChildSpec, stop: threading.Event, *, job=None,
-                    tracker: CrashTracker | None = None, on_crash_loop=None,
-                    popen=subprocess.Popen) -> None:
-    """Keep one child running until ``stop`` is set (growing back-off on failures)."""
+#: v2.13.0 watchdog: a child with a heartbeat file that has not touched it for this
+#: long (its event loop stopped) is killed and started again
+HEARTBEAT_STALE_SEC = 10 * 60
+HEARTBEAT_CHECK_SEC = 30
+#: v2.13.0: one owner alert per incident; an incident ends once the child has run
+#: this long without trouble (the next failure is a new incident)
+INCIDENT_RESET_SEC = 30 * 60
+#: what ``_run_once`` returns when ``stop`` was set (the child was stopped by us)
+_STOPPED = object()
+
+
+def _heartbeat_stale(spec: ChildSpec, started_wall: float, now_wall: float,
+                     stale_after: float) -> bool:
+    if spec.heartbeat is None:
+        return False
+    try:
+        last = max(started_wall, Path(spec.heartbeat).stat().st_mtime)
+    except OSError:
+        last = started_wall               # no file yet: counted from the start
+    return now_wall - last > stale_after
+
+
+def _run_once(spec: ChildSpec, stop: threading.Event, *, job, popen, stale_after: float,
+              wall=time.time):
+    """Start the child once and wait for it. Returns its exit code, ``"hung"`` when
+    the watchdog killed it, None when it could not start, or _STOPPED."""
     log = logging.getLogger("shopsystem.supervisor")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        process = popen(spec.command, env=spec.current_env(), cwd=spec.cwd, creationflags=flags,
+                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        log.error("%s: cannot start (%s)", spec.name, type(exc).__name__)
+        return None
+    _assign_to_job(job, process)
+    log.info("%s started (pid %s)", spec.name, process.pid)
+    started_wall = wall()
+    next_check = started_wall + HEARTBEAT_CHECK_SEC
+    while process.poll() is None:
+        if stop.wait(1.0):
+            log.info("%s: stopping", spec.name)
+            process.terminate()
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            return _STOPPED
+        now = wall()
+        if now >= next_check:
+            next_check = now + HEARTBEAT_CHECK_SEC
+            if _heartbeat_stale(spec, started_wall, now, stale_after):
+                log.error("%s: no sign of life for over %d s - killing it to start again",
+                          spec.name, int(stale_after))
+                process.kill()
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    pass
+                return "hung"
+    return process.returncode
+
+
+def supervise_child(spec: ChildSpec, stop: threading.Event, *, job=None,
+                    tracker: CrashTracker | None = None, on_crash_loop=None,
+                    on_incident=None, popen=subprocess.Popen,
+                    stale_after: float = HEARTBEAT_STALE_SEC, clock=time.monotonic) -> None:
+    """Keep one child running until ``stop`` is set (growing back-off on failures).
+    v2.13.0: a child whose heartbeat stops is killed and started again
+    (``"hung"``); ``on_incident(spec, code)`` is called once per incident (the first
+    unexpected exit after the child had run fine for INCIDENT_RESET_SEC); this
+    loop never dies on an unexpected error of its own."""
+    log = logging.getLogger("shopsystem.supervisor")
     failures = 0
+    in_incident = False
     while not stop.is_set():
-        started = time.monotonic()
+        started = clock()
         try:
-            process = popen(spec.command, env=spec.current_env(), cwd=spec.cwd, creationflags=flags,
-                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL)
-        except OSError as exc:
-            log.error("%s: cannot start (%s)", spec.name, type(exc).__name__)
+            code = _run_once(spec, stop, job=job, popen=popen, stale_after=stale_after)
+        except Exception as exc:  # noqa: BLE001 - the supervisor must keep supervising
+            log.error("%s: supervision error (%s)", spec.name, type(exc).__name__)
             code = None
-        else:
-            _assign_to_job(job, process)
-            log.info("%s started (pid %s)", spec.name, process.pid)
-            while process.poll() is None:
-                if stop.wait(1.0):
-                    log.info("%s: stopping", spec.name)
-                    process.terminate()
-                    try:
-                        process.wait(timeout=15)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                    return
-            code = process.returncode
-            if code == EXIT_RESTART:
-                log.info("%s asked for a restart", spec.name)
-                failures = 0
-                continue
-        if time.monotonic() - started > 300:
+        if code is _STOPPED:
+            return
+        ran = clock() - started
+        if ran >= INCIDENT_RESET_SEC:
+            in_incident = False
+        if code == EXIT_RESTART:
+            log.info("%s asked for a restart", spec.name)
+            failures = 0
+            continue
+        if ran > 300:
             failures = 0  # it ran fine for a while: start the back-off over
         failures += 1
+        if not in_incident and code != EXIT_NO_CONFIG:
+            in_incident = True
+            if on_incident is not None:
+                try:
+                    on_incident(spec, code)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("%s: alert failed (%s)", spec.name, type(exc).__name__)
         if tracker is not None and tracker.failed(spec.name) and on_crash_loop is not None:
             on_crash_loop(spec)
         delay = 60 if code == EXIT_NO_CONFIG else min(5 * failures, 60)
@@ -842,8 +963,18 @@ def run_supervisor(args: list[str], stop_event: threading.Event | None = None) -
     tracker = CrashTracker()
 
     def crash_loop(spec: ChildSpec) -> None:
-        supervisor_log.error("%s keeps failing - alerting the owner", spec.name)
-        threading.Thread(target=send_crash_alert, args=(spec.label, values), daemon=True).start()
+        # v2.13.0: the owner was told at the first failure (one alert per incident)
+        supervisor_log.error("%s keeps failing", spec.name)
+
+    def incident(spec: ChildSpec, code) -> None:
+        supervisor_log.error("%s stopped unexpectedly (%s) - restarting it, telling the owner",
+                             spec.name, code)
+
+        def later() -> None:
+            # give a restarted server a moment to answer before the event is posted
+            if not stop.wait(45):
+                alert_restart(spec.label, read_env_values() or values)
+        threading.Thread(target=later, daemon=True).start()
 
     threads = []
     import backup
@@ -855,7 +986,8 @@ def run_supervisor(args: list[str], stop_event: threading.Event | None = None) -
     for spec in child_specs(values, run_mode=run_mode):
         thread = threading.Thread(target=supervise_child, args=(spec, stop),
                                   kwargs={"job": job, "tracker": tracker,
-                                          "on_crash_loop": crash_loop},
+                                          "on_crash_loop": crash_loop,
+                                          "on_incident": incident},
                                   name=f"supervise-{spec.name}", daemon=True)
         thread.start()
         threads.append(thread)
@@ -1099,6 +1231,9 @@ SETUP_FIELDS = {
     "backup_copy_dir": "BACKUP_COPY_DIR",
     "backup_passphrase": "BACKUP_PASSPHRASE",
     "backup_keep_days": "BACKUP_KEEP_DAYS",
+    # v2.13.0: an account of the computer behind a network backup folder
+    "backup_share_user": "BACKUP_SHARE_USER",
+    "backup_share_password": "BACKUP_SHARE_PASSWORD",
 }
 
 #: Written once, on the first setup. Existing values are never replaced.
@@ -1126,9 +1261,11 @@ FIRST_RUN_DEFAULTS = {
 
 
 def _emit(payload: dict) -> None:
+    """One JSON line for the setup. v2.13.0: ASCII only (Persian as \\u escapes), so
+    the answer survives any console code page."""
     import json
 
-    print(json.dumps(payload, ensure_ascii=False))
+    print(json.dumps(payload, ensure_ascii=True), flush=True)
 
 
 def init_config(json_path: Path) -> int:
@@ -1430,7 +1567,20 @@ def normalise_configuration_for_db() -> None:
 # --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
+def utf8_console() -> None:
+    """v2.13.0: the frozen exe ignores PYTHONIOENCODING, so a piped stdout was the
+    ANSI code page (cp1252): every JSON answer with Persian text (a database
+    without access, …) crashed with UnicodeEncodeError and the setup never saw
+    «no access» - nor offered the grant. Always UTF-8 now."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass                          # no console (service) / already replaced
+
+
 def main(argv: list[str] | None = None) -> int:
+    utf8_console()
     args = list(sys.argv[1:] if argv is None else argv)
     configure_paths(resolve_data_dir(args))
 

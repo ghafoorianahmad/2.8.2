@@ -87,11 +87,22 @@ def local_backup_dir(raw: Optional[str]) -> Optional[Path]:
     return path
 
 
+#: v2.13.0: every received price-list PDF (shopapi's pricelists folder)
+PRICELIST_ARCHIVE = "pricelists"
+#: BUILTIN\Users, by SID (a Persian Windows names the group differently)
+USERS_SID = "*S-1-5-32-545"
+
+
 def acl_commands(data_dir: Path, *, shoptg_dir: Optional[Path] = None,
                  shoptg_data: Optional[Path] = None,
                  backup_dir: Optional[Path] = None) -> list[list[str]]:
     """Grants for the service account (added, never replacing other entries)."""
     commands = [["icacls", str(data_dir), "/grant", f"{SERVICE_ACCOUNT}:(OI)(CI)M", "/C", "/Q"]]
+    if (data_dir / PRICELIST_ARCHIVE).exists():
+        # v2.13.0: the price-list archive (public PDFs) opens in Explorer for the
+        # computer's users («باز کردن پوشه»); the rest of the data folder stays locked
+        commands.append(["icacls", str(data_dir / PRICELIST_ARCHIVE), "/grant",
+                         f"{USERS_SID}:(OI)(CI)RX", "/C", "/Q"])
     if backup_dir is not None:
         # the off-server copy (encrypted): a USB / second disk folder
         commands.append(["icacls", str(backup_dir), "/grant",
@@ -152,6 +163,10 @@ def install(exe_command: Sequence[str], data_dir: Path, *, shoptg_dir: Optional[
             raise ServiceError(f"{' '.join(command[:2])} failed: {_tail(result)}")
     if backup_dir is not None:
         backup_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        (Path(data_dir) / PRICELIST_ARCHIVE).mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     for command in acl_commands(data_dir, shoptg_dir=shoptg_dir, shoptg_data=shoptg_data,
                                 backup_dir=backup_dir):
         result = run(command)
