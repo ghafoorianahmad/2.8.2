@@ -192,6 +192,12 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
      "شما اجازهٔ ارجاع این مورد را ندارید. فقط مدیر، صاحب کار یا کسی با دسترسی "
      "«ارجاع سفارش» می‌تواند ارجاع دهد."),
     (re.compile(r"unknown colleague", re.I), "همکار انتخاب‌شده پیدا نشد یا غیرفعال است."),
+    (re.compile(r"picture list not approved", re.I),
+     "این لیست عکسی است؛ اول ردیف‌هایش را ببینید و «تأیید لیست عکسی» را بزنید."),
+    (re.compile(r"channel list has no usable rows", re.I), "این لیست ردیفِ مطمئنی ندارد."),
+    (re.compile(r"basis time out of range", re.I), "زمان باید از اکنون تا حداکثر ۷ روز بعد باشد."),
+    (re.compile(r"unknown channel list", re.I), "این لیست پیدا نشد."),
+    (re.compile(r"no picture for this row", re.I), "برای این ردیف عکسی نیست."),
     (re.compile(r"managers only", re.I), "این بخش فقط برای «مدیر» است."),
     (re.compile(r"choose the product", re.I),
      "این ردیف لیست قیمت هنوز به کالایی در «سازه حساب» وصل نیست؛ کالا را انتخاب کنید."),
@@ -820,6 +826,29 @@ class ShopApiClient:
         body = {"data_b64": base64.b64encode(data).decode("ascii"),
                 "source_ref": (file_name or "")[:200]}
         return self._request("POST", "/admin/pricelists", json_body=body) or {}
+
+    # ---- v2.14.0: lists of other price channels + the temporary basis ---------------
+    def channel_lists(self) -> dict:
+        return self._request("GET", "/admin/channel-lists") or {}
+
+    def channel_list(self, list_id: int) -> dict:
+        return self._request("GET", f"/admin/channel-lists/{int(list_id)}") or {}
+
+    def channel_row_crop(self, list_id: int, index: int) -> bytes:
+        out = self._request("GET", f"/admin/channel-lists/{int(list_id)}/rows/{int(index)}/crop")
+        return base64.b64decode((out or {}).get("png_b64") or "")
+
+    def approve_channel_list(self, list_id: int) -> dict:
+        return self._request("POST", f"/admin/channel-lists/{int(list_id)}/approve") or {}
+
+    def set_price_basis(self, list_id: int, column: str, until: str | None = None) -> dict:
+        body = {"list_id": int(list_id), "column": column}
+        if until:
+            body["until"] = until
+        return self._request("POST", "/admin/price-basis", json_body=body) or {}
+
+    def clear_price_basis(self) -> dict:
+        return self._request("DELETE", "/admin/price-basis") or {}
 
     def approve_pricelist(self, list_id: int) -> dict:
         return self._request("POST", f"/admin/pricelists/{int(list_id)}/approve") or {}

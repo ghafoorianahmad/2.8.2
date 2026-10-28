@@ -348,6 +348,11 @@ class PriceListPage(BasePage):
         self.fetch_status.setVisible(False)
         panel.body.addWidget(self.fetch_status)
         layout.addWidget(panel, 1)
+        # v2.14.0: the lists of other price channels and the temporary basis
+        from ..channel_lists import ChannelListsPanel
+
+        self.channel_panel = ChannelListsPanel(self)
+        layout.addWidget(self.channel_panel, 1)
         return tab
 
     def _build_notes_tab(self) -> QWidget:
@@ -458,6 +463,7 @@ class PriceListPage(BasePage):
         self.lists_table.set_busy(True)
         self.run(lambda: self.context.api.list_pricelists(),
                  on_success=self._on_lists, on_error=self._table_error(self.lists_table))
+        self.channel_panel.load()
 
     def _load_proxies(self) -> None:
         self.proxy_table.set_busy(True)
@@ -859,7 +865,7 @@ class PriceListPage(BasePage):
     def _held_selection(self) -> Optional[dict]:
         chosen = self._selected_quiet()
         held = [item for item in self._lists if item.get("status") == "held"]
-        if not (len(chosen) == 1 and chosen[0].get("status") == "held") and len(held) == 1:
+        if not chosen and len(held) == 1:
             chosen = held          # v2.14.0: the only held list needs no selection
         if len(chosen) != 1 or chosen[0].get("status") != "held":
             self.notify_warning("یک لیست «نگه‌داشته» را انتخاب کنید.")

@@ -69,6 +69,8 @@ _PROXY_RE = re.compile(r"^(tg://(web)?proxy\?|(https?://)?(www\.)?(t|telegram)\.
                        re.I)
 #: v2.9.1: role of each joined channel (only the first two are read today)
 CHANNEL_ROLES = (("", "انتخاب نشده"), ("pricelist", "لیست قیمت (گوشی)"), ("proxy", "پراکسی"),
+                 # v2.14.0: read and kept in «لیست‌های دریافتی»; the basis stays «لیست قیمت»
+                 ("price_other", "کانال قیمت دیگر (فقط خواندن)"),
                  ("accessories", "لوازم جانبی (به‌زودی)"), ("used", "گوشی کارکرده (به‌زودی)"),
                  ("ignore", "نادیده"))
 CHANNEL_HEADERS = ("کانال", "نشانی", "نقش")
