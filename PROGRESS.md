@@ -2,6 +2,10 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
+## v2.14.0 — site tree, table PDFs, de-duplication, price per item, new buttons, other price channels, «سلامت سیستم» (2026-10-28, branch `claude/site-shopadmin-tree-bb74e8` from `feature/order-flow-v250`) — DONE in code; not installed (no admin rights)
+
+Step by step, decisions and the OCR measurement: `PROGRESS_SITE.md` (v2.14.0). Site repo: local commit `3ca2aba` (not pushed, not published).
+
 ## v2.13.0 — owner's 11-point list after testing the installed 2.12.0 (2026-10-27, same branch) — DONE in code, built (not installed: no admin rights)
 
 Owner's rules for this run: no admin rights (no service restart, no install, no helper task), test the running ShopAdmin as it is, DB writes only in «hesab5 t», no «پاک‌سازی», no site publish, no push, never message customers. Build goes to `E:\Outputs\ShopSystem\`; the owner installs and re-tests.

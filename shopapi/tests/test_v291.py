@@ -253,7 +253,7 @@ def test_joined_channels_roles_and_new_channel_alert(client, db, worker):
     admin = staff(db)
     listed = client.get("/admin/telegram/channels", headers=admin).json()
     assert [c["id"] for c in listed["channels"]][:3] and listed["working_roles"] == [
-        "pricelist", "proxy"]
+        "pricelist", "proxy", "price_other"]          # v2.14.0: other price channels
     r = client.put("/admin/telegram/channels/3", headers=admin, json={"role": "pricelist"})
     assert r.status_code == 200
     roles = {r["ref"]: r["role"] for r in

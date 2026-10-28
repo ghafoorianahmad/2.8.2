@@ -27,12 +27,16 @@ def test_every_look_has_glass_buttons(admin_qapp, palette, mode, effects, monkey
     try:
         sheet = theme.stylesheet()
         rule = sheet.split("QPushButton {", 1)[1].split("}", 1)[0]
-        assert "rgba(" in rule                              # see-through fill
+        # v2.14.0: a light soft button with the accent edge (never the old dark frame)
+        assert theme.soft_border() in rule and theme.BUTTON_BORDER not in rule
         assert "QPushButton:hover" in sheet and "QPushButton:pressed" in sheet
         pressed = sheet.split("QPushButton:pressed {", 1)[1].split("}", 1)[0]
         assert "border-top: 2px" in pressed and "border-bottom: 1px" in pressed
         primary = sheet.split("QPushButton#Primary {", 1)[1].split("}", 1)[0]
         assert "rgba(" not in primary                       # prominent stays coloured
+        assert "transparent" in primary                     # no dark frame
+        if effects == "full":
+            assert "x2:1, y2:1" in primary and theme.GRAD_END in primary   # blue -> purple
     finally:
         theme.set_mode(old_mode, old_palette)
 
@@ -58,7 +62,8 @@ def test_glow_on_hover_only(admin_qapp, monkeypatch):
     fx.eventFilter(primary, QEvent(QEvent.Type.Enter))
     assert effect.color().name().upper() == theme.ACCENT.upper()
     fx.eventFilter(primary, QEvent(QEvent.Type.Leave))
-    assert effect.color().name().upper() == theme.SHADOW.upper()
+    # v2.14.0: at rest a soft glow of the gradient's colour (the site's «ثبت سفارش»)
+    assert effect.color().name().upper() == theme.rest_glow().name().upper()
     button.deleteLater()
     primary.deleteLater()
 

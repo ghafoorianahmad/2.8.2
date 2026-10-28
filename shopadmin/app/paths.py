@@ -13,7 +13,7 @@ from pathlib import Path
 
 APP_NAME = "ShopAdmin"
 APP_TITLE_FA = "مدیریت فروشگاه"
-APP_VERSION = "2.13.0"  # keep equal to installer/ShopAdmin.iss MyAppVersion (test_version.py)
+APP_VERSION = "2.14.0"  # keep equal to installer/ShopAdmin.iss MyAppVersion (test_version.py)
 
 ORG_NAME = "ShopAdmin"
 

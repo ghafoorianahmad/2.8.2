@@ -436,7 +436,7 @@ def test_sidebar_shows_users_for_the_super_admin(ui_context, admin_qapp):
     # v2.6.0: + «درخواست کالا», «گروه‌های کالا»; v2.8.0: + «بایگانی», «گزارش فعالیت»;
     # v2.11.0: + «سایت»
     assert "site" in window._nav_buttons
-    assert len(window._nav_buttons) == 16
+    assert len(window._nav_buttons) == 17          # v2.14.0: + «سلامت سیستم»
     window.close()
 
 
@@ -987,7 +987,8 @@ def _style_rule_colors(widget) -> tuple[str, str]:
             ):
                 body = match.group(1)
                 color = re.search(r"(?<![-\w])color:\s*(#[0-9A-Fa-f]{6})", body)
-                background = re.search(r"(?<![-\w])background:\s*(#[0-9A-Fa-f]{6})", body)
+                background = re.search(r"(?<![-\w])background:\s*(#[0-9A-Fa-f]{6})", body) or                     re.search(r"(?<![-\w])background:\s*qlineargradient\([^)]*?stop:0\s+(#[0-9A-Fa-f]{6})",
+                              body)       # v2.14.0: a gradient button: its first colour
                 if color and background:
                     return color.group(1), background.group(1)
     return "", ""

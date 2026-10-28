@@ -440,9 +440,10 @@ def test_close_button_stands_out_and_a_faint_one_is_caught(admin_qapp, monkeypat
                 dialog.close()
         # the 2.9.3 look (a 1.3:1 frame) is reported
         theme.set_mode("light", "ocean")
-        faint = theme.stylesheet().replace("border: 1px solid " + theme.BUTTON_BORDER,
+        edge = theme.soft_border()          # v2.14.0: the accent edge of a normal button
+        faint = theme.stylesheet().replace("border: 1px solid " + edge,
                                            "border: 1px solid " + theme.BORDER_STRONG)
-        faint = faint.replace("border-bottom: 2px solid " + theme.BUTTON_BORDER,
+        faint = faint.replace("border-bottom: 2px solid " + edge,
                               "border-bottom: 2px solid " + theme.BORDER_STRONG)
         dialog = _dialog_with_close(faint)
         dialog.show()

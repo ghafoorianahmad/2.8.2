@@ -192,6 +192,7 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
      "شما اجازهٔ ارجاع این مورد را ندارید. فقط مدیر، صاحب کار یا کسی با دسترسی "
      "«ارجاع سفارش» می‌تواند ارجاع دهد."),
     (re.compile(r"unknown colleague", re.I), "همکار انتخاب‌شده پیدا نشد یا غیرفعال است."),
+    (re.compile(r"bad file data", re.I), "فایل درست فرستاده نشد."),
     (re.compile(r"picture list not approved", re.I),
      "این لیست عکسی است؛ اول ردیف‌هایش را ببینید و «تأیید لیست عکسی» را بزنید."),
     (re.compile(r"channel list has no usable rows", re.I), "این لیست ردیفِ مطمئنی ندارد."),

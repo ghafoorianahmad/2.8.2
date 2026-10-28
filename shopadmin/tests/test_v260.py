@@ -22,7 +22,7 @@ def test_app_version_matches_the_installer_and_the_server():
     server = re.search(r'^VERSION = "([^"]+)"',
                        (ROOT.parent / "shopapi" / "app" / "control.py").read_text(encoding="utf-8"),
                        re.M).group(1)
-    assert APP_VERSION == installer == server == "2.13.0"
+    assert APP_VERSION == installer == server == "2.14.0"
 
 
 def test_sidebar_shows_the_real_version(ui_context, admin_qapp):
@@ -31,7 +31,7 @@ def test_sidebar_shows_the_real_version(ui_context, admin_qapp):
     window = MainWindow(ui_context)
     from app.persian import to_persian_digits
 
-    assert window.version_label.text() == f"نسخهٔ {to_persian_digits('2.13.0')}"
+    assert window.version_label.text() == f"نسخهٔ {to_persian_digits('2.14.0')}"
 
 
 # ---- 2 + 3: order dialog ------------------------------------------------------------------------
