@@ -1263,6 +1263,10 @@ class ShopApiClient:
         return list(self._request("GET", "/admin/audit", params={"limit": limit}) or [])
 
     # ---- server control (super admin) ---------------------------------------
+    def server_health(self) -> dict:
+        """v2.14.0 «سلامت سیستم»: each check now and the journal."""
+        return self._request("GET", "/admin/server/health") or {}
+
     def server_status(self) -> dict:
         return self._request("GET", "/admin/server/status") or {}
 

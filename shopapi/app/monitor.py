@@ -30,7 +30,8 @@ from .util import now_utc
 
 logger = logging.getLogger(__name__)
 
-CHECKS = ("sql", "bot", "bale", "tg", "backup")
+#: v2.14.0: + the free space of the server's disk
+CHECKS = ("sql", "bot", "bale", "tg", "backup", "disk")
 BACKUP_OVERDUE_HOURS = 30
 #: The bot counts as cut off from Bale after this many failed polls in a row
 #: and no successful poll for BALE_SILENCE.
@@ -47,6 +48,8 @@ TEXTS_DOWN = {
     "tg": "⚠️ هشدار سرور: کارگر تلگرام (لیست قیمت/پراکسی) گزارش نمی‌دهد.",
     "backup": "⚠️ هشدار سرور: پشتیبان‌گیری روزانه ناموفق بود یا عقب افتاده است "
               "(دیسک/پوشهٔ نسخهٔ بیرون از سرور را بررسی کنید). جزئیات: صفحهٔ «سرور فروشگاه».",
+    "disk": "⚠️ هشدار سرور: فضای دیسک سرور کم است. پوشهٔ بایگانی لیست‌ها یا پشتیبان‌های قدیمی را "
+            "به دیسک دیگری ببرید (صفحهٔ «سلامت سیستم»).",
 }
 TEXTS_UP = {
     "sql": "✅ پایگاه دادهٔ حسابداری دوباره در دسترس است.",
@@ -54,6 +57,7 @@ TEXTS_UP = {
     "bale": "✅ اتصال ربات به بله برقرار شد.",
     "tg": "✅ کارگر تلگرام دوباره گزارش می‌دهد.",
     "backup": "✅ پشتیبان‌گیری روزانه دوباره موفق شد.",
+    "disk": "✅ فضای دیسک سرور دوباره کافی است.",
 }
 
 
@@ -116,6 +120,7 @@ class HealthMonitor:
         self.reader_factory = reader_factory
         self.sender = sender
         self.clock = clock
+        self.disk_detail = ""
         self.threshold = max(1, int(getattr(settings, "health_fail_threshold", 2)))
         self.fails: dict[str, int] = {name: 0 for name in CHECKS}
         self.down: dict[str, bool] = {name: False for name in CHECKS}
@@ -200,8 +205,29 @@ class HealthMonitor:
             logger.warning("health: backup alert mark not stored (%s)", type(exc).__name__)
 
     # ---- one round ------------------------------------------------------------
+    def probe_disk(self) -> Optional[bool]:
+        from pathlib import Path
+
+        from . import selfheal
+
+        path = str(getattr(self.settings, "sqlite_path", "") or "")
+        if not path or path == ":memory:":
+            return None
+        ok, self.disk_detail = selfheal.disk_ok(Path(path).resolve().parent)
+        return ok
+
+    def heal(self) -> None:
+        """v2.14.0: the safe repairs of ``selfheal`` (never raises)."""
+        from . import selfheal
+
+        try:
+            selfheal.retry_failed_list(self.db_factory(), self.settings)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("self-heal failed: %s", type(exc).__name__)
+
     def tick(self) -> list[str]:
         """Run every check once; return the event kinds that were raised."""
+        self.heal()
         results = {name: getattr(self, f"probe_{name}")() for name in CHECKS}
         self.checked_at = self.clock()
         raised: list[str] = []
@@ -248,6 +274,15 @@ class HealthMonitor:
         except Exception as exc:  # noqa: BLE001 - the Bale alert still goes out
             logger.warning("health: event not stored (%s)", type(exc).__name__)
         self._send(text or (TEXTS_UP if up else TEXTS_DOWN)[name])
+        # v2.14.0 «سلامت سیستم»: down = needs the owner; back up by itself = fixed
+        try:
+            from . import selfheal
+
+            detail = f" ({self.disk_detail})" if name == "disk" and self.disk_detail else ""
+            selfheal.record(self.db_factory(), selfheal.FIXED if up else selfheal.NEEDS_YOU, name,
+                            (TEXTS_UP if up else TEXTS_DOWN)[name].lstrip("⚠️✅ ") + detail)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("health: journal not written (%s)", type(exc).__name__)
         return kind
 
     def snapshot(self) -> dict:

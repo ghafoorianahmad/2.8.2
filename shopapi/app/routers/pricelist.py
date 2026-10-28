@@ -14,7 +14,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from .. import deps, owner_alerts
+from .. import deps, owner_alerts, selfheal
 from ..accounting_reader import AccountingReader
 from ..config import Settings
 from ..db_own import OwnDB
@@ -927,6 +927,10 @@ def worker_alert(
     if payload.kind not in WORKER_ALERTS:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown alert")
     sent = _alert_once(db, payload.kind, "worker")
+    try:
+        selfheal.worker_alert(db, payload.kind)      # v2.14.0 «سلامت سیستم»
+    except Exception:  # noqa: BLE001 - the journal is a convenience
+        pass
     text = DIRECT_ALERTS.get(payload.kind)
     if sent and text:
         detail = " ".join(payload.detail.split())[:120] or "یکی از بخش‌های سرور"

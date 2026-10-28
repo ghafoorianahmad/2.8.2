@@ -113,3 +113,68 @@ def test_worker_posts_a_channel_file(client, db, settings, tmp_path):
                                                    "text": TEXT_LIST},
                     headers={"X-API-Key": "worker-key"})
     assert r.status_code == 200 and r.json()["usable"] == 2
+
+
+# ---- «سلامت سیستم» ------------------------------------------------------------------------
+from types import SimpleNamespace  # noqa: E402
+
+from app import monitor, selfheal  # noqa: E402
+
+
+def test_failed_list_is_read_again_a_few_times_then_needs_you(db, settings, tmp_path, monkeypatch):
+    settings.pricelists_dir = str(tmp_path)
+    from app.pricelist import parser
+
+    def broken(data):
+        raise parser.ParseError("price headers are not on one line")
+    monkeypatch.setattr(importer, "parse_pdf", broken)
+    importer.import_pdf(db, settings, b"%PDF-X", source="manual")
+    calls = []
+
+    def reread(db_, settings_, list_id, *, actor):
+        calls.append(actor)
+        return SimpleNamespace(outcome="failed")
+    start = WHEN
+    for n in range(5):
+        selfheal.retry_failed_list(db, settings, start + timedelta(minutes=31 * n), reread=reread)
+    assert calls == ["selfheal"] * selfheal.RETRY_TIMES            # never more than 3 times
+    assert selfheal.journal(db)[0]["kind"] == selfheal.NEEDS_YOU
+    assert selfheal.journal(db)[0]["fix"]
+
+
+def test_reread_that_works_is_written_as_fixed(db, settings, tmp_path, monkeypatch):
+    settings.pricelists_dir = str(tmp_path)
+    from app.pricelist import parser
+
+    monkeypatch.setattr(importer, "parse_pdf",
+                        lambda d: (_ for _ in ()).throw(parser.ParseError("x")))
+    importer.import_pdf(db, settings, b"%PDF-Y", source="manual")
+    out = selfheal.retry_failed_list(db, settings, WHEN,
+                                     reread=lambda *a, **k: SimpleNamespace(outcome="active"))
+    assert out == "fixed" and selfheal.journal(db)[0]["kind"] == selfheal.FIXED
+
+
+def test_disk_and_journal_from_the_monitor(db, settings, tmp_path, monkeypatch):
+    sent = []
+    settings.sqlite_path = str(tmp_path / "shopapi.db")
+    mon = monitor.HealthMonitor(settings, lambda: db, lambda: None, sender=sent.append)
+    monkeypatch.setattr(selfheal, "disk_ok", lambda path: (False, "۱٫۰ گیگابایت آزاد از ۱۰۰"))
+    for name in ("sql", "bot", "bale", "tg", "backup"):
+        monkeypatch.setattr(mon, f"probe_{name}", lambda: None)
+    for _ in range(mon.threshold):
+        mon.tick()
+    entry = selfheal.journal(db)[0]
+    assert entry["check"] == "disk" and entry["kind"] == selfheal.NEEDS_YOU
+    assert "گیگابایت" in entry["text"] and entry["fix"]
+    monkeypatch.setattr(selfheal, "disk_ok", lambda path: (True, ""))
+    mon.tick()
+    assert selfheal.journal(db)[0]["kind"] == selfheal.FIXED
+    assert len(sent) == 2                                    # one alert down, one up
+
+
+def test_health_endpoint_and_worker_restart(client, db, settings):
+    settings.worker_api_key = "worker-key"
+    client.post("/worker/alerts", json={"kind": "worker_restarted", "detail": "x"},
+                headers={"X-API-Key": "worker-key"})
+    out = client.get("/admin/server/health", headers=staff(db)).json()
+    assert out["journal"][0]["kind"] == selfheal.FIXED and out["journal"][0]["check"] == "tg"

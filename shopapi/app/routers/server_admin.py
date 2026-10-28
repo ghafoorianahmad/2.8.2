@@ -29,6 +29,19 @@ class SettingsUpdate(BaseModel):
     values: dict[str, str]
 
 
+@router.get("/health")
+def server_health(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_SEE) -> dict:
+    """v2.14.0 «سلامت سیستم»: each check now (with a Persian fix) and the journal."""
+    from .. import selfheal
+
+    snap = monitor.CURRENT.snapshot() if monitor.CURRENT else {"checks": {}, "checked_at": None}
+    checks = [{"check": name, "label": selfheal.LABELS.get(name, name), "ok": item.get("ok"),
+               "down": item.get("down"), "fix": selfheal.FIXES.get(name, "")}
+              for name, item in (snap.get("checks") or {}).items()]
+    return {"checked_at": snap.get("checked_at"), "checks": checks,
+            "journal": selfheal.journal(db)}
+
+
 @router.get("/status")
 def server_status(
     settings: Settings = Depends(deps.get_settings),

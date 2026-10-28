@@ -49,6 +49,7 @@ from .pages.activity import ActivityPage
 from .pages.archive import ArchivePage
 from .pages.customers import CustomersPage
 from .pages.dashboard import DashboardPage
+from .pages.health import HealthPage
 from .pages.item_requests import ItemRequestsPage
 from .pages.orders import OrdersPage
 from .pages.product_groups import ProductGroupsPage
@@ -82,6 +83,8 @@ NAV_ITEMS = (
     ("password_requests", "درخواست‌های گذرواژه", "key", PASSWORDS_VIEW),
     ("users", "کاربران سیستم", "users", USERS_VIEW),
     ("server", "تنظیمات سرور فروشگاه", "server", SERVER_VIEW),
+    # v2.14.0: what the server found / fixed by itself / needs you
+    ("health", "سلامت سیستم", "shield", SERVER_VIEW),
 )
 
 SIDEBAR_WIDE = 232
@@ -425,6 +428,7 @@ class MainWindow(QMainWindow):
             "password_requests": PasswordRequestsPage,
             "users": UsersPage,
             "server": ServerPage,
+            "health": HealthPage,
         }
         for key, text, _icon, permission in NAV_ITEMS:
             if not self.context.can(permission):
