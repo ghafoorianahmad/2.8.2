@@ -81,6 +81,11 @@ _STATUS_COLORS = {
     ORDER_REJECTED: ("#B91C1C", "#FEE2E2"),
     ORDER_CANCELLED: ("#475569", "#E2E8F0"),
     ORDER_EXPIRED: ("#4B5563", "#F3F4F6"),
+    # v2.14.0: plain pill kinds (the «نمایش/پنهان» pill, import preview)
+    "success": ("#047857", "#D1FAE5"),
+    "warning": ("#B45309", "#FEF3C7"),
+    "info": ("#1D4ED8", "#DBEAFE"),
+    "danger": ("#B91C1C", "#FEE2E2"),
 }
 _DEFAULT_COLOR = ("#475569", "#E2E8F0")
 

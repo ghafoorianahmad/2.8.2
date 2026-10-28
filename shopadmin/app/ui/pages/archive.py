@@ -67,6 +67,11 @@ class ArchivePage(BasePage):
         self.requests_table.set_empty_state("درخواستی در بایگانی نیست", "", "archive")
         self.requests_table.row_activated.connect(self._open_request)
         self.requests_table.setVisible(False)
+        self.open_order_button = widgets.open_button(self.orders_table)
+        self.open_request_button = widgets.open_button(self.requests_table)
+        self.open_request_button.setVisible(False)
+        bar.addWidget(self.open_order_button)
+        bar.addWidget(self.open_request_button)
         for table in (self.orders_table, self.requests_table):
             table.setMinimumHeight(360)
             panel.body.addWidget(table, 1)
@@ -83,6 +88,8 @@ class ArchivePage(BasePage):
             button.setChecked(tab_key == self._tab)
         self.orders_table.setVisible(self._tab == "orders")
         self.requests_table.setVisible(self._tab == "requests")
+        self.open_order_button.setVisible(self._tab == "orders")
+        self.open_request_button.setVisible(self._tab == "requests")
         self.table = self.orders_table if self._tab == "orders" else self.requests_table
         self.load()
 

@@ -66,6 +66,8 @@ class ProductsPage(BasePage):
         )
         self.table.setMinimumHeight(380)
         self.table.row_activated.connect(self._open_row)
+        self.open_button = widgets.open_button(self.table)
+        bar.addWidget(self.open_button)
         panel.body.addWidget(self.table, 1)
 
         self.summary = widgets.label("", name="Muted")

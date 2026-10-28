@@ -1,7 +1,10 @@
 """v2.11.0 صفحهٔ «سایت» — گوشی‌ها و لوازم جانبی سایت، فقط روی همین رایانه (بدون سرور فروشگاه).
 
-* «گوشی‌ها»: فهرست با «نمایش/پنهان در سایت»، «افزودن گوشی جدید»، «ویرایش».
-* «لوازم جانبی»: افزودن / ویرایش / پنهان؛ «خواندن از PDF…» کمکی است.
+* v2.14.0 «کالاها»: یک درخت — «گوشی‌ها» ← برند ← مدل، «لوازم جانبی» ← دسته ← کالا. روی هر
+  شاخه: «افزودن از PDF» (کالاها به همان دسته می‌روند؛ دسته حدس زده نمی‌شود)، «افزودن دستی»،
+  «زیرشاخهٔ تازه»، «تغییر نام». کنار درخت فهرست کالاهای همان شاخه: یک کلیک = انتخاب، دوبار
+  کلیک یا «ویرایش» = ویرایش، قرص «نمایش/پنهان» با کلیک عوض می‌شود، «حذف» (با تأیید؛ تا ۴۸
+  ساعت «برگرداندن حذف‌شده‌ها»).
 * v2.12.0 «ظاهر و چیدمان» (``app.ui.site_look``): ترتیب برندها و کالاها، «تازه‌ترین گوشی‌ها»،
   رنگ‌بندی آماده، لوگو، بنر، بخش‌های صفحهٔ اصلی، اطلاعات فروشگاه — بدون کد؛ و «پیش‌نمایش در
   مرورگر» (همان سایت با دادهٔ این رایانه، روی 127.0.0.1).
@@ -22,9 +25,14 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLineEdit,
     QPlainTextEdit,
+    QSplitter,
+    QStackedWidget,
     QTabWidget,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -42,12 +50,18 @@ from .. import theme, widgets
 from ..async_utils import run_async
 from ..base_page import BasePage
 from ..rtl import mark_ltr
-from ..site_dialogs import AccessoryDialog, AccessoryPdfDialog, PhoneDialog
+from ..site_dialogs import AccessoryDialog, PhoneDialog
+from ..site_import import PdfImportDialog
 from ..site_look import LookTab
 
 NL = chr(10)
 PHONE_HEADERS = ("برند", "گوشی", "رنگ‌ها", "عکس", "در سایت")
-ACCESSORY_HEADERS = ("نوع", "عنوان", "عکس", "در سایت")
+ACCESSORY_HEADERS = ("دسته", "عنوان", "برند", "عکس", "در سایت")
+#: v2.14.0 tree nodes: (kind, key) in the item's UserRole
+NODE_PHONES, NODE_BRAND, NODE_PHONE = "phones", "brand", "phone"
+NODE_ACCESSORIES, NODE_GROUP, NODE_ACCESSORY = "accessories", "group", "accessory"
+#: brands the site has a page for (a phone of another brand is kept here only)
+SITE_BRAND_PAGES = ("apple", "samsung", "xiaomi")
 #: v2.12.0: the site folder of «خواندن از پوشهٔ سایت…» = the code of the browser preview
 PREVIEW_FOLDER_SETTING = "site_preview_folder"
 
@@ -59,6 +73,14 @@ def photo_state(store: SiteStore, item: dict) -> str:
     if not refs or not have:
         return "ندارد"
     return "کامل" if have == len(refs) else f"{format_int(have)} از {format_int(len(refs))}"
+
+
+def count_text(counts: dict, noun: str) -> str:
+    """v2.14.0: «۶۶ گوشی (۶۳ در سایت، ۳ پنهان)»."""
+    text = f"{format_int(counts['total'])} {noun} ({format_int(counts['shown'])} در سایت"
+    if counts["hidden"]:
+        text += f"، {format_int(counts['hidden'])} پنهان"
+    return text + ")"
 
 
 def matches(item: dict, text: str) -> bool:
@@ -107,8 +129,7 @@ class SitePage(BasePage):
         self.banner = widgets.label("", wrap=True, bold=True)
         self.body.addWidget(self.banner)
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._phones_tab(), "گوشی‌ها")
-        self.tabs.addTab(self._accessories_tab(), "لوازم جانبی")
+        self.tabs.addTab(self._items_tab(), "کالاها")
         self.look_tab = LookTab(self.store, can_manage=self.can_manage,
                                 notify=self.notify_success, parent=self)
         self.look_tab.changed.connect(self.render)
@@ -129,25 +150,73 @@ class SitePage(BasePage):
         return base / "site"
 
     # ---- tabs ----------------------------------------------------------------------
-    def _phones_tab(self) -> QWidget:
+    def _items_tab(self) -> QWidget:
+        """v2.14.0: the tree of branches + the items of the chosen branch."""
         tab = QWidget()
         box = QVBoxLayout(tab)
         bar_holder = QWidget()
         bar = widgets.FlowLayout(bar_holder, spacing=8)
-        self.phone_search = widgets.SearchBox("جستجوی گوشی…")
-        self.phone_search.textChanged.connect(lambda _t: self.render())
-        bar.addWidget(self.phone_search)
-        self.add_phone_button = widgets.button("افزودن گوشی جدید", icon_name="plus",
-                                               variant="primary", on_click=self._add_phone)
-        self.edit_phone_button = widgets.button("ویرایش", icon_name="edit",
-                                                on_click=self._edit_phone)
-        self.toggle_phone_button = widgets.button("نمایش/پنهان در سایت", icon_name="eye",
-                                                  on_click=lambda: self._toggle(self.phones_table,
-                                                                                cat.KIND_PHONE))
-        for b in (self.add_phone_button, self.edit_phone_button, self.toggle_phone_button):
+        self.add_button = widgets.button("افزودن دستی", icon_name="plus", variant="primary",
+                                         on_click=self._add_manual)
+        self.pdf_button = widgets.button("افزودن از PDF…", icon_name="file",
+                                         on_click=self._read_pdf,
+                                         tooltip="کالاهای یک یا چند PDF به همین دستهٔ لوازم جانبی")
+        self.branch_button = widgets.button("زیرشاخهٔ تازه", icon_name="plus",
+                                            on_click=self._new_branch,
+                                            tooltip="برند تازه زیر «گوشی‌ها» یا دستهٔ تازه زیر "
+                                                    "«لوازم جانبی»")
+        self.rename_button = widgets.button("تغییر نام", icon_name="edit",
+                                            on_click=self._rename_branch)
+        self.undelete_button = widgets.button("برگرداندن حذف‌شده‌ها…", icon_name="refresh",
+                                              on_click=self._undelete)
+        # the old names (tests, audits)
+        self.add_phone_button = self.add_accessory_button = self.add_button
+        for b in (self.add_button, self.pdf_button, self.branch_button, self.rename_button,
+                  self.undelete_button):
             b.setEnabled(self.can_manage)
             bar.addWidget(b)
         box.addWidget(bar_holder)
+        self.branch_hint = widgets.label("", name="Muted", wrap=True)
+        box.addWidget(self.branch_hint)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.tree.setMinimumWidth(230)
+        self.tree.currentItemChanged.connect(lambda _new, _old: self._node_changed())
+        splitter.addWidget(self.tree)
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self._phones_panel())
+        self.stack.addWidget(self._accessories_panel())
+        splitter.addWidget(self.stack)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([260, 760])
+        box.addWidget(splitter, 1)
+        return tab
+
+    def _item_bar(self, kind: str) -> tuple[QWidget, list]:
+        holder = QWidget()
+        bar = widgets.FlowLayout(holder, spacing=8)
+        edit = widgets.button("ویرایش", icon_name="edit",
+                              on_click=self._edit_phone if kind == cat.KIND_PHONE
+                              else self._edit_accessory)
+        delete = widgets.button("حذف", icon_name="trash", on_click=lambda: self._delete(kind))
+        buttons = [edit, delete]
+        for b in buttons:
+            b.setEnabled(self.can_manage)
+            bar.addWidget(b)
+        return holder, buttons
+
+    def _phones_panel(self) -> QWidget:
+        panel = QWidget()
+        box = QVBoxLayout(panel)
+        box.setContentsMargins(0, 0, 0, 0)
+        holder, (self.edit_phone_button, self.delete_phone_button) = self._item_bar(cat.KIND_PHONE)
+        self.phone_search = widgets.SearchBox("جستجوی گوشی…")
+        self.phone_search.textChanged.connect(lambda _t: self.render())
+        holder.layout().addWidget(self.phone_search)
+        box.addWidget(holder)
         self.phones_table = widgets.DataTable(PHONE_HEADERS, selectable_rows=True, key="site_phones")
         self.phones_table.set_empty_state("هنوز گوشی‌ای نیست",
                                           "در «انتشار و پشتیبان»، «خواندن از سایت» را بزنید.", "file")
@@ -156,42 +225,34 @@ class SitePage(BasePage):
         box.addWidget(self.phones_table, 1)
         self.phones_summary = widgets.label("", name="Muted")
         box.addWidget(self.phones_summary)
-        return tab
+        return panel
 
-    def _accessories_tab(self) -> QWidget:
-        tab = QWidget()
-        box = QVBoxLayout(tab)
-        bar_holder = QWidget()
-        bar = widgets.FlowLayout(bar_holder, spacing=8)
-        self.add_accessory_button = widgets.button("افزودن لوازم جانبی", icon_name="plus",
-                                                   variant="primary", on_click=self._add_accessory)
-        self.edit_accessory_button = widgets.button("ویرایش", icon_name="edit",
-                                                    on_click=self._edit_accessory)
-        self.toggle_accessory_button = widgets.button(
-            "نمایش/پنهان در سایت", icon_name="eye",
-            on_click=lambda: self._toggle(self.accessories_table, cat.KIND_ACCESSORY))
-        self.pdf_button = widgets.button("خواندن از PDF…", icon_name="file",
-                                         on_click=self._read_pdf,
-                                         tooltip="کمکی: عنوان، مشخصات و عکس کالاها از PDF")
-        for b in (self.add_accessory_button, self.edit_accessory_button,
-                  self.toggle_accessory_button, self.pdf_button):
-            b.setEnabled(self.can_manage)
-            bar.addWidget(b)
-        box.addWidget(bar_holder)
+    def _accessories_panel(self) -> QWidget:
+        panel = QWidget()
+        box = QVBoxLayout(panel)
+        box.setContentsMargins(0, 0, 0, 0)
+        holder, (self.edit_accessory_button, self.delete_accessory_button) = \
+            self._item_bar(cat.KIND_ACCESSORY)
+        self.accessory_search = widgets.SearchBox("جستجوی لوازم جانبی…")
+        self.accessory_search.textChanged.connect(lambda _t: self.render())
+        holder.layout().addWidget(self.accessory_search)
+        box.addWidget(holder)
         self.accessories_table = widgets.DataTable(ACCESSORY_HEADERS, selectable_rows=True,
                                                    key="site_accessories")
-        self.accessories_table.set_empty_state("هنوز لوازم جانبی‌ای نیست",
-                                               "«افزودن لوازم جانبی» را بزنید.", "box")
+        self.accessories_table.set_empty_state("در این دسته هنوز کالایی نیست",
+                                               "«افزودن از PDF…» یا «افزودن دستی» را بزنید.", "box")
         self.accessories_table.setMinimumHeight(320)
         self.accessories_table.row_activated.connect(lambda _r: self._edit_accessory())
         box.addWidget(self.accessories_table, 1)
-        return tab
+        self.accessories_summary = widgets.label("", name="Muted")
+        box.addWidget(self.accessories_summary)
+        return panel
 
     def _publish_tab(self) -> QWidget:
         tab = QWidget()
         box = QVBoxLayout(tab)
-        box.addWidget(widgets.label("پیش‌نمایش — همین تغییرها با «انتشار» در سایت دیده می‌شود:",
-                                    bold=True, wrap=True))
+        box.addWidget(widgets.label("تغییرهای منتشرنشده — خودکار به‌روز می‌شود؛ همین‌ها با «انتشار» "
+                                    "در سایت دیده می‌شود:", bold=True, wrap=True))
         self.preview_box = QPlainTextEdit()
         self.preview_box.setReadOnly(True)
         self.preview_box.setMinimumHeight(150)
@@ -200,15 +261,13 @@ class SitePage(BasePage):
         box.addWidget(self.publish_state)
         actions = QWidget()
         flow = widgets.FlowLayout(actions, spacing=8)
-        self.preview_button = widgets.button("پیش‌نمایش", icon_name="eye", on_click=self.render)
         self.browser_button = widgets.button("پیش‌نمایش در مرورگر", icon_name="globe",
                                              on_click=self._preview_browser)
         self.publish_button = widgets.button("انتشار در سایت", icon_name="check",
                                              variant="primary", on_click=self._publish)
         self.rollback_button = widgets.button("برگرداندن انتشار قبلی", icon_name="refresh",
                                               on_click=self._rollback)
-        for b in (self.publish_button, self.preview_button, self.browser_button,
-                  self.rollback_button):
+        for b in (self.publish_button, self.browser_button, self.rollback_button):
             flow.addWidget(b)
         box.addWidget(actions)
 
@@ -281,11 +340,117 @@ class SitePage(BasePage):
     def soft_refresh(self) -> None:
         self.render()
 
+    #: v2.14.0 the branch shown next to the tree: (kind, key)
+    _node: tuple[str, str] = (NODE_PHONES, "")
+
+    def _fill_tree(self, data: dict, phones: list[dict], accessories: list[dict]) -> None:
+        tree = self.tree
+        tree.blockSignals(True)
+        expanded = {tuple(i.data(0, Qt.ItemDataRole.UserRole)) for i in self._tree_items()
+                    if i.isExpanded()}
+        first = not tree.topLevelItemCount()
+        tree.clear()
+
+        def node(parent, text: str, kind: str, key: str = "") -> QTreeWidgetItem:
+            item = QTreeWidgetItem([text])
+            item.setData(0, Qt.ItemDataRole.UserRole, [kind, key])
+            item.setToolTip(0, text)
+            (parent.addChild if isinstance(parent, QTreeWidgetItem) else tree.addTopLevelItem)(item)
+            return item
+
+        root = node(tree, f"گوشی‌ها ({format_int(len(phones))})", NODE_PHONES)
+        for brand in data["brands"]:
+            models = [p for p in phones if p["brand"] == brand["key"]]
+            branch = node(root, f"{brand['name']} ({format_int(len(models))})", NODE_BRAND,
+                          brand["key"])
+            for phone in models:
+                node(branch, phone["name"] + (" — پنهان" if phone["hidden"] else ""),
+                     NODE_PHONE, phone["code"])
+        root2 = node(tree, f"لوازم جانبی ({format_int(len(accessories))})", NODE_ACCESSORIES)
+        for group in cat.clean_groups(data.get("groups")):
+            rows = [a for a in accessories if a["group"] == group["key"]]
+            branch = node(root2, f"{group['name']} ({format_int(len(rows))})", NODE_GROUP,
+                          group["key"])
+            for row in rows:
+                node(branch, row["name"] + (" — پنهان" if row["hidden"] else ""),
+                     NODE_ACCESSORY, row["code"])
+        current = None
+        for item in self._tree_items():
+            key = tuple(item.data(0, Qt.ItemDataRole.UserRole))
+            if key in expanded or (first and key[0] in (NODE_PHONES, NODE_ACCESSORIES)):
+                item.setExpanded(True)
+            if key == tuple(self._node):
+                current = item
+        tree.setCurrentItem(current or root)
+        tree.blockSignals(False)
+
+    def _tree_items(self) -> list[QTreeWidgetItem]:
+        out, stack = [], [self.tree.topLevelItem(n) for n in range(self.tree.topLevelItemCount())]
+        while stack:
+            item = stack.pop(0)
+            out.append(item)
+            stack[0:0] = [item.child(n) for n in range(item.childCount())]
+        return out
+
+    def _node_changed(self) -> None:
+        item = self.tree.currentItem()
+        if item is None:
+            return
+        kind, key = item.data(0, Qt.ItemDataRole.UserRole)
+        self._node = (kind, key)
+        self.render()
+
+    def _branch(self) -> tuple[str, str]:
+        """(category, branch key) of the chosen node: the brand or the accessory
+        category; "" for a top node."""
+        kind, key = self._node
+        if kind in (NODE_PHONES, NODE_BRAND, NODE_PHONE):
+            brand = key if kind == NODE_BRAND else ""
+            if kind == NODE_PHONE:
+                brand = (self.store.get(key) or {}).get("brand", "")
+            return cat.KIND_PHONE, brand
+        group = key if kind == NODE_GROUP else ""
+        if kind == NODE_ACCESSORY:
+            group = (self.store.get(key) or {}).get("group", "")
+        return cat.KIND_ACCESSORY, group
+
+    def _pill(self, item: dict) -> QWidget:
+        pill = widgets.TogglePill("پنهان" if item["hidden"] else "نمایش",
+                                  "warning" if item["hidden"] else "success",
+                                  tooltip="با کلیک در سایت نمایش داده یا پنهان می‌شود")
+        pill.setEnabled(self.can_manage)
+        code = item["code"]
+        pill.clicked.connect(lambda: self._toggle_code(code))
+        return widgets.pill_cell(pill)
+
     def render(self) -> None:
-        phones = self.store.items(cat.KIND_PHONE)
-        accessories = self.store.items(cat.KIND_ACCESSORY)
-        brands = {b["key"]: b["name"] for b in self.store.load()["brands"]}
-        self._phones = [p for p in phones if matches(p, self.phone_search.text())]
+        data = self.store.load()
+        phones = [i for i in data["items"] if i["category"] == cat.KIND_PHONE]
+        accessories = [i for i in data["items"] if i["category"] == cat.KIND_ACCESSORY]
+        brands = {b["key"]: b["name"] for b in data["brands"]}
+        groups = {g["key"]: g["name"] for g in cat.clean_groups(data.get("groups"))}
+        self._fill_tree(data, phones, accessories)
+        category, branch = self._branch()
+        kind, key = self._node
+        self.stack.setCurrentIndex(0 if category == cat.KIND_PHONE else 1)
+        self.pdf_button.setEnabled(self.can_manage and category == cat.KIND_ACCESSORY
+                                   and bool(branch))
+        self.rename_button.setEnabled(self.can_manage and bool(branch))
+        self.undelete_button.setEnabled(self.can_manage and bool(self.store.recently_deleted()))
+        if category == cat.KIND_PHONE:
+            where = f"«{brands.get(branch, branch)}»" if branch else "همهٔ برندها"
+            hint = f"گوشی‌های {where}."
+            if branch and branch not in SITE_BRAND_PAGES:
+                hint += " سایت هنوز برای این برند صفحه ندارد؛ گوشی‌هایش فقط همین‌جا نگه داشته می‌شود."
+        else:
+            hint = (f"لوازم جانبی «{groups.get(branch, branch)}» — «افزودن از PDF…» کالاها را به "
+                    "همین دسته می‌برد." if branch else
+                    "یک دسته را در درخت انتخاب کنید تا «افزودن از PDF…» فعال شود.")
+        self.branch_hint.setText(hint)
+
+        self._phones = [p for p in phones if (not branch or category != cat.KIND_PHONE
+                                              or p["brand"] == branch)
+                        and matches(p, self.phone_search.text())]
         table = self.phones_table
         table.setRowCount(0)
         for item in self._phones:
@@ -295,24 +460,30 @@ class SitePage(BasePage):
             table.set_cell(i, 1, item["name"], bold=True)
             table.set_cell(i, 2, "، ".join(c["name"] for c in item["colors"]) or "—")
             table.set_cell(i, 3, photo_state(self.store, item))
-            table.set_widget(i, 4, widgets.pill_cell(widgets.StatusPill(
-                "پنهان" if item["hidden"] else "نمایش", "warning" if item["hidden"] else "success")))
+            table.set_widget(i, 4, self._pill(item))
+            table.set_row_key(i, item["code"])
         table._refresh_states()
-        self._accessories = accessories
+        self._accessories = [a for a in accessories if (not branch or category != cat.KIND_ACCESSORY
+                                                        or a["group"] == branch)
+                             and matches(a, self.accessory_search.text())]
         table = self.accessories_table
         table.setRowCount(0)
-        for item in accessories:
+        for item in self._accessories:
             i = table.rowCount()
             table.insertRow(i)
-            table.set_cell(i, 0, cat.GROUPS.get(item["group"], "سایر"))
+            table.set_cell(i, 0, groups.get(item["group"], "سایر"))
             table.set_cell(i, 1, item["name"], bold=True)
-            table.set_cell(i, 2, photo_state(self.store, item))
-            table.set_widget(i, 3, widgets.pill_cell(widgets.StatusPill(
-                "پنهان" if item["hidden"] else "نمایش", "warning" if item["hidden"] else "success")))
+            table.set_cell(i, 2, item["brand_name"] or "—")
+            table.set_cell(i, 3, photo_state(self.store, item))
+            table.set_widget(i, 4, self._pill(item))
+            table.set_row_key(i, item["code"])
         table._refresh_states()
-        shown = sum(1 for p in phones if not p["hidden"])
-        self.phones_summary.setText(f"{format_int(len(phones))} گوشی؛ "
-                                    f"{format_int(shown)} در سایت نمایش داده می‌شود")
+        if kind in (NODE_PHONE, NODE_ACCESSORY):
+            target = self.phones_table if kind == NODE_PHONE else self.accessories_table
+            target.select_key(key)
+        self.phones_summary.setText(count_text(self.store.counts(cat.KIND_PHONE), "گوشی"))
+        self.accessories_summary.setText(count_text(self.store.counts(cat.KIND_ACCESSORY),
+                                                    "لوازم جانبی"))
         self.look_tab.fill_lists()
         preview = self.store.preview()
         lines = list(preview["lines"])
@@ -330,8 +501,9 @@ class SitePage(BasePage):
             self.banner.setStyleSheet(f"color: {theme.WARNING_TEXT};")
         else:
             changes = "تغییر منتشرنشده دارد." if preview["has_changes"] else "با سایت یکی است."
-            self.banner.setText(f"{format_int(len(phones))} گوشی و {format_int(len(accessories))} "
-                                f"لوازم جانبی — {changes}")
+            self.banner.setText(f"{count_text(self.store.counts(cat.KIND_PHONE), 'گوشی')} و "
+                                f"{count_text(self.store.counts(cat.KIND_ACCESSORY), 'لوازم جانبی')}"
+                                f" — {changes}")
             self.banner.setStyleSheet(
                 f"color: {theme.WARNING_TEXT if preview['has_changes'] else theme.SUCCESS_DARK};")
 
@@ -371,8 +543,18 @@ class SitePage(BasePage):
             self, "سایت", message), on_done=lambda: self.set_busy(False))
 
     # ---- phones / accessories ----------------------------------------------------------
-    def _add_phone(self) -> None:
-        if PhoneDialog(self.store, parent=self).exec() == QDialog.DialogCode.Accepted:
+    def _add_manual(self) -> None:
+        category, branch = self._branch()
+        if category == cat.KIND_PHONE:
+            self._add_phone(branch)
+        else:
+            self._add_accessory(branch)
+
+    def _add_phone(self, brand: str = "") -> None:
+        dialog = PhoneDialog(self.store, parent=self)
+        if brand:
+            dialog.brand.setCurrentIndex(max(0, dialog.brand.findData(brand)))
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.notify_success("گوشی اضافه شد؛ با «انتشار در سایت» در سایت دیده می‌شود.")
         self.render()
 
@@ -382,8 +564,11 @@ class SitePage(BasePage):
             self.notify_success("ذخیره شد.")
         self.render()
 
-    def _add_accessory(self) -> None:
-        if AccessoryDialog(self.store, parent=self).exec() == QDialog.DialogCode.Accepted:
+    def _add_accessory(self, group: str = "") -> None:
+        dialog = AccessoryDialog(self.store, parent=self)
+        if group:
+            dialog.group.setCurrentIndex(max(0, dialog.group.findData(group)))
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.notify_success("لوازم جانبی اضافه شد.")
         self.render()
 
@@ -396,26 +581,111 @@ class SitePage(BasePage):
     def _toggle(self, table, kind: str) -> None:
         rows = self._phones if kind == cat.KIND_PHONE else self._accessories
         item = self._selected(table, rows)
-        if item is None:
+        if item is not None:
+            self._toggle_code(item["code"])
+
+    def _toggle_code(self, code: str) -> None:
+        """v2.14.0: a click on the «نمایش/پنهان» pill of a row."""
+        item = self.store.get(code)
+        if item is None or not self.can_manage:
             return
-        self.store.set_hidden(item["code"], not item["hidden"])
+        self.store.set_hidden(code, not item["hidden"])
         self.notify_success(f"«{item['name']}» " + ("در سایت نمایش داده می‌شود." if item["hidden"]
                                                      else "در سایت پنهان می‌شود."))
         self.render()
 
-    def _read_pdf(self) -> None:
-        path, _f = QFileDialog.getOpenFileName(self, "انتخاب PDF لوازم جانبی", "", "PDF (*.pdf)")
-        if not path:
+    def _delete(self, kind: str) -> None:
+        table = self.phones_table if kind == cat.KIND_PHONE else self.accessories_table
+        item = self._selected(table, self._phones if kind == cat.KIND_PHONE else self._accessories)
+        if item is None:
+            return
+        if not widgets.confirm(self, "حذف", f"«{item['name']}» حذف شود؟" + NL + NL +
+                               "با «انتشار در سایت» از سایت هم برداشته می‌شود. تا ۴۸ ساعت با "
+                               "«برگرداندن حذف‌شده‌ها…» (یا «برگرداندن انتشار قبلی») برمی‌گردد.",
+                               confirm_text="حذف", kind="warning"):
+            return
+        self.store.delete(item["code"])
+        self.notify_success(f"«{item['name']}» حذف شد.")
+        self.render()
+
+    def _undelete(self) -> None:
+        entries = self.store.recently_deleted()
+        if not entries:
+            self.notify_warning("در ۴۸ ساعت گذشته چیزی حذف نشده است.")
+            return
+        names = [f"{e['item'].get('name')} — {format_shamsi(e.get('at'))}" for e in entries]
+        choice, ok = QInputDialog.getItem(self, "برگرداندن حذف‌شده‌ها", "کدام برگردد؟", names, 0,
+                                          False)
+        if not ok or choice not in names:
+            return
+        entry = entries[names.index(choice)]
+        if self.store.undelete(entry["item"].get("code", "")):
+            self.notify_success(f"«{entry['item'].get('name')}» برگشت.")
+        else:
+            self.notify_warning("برنگشت؛ کالایی با همین کد هست.")
+        self.render()
+
+    # ---- branches ------------------------------------------------------------------------
+    def _ask_name(self, title: str, label: str, text: str = "") -> str:
+        value, ok = QInputDialog.getText(self, title, label, QLineEdit.EchoMode.Normal, text)
+        return " ".join(value.split()) if ok else ""
+
+    def _new_branch(self) -> None:
+        category, _branch = self._branch()
+        phone = category == cat.KIND_PHONE
+        name = self._ask_name("زیرشاخهٔ تازه", "نام برند تازه (انگلیسی، مثلاً Honor):" if phone
+                              else "نام دستهٔ تازهٔ لوازم جانبی (مثلاً ساعت هوشمند):")
+        if not name:
             return
         try:
-            data = Path(path).read_bytes()
-        except OSError:
-            self.notify_error("این فایل خوانده نشد.")
+            key = self.store.add_brand(name) if phone else self.store.add_group(name)
+        except SiteDataError as exc:
+            widgets.error(self, "زیرشاخهٔ تازه", str(exc))
             return
-        dialog = AccessoryPdfDialog(self.store, data, parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.notify_success(f"{format_int(dialog.added)} لوازم جانبی اضافه شد.")
+        self._node = (NODE_BRAND if phone else NODE_GROUP, key)
+        self.notify_success(f"«{name}» ساخته شد.")
         self.render()
+
+    def _rename_branch(self) -> None:
+        category, branch = self._branch()
+        if not branch:
+            self.notify_warning("یک برند یا دسته را در درخت انتخاب کنید.")
+            return
+        phone = category == cat.KIND_PHONE
+        current = next((b["name"] for b in self.store.brands() if b["key"] == branch), "") \
+            if phone else self.store.group_name(branch)
+        name = self._ask_name("تغییر نام", "نام تازه:", current)
+        if not name or name == current:
+            return
+        try:
+            (self.store.rename_brand if phone else self.store.rename_group)(branch, name)
+        except SiteDataError as exc:
+            widgets.error(self, "تغییر نام", str(exc))
+            return
+        self.notify_success("نام عوض شد.")
+        self.render()
+
+    def _read_pdf(self) -> None:
+        category, group = self._branch()
+        if category != cat.KIND_ACCESSORY or not group:
+            self.notify_warning("اول یک دستهٔ لوازم جانبی را در درخت انتخاب کنید؛ کالاهای PDF به "
+                                "همان دسته می‌روند.")
+            return
+        paths_, _f = QFileDialog.getOpenFileNames(self, "انتخاب PDF (یک یا چند فایل)", "",
+                                                  "PDF (*.pdf)")
+        for path in paths_:
+            try:
+                data = Path(path).read_bytes()
+            except OSError:
+                self.notify_error(f"«{Path(path).name}» خوانده نشد.")
+                continue
+            dialog = PdfImportDialog(self.store, group, data, file_name=Path(path).name, parent=self)
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+            self.render()
+            if accepted:
+                widgets.success(self, "افزودن از PDF", dialog.result_text())
+            else:
+                break
 
     # ---- publish -----------------------------------------------------------------------
     def _publish(self) -> None:

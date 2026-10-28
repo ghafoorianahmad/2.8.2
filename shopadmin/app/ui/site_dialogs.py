@@ -287,10 +287,10 @@ class AccessoryDialog(_FormDialog):
         self.name.setMaxLength(120)
         self.row("عنوان:", self.name)
         self.group = QComboBox()
-        for key, title in cat.GROUPS.items():
-            self.group.addItem(title, key)
+        for group in store.groups():          # v2.14.0: the manager's own categories too
+            self.group.addItem(group["name"], group["key"])
         self.group.setCurrentIndex(max(0, self.group.findData(self.item.get("group") or "other")))
-        self.row("نوع:", self.group)
+        self.row("دسته:", self.group)
         self.brand_name = QLineEdit(self.item.get("brand_name", ""))
         self.brand_name.setPlaceholderText("اختیاری، مثلاً Anker")
         self.brand_name.setMaxLength(40)

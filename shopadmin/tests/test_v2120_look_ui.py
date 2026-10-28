@@ -47,7 +47,7 @@ def settle(app) -> None:
 
 def test_the_tab_is_there_between_accessories_and_publish(page):
     titles = [page.tabs.tabText(n) for n in range(page.tabs.count())]
-    assert titles == ["گوشی‌ها", "لوازم جانبی", "ظاهر و چیدمان", "انتشار و پشتیبان"]
+    assert titles == ["کالاها", "ظاهر و چیدمان", "انتشار و پشتیبان"]   # v2.14.0 one tree
     look = page.look_tab
     assert [look.tabs.tabText(n) for n in range(look.tabs.count())] == [
         "چیدمان کالاها", "تازه‌ترین گوشی‌ها", "رنگ و لوگو", "بنر صفحهٔ اصلی",

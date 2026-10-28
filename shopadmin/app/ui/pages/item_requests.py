@@ -138,7 +138,8 @@ class ItemRequestsPage(BasePage):
         panel = widgets.Panel("درخواست‌ها")
         panel.body.addWidget(widgets.label(
             "درخواست کالا سفارش نیست؛ پرداختی ندارد و در «سازه حساب» چیزی ثبت نمی‌شود. "
-            "روی هر ردیف کلیک کنید تا جزئیات، یادداشت و ارسال پیام به مشتری باز شود.",
+            "روی هر ردیف دوبار کلیک کنید (یا «باز کردن») تا جزئیات، یادداشت و ارسال پیام به "
+            "مشتری باز شود.",
             name="Muted", wrap=True))
         # New width key: widths saved by v2.6.0 cut the date and the product header.
         self.table = widgets.DataTable(HEADERS, selectable_rows=True, key="item_requests_v261",
@@ -146,6 +147,8 @@ class ItemRequestsPage(BasePage):
         self.table.set_empty_state("درخواستی نیست", "", "inbox")
         self.table.setMinimumHeight(300)
         self.table.row_activated.connect(self._open_row)
+        self.open_button = widgets.open_button(self.table)
+        panel.body.addWidget(self.open_button, 0, Qt.AlignmentFlag.AlignRight)
         panel.body.addWidget(self.table, 1)
         self.summary = widgets.label("", name="Muted")
         panel.body.addWidget(self.summary)

@@ -8,8 +8,8 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Iterable, Sequence
 
-from PySide6.QtCore import (QEasingCurve, QEvent, QObject, QPropertyAnimation, QRect, QSize, Qt,
-                            QTimer, Signal)
+from PySide6.QtCore import (QEasingCurve, QEvent, QItemSelectionModel, QObject, QPropertyAnimation,
+                            QRect, QSize, Qt, QTimer, Signal)
 from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -593,6 +593,25 @@ def actions_menu_button(actions, *, text: str = "بیشتر", tooltip: str = "ک
     return button
 
 
+class TogglePill(StatusPill):
+    """v2.14.0: the «نمایش / پنهان» pill of a row — one click switches it."""
+
+    clicked = Signal()
+
+    def __init__(self, text: str, status: str = "", *, tooltip: str = "",
+                 parent: QWidget | None = None) -> None:
+        super().__init__(text, status, parent)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setToolTip(tooltip or "با کلیک عوض می‌شود")
+        self.setAccessibleName(text)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if self.isEnabled() and event.button() == Qt.MouseButton.LeftButton                 and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+            return
+        super().mouseReleaseEvent(event)
+
+
 def pill_cell(widget: QWidget) -> QWidget:
     """Wrap a pill so it sits centred inside a table cell with room to breathe."""
     holder = QWidget()
@@ -879,8 +898,11 @@ class DataTable(QTableWidget):
         self._empty_widget: QWidget | None = None
         self._busy_widget: QWidget | None = None
 
+        #: v2.14.0: a reload keeps the scroll position and the selected row
+        self._kept: tuple[int, Any, int] | None = None
+        self._restoring = False
         if selectable_rows:
-            self.cellClicked.connect(self._emit_row)
+            # v2.14.0: one click only selects; a double click (or Enter) opens / edits
             self.doubleClicked.connect(lambda index: self.row_activated.emit(index.row()))
 
     # ---- column widths ---------------------------------------------------
@@ -1017,6 +1039,99 @@ class DataTable(QTableWidget):
     def _emit_row(self, row: int, _column: int) -> None:
         self.row_activated.emit(row)
 
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.currentRow() >= 0                 and self.selectionMode() != QAbstractItemView.SelectionMode.NoSelection:
+            self.row_activated.emit(self.currentRow())
+            return
+        super().keyPressEvent(event)
+
+    def activate_selected(self) -> bool:
+        """«باز کردن» / «ویرایش» of a page: the same as a double click on the selected row."""
+        rows = sorted({index.row() for index in self.selectionModel().selectedRows()})
+        if len(rows) != 1:
+            return False
+        self.row_activated.emit(rows[0])
+        return True
+
+    # ---- v2.14.0 keep scroll + selection across a reload ----------------------------
+    _ROW_KEY = Qt.ItemDataRole.UserRole + 41
+    _kept: tuple | None = None
+    _restoring = False
+
+    def set_row_key(self, row: int, key: Any) -> None:
+        """An id for the row (order id, item code): a reload selects the same row again."""
+        item = self.item(row, 0)
+        if item is None:
+            item = QTableWidgetItem("")
+            self.setItem(row, 0, item)
+        item.setData(self._ROW_KEY, key)
+
+    def row_key(self, row: int) -> Any:
+        item = self.item(row, 0)
+        if item is None:
+            return None
+        key = item.data(self._ROW_KEY)
+        if key is not None:
+            return key
+        return tuple(self.item(row, c).text() if self.item(row, c) else ""
+                     for c in range(min(self.columnCount(), 3)))
+
+    def select_row(self, row: int) -> None:
+        """Select one whole row (``selectRow`` does nothing in a table without focus)."""
+        model = self.selectionModel()
+        index = self.model().index(row, 0)
+        model.clearSelection()
+        model.select(index, QItemSelectionModel.SelectionFlag.Select
+                     | QItemSelectionModel.SelectionFlag.Rows)
+        model.setCurrentIndex(index, QItemSelectionModel.SelectionFlag.NoUpdate)
+
+    def select_key(self, key: Any) -> bool:
+        for row in range(self.rowCount()):
+            if self.row_key(row) == key:
+                self.select_row(row)
+                self.scrollToItem(self.item(row, 0) or QTableWidgetItem(),
+                                  QAbstractItemView.ScrollHint.EnsureVisible)
+                return True
+        return False
+
+    def setRowCount(self, rows: int) -> None:  # noqa: N802 - Qt naming
+        if rows == 0 and self.rowCount() and not getattr(self, "_restoring", True):
+            selected = sorted({i.row() for i in self.selectionModel().selectedRows()})                 if self.selectionModel() is not None else []
+            key = self.row_key(selected[0]) if selected else None
+            self._kept = (self.verticalScrollBar().value(), key, selected[0] if selected else -1,
+                          self.rowCount())
+        super().setRowCount(rows)
+
+    def _restore_kept(self) -> None:
+        if getattr(self, "_kept", None) is None or not self.rowCount():
+            return
+        scroll, key, index, count = self._kept
+        self._kept = None
+        # the same list again (a dialog closed, a row added / removed): keep the place;
+        # another list (a new search or filter) starts at its top
+        same_list = abs(self.rowCount() - count) <= 1
+        self._restoring = True
+        try:
+            found = False
+            if self.selectionMode() != QAbstractItemView.SelectionMode.NoSelection and index >= 0:
+                found = key is not None and self._select_quietly(key)
+                if not found and same_list and index < self.rowCount():
+                    self.select_row(index)
+            if not (found or same_list):
+                return
+            self.verticalScrollBar().setValue(scroll)
+            # the bar's range grows only after the layout: set it once more then
+            QTimer.singleShot(0, lambda: _alive(self) and self.verticalScrollBar().setValue(scroll))
+        finally:
+            self._restoring = False
+
+    def _select_quietly(self, key: Any) -> bool:
+        for row in range(self.rowCount()):
+            if self.row_key(row) == key:
+                self.select_row(row)
+                return True
+        return False
+
     def set_empty_state(self, title: str, hint: str = "", icon_name: str = "inbox") -> None:
         self._empty_title = title
         self._empty_hint = hint
@@ -1085,6 +1200,7 @@ class DataTable(QTableWidget):
     def _refresh_states(self) -> None:
         if self.rowCount():
             self._auto_size()
+            self._restore_kept()
         empty = self.rowCount() == 0 and not self._busy
         if empty:
             if self._empty_widget is None:
@@ -1109,6 +1225,21 @@ class DataTable(QTableWidget):
         for widget in (self._empty_widget, self._busy_widget):
             if widget is not None:
                 widget.setGeometry(self.viewport().rect())
+
+
+def open_button(table: "DataTable", text: str = "باز کردن", *, icon_name: str = "eye") -> QPushButton:
+    """v2.14.0: one click on a row only selects it; this button (or a double click /
+    Enter) opens the selected row. Enabled only while one row is selected."""
+    widget = button(text, icon_name=icon_name, on_click=table.activate_selected,
+                    tooltip="ردیف انتخاب‌شده را باز می‌کند (یا روی ردیف دوبار کلیک کنید)")
+
+    def sync() -> None:
+        model = table.selectionModel()
+        widget.setEnabled(model is not None and len({i.row() for i in model.selectedRows()}) == 1)
+
+    table.itemSelectionChanged.connect(sync)
+    sync()
+    return widget
 
 
 def show_full_headers(table, padding: int = 40) -> None:
