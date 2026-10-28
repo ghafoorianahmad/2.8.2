@@ -185,7 +185,7 @@ class PdfImportDialog(widgets.ResponsiveDialog):
         self.table.setColumnWidth(3, 140)
         self.table.setColumnWidth(4, 170)
         self.table.setColumnWidth(5, 260)
-        self.table.setColumnWidth(6, 170)
+        self.table.setColumnWidth(6, 260)
         self.table.itemChanged.connect(self._title_edited)
         root.addWidget(self.table, 1)
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
@@ -265,6 +265,7 @@ class PdfImportDialog(widgets.ResponsiveDialog):
             same = widgets.button("یکی است", on_click=lambda: self._decide(index, imp.SAME))
             apart = widgets.button("جداست", on_click=lambda: self._decide(index, imp.SEPARATE))
             for b in (same, apart):
+                b.setMinimumWidth(b.sizeHint().width())
                 column.addWidget(b)
             line.addLayout(column)
         return holder
@@ -273,10 +274,12 @@ class PdfImportDialog(widgets.ResponsiveDialog):
         holder = QWidget()
         line = QHBoxLayout(holder)
         line.setContentsMargins(4, 2, 4, 2)
-        line.addWidget(widgets.button("ویرایش", icon_name="edit", on_click=lambda: self._edit(index)))
-        line.addWidget(widgets.button("بازگرداندن" if prepared.removed else "حذف",
-                                      icon_name="refresh" if prepared.removed else "trash",
-                                      on_click=lambda: self._remove(index)))
+        for b in (widgets.button("ویرایش", icon_name="edit", on_click=lambda: self._edit(index)),
+                  widgets.button("بازگرداندن" if prepared.removed else "حذف",
+                                 icon_name="refresh" if prepared.removed else "trash",
+                                 on_click=lambda: self._remove(index))):
+            b.setMinimumWidth(b.sizeHint().width())      # never cut (text_fit_audit)
+            line.addWidget(b)
         return holder
 
     def _keep_scroll(self, change) -> None:
