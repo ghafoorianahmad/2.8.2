@@ -118,7 +118,9 @@ def request_from_row(db: OwnDB, settings: Settings, row: dict, user: dict, qty: 
         user["id"], row.get("kala_code") if mapping_id else None, name,
         "", KIND, accounting_db=settings.database_name(), row_key=row["row_key"],
         mapping_id=mapping_id, color=color, part=part,
-        price_rial=int(row["price_rial"]) if row.get("price_rial") else None, qty=qty)
+        price_rial=int(row["price_rial"]) if row.get("price_rial") else None, qty=qty,
+        # v2.14.0: staff see which list (and channel) the price came from
+        price_list_id=(PriceListRepo(db).active_list() or {}).get("id"))
     db.audit(actor, "purchase_request_create", f"request id={created['id']}")
     db.add_event("item_request", created["id"], actor)
     return created

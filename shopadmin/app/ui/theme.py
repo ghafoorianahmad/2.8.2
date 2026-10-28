@@ -99,7 +99,7 @@ _ACCENTS: dict[str, dict[str, dict[str, str]]] = {
         "light": {
             "PRIMARY": "#1F6AE0", "PRIMARY_DARK": "#1957BF", "PRIMARY_PRESSED": "#14479C",
             "PRIMARY_LIGHT": "#D6E6FD", "PRIMARY_SOFT": "#EAF2FE", "PRIMARY_TEXT": "#1957BF",
-            "ACCENT": "#2F7CF6", "ACCENT2": "#1FB5D6",
+            "ACCENT": "#2F7CF6", "ACCENT2": "#1FB5D6", "GRAD_END": "#6A4FE0",
             "SIDEBAR_BG": "#16325C", "SIDEBAR_BG2": "#0F5A8A", "SIDEBAR_TEXT": "#E9EFFA",
             "SIDEBAR_MUTED": "#B8C8E0", "SIDEBAR_HOVER": "#24477A",
             "SIDEBAR_ACTIVE": "#1F6AE0", "SIDEBAR_ACTIVE2": "#0B7A99",
@@ -109,7 +109,7 @@ _ACCENTS: dict[str, dict[str, dict[str, str]]] = {
         "dark": {
             "PRIMARY": "#2F6FD8", "PRIMARY_DARK": "#2A62C0", "PRIMARY_PRESSED": "#22519F",
             "PRIMARY_LIGHT": "#24395E", "PRIMARY_SOFT": "#1E2D47", "PRIMARY_TEXT": "#8DB6FF",
-            "ACCENT": "#4E8EF7", "ACCENT2": "#3FC4DE",
+            "ACCENT": "#4E8EF7", "ACCENT2": "#3FC4DE", "GRAD_END": "#6E57E6",
             "SIDEBAR_BG": "#0E1A2E", "SIDEBAR_BG2": "#0F3550", "SIDEBAR_TEXT": "#D6DEEB",
             "SIDEBAR_MUTED": "#9FB0C8", "SIDEBAR_HOVER": "#1D2D47",
             "SIDEBAR_ACTIVE": "#2F6FD8", "SIDEBAR_ACTIVE2": "#147A94",
@@ -121,7 +121,7 @@ _ACCENTS: dict[str, dict[str, dict[str, str]]] = {
         "light": {
             "PRIMARY": "#4F46E5", "PRIMARY_DARK": "#4338CA", "PRIMARY_PRESSED": "#3730A3",
             "PRIMARY_LIGHT": "#E0E7FF", "PRIMARY_SOFT": "#EEF2FF", "PRIMARY_TEXT": "#4338CA",
-            "ACCENT": "#5A6CFF", "ACCENT2": "#12B5D8",
+            "ACCENT": "#5A6CFF", "ACCENT2": "#12B5D8", "GRAD_END": "#7C3AED",
             "SIDEBAR_BG": "#221E5C", "SIDEBAR_BG2": "#0E4E6E", "SIDEBAR_TEXT": "#ECEBFD",
             "SIDEBAR_MUTED": "#C0C3EE", "SIDEBAR_HOVER": "#332E7E",
             "SIDEBAR_ACTIVE": "#4F46E5", "SIDEBAR_ACTIVE2": "#0E7490",
@@ -131,7 +131,7 @@ _ACCENTS: dict[str, dict[str, dict[str, str]]] = {
         "dark": {
             "PRIMARY": "#5850D8", "PRIMARY_DARK": "#4B44C2", "PRIMARY_PRESSED": "#3E37A3",
             "PRIMARY_LIGHT": "#2B2A5E", "PRIMARY_SOFT": "#222248", "PRIMARY_TEXT": "#A5B0FF",
-            "ACCENT": "#8B9BFF", "ACCENT2": "#22D3EE",
+            "ACCENT": "#8B9BFF", "ACCENT2": "#22D3EE", "GRAD_END": "#7B5BE8",
             "SIDEBAR_BG": "#15123A", "SIDEBAR_BG2": "#0C3247", "SIDEBAR_TEXT": "#DEE0F7",
             "SIDEBAR_MUTED": "#A9AEDB", "SIDEBAR_HOVER": "#26225A",
             "SIDEBAR_ACTIVE": "#5850D8", "SIDEBAR_ACTIVE2": "#0E7490",
@@ -143,7 +143,7 @@ _ACCENTS: dict[str, dict[str, dict[str, str]]] = {
         "light": {
             "PRIMARY": "#047857", "PRIMARY_DARK": "#065F46", "PRIMARY_PRESSED": "#064E3B",
             "PRIMARY_LIGHT": "#D1FAE5", "PRIMARY_SOFT": "#ECFDF5", "PRIMARY_TEXT": "#065F46",
-            "ACCENT": "#14A37F", "ACCENT2": "#3FC4B0",
+            "ACCENT": "#14A37F", "ACCENT2": "#3FC4B0", "GRAD_END": "#0E6F8C",
             "SIDEBAR_BG": "#0F3B37", "SIDEBAR_BG2": "#11624F", "SIDEBAR_TEXT": "#E6F4EF",
             "SIDEBAR_MUTED": "#B5D6CC", "SIDEBAR_HOVER": "#1A5049",
             "SIDEBAR_ACTIVE": "#047857", "SIDEBAR_ACTIVE2": "#0F766E",
@@ -153,7 +153,7 @@ _ACCENTS: dict[str, dict[str, dict[str, str]]] = {
         "dark": {
             "PRIMARY": "#0E8063", "PRIMARY_DARK": "#0B6E55", "PRIMARY_PRESSED": "#095A46",
             "PRIMARY_LIGHT": "#173A30", "PRIMARY_SOFT": "#142E27", "PRIMARY_TEXT": "#5FD4B0",
-            "ACCENT": "#2BC49A", "ACCENT2": "#3FC4B0",
+            "ACCENT": "#2BC49A", "ACCENT2": "#3FC4B0", "GRAD_END": "#167C99",
             "SIDEBAR_BG": "#0B2622", "SIDEBAR_BG2": "#0E4438", "SIDEBAR_TEXT": "#D5ECE5",
             "SIDEBAR_MUTED": "#9CC4B8", "SIDEBAR_HOVER": "#163A34",
             "SIDEBAR_ACTIVE": "#0E8063", "SIDEBAR_ACTIVE2": "#0F766E",
@@ -186,7 +186,7 @@ PALETTE = "ocean"
 EFFECTS = "full"
 
 PRIMARY = PRIMARY_DARK = PRIMARY_PRESSED = PRIMARY_LIGHT = PRIMARY_SOFT = PRIMARY_TEXT = ""
-ACCENT = ACCENT2 = GLOW = SHADOW = ""
+ACCENT = ACCENT2 = GLOW = SHADOW = GRAD_END = ""
 SUCCESS = SUCCESS_DARK = SUCCESS_LIGHT = ""
 WARNING = WARNING_TEXT = WARNING_LIGHT = WARNING_BG = WARNING_BORDER = ""
 DANGER = DANGER_DARK = DANGER_LIGHT = ""
@@ -562,6 +562,11 @@ def mix(color: str, other: str, amount: float) -> str:
     return "#" + "".join(f"{round(x + (y - x) * amount):02X}" for x, y in zip(a, b))
 
 
+def _diagonal(start: str, end: str) -> str:
+    """v2.14.0: the site's ``linear-gradient(135deg, accent, accent2)``."""
+    return f"qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {start}, stop:1 {end})"
+
+
 def _sheen(fill: str, dark: str) -> str:
     """A coloured (prominent) button stays its own colour, deepening downwards
     (never lighter than ``fill``: white text keeps WCAG AA, contrast_audit)."""
@@ -584,15 +589,32 @@ def glass_fills(simple: bool) -> dict[str, str]:
             "pressed": rgba("#000000", 0.28),
         }
     if simple:
-        return {"fill": rgba("#FFFFFF", 0.72), "hover": rgba(mix(PRIMARY_SOFT, "#FFFFFF", 0.3), 0.95),
-                "pressed": rgba(BUTTON2, 0.95)}
+        return {"fill": mix(PRIMARY_SOFT, "#FFFFFF", 0.4), "hover": PRIMARY_SOFT,
+                "pressed": PRIMARY_LIGHT}
+    # v2.14.0: a light, soft button (the site's «مشخصات»): white into the palette's tint
     return {
-        "fill": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba('#FFFFFF', 0.96)}, "
-                 f"stop:0.5 {rgba('#FFFFFF', 0.72)}, stop:1 {rgba(BUTTON2, 0.62)})"),
-        "hover": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba('#FFFFFF', 1.0)}, "
-                  f"stop:1 {rgba(PRIMARY_SOFT, 0.95)})"),
-        "pressed": rgba(BUTTON2, 0.95),
+        "fill": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, "
+                 f"stop:1 {mix(PRIMARY_SOFT, '#FFFFFF', 0.25)})"),
+        "hover": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, "
+                  f"stop:1 {PRIMARY_SOFT})"),
+        "pressed": PRIMARY_LIGHT,
     }
+
+
+def soft_border() -> str:
+    """v2.14.0: the edge of a normal button - the accent, never black, and still
+    3:1 against every background (WCAG 1.4.11; scripts/button_audit.py)."""
+    if MODE == "dark":
+        return mix(ACCENT, SURFACE, 0.22)
+    return mix(PRIMARY, "#FFFFFF", 0.16)
+
+
+def rest_glow() -> QColor:
+    """v2.14.0: the soft glow under a coloured (primary) button at rest, like the
+    site's «ثبت سفارش»."""
+    color = QColor(GRAD_END or ACCENT)
+    color.setAlpha(150 if MODE == "dark" else 105)
+    return color
 
 
 def glow_color() -> QColor:
@@ -612,9 +634,17 @@ def _stylesheet_template() -> str:
     simple = EFFECTS == "simple"
     glass = glass_fills(simple)
     button_fill, button_hover, button_pressed = glass["fill"], glass["hover"], glass["pressed"]
-    primary_fill = PRIMARY if simple else _sheen(PRIMARY, PRIMARY_DARK)
-    success_fill = SUCCESS_FILL if simple else _sheen(SUCCESS_FILL, SUCCESS_FILL_DARK)
-    danger_fill = DANGER_FILL if simple else _sheen(DANGER_FILL, DANGER_FILL_DARK)
+    # v2.14.0: the site's «ثبت سفارش»: a diagonal blue -> purple gradient, no dark frame
+    primary_fill = PRIMARY if simple else _diagonal(PRIMARY, GRAD_END)
+    primary_hover = mix(PRIMARY, GRAD_END, 0.5) if simple else _diagonal(
+        mix(PRIMARY, "#FFFFFF", 0.1), mix(GRAD_END, "#FFFFFF", 0.1))
+    primary_pressed = PRIMARY_PRESSED if simple else _diagonal(
+        PRIMARY_PRESSED, mix(GRAD_END, "#000000", 0.18))
+    success_fill = SUCCESS_FILL if simple else _diagonal(
+        SUCCESS_FILL, mix(SUCCESS_FILL, "#0E6F8C", 0.45))
+    danger_fill = DANGER_FILL if simple else _diagonal(
+        DANGER_FILL, mix(DANGER_FILL, "#9D174D", 0.45))
+    edge = soft_border()
     return f"""
 QWidget {{
     font-family: "__FONT_FAMILY__";
@@ -659,7 +689,7 @@ QLabel#EmptyHint {{ color: {TEXT_MUTED}; }}
    (no transparent text buttons; «Ghost» is only for an icon without text). */
 QPushButton {{
     background: {button_fill};
-    color: {TEXT}; border: 1px solid {BUTTON_BORDER}; border-bottom: 2px solid {BUTTON_BORDER};
+    color: {TEXT}; border: 1px solid {edge}; border-bottom: 2px solid {edge};
     border-radius: {RADIUS}px; padding: 8px 16px; font-size: {BASE_FONT_SIZE}pt; font-weight: 600;
     min-height: {BUTTON_CONTENT_HEIGHT}px; max-height: {BUTTON_CONTENT_HEIGHT}px;
 }}
@@ -668,8 +698,8 @@ QPushButton {{
    button sinks (the thick edge moves to the top, the text 1px down, darker fill).
    The height never changes: 1 + 2 px of edges and 16 px of padding in every state. */
 QPushButton:hover {{ background: {button_hover}; border-color: {ACCENT}; color: {PRIMARY_TEXT}; }}
-QPushButton:pressed {{ background: {button_pressed}; border-top: 2px solid {BUTTON_BORDER};
-                       border-bottom: 1px solid {BUTTON_BORDER}; padding-top: 9px;
+QPushButton:pressed {{ background: {button_pressed}; border-top: 2px solid {ACCENT};
+                       border-bottom: 1px solid {ACCENT}; padding-top: 9px;
                        padding-bottom: 7px; }}
 QPushButton:disabled, QPushButton#Primary:disabled, QPushButton#Success:disabled,
 QPushButton#Danger:disabled, QPushButton#Ghost:disabled, QPushButton#Tab:disabled,
@@ -680,26 +710,26 @@ QPushButton#RowMenu:disabled {{
 
 QPushButton#Primary {{
     background: {primary_fill};
-    color: #FFFFFF; border: 1px solid {PRIMARY_DARK}; border-bottom: 2px solid {PRIMARY_PRESSED};
+    color: #FFFFFF; border: 1px solid transparent; border-bottom: 2px solid transparent;
     font-weight: 700;
 }}
-QPushButton#Primary:hover {{ background: {PRIMARY_DARK}; color: #FFFFFF; border-color: {ACCENT}; }}
-QPushButton#Primary:pressed {{ background: {PRIMARY_PRESSED}; border-top: 2px solid {PRIMARY_PRESSED};
-                               border-bottom: 1px solid {PRIMARY_PRESSED}; padding-top: 9px;
+QPushButton#Primary:hover {{ background: {primary_hover}; color: #FFFFFF; border-color: transparent; }}
+QPushButton#Primary:pressed {{ background: {primary_pressed}; border-top: 2px solid transparent;
+                               border-bottom: 1px solid transparent; padding-top: 9px;
                                padding-bottom: 7px; }}
 
-QPushButton#Success {{ background: {success_fill}; color: #FFFFFF; border: 1px solid {SUCCESS_FILL_DARK};
-                       border-bottom: 2px solid {SUCCESS_FILL_DARK}; font-weight: 700; }}
+QPushButton#Success {{ background: {success_fill}; color: #FFFFFF; border: 1px solid transparent;
+                       border-bottom: 2px solid transparent; font-weight: 700; }}
 QPushButton#Success:hover {{ background: {SUCCESS_FILL_DARK}; color: #FFFFFF; }}
-QPushButton#Success:pressed {{ background: {SUCCESS_FILL_DARK}; border-top: 2px solid {SUCCESS_FILL_DARK};
-                               border-bottom: 1px solid {SUCCESS_FILL_DARK}; padding-top: 9px;
+QPushButton#Success:pressed {{ background: {SUCCESS_FILL_DARK}; border-top: 2px solid transparent;
+                               border-bottom: 1px solid transparent; padding-top: 9px;
                                padding-bottom: 7px; }}
 
-QPushButton#Danger {{ background: {danger_fill}; color: #FFFFFF; border: 1px solid {DANGER_FILL_DARK};
-                      border-bottom: 2px solid {DANGER_FILL_DARK}; font-weight: 700; }}
+QPushButton#Danger {{ background: {danger_fill}; color: #FFFFFF; border: 1px solid transparent;
+                      border-bottom: 2px solid transparent; font-weight: 700; }}
 QPushButton#Danger:hover {{ background: {DANGER_FILL_DARK}; color: #FFFFFF; }}
-QPushButton#Danger:pressed {{ background: {DANGER_FILL_DARK}; border-top: 2px solid {DANGER_FILL_DARK};
-                              border-bottom: 1px solid {DANGER_FILL_DARK}; padding-top: 9px;
+QPushButton#Danger:pressed {{ background: {DANGER_FILL_DARK}; border-top: 2px solid transparent;
+                              border-bottom: 1px solid transparent; padding-top: 9px;
                               padding-bottom: 7px; }}
 
 /* only for a small icon button without text (the toast's ✕) */
@@ -935,7 +965,7 @@ class _Effects(QObject):
             name = obj.objectName()
             if isinstance(obj, QPushButton) and name in SHADOW_BUTTONS:
                 if not _inside_item_view(obj):
-                    _shadow(obj, 12, 3, button=True)
+                    _shadow(obj, 16, 3, button=True)
                     # v2.9.3: a disabled button is flat (no shadow)
                     obj.graphicsEffect().setEnabled(obj.isEnabled())
             elif isinstance(obj, QFrame) and name == "Panel" and _panel_can_have_shadow(obj):
@@ -950,8 +980,8 @@ class _Effects(QObject):
                 effect.setColor(glow_color())
                 self._animate(obj, 24, 0)
             elif kind == QEvent.Type.Leave:
-                effect.setColor(shadow_color(90 if MODE != "dark" else None))
-                self._animate(obj, 12, 3)
+                effect.setColor(rest_glow())
+                self._animate(obj, 16, 3)
             elif kind == QEvent.Type.MouseButtonPress:
                 self._animate(obj, 6, 0, 80)
             elif kind == QEvent.Type.MouseButtonRelease:
@@ -1018,7 +1048,7 @@ def _shadow(widget: QWidget, blur: float, dy: float, *, button: bool = False) ->
     effect = QGraphicsDropShadowEffect(widget)
     effect.setBlurRadius(blur)
     effect.setOffset(0, dy)
-    effect.setColor(shadow_color(90 if button and MODE != "dark" else None))
+    effect.setColor(rest_glow() if button else shadow_color())
     widget.setGraphicsEffect(effect)
 
 

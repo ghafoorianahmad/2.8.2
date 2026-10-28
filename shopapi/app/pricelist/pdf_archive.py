@@ -130,6 +130,39 @@ def stored_path(settings: Settings, file_name: str | None) -> Path | None:
     return folder / name
 
 
+def normalize_archive(db: OwnDB, settings: Settings) -> int:
+    """v2.14.0: a file of the archive with another name (an older build kept
+    ``pricelist_16_unknown.pdf``) gets the standard ``1405-08-05-1.pdf`` name of
+    the day it was received (its file time); the list that points at it follows.
+    Returns how many were renamed. Never deletes anything."""
+    folder = settings.pricelists_path()
+    if folder is None or not folder.is_dir():
+        return 0
+    renamed = 0
+    try:
+        odd = sorted((e for e in folder.iterdir() if e.is_file() and e.suffix.lower() == ".pdf"
+                      and not _NAME.match(e.name)), key=lambda e: e.stat().st_mtime)
+    except OSError:
+        return 0
+    for entry in odd:
+        try:
+            when = datetime.fromtimestamp(entry.stat().st_mtime, timezone.utc)
+            name = archive_name(folder, when)
+            target = folder / name
+            if target.exists():
+                continue
+            os.replace(entry, target)
+        except OSError as exc:
+            logger.warning("archive file not renamed: %s", type(exc).__name__)
+            continue
+        with db._lock:
+            db._conn.execute("UPDATE price_lists SET file_name=? WHERE file_name=?",
+                             (name, entry.name))
+            db._commit()
+        renamed += 1
+    return renamed
+
+
 def archive_info(settings: Settings) -> dict:
     """For «تنظیمات سرور فروشگاه»: where the archive is, how many files, how big."""
     folder = settings.pricelists_path()
@@ -186,7 +219,9 @@ async def reminder_loop(settings: Settings, db_factory) -> None:
     """Background loop started with the API (never raises)."""
     while True:
         try:
-            await asyncio.to_thread(check_reminder, db_factory(), settings)
+            db = db_factory()
+            await asyncio.to_thread(normalize_archive, db, settings)
+            await asyncio.to_thread(check_reminder, db, settings)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001

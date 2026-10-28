@@ -468,6 +468,11 @@ class ItemRequestOut(BaseModel):
     order_id: Optional[int] = None
     #: v2.9.2: the price offered to the customer (waits for «تأیید و خرید»)
     offer_price_rial: Optional[int] = None
+    #: v2.14.0: the list (and channel) the request's price came from
+    price_list_id: Optional[int] = None
+    price_list_date: Optional[str] = None
+    price_list_source: Optional[str] = None
+    price_list_channel: Optional[str] = None
     offered_at: Optional[str] = None
 
 

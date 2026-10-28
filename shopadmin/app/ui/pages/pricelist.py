@@ -340,6 +340,10 @@ class PriceListPage(BasePage):
             b.setEnabled(self.can_manage)
             actions.addWidget(b)
         panel.body.addWidget(actions_holder)
+        # v2.14.0: why «تأیید / رد» is off (only a held list can be approved or rejected)
+        self.held_hint = widgets.label("", name="Muted", wrap=True)
+        panel.body.addWidget(self.held_hint)
+        self.lists_table.itemSelectionChanged.connect(self._sync_held_buttons)
         self.fetch_status = widgets.label("", name="Muted", wrap=True)
         self.fetch_status.setVisible(False)
         panel.body.addWidget(self.fetch_status)
@@ -571,6 +575,30 @@ class PriceListPage(BasePage):
         # the row buttons need a full button height (they were cut at the bottom)
         table.resizeRowsToContents()
         table._refresh_states()
+        self._sync_held_buttons()
+
+    def _sync_held_buttons(self) -> None:
+        """v2.14.0: «تأیید لیست نگه‌داشته» / «رد لیست» only when there is a held list."""
+        held = [item for item in getattr(self, "_lists", []) if item.get("status") == "held"]
+        chosen = self._selected_quiet()
+        if not held:
+            hint = "لیست نگه‌داشته‌ای نیست؛ «تأیید» و «رد» فقط برای لیست نگه‌داشته است."
+        elif len(chosen) == 1 and chosen[0].get("status") == "held":
+            hint = ""
+        else:
+            hint = f"{format_int(len(held))} لیست نگه‌داشته منتظر تأیید است؛ آن را در جدول انتخاب کنید."
+        ok = self.can_manage and bool(held)
+        for b in (self.approve_button, self.reject_button):
+            b.setEnabled(ok)
+            b.setToolTip(hint or "")
+        self.held_hint.setText(hint)
+        self.held_hint.setVisible(bool(hint))
+
+    def _selected_quiet(self) -> list:
+        model = self.lists_table.selectionModel()
+        rows = sorted({i.row() for i in model.selectedRows()}) if model is not None else []
+        lists = getattr(self, "_lists", [])
+        return [lists[r] for r in rows if 0 <= r < len(lists)]
 
     def _list_actions(self, item: dict) -> QWidget:
         """v2.13.0: «خواندن دوباره» on every received list whose file was kept."""
@@ -829,7 +857,10 @@ class PriceListPage(BasePage):
                  busy_message="در حال خواندن لیست…")
 
     def _held_selection(self) -> Optional[dict]:
-        chosen = self._selected(self.lists_table, self._lists)
+        chosen = self._selected_quiet()
+        held = [item for item in self._lists if item.get("status") == "held"]
+        if not (len(chosen) == 1 and chosen[0].get("status") == "held") and len(held) == 1:
+            chosen = held          # v2.14.0: the only held list needs no selection
         if len(chosen) != 1 or chosen[0].get("status") != "held":
             self.notify_warning("یک لیست «نگه‌داشته» را انتخاب کنید.")
             return None

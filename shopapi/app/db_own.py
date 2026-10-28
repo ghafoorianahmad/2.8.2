@@ -352,6 +352,9 @@ CREATE INDEX IF NOT EXISTS idx_activity_customer ON activity_log(customer_id);
 #: Columns added after the first release: (table, column, declaration).
 #: SQLite cannot alter a CHECK, so tracking lives in extra columns, not statuses.
 MIGRATIONS = (
+    # v2.14.0: the list a purchase request's price came from; the channel of a list
+    ("item_requests", "price_list_id", "INTEGER"),
+    ("price_lists", "channel", "TEXT NOT NULL DEFAULT ''"),
     ("orders", "invoice_state", "TEXT"),        # NULL | 'partial' | 'full'
     ("orders", "invoiced_qty", "REAL"),
     ("orders", "invoiced_at", "TEXT"),
@@ -919,6 +922,12 @@ class OwnDB:
     _ITEM_REQUEST_SELECT = (
         "SELECT r.*, u.name AS customer_name, u.person_code, u.platform, "
         "u.phone AS customer_phone, "
+        "(SELECT pl.list_date FROM price_lists pl WHERE pl.id = r.price_list_id) "
+        "AS price_list_date, "
+        "(SELECT pl.source FROM price_lists pl WHERE pl.id = r.price_list_id) "
+        "AS price_list_source, "
+        "(SELECT pl.channel FROM price_lists pl WHERE pl.id = r.price_list_id) "
+        "AS price_list_channel, "
         "(SELECT COUNT(*) FROM item_request_messages m WHERE m.request_id = r.id) "
         "AS messages_count FROM item_requests r JOIN users u ON u.id = r.user_id "
     )
@@ -927,16 +936,17 @@ class OwnDB:
                          text: str, kind: str = "unavailable", *,
                          accounting_db: str | None = None, row_key: str | None = None,
                          mapping_id: int | None = None, color: str = "", part: str = "",
-                         price_rial: int | None = None, qty: float = 1) -> dict:
+                         price_rial: int | None = None, qty: float = 1,
+                         price_list_id: int | None = None) -> dict:
         if kind not in ITEM_REQUEST_KINDS:
             raise ValueError(kind)
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO item_requests (user_id, kala_code, product_name, text, kind, "
-                "created_at, accounting_db, row_key, mapping_id, color, part, price_rial, qty) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "created_at, accounting_db, row_key, mapping_id, color, part, price_rial, qty, "
+                "price_list_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (user_id, kala_code, product_name, text, kind, now_iso(), accounting_db,
-                 row_key, mapping_id, color or "", part or "", price_rial, qty),
+                 row_key, mapping_id, color or "", part or "", price_rial, qty, price_list_id),
             )
             self._commit()
             return self.get_item_request(cur.lastrowid)

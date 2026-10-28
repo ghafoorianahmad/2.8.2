@@ -657,6 +657,24 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         super().closeEvent(event)
 
 
+def price_source_text(item: dict) -> str:
+    """v2.14.0: «قیمت لیست این قلم: … ریال — لیست ۱۴۰۵/۰۸/۰۵، کانال «ابریشمی»»."""
+    if item.get("kind") != "purchase" or not item.get("price_rial"):
+        return ""
+    text = f"قیمت لیست این قلم: {format_money(int(item['price_rial']))} ریال"
+    parts = []
+    if item.get("price_list_date"):
+        parts.append(f"لیست {to_persian_digits(item['price_list_date'])}")
+    channel = str(item.get("price_list_channel") or "")
+    if channel:
+        parts.append(f"کانال «{channel}»")
+    elif item.get("price_list_source"):
+        parts.append({"telegram": "کانال تلگرام", "manual": "بارگذاری دستی"}.get(
+            str(item["price_list_source"]), str(item["price_list_source"])))
+    return text + (" — " + "، ".join(parts) if parts else "") + \
+        ". می‌توانید پیش از «ارسال قیمت» آن را عوض کنید."
+
+
 class StockConfirmDialog(widgets.ResponsiveDialog):
     """v2.9.2 «تأیید موجودی / ارسال قیمت»: the «سازه حساب» product (needed when the
     row is not mapped yet) and the price: the list price («تأیید موجودی با قیمت
@@ -692,6 +710,12 @@ class StockConfirmDialog(widgets.ResponsiveDialog):
         root.addWidget(self.code_input)
         self._list_price = int(item.get("price_rial") or 0) if item.get("kind") == "purchase" \
             else 0
+        source = price_source_text(item)
+        if source:
+            # v2.14.0: which list / channel this item's price came from (staff may change it)
+            self.source_label = widgets.label(source, wrap=True)
+            self.source_label.setObjectName("PageHelp")
+            root.addWidget(self.source_label)
         root.addWidget(widgets.label(
             "قیمت — خالی = قیمت لیست" if self._list_price else
             "قیمت — لازم است (این کالا قیمت لیست ندارد یا قیمتش منتظر تأیید است)"))

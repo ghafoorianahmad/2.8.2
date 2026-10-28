@@ -12,7 +12,7 @@ from .matching import part_code
 LIST_STATUSES = ("active", "held", "rejected", "superseded", "failed")
 _LIST_COLUMNS = (
     "id, list_date, sha256, source, source_ref, posted_at, status, reason, row_count, "
-    "file_name, created_at, activated_at, decided_at, decided_by"
+    "file_name, created_at, activated_at, decided_at, decided_by, channel"
 )
 
 

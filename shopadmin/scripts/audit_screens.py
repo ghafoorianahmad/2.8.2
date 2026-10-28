@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 import render_screens as rs  # noqa: E402
@@ -244,6 +245,9 @@ def _dialogs(context, fake, window) -> Iterator[tuple[str, object]]:
     yield "site accessory", lambda: sd.AccessoryDialog(site, site.get("anker-737-power-bank"),
                                                        parent=window)
     yield "site accessory pdf", lambda: sd.AccessoryPdfDialog(site, _placeholder_pdf(), window)
+    from app.ui import site_import as si
+    yield "site pdf import", lambda: si.PdfImportDialog(site, "powerbank", _placeholder_pdf(),
+                                                        file_name="list.pdf", parent=window)
     from app.ui import site_look as sl
 
     yield "site pick featured", lambda: sl.PickPhonesDialog(
@@ -332,6 +336,17 @@ def iter_screens(app, tmp: Path, *, roles=("manager", "sales"),
                     window.navigate(key)
                     settle(app)
                     yield f"{tag} {role} {width} {key}", window._pages[key]
+                    # v2.14.0: «سایت › کالاها» on an accessory category (the other panel)
+                    page = window._pages[key]
+                    if hasattr(page, "tree") and hasattr(page, "_tree_items"):
+                        for item in page._tree_items():
+                            if list(item.data(0, Qt.ItemDataRole.UserRole))[0] == "group":
+                                page.tree.setCurrentItem(item)
+                                settle(app)
+                                yield f"{tag} {role} {width} {key} accessories", page
+                                page.tree.setCurrentItem(page.tree.topLevelItem(0))
+                                settle(app)
+                                break
                     # v2.11.0: every tab of a page with tabs («سایت»)
                     tabs = getattr(window._pages[key], "tabs", None)
                     for index in range(1, tabs.count() if tabs is not None else 0):
