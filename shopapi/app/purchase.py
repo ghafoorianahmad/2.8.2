@@ -24,6 +24,7 @@ from . import ownership, sales
 from .accounting_reader import AccountingReader
 from .config import Settings
 from .db_own import OwnDB
+from .pricelist import channels as channel_lists
 from .pricelist.importer import active_list_fresh
 from .pricelist.matching import part_label
 from .pricelist.repo import PriceListRepo
@@ -73,6 +74,10 @@ def active_rows(db: OwnDB, settings: Settings) -> tuple[dict | None, list[dict]]
     """The active list (only while it is valid) and its rows with mappings.
     v2.9.2: a row whose new price waits for a manager (price guard) has no price
     here (``price_held``): never sold at the old price, only requested."""
+    # v2.14.0: another channel's list chosen as the basis for a while (only requests)
+    other = channel_lists.basis_rows(db, settings)
+    if other is not None:
+        return other
     repo = PriceListRepo(db)
     active = repo.active_list()
     if active is None or not active_list_fresh(active, settings):

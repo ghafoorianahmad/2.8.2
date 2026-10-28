@@ -23,9 +23,11 @@ from .util import now_iso
 STATE_KEY = "tg_channels"
 ROLE_PRICELIST = "pricelist"
 ROLE_PROXY = "proxy"
-ROLES = ("", ROLE_PRICELIST, ROLE_PROXY, "accessories", "used", "ignore")
+#: v2.14.0: another price channel: read and kept («لیست‌های دریافتی»), never the basis by itself
+ROLE_PRICE_OTHER = "price_other"
+ROLES = ("", ROLE_PRICELIST, ROLE_PROXY, ROLE_PRICE_OTHER, "accessories", "used", "ignore")
 #: the roles the reader acts on today; the others are placeholders
-WORKING_ROLES = (ROLE_PRICELIST, ROLE_PROXY)
+WORKING_ROLES = (ROLE_PRICELIST, ROLE_PROXY, ROLE_PRICE_OTHER)
 EVENT_NEW = "telegram_channel_new"
 DEFAULT_ROLES = {"abrishamiiphonemashhad": ROLE_PRICELIST, "proxymtproto": ROLE_PROXY}
 
@@ -102,4 +104,5 @@ def set_role(db: OwnDB, channel_id: int, role: str, actor: str) -> dict | None:
 
 def roles_for_worker(db: OwnDB) -> list[dict]:
     """[{ref, role}] of every known channel (the reader decides with its defaults)."""
-    return [{"ref": ref(c), "role": str(c.get("role") or "")} for c in load(db)]
+    return [{"ref": ref(c), "role": str(c.get("role") or ""),
+             "title": str(c.get("title") or "")} for c in load(db)]

@@ -56,6 +56,10 @@ K_PRICE_DONE = "tg_price_done"
 
 ROLE_PRICELIST = "pricelist"
 ROLE_PROXY = "proxy"
+#: v2.14.0: other price channels: every list is read and kept, never the basis by itself
+ROLE_PRICE_OTHER = "price_other"
+K_OTHER_LAST = "price_other:last_ids"
+OTHER_FIRST_SCAN = 10
 #: how long the channel roles are cached; the joined channels are listed this often
 ROLES_TTL = 5 * 60
 CHANNELS_INTERVAL_SEC = 6 * 3600
@@ -134,7 +138,7 @@ class Worker:
         self._down_since: float | None = None
         self._login_missing = False
         self._probe_offset = 0
-        self._next = {"health": 0.0, "price": 0.0, "collect": 0.0, "probe": 0.0,
+        self._next = {"health": 0.0, "price": 0.0, "other_price": 0.0, "collect": 0.0, "probe": 0.0,
                       "channels": 0.0, "request": 0.0}
         #: v2.9.2: the first collection check after a start
         self._first_collect = True
@@ -277,7 +281,8 @@ class Worker:
         try:
             data = await self.api.channel_roles()
             items = data.get("channels") if isinstance(data, dict) else None
-            self._roles = [{"ref": str(i.get("ref") or ""), "role": str(i.get("role") or "")}
+            self._roles = [{"ref": str(i.get("ref") or ""), "role": str(i.get("role") or ""),
+                            "title": str(i.get("title") or "")}
                            for i in items or [] if isinstance(i, dict) and i.get("ref")]
             self._roles_at = now
         except ApiError as exc:
@@ -420,6 +425,39 @@ class Worker:
                  "; ".join(result.get("reasons") or []))
         self._price_result(ref, str(result.get("outcome") or ""))
         return True
+
+    async def other_price_tick(self) -> int:
+        """v2.14.0: the new posts of the other price channels (files and price text)
+        go to shopapi once each; the first time only the newest few. Returns how many."""
+        chans = [i for i in await self.roles() if i["role"] == ROLE_PRICE_OTHER and i["ref"]]
+        if not chans:
+            return 0
+        state = await self.api.get_state()
+        try:
+            last = json.loads(state.get(K_OTHER_LAST) or "{}")
+        except ValueError:
+            last = {}
+        sent = 0
+        for item in chans:
+            ref, title = item["ref"], item.get("title") or item["ref"]
+            start = int(last.get(ref) or 0)
+            messages = await self.tg.messages(ref, min_id=start,
+                                              limit=OTHER_FIRST_SCAN if not start else 50)
+            for msg in sorted(messages, key=lambda m: m.id):
+                data, text = b"", ""
+                if msg.media_kind and msg.file_size <= self.s.pdf_max_bytes:
+                    data = await self.tg.download(msg, self.s.pdf_max_bytes)
+                elif not msg.media_kind and any(ch.isdigit() for ch in (msg.text or "")):
+                    text = msg.text
+                if data or text:
+                    posted = msg.published.isoformat() if msg.published else None
+                    await self.api.post_channel_file(
+                        channel=ref, title=title, data=data, text=text, file_name=msg.file_name,
+                        source_ref=f"t.me/{ref}/{msg.id}", posted_at=posted)
+                    sent += 1
+                last[ref] = max(int(last.get(ref) or 0), msg.id)
+        await self.api.put_json_state(K_OTHER_LAST, last)
+        return sent
 
     def _price_result(self, ref: str, outcome: str) -> None:
         self.price_info.update(ref=ref, outcome=outcome,
@@ -647,6 +685,7 @@ class Worker:
         for name, interval, job, needs_connection in (
             ("channels", CHANNELS_INTERVAL_SEC, self.channels_tick, True),
             ("price", self.price_interval(), self.price_tick, True),
+            ("other_price", self.price_interval(), self.other_price_tick, True),
             # v2.9.0: also without a connection (web preview + anonymous tests)
             ("collect", COLLECT_CHECK_SEC, self.collect_tick, False),
             ("probe", self.s.probe_interval_sec, self.probe_tick, True),

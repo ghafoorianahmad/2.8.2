@@ -153,6 +153,8 @@ class FakeShopApi:
     notes: list[dict] = field(default_factory=list)
     channels: list[dict] = field(default_factory=list)
     roles: list[dict] = field(default_factory=list)
+    #: v2.14.0: posts of other price channels
+    channel_files: list[dict] = field(default_factory=list)
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -195,6 +197,9 @@ class FakeShopApi:
             return httpx.Response(200, json={"known": len(self.channels), "new": 0})
         if path == "/worker/telegram/roles":
             return httpx.Response(200, json={"channels": self.roles})
+        if path == "/worker/channel-files":       # v2.14.0
+            self.channel_files.append(body)
+            return httpx.Response(200, json={"outcome": "read", "id": len(self.channel_files)})
         if path == "/worker/alerts":
             self.alerts.append(body["kind"])
             return httpx.Response(200, json={"sent": True})

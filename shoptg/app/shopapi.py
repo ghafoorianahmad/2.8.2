@@ -99,6 +99,16 @@ class WorkerApi:
         """v2.9.1: the channels the account has joined -> their roles."""
         return await self._call("POST", "/worker/telegram/channels", {"channels": channels})
 
+    async def post_channel_file(self, *, channel: str, title: str, data: bytes = b"",
+                                text: str = "", file_name: str = "", source_ref: str = "",
+                                posted_at: str | None = None) -> dict:
+        """v2.14.0: a post of another price channel (file or text) for «لیست‌های دریافتی»."""
+        return await self._call("POST", "/worker/channel-files", {
+            "channel": channel[:120], "title": title[:120],
+            "data_b64": base64.b64encode(data).decode("ascii") if data else "",
+            "text": text[:60_000], "file_name": file_name[:200], "source_ref": source_ref[:200],
+            "posted_at": posted_at})
+
     async def channel_roles(self) -> dict:
         """v2.9.1: {"pricelist": [ref], "proxy": [ref, ...]} chosen in «تنظیمات سرور»."""
         return await self._call("GET", "/worker/telegram/roles") or {}

@@ -22,6 +22,7 @@ from ..pricelist.importer import ImportResult, import_pdf, reread_list
 from .. import groups as group_config
 from ..pricelist.matching import SUGGESTIONS, auto_match, confident, name_candidates, name_match
 from ..pricelist import notes
+from ..pricelist import channels as channel_lists
 from ..pricelist.repo import PriceListRepo
 from .. import sales as sales_state
 from .. import tgchannels
@@ -935,3 +936,89 @@ def worker_alert(
             pass
     return {"sent": sent}
 
+
+
+# ---- v2.14.0: lists of other price channels -----------------------------------------------
+class ChannelFileIn(BaseModel):
+    channel: str = Field(min_length=1, max_length=120)
+    title: str = Field(default="", max_length=120)
+    data_b64: str = Field(default="", max_length=30_000_000)
+    text: str = Field(default="", max_length=60_000)
+    file_name: str = Field(default="", max_length=200)
+    source_ref: str = Field(default="", max_length=200)
+    posted_at: Optional[str] = None
+
+
+class BasisIn(BaseModel):
+    list_id: int
+    column: Literal["min", "max"] = "min"
+    #: an ISO time, or omitted = the end of today (Tehran)
+    until: Optional[datetime] = None
+
+
+@router.post("/worker/channel-files")
+def worker_channel_file(payload: ChannelFileIn, db: OwnDB = Depends(deps.get_db),
+                        settings: Settings = Depends(deps.get_settings), _: str = WORKER) -> dict:
+    try:
+        data = base64.b64decode(payload.data_b64, validate=True) if payload.data_b64 else b""
+    except (binascii.Error, ValueError):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bad file data") from None
+    return channel_lists.store(db, settings, channel=payload.channel, channel_title=payload.title,
+                               data=data, text=payload.text, source_ref=payload.source_ref,
+                               posted_at=payload.posted_at, file_name=payload.file_name)
+
+
+@router.get("/admin/channel-lists")
+def get_channel_lists(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_VIEW) -> dict:
+    return {"lists": channel_lists.lists(db), "basis": channel_lists.basis_state(db)}
+
+
+@router.get("/admin/channel-lists/{list_id}")
+def get_channel_list(list_id: int, db: OwnDB = Depends(deps.get_db),
+                     _: Identity = CAN_VIEW) -> dict:
+    item = channel_lists.get(db, list_id)
+    if item is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Channel list not found")
+    return item
+
+
+@router.get("/admin/channel-lists/{list_id}/rows/{index}/crop")
+def get_channel_row_crop(list_id: int, index: int, db: OwnDB = Depends(deps.get_db),
+                         settings: Settings = Depends(deps.get_settings),
+                         _: Identity = CAN_VIEW) -> dict:
+    data = channel_lists.crop(db, settings, list_id, index)
+    if data is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No picture for this row")
+    return {"png_b64": base64.b64encode(data).decode("ascii")}
+
+
+@router.post("/admin/channel-lists/{list_id}/approve")
+def approve_channel_list(list_id: int, db: OwnDB = Depends(deps.get_db),
+                         who: Identity = CAN_PRICELIST) -> dict:
+    if channel_lists.get(db, list_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Channel list not found")
+    return channel_lists.approve(db, list_id, who.actor)
+
+
+@router.get("/admin/price-basis")
+def get_price_basis(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_VIEW) -> dict:
+    return {"basis": channel_lists.basis_state(db)}
+
+
+@router.post("/admin/price-basis")
+def set_price_basis(payload: BasisIn, db: OwnDB = Depends(deps.get_db),
+                    who: Identity = CAN_PRICELIST) -> dict:
+    until = payload.until or channel_lists.end_of_today()
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=now_utc().tzinfo)
+    try:
+        return {"basis": channel_lists.set_basis(db, payload.list_id, payload.column, until,
+                                                 who.actor)}
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+
+
+@router.delete("/admin/price-basis")
+def clear_price_basis(db: OwnDB = Depends(deps.get_db), who: Identity = CAN_PRICELIST) -> dict:
+    channel_lists.clear_basis(db, who.actor)
+    return {"basis": None}

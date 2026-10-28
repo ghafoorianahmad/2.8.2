@@ -41,6 +41,8 @@ class TgMessage:
     raw: Any = field(default=None, repr=False)
     #: v2.9.1: when the post was last edited (a list PDF may be replaced in place)
     edit_date: datetime | None = None
+    #: v2.14.0: pdf | image | excel | '' (a list of another price channel)
+    media_kind: str = ""
 
     @property
     def version(self) -> str:
@@ -95,9 +97,25 @@ def to_message(msg: Any) -> TgMessage:
         name = getattr(file, "name", "") or ""
         size = int(getattr(file, "size", 0) or 0)
         is_pdf = mime == "application/pdf" or name.lower().endswith(".pdf")
+    kind = media_kind(mime if file is not None else "", name, is_pdf)
+    if getattr(msg, "photo", None) is not None:
+        kind, name = "image", name or "photo.jpg"
+        size = int(getattr(getattr(msg, "file", None), "size", 0) or 0)
     return TgMessage(id=int(msg.id), date=getattr(msg, "date", None), text=text, urls=urls,
                      is_pdf=is_pdf, file_size=size, file_name=name, raw=msg,
-                     edit_date=getattr(msg, "edit_date", None))
+                     edit_date=getattr(msg, "edit_date", None), media_kind=kind)
+
+
+def media_kind(mime: str, name: str, is_pdf: bool) -> str:
+    """v2.14.0: what kind of price list a file is (or '')."""
+    low = (name or "").lower()
+    if is_pdf:
+        return "pdf"
+    if mime.startswith("image/") or low.endswith((".png", ".jpg", ".jpeg")):
+        return "image"
+    if "spreadsheet" in mime or "excel" in mime or low.endswith((".xlsx", ".xlsm")):
+        return "excel"
+    return ""
 
 
 def channel_target(ref: str):

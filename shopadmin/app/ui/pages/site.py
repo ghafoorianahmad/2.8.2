@@ -211,7 +211,7 @@ class SitePage(BasePage):
     def _phones_panel(self) -> QWidget:
         panel = QWidget()
         box = QVBoxLayout(panel)
-        box.setContentsMargins(0, 0, 0, 0)
+        box.setContentsMargins(10, 0, 10, 0)   # never flush against the tree
         holder, (self.edit_phone_button, self.delete_phone_button) = self._item_bar(cat.KIND_PHONE)
         self.phone_search = widgets.SearchBox("جستجوی گوشی…")
         self.phone_search.textChanged.connect(lambda _t: self.render())
@@ -230,7 +230,7 @@ class SitePage(BasePage):
     def _accessories_panel(self) -> QWidget:
         panel = QWidget()
         box = QVBoxLayout(panel)
-        box.setContentsMargins(0, 0, 0, 0)
+        box.setContentsMargins(10, 0, 10, 0)   # never flush against the tree
         holder, (self.edit_accessory_button, self.delete_accessory_button) = \
             self._item_bar(cat.KIND_ACCESSORY)
         self.accessory_search = widgets.SearchBox("جستجوی لوازم جانبی…")
