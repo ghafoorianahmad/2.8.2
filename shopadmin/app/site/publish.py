@@ -27,7 +27,7 @@ def publish(store: SiteStore, publisher: GitHubPublisher, *, generator: str) -> 
     GitHubError (Persian)."""
     catalog, files = store.build(generator)
     site, look_files = store.build_look(generator)
-    problems = cat.validate_catalog(catalog)
+    problems = cat.validate_catalog(catalog, store.blocked_prices())
     if problems:
         raise SiteDataError("انتشار انجام نشد: " + "، ".join(problems[:3]))
     before = (store.published() or {}).get("snapshot")

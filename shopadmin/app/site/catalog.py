@@ -37,6 +37,31 @@ DEFAULT_BRANDS = (
 GROUPS = {"case": "قاب و کاور", "charger": "شارژر و کابل", "headphones": "هدفون و هندزفری",
           "powerbank": "پاوربانک", "other": "سایر لوازم جانبی"}
 TIERS = ("پرچمدار", "میان‌رده", "اقتصادی", "پرفروش")
+#: v2.14.0: the manager can add accessory categories («زیرشاخهٔ تازه») and rename them
+GROUP_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
+PRODUCT_CODE_RE = re.compile(r"^[0-9A-Za-z-]{1,20}$")
+
+
+def default_groups() -> list[dict]:
+    return [{"key": k, "name": v} for k, v in GROUPS.items()]
+
+
+def clean_groups(groups) -> list[dict]:
+    """The accessory categories of the data (known keys first come from GROUPS)."""
+    out, seen = [], set()
+    for raw in groups if isinstance(groups, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        key = str(raw.get("key") or "")
+        name = text(raw.get("name"), 40)
+        if GROUP_KEY_RE.match(key) and name and key not in seen:
+            out.append({"key": key, "name": name})
+            seen.add(key)
+    for group in default_groups():
+        if group["key"] not in seen:
+            out.append(group)
+            seen.add(group["key"])
+    return out
 
 CODE_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 CODE_MAX = 62
@@ -273,6 +298,7 @@ def clean_item(raw: dict | None) -> dict:
                 specs.append([key, value])
     category = KIND_ACCESSORY if raw.get("category") == KIND_ACCESSORY else KIND_PHONE
     group = str(raw.get("group") or "")
+    product_code = text(raw.get("product_code"), 20)
     brand = str(raw.get("brand") or "").lower()
     code = str(raw.get("code") or "")
     return {
@@ -288,7 +314,10 @@ def clean_item(raw: dict | None) -> dict:
         "specs": specs,
         "colors": colors,
         "image": image_name(raw.get("image")),
-        "group": (group if group in GROUPS else "other") if category == KIND_ACCESSORY else "",
+        "group": (group if GROUP_KEY_RE.match(group) else "other") if category == KIND_ACCESSORY else "",
+        # v2.14.0: the supplier's «کد کالا» — on this computer only (finding the same
+        # item in the next list); never in catalog.json
+        "product_code": product_code if PRODUCT_CODE_RE.match(product_code) else "",
         "description": text(raw.get("description"), 600) if category == KIND_ACCESSORY else "",
         "hidden": bool(raw.get("hidden")),
     }
@@ -319,6 +348,7 @@ def build_catalog(data: dict, photos: dict[str, str], *, generator: str = "ShopA
     """catalog.json of the visible items. ``photos``: file name -> sha256 of the
     photos that exist; a missing photo is left out (the site draws the phone)."""
     brand_list = data.get("brands") or list(DEFAULT_BRANDS)
+    groups = clean_groups(data.get("groups"))
     items, images = [], {}
 
     def photo(name: str) -> str:
@@ -355,16 +385,48 @@ def build_catalog(data: dict, photos: dict[str, str], *, generator: str = "ShopA
         items.append(out)
     # the time the data last changed: the same data always gives the same file,
     # so publishing twice without a change sends nothing
+    used = {i["group"] for i in items if i["category"] == KIND_ACCESSORY}
     return {"format": FORMAT, "version": VERSION,
             "generated_at": str(data.get("updated_at") or now_iso()),
-            "generator": generator, "brands": brand_list, "items": items,
+            "generator": generator, "brands": brand_list,
+            # v2.14.0: the accessory categories that have items, in the manager's order
+            "groups": [g for g in groups if g["key"] in used], "items": items,
             "images": {path: {"sha256": sha} for path, sha in sorted(images.items())}}
 
 
-def validate_catalog(catalog: dict) -> list[str]:
+def item_texts(item: dict) -> list[str]:
+    """Every text of an item the site shows (for the price check)."""
+    out = [item.get("name") or "", item.get("brand_name") or "", item.get("description") or "",
+           item.get("tier") or ""]
+    out += [str(a) for a in item.get("aliases") or []]
+    for row in item.get("specs") or []:
+        if isinstance(row, (list, tuple)):
+            out += [str(v) for v in row]
+    out += [str(c.get("name") or "") for c in item.get("colors") or [] if isinstance(c, dict)]
+    return [t for t in out if t]
+
+
+def price_problems(items: list[dict], blocked=frozenset()) -> list[str]:
+    """v2.14.0: the site never shows a price — a title or text with a number that
+    looks like one (a dropped price of an imported list, or «… تومان») stops the
+    publish (Persian, one line per item)."""
+    from .textfix import price_problems as found_in
+
+    problems = []
+    for item in items:
+        found = []
+        for value in item_texts(item):
+            found += [f for f in found_in(value, blocked) if f not in found]
+        if found:
+            problems.append(f"«{item.get('name')}» عددی شبیه قیمت دارد ({'، '.join(found[:3])}); "
+                            "آن را ویرایش کنید")
+    return problems
+
+
+def validate_catalog(catalog: dict, blocked=frozenset()) -> list[str]:
     """Problems that would make the site refuse the file (Persian; empty = fine).
     The site checks the same rules (``applyCatalog`` in site.js)."""
-    problems = []
+    problems = price_problems(catalog.get("items") or [], blocked)
     if catalog.get("format") != FORMAT or catalog.get("version") != VERSION:
         problems.append("قالب فایل نادرست است")
     items = catalog.get("items") or []

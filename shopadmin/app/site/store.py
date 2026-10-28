@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -67,6 +68,11 @@ class SiteStore:
             return {"format": cat.DATA_FORMAT, "version": 1, "brands": list(cat.DEFAULT_BRANDS),
                     "items": [], "seeded": ""}
         data["items"] = [cat.clean_item(i) for i in data.get("items") or []]
+        # v2.14.0: deleted items are kept 48 hours only
+        if data.get("deleted"):
+            limit = (self.clock() - timedelta(hours=ROLLBACK_HOURS)).isoformat(timespec="seconds")
+            data["deleted"] = [d for d in data["deleted"] if isinstance(d, dict)
+                               and str(d.get("at") or "") >= limit]
         return data
 
     def save(self, data: dict) -> None:
@@ -107,6 +113,128 @@ class SiteStore:
             data["items"].append(clean)
         self.save(data)
         return clean
+
+    # ---- v2.14.0 branches (accessory categories, phone brands) -----------------------
+    def groups(self) -> list[dict]:
+        return cat.clean_groups(self.load().get("groups"))
+
+    def group_name(self, key: str) -> str:
+        return next((g["name"] for g in self.groups() if g["key"] == key), "سایر")
+
+    def add_group(self, name: str) -> str:
+        """A new accessory category; returns its key. Raises SiteDataError."""
+        name = cat.text(name, 40)
+        if not name:
+            raise SiteDataError("نام دسته را بنویسید.")
+        data = self.load()
+        groups = cat.clean_groups(data.get("groups"))
+        if any(cat.text(g["name"], 40) == name for g in groups):
+            raise SiteDataError("دسته‌ای با همین نام هست.")
+        taken = {g["key"] for g in groups}
+        base = "_".join(w.lower() for w in re.findall(r"[A-Za-z0-9]+", name))[:24]
+        if not base or not base[0].isalpha():
+            base = "g" + cat.sha256(name.encode("utf-8"))[:6]
+        key, n = base, 2
+        while key in taken:
+            key, n = f"{base}{n}", n + 1
+        data["groups"] = groups + [{"key": key, "name": name}]
+        self.save(data)
+        return key
+
+    def rename_group(self, key: str, name: str) -> None:
+        name = cat.text(name, 40)
+        if not name:
+            raise SiteDataError("نام دسته را بنویسید.")
+        data = self.load()
+        groups = cat.clean_groups(data.get("groups"))
+        for group in groups:
+            if group["key"] == key:
+                group["name"] = name
+        data["groups"] = groups
+        self.save(data)
+
+    def add_brand(self, name: str) -> str:
+        """A new phone brand (sub-branch of «گوشی‌ها»); returns its key."""
+        name = cat.text(name, 40)
+        key = "".join(w.lower() for w in re.findall(r"[A-Za-z0-9]+", name))[:30]
+        if not name or not key or not key[0].isalpha():
+            raise SiteDataError("نام برند را با حروف انگلیسی بنویسید (مثلاً Honor).")
+        data = self.load()
+        if any(b["key"] == key for b in data["brands"]):
+            raise SiteDataError("این برند هست.")
+        data["brands"].append({"key": key, "name": name, "tagline": ""})
+        self.save(data)
+        return key
+
+    def rename_brand(self, key: str, name: str) -> None:
+        name = cat.text(name, 40)
+        if not name:
+            raise SiteDataError("نام برند را بنویسید.")
+        data = self.load()
+        for brand in data["brands"]:
+            if brand["key"] == key:
+                brand["name"] = name
+        self.save(data)
+
+    def counts(self, category: str) -> dict:
+        rows = self.items(category)
+        hidden = sum(1 for r in rows if r["hidden"])
+        return {"total": len(rows), "shown": len(rows) - hidden, "hidden": hidden}
+
+    # ---- v2.14.0 price check -------------------------------------------------------
+    def blocked_prices(self) -> frozenset:
+        """Numbers of price columns dropped by imports (never published)."""
+        return frozenset(str(v) for v in self.load().get("price_marks") or [] if v)
+
+    def add_price_marks(self, values) -> None:
+        from .textfix import price_number_forms
+
+        data = self.load()
+        marks = set(data.get("price_marks") or [])
+        for value in values:
+            marks |= price_number_forms(str(value))
+        data["price_marks"] = sorted(marks)[-5000:]
+        self.save(data)
+
+    # ---- v2.14.0 delete (48 hours to undo) -------------------------------------------
+    def delete(self, code: str) -> Optional[dict]:
+        """Remove an item; it is kept 48 hours in «حذف‌شده‌ها» (and a rollback of the
+        publish that removed it from the site brings it back)."""
+        data = self.load()
+        item = next((i for i in data["items"] if i["code"] == code), None)
+        if item is None:
+            return None
+        data["items"] = [i for i in data["items"] if i["code"] != code]
+        deleted = [d for d in data.get("deleted") or [] if d.get("item", {}).get("code") != code]
+        deleted.append({"at": self.clock().isoformat(timespec="seconds"), "item": item})
+        data["deleted"] = deleted
+        self.save(data)
+        return item
+
+    def recently_deleted(self) -> list[dict]:
+        limit = self.clock() - timedelta(hours=ROLLBACK_HOURS)
+        out = []
+        for entry in self.load().get("deleted") or []:
+            try:
+                when = datetime.fromisoformat(str(entry.get("at")))
+            except ValueError:
+                continue
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            if when >= limit and isinstance(entry.get("item"), dict):
+                out.append(entry)
+        return out
+
+    def undelete(self, code: str) -> bool:
+        data = self.load()
+        entry = next((d for d in self.recently_deleted() if d["item"].get("code") == code), None)
+        if entry is None or any(i["code"] == code for i in data["items"]):
+            return False
+        data["items"].append(cat.clean_item(entry["item"]))
+        data["deleted"] = [d for d in data.get("deleted") or []
+                           if d.get("item", {}).get("code") != code]
+        self.save(data)
+        return True
 
     def set_hidden(self, code: str, hidden: bool) -> None:
         data = self.load()
@@ -376,7 +504,7 @@ class SiteStore:
         return {"change": change, "lines": lines,
                 "has_changes": cat.has_changes(change) or bool(look_lines) or order_changed,
                 "look_lines": look_lines,
-                "problems": cat.validate_catalog(catalog),
+                "problems": cat.validate_catalog(catalog, self.blocked_prices()),
                 "look_problems": lk.look_problems(self.look()),
                 "phones": sum(1 for i in catalog["items"] if i["category"] == cat.KIND_PHONE),
                 "accessories": sum(1 for i in catalog["items"]
@@ -450,6 +578,9 @@ class SiteStore:
         """After a rollback commit: the site shows the state before that publish."""
         before = record.get("snapshot_before")
         if isinstance(before, dict):
+            # v2.14.0: an item deleted since comes back too
+            for code in (before.get("items") or {}):
+                self.undelete(code)
             _write_atomic(self.root / "published.json", json.dumps(
                 {"at": self.clock().isoformat(timespec="seconds"), "commit": commit,
                  "note": "rollback", "snapshot": before}, ensure_ascii=False).encode("utf-8"))
