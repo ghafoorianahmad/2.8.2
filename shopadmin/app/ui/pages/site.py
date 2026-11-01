@@ -51,7 +51,7 @@ from .. import theme, widgets
 from ..async_utils import run_async
 from ..base_page import BasePage
 from ..rtl import mark_ltr
-from ..site_dialogs import AccessoryDialog, PhoneDialog
+from ..site_dialogs import AccessoryDialog, PhoneDialog, WordsDialog
 from ..site_import import PdfImportDialog
 from ..site_look import LookTab
 
@@ -171,10 +171,23 @@ class SitePage(BasePage):
                                             on_click=self._rename_branch)
         self.undelete_button = widgets.button("برگرداندن حذف‌شده‌ها…", icon_name="refresh",
                                               on_click=self._undelete)
+        # v2.16.0: clean codes out of the texts and translate them with the dictionary
+        self.farsi_button = widgets.button(
+            "فارسی‌سازی توضیحات", icon_name="edit", on_click=self._farsi,
+            tooltip="کدها و بارکدها را از توضیح و مشخصات برمی‌دارد و برچسب‌ها و ویژگی‌های "
+                    "انگلیسی را با واژه‌نامه فارسی می‌کند (تیک‌خورده‌ها، وگرنه همهٔ همین شاخه)")
+        self.words_button = widgets.button("واژه‌نامه…", icon_name="file",
+                                           on_click=self._edit_words,
+                                           tooltip="واژه‌های فارسی‌سازی؛ واژهٔ تازه اضافه کنید")
+        self.farsi_undo_button = widgets.button("برگرداندن فارسی‌سازی", icon_name="refresh",
+                                                on_click=self._farsi_undo,
+                                                tooltip="متن‌های پیش از آخرین فارسی‌سازی "
+                                                        "(تا ۴۸ ساعت)")
         # the old names (tests, audits)
         self.add_phone_button = self.add_accessory_button = self.add_button
         for b in (self.add_button, self.pdf_button, self.branch_button, self.rename_button,
-                  self.undelete_button):
+                  self.undelete_button, self.farsi_button, self.words_button,
+                  self.farsi_undo_button):
             b.setEnabled(self.can_manage)
             bar.addWidget(b)
         box.addWidget(bar_holder)
@@ -466,6 +479,7 @@ class SitePage(BasePage):
                                    and bool(branch))
         self.rename_button.setEnabled(self.can_manage and bool(branch))
         self.undelete_button.setEnabled(self.can_manage and bool(self.store.recently_deleted()))
+        self.farsi_undo_button.setEnabled(self.can_manage and bool(self.store.farsi_undo_count()))
         if category == cat.KIND_PHONE:
             where = f"«{brands.get(branch, branch)}»" if branch else "همهٔ برندها"
             hint = f"گوشی‌های {where}."
@@ -730,6 +744,59 @@ class SitePage(BasePage):
         else:
             self.notify_warning("برنگشت؛ کالایی با همین کد هست.")
         self.render()
+
+    # ---- v2.16.0 «فارسی‌سازی توضیحات» ---------------------------------------------------------
+    def _farsi_targets(self) -> tuple[str, list[dict]]:
+        """(where, items): the ticked rows, else every row of the branch shown."""
+        kind = cat.KIND_PHONE if self.stack.currentIndex() == 0 else cat.KIND_ACCESSORY
+        table, rows = self._table(kind), self._rows(kind)
+        ticked = [rows[r] for r in table.checked_rows() if 0 <= r < len(rows)]
+        if ticked:
+            return f"{format_int(len(ticked))} کالای تیک‌خورده", ticked
+        return f"همهٔ {format_int(len(rows))} کالای همین شاخه", list(rows)
+
+    def _farsi(self) -> None:
+        if not self.can_manage:
+            return
+        where, items = self._farsi_targets()
+        if not items:
+            self.notify_warning("در این شاخه کالایی نیست.")
+            return
+        changes = self.store.farsi_changes([i["code"] for i in items])
+        if not changes:
+            self.notify_success(f"{where}: چیزی برای فارسی‌سازی نبود (همه از قبل درست است).")
+            return
+        before, after = changes[0]
+        sample = (f"نمونه — «{before['name']}»:{NL}"
+                  f"پیش از آن: {(before.get('description') or '—')[:160]}{NL}"
+                  f"پس از آن: {(after.get('description') or '—')[:160]}")
+        question = (f"{where}: توضیح و مشخصات {format_int(len(changes))} کالا عوض می‌شود "
+                    f"(کدها و بارکدها برداشته و واژه‌های انگلیسی فارسی می‌شوند؛ عددها، "
+                    f"واحدها و نام مدل‌ها انگلیسی می‌مانند).{NL}{NL}{sample}{NL}{NL}"
+                    f"تا ۴۸ ساعت با «برگرداندن فارسی‌سازی» برمی‌گردد.")
+        if not widgets.confirm(self, "فارسی‌سازی توضیحات", question, confirm_text="فارسی‌سازی"):
+            return
+        changed = self.store.farsi_many([i["code"] for i in items])
+        self.notify_success(f"توضیح {format_int(changed)} کالا فارسی شد؛ پس از «انتشار در سایت» "
+                            f"در سایت دیده می‌شود.")
+        self.render()
+
+    def _farsi_undo(self) -> None:
+        count = self.store.farsi_undo_count()
+        if not count or not widgets.confirm(
+                self, "برگرداندن فارسی‌سازی",
+                f"متن {format_int(count)} کالا به پیش از آخرین فارسی‌سازی برمی‌گردد.",
+                confirm_text="برگرداندن"):
+            return
+        back = self.store.farsi_undo()
+        self.notify_success(f"متن {format_int(back)} کالا برگشت.")
+        self.render()
+
+    def _edit_words(self) -> None:
+        dialog = WordsDialog(self.store, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.notify_success("واژه‌نامه ذخیره شد؛ برای کالاهای فعلی «فارسی‌سازی توضیحات» را "
+                                "بزنید.")
 
     # ---- branches ------------------------------------------------------------------------
     def _ask_name(self, title: str, label: str, text: str = "") -> str:

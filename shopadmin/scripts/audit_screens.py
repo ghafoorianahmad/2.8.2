@@ -245,6 +245,14 @@ def _dialogs(context, fake, window) -> Iterator[tuple[str, object]]:
     yield "site accessory", lambda: sd.AccessoryDialog(site, site.get("anker-737-power-bank"),
                                                        parent=window)
     yield "site accessory pdf", lambda: sd.AccessoryPdfDialog(site, _placeholder_pdf(), window)
+    # v2.16.0 واژه‌نامهٔ فارسی‌سازی (with a word and a trial, so both rows are drawn)
+    def words_dialog():
+        dialog = sd.WordsDialog(site, parent=window)
+        dialog.words.setPlainText("Fast Charging = شارژ سریع" + chr(10) + "Cable Length = طول کابل")
+        dialog.trial.setText("PD 20W Fast Charging")
+        return dialog
+
+    yield "site words", words_dialog
     from app.ui import site_import as si
     yield "site pdf import", lambda: si.PdfImportDialog(site, "powerbank", _placeholder_pdf(),
                                                         file_name="list.pdf", parent=window)

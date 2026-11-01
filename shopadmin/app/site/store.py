@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import catalog as cat
+from . import farsi
 from . import look as lk
 from . import photos as ph
 
@@ -256,6 +257,74 @@ class SiteStore:
         if changed:
             self.save(data)
         return changed
+
+    # ---- v2.16.0 «فارسی‌سازی توضیحات» --------------------------------------------------------
+    def fa_words(self) -> list[list[str]]:
+        """The manager's own dictionary words ([[English, فارسی], ...])."""
+        return farsi.clean_words(self.load().get("fa_words"))
+
+    def set_fa_words(self, words) -> None:
+        data = self.load()
+        data["fa_words"] = farsi.clean_words(words)
+        self.save(data)
+
+    def dictionary(self) -> farsi.Dictionary:
+        return farsi.Dictionary(self.load().get("fa_words"))
+
+    def farsi_changes(self, codes: list[str]) -> list[tuple[dict, dict]]:
+        """(before, after) of every chosen item that «فارسی‌سازی» would change."""
+        wanted, words = set(codes), self.dictionary()
+        out = []
+        for row in self.items():
+            if row["code"] in wanted:
+                new = cat.clean_item(farsi.farsi_item(row, words))
+                if farsi.changed(row, new):
+                    out.append((row, new))
+        return out
+
+    def farsi_many(self, codes: list[str]) -> int:
+        """Clean + translate the description and specs of the chosen items; the texts
+        before it are kept 48 hours for «برگرداندن فارسی‌سازی». Returns how many changed."""
+        wanted = set(codes)
+        data = self.load()
+        words = farsi.Dictionary(data.get("fa_words"))
+        undo = {}
+        for n, row in enumerate(data["items"]):
+            if row["code"] not in wanted:
+                continue
+            new = cat.clean_item(farsi.farsi_item(row, words))
+            if farsi.changed(row, new):
+                undo[row["code"]] = {"description": row.get("description") or "",
+                                     "specs": row.get("specs") or []}
+                data["items"][n] = new
+        if undo:
+            data["fa_undo"] = {"at": self.clock().isoformat(timespec="seconds"), "items": undo}
+            self.save(data)
+        return len(undo)
+
+    def farsi_undo_count(self) -> int:
+        undo = self.load().get("fa_undo") or {}
+        limit = (self.clock() - timedelta(hours=ROLLBACK_HOURS)).isoformat(timespec="seconds")
+        if not isinstance(undo, dict) or str(undo.get("at") or "") < limit:
+            return 0
+        return len(undo.get("items") or {})
+
+    def farsi_undo(self) -> int:
+        """The texts before the last «فارسی‌سازی» (within 48 hours) back."""
+        if not self.farsi_undo_count():
+            return 0
+        data = self.load()
+        before = data["fa_undo"]["items"]
+        back = 0
+        for n, row in enumerate(data["items"]):
+            old = before.get(row["code"])
+            if isinstance(old, dict):
+                data["items"][n] = cat.clean_item({**row, "description": old.get("description") or "",
+                                                   "specs": old.get("specs") or []})
+                back += 1
+        data.pop("fa_undo", None)
+        self.save(data)
+        return back
 
     def recently_deleted(self) -> list[dict]:
         limit = self.clock() - timedelta(hours=ROLLBACK_HOURS)

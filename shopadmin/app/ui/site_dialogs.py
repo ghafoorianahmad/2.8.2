@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from ..persian import format_int, to_persian_digits
 from ..site import catalog as cat
+from ..site import farsi
 from ..site import photos as ph
 from ..site.store import SiteDataError, SiteStore
 from . import theme, widgets
@@ -423,8 +424,115 @@ class AccessoryPdfDialog(widgets.ResponsiveDialog):
                 except (ph.PhotoError, SiteDataError):
                     image = ""
             try:
-                self.store.upsert(accessory_pdf.item_for(item, image))
+                # v2.16.0: cleaned and translated like every PDF import
+                self.store.upsert(farsi.farsi_item(accessory_pdf.item_for(item, image),
+                                                   self.store.dictionary()))
                 self.added += 1
             except SiteDataError:
                 continue
+        self.accept()
+
+
+# ---- v2.16.0 واژه‌نامهٔ «فارسی‌سازی توضیحات» -------------------------------------------------
+def words_to_text(words: list) -> str:
+    return NL.join(f"{src} = {dst}" for src, dst in words or [])
+
+
+def parse_words_text(text: str) -> list[list[str]]:
+    """«English = فارسی» per line (also «:» or a tab between them)."""
+    rows = []
+    for line in (text or "").splitlines():
+        for sep in ("=", "\t", ":"):
+            if sep in line:
+                src, dst = line.split(sep, 1)
+                rows.append([src.strip(), dst.strip()])
+                break
+    return farsi.clean_words(rows)
+
+
+class WordsDialog(widgets.ResponsiveDialog):
+    """واژه‌های خود مدیر برای فارسی‌سازی (بر واژه‌های آمادهٔ برنامه مقدم‌اند)."""
+
+    def __init__(self, store: SiteStore, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.store = store
+        self.setWindowTitle("واژه‌نامهٔ فارسی‌سازی")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumWidth(620)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(10)
+        root.addWidget(widgets.label("واژه‌نامهٔ فارسی‌سازی", size=15, bold=True))
+        root.addWidget(widgets.label(
+            "هر خط یک واژه: «انگلیسی = فارسی»، مثلاً «Fast Charging = شارژ سریع». واژه‌های شما "
+            "بر واژه‌های آمادهٔ برنامه مقدم‌اند و در هر «افزودن از PDF» و «فارسی‌سازی توضیحات» "
+            "به کار می‌روند. عددها، واحدها و نام مدل‌ها (20W، PD، mAh) انگلیسی می‌مانند.",
+            name="Muted", wrap=True))
+        root.addWidget(widgets.label("واژه‌های شما:", bold=True))
+        self.words = QPlainTextEdit(words_to_text(store.fa_words()))
+        self.words.setPlaceholderText("Fast Charging = شارژ سریع" + NL + "Cable Length = طول کابل")
+        self.words.setMinimumHeight(130)
+        mark_ltr(self.words)               # «English = فارسی» reads left to right
+        root.addWidget(self.words)
+        root.addWidget(widgets.label("آزمایش (یک عبارت انگلیسی بنویسید):", bold=True))
+        self.trial = QLineEdit()
+        self.trial.setPlaceholderText("PD 20W Fast Charging")
+        mark_ltr(self.trial)
+        self.trial_result = widgets.label("", wrap=True)
+        self.trial.textChanged.connect(lambda _t: self._try())
+        self.words.textChanged.connect(self._try)
+        root.addWidget(self.trial)
+        root.addWidget(self.trial_result)
+        root.addWidget(widgets.label(
+            f"واژه‌های آمادهٔ برنامه ({format_int(len(farsi.BUILT_IN))} واژه):", bold=True))
+        self.search = widgets.SearchBox("جستجو در واژه‌های آماده…")
+        self.search.textChanged.connect(lambda _t: self._fill())
+        root.addWidget(self.search)
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["انگلیسی", "فارسی"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setMinimumHeight(180)
+        self.table.setColumnWidth(0, 260)
+        root.addWidget(self.table)
+        self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
+        root.addWidget(self.error_label)
+        root.addLayout(widgets.footer(
+            widgets.button("ذخیره", icon_name="check", variant="primary", on_click=self._save),
+            close=widgets.button("انصراف", on_click=self.reject)))
+        self._fill()
+
+    def _fill(self) -> None:
+        text = self.search.text().strip().casefold()
+        rows = [(k, v) for k, v in sorted(farsi.BUILT_IN.items(), key=lambda kv: kv[0].casefold())
+                if not text or text in k.casefold() or text in v]
+        self.table.setRowCount(len(rows))
+        for n, (src, dst) in enumerate(rows):
+            left = QTableWidgetItem(src)
+            left.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(n, 0, left)
+            self.table.setItem(n, 1, QTableWidgetItem(dst))
+
+    def _try(self) -> None:
+        text = self.trial.text().strip()
+        if not text:
+            self.trial_result.setText("")
+            return
+        words = farsi.Dictionary(parse_words_text(self.words.toPlainText()))
+        self.trial_result.setText("نتیجه: " + words.translate(text))
+
+    def _save(self) -> None:
+        lines = [ln for ln in self.words.toPlainText().splitlines() if ln.strip()]
+        words = parse_words_text(self.words.toPlainText())
+        if len(words) < len(lines):
+            self.error_label.setText(
+                f"{format_int(len(lines) - len(words))} خط قالب «انگلیسی = فارسی» ندارد یا "
+                f"تکراری است؛ درستش کنید.")
+            return
+        try:
+            self.store.set_fa_words(words)
+        except (OSError, SiteDataError) as exc:
+            self.error_label.setText(str(exc))
+            return
         self.accept()

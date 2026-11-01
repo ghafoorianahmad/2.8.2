@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from . import catalog as cat
 from . import dedup
+from . import farsi
 from . import pdf_table as pt
 from .store import SiteStore
 
@@ -46,9 +47,11 @@ def prepare(store: SiteStore, group: str, rows: list[pt.TableRow]) -> list[Prepa
     taken = {i["code"] for i in store.items()}
     out: list[Prepared] = []
     earlier: list[dict] = []
+    words = store.dictionary()             # v2.16.0: every import is cleaned + translated
     for row in rows:
         code = cat.code_from_name(row.name or row.product_code or "item", taken)
-        item = row.item(group, code, _image_name(code) if row.image else "")
+        item = farsi.farsi_item(row.item(group, code, _image_name(code) if row.image else ""),
+                                words)
         match = dedup.classify(item, existing, earlier)
         prepared = Prepared(row=row, item=item, match=match, notes=list(row.notes))
         if match.status in (dedup.NEW, dedup.NEAR):
