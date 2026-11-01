@@ -1151,3 +1151,7 @@ def _no_real_server_tool(monkeypatch):
         raise errors.SetupError("برنامهٔ سرور در آزمون اجرا نمی‌شود.")
 
     monkeypatch.setattr(server_setup, "server_command", refused)
+    # v2.15.0: the setup reads the saved settings in every mode: never this
+    # computer's real server folder (D:\ShopServerData on the owner's PC)
+    monkeypatch.setenv("SHOPSERVER_DATA_DIR", os.path.join(
+        os.environ.get("TEMP", "."), "shopadmin-tests-no-server"))

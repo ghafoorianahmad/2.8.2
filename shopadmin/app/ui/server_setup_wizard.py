@@ -303,13 +303,21 @@ class ServerSetupWizard(QWidget):
         super().__init__(parent)
         self._current: setup.CurrentConfig | None = None
         load_problem = ""
-        if mode == MODE_SETTINGS:
-            try:
-                self._current = setup.read_current_config()
-            except setup.SetupError as exc:
-                load_problem = exc.message
-            if self._current is None:
-                mode = MODE_SETUP   # never set up here: the full setup it is
+        # v2.15.0: the installer opened the SETUP after every upgrade, with empty
+        # fields: saving it replaced the database, the allowed list and the «ثبت
+        # واقعی» switches. A server that already has settings always opens with them.
+        try:
+            self._current = setup.read_current_config()
+        except setup.SetupError as exc:
+            load_problem = exc.message
+        if self._current is not None:
+            mode = MODE_SETTINGS
+        elif load_problem:
+            mode = MODE_SETTINGS   # settings exist but were not read: never save blanks
+        else:
+            mode = MODE_SETUP      # never set up here: the full setup it is
+        #: v2.15.0: the saved settings could not be read; saving is refused
+        self.load_failed = bool(load_problem)
         self.mode = mode
         self.settings_mode = mode == MODE_SETTINGS
         self._steps = [key for key in STEP_TITLES if key != "tools" or self.settings_mode]
@@ -1156,6 +1164,9 @@ class ServerSetupWizard(QWidget):
             trusted=self.auth_windows.isChecked(),
             user=self.db_user.text().strip(),
             password=self.db_password.text(),
+            # v2.15.0: the saved ODBC driver stays (it was always reset to Driver 17)
+            **({"driver": self._current.db_driver}
+               if self._current is not None and self._current.db_driver else {}),
         )
 
     def database_state_text(self) -> tuple[str, str]:
@@ -1545,6 +1556,12 @@ class ServerSetupWizard(QWidget):
         return extra
 
     def _execute(self) -> None:
+        if self.load_failed:
+            # v2.15.0: empty fields would replace the server's real settings
+            self._say("تنظیمات فعلی سرور خوانده نشد؛ برای اینکه هیچ تنظیمی پاک نشود، ذخیره "
+                      "انجام نشد. برنامه را با «Run as administrator» دوباره باز کنید.", False)
+            self.back_button.setEnabled(True)
+            return
         db = self._db_config()
         port = self.port.value()
         allowed_ips = self.allowed_ips.text().strip()

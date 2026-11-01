@@ -1303,6 +1303,12 @@ def init_config(json_path: Path) -> int:
             if isinstance(value, bool):
                 value = "yes" if value else "no"
             values[key] = str(value).strip()
+    # v2.15.0: the server reads ACCOUNTING_DATABASE before DB_NAME (ALIASES). A .env
+    # that has both kept the old name in force while the setup showed the new one:
+    # a saved friendly value now also replaces its non-empty internal twin.
+    for friendly, internal in ALIASES.items():
+        if friendly in values and (existing.get(internal) or "").strip():
+            values[internal] = values[friendly]
 
     from shopapi_app import control
 

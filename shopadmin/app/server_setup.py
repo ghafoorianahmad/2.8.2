@@ -588,6 +588,8 @@ class CurrentConfig:
     backup_keep_days: int = 14
     #: v2.13.0: the account of the computer behind a network backup folder
     backup_share_user: str = ""
+    #: v2.15.0: kept as saved (a reopened setup must not reset it to Driver 17)
+    db_driver: str = ""
 
 
 #: v2.9.0: TG_PROXY (the manual first proxy) carries a proxy secret: never shown
@@ -601,9 +603,9 @@ def read_current_config() -> Optional[CurrentConfig]:
     from dotenv import dotenv_values
 
     env = data_dir() / ".env"
-    if not env.exists():
-        return None
     try:
+        if not env.exists():
+            return None
         values = {k: (v or "") for k, v in dotenv_values(env).items()}
     except (OSError, ValueError) as exc:
         raise SetupError("تنظیمات فعلی سرور خوانده نشد.", type(exc).__name__) from exc
@@ -618,13 +620,16 @@ def read_current_config() -> Optional[CurrentConfig]:
         port = int(get("API_PORT") or DEFAULT_PORT)
     except ValueError:
         port = DEFAULT_PORT
-    trusted = get("DB_TRUSTED", "ACCOUNTING_TRUSTED_CONNECTION").lower() in ("1", "true", "yes", "on")
+    # v2.15.0: the same order as the server (ShopSystem ALIASES: the ACCOUNTING_*
+    # name wins when both are set), so the setup shows the database really in use
+    trusted = get("ACCOUNTING_TRUSTED_CONNECTION", "DB_TRUSTED").lower() in ("1", "true", "yes", "on")
     return CurrentConfig(
-        db_server=get("DB_SERVER", "ACCOUNTING_SERVER"),
-        db_name=get("DB_NAME", "ACCOUNTING_DATABASE"),
+        db_server=get("ACCOUNTING_SERVER", "DB_SERVER"),
+        db_name=get("ACCOUNTING_DATABASE", "DB_NAME"),
         db_trusted=trusted,
-        db_user=get("DB_USER", "ACCOUNTING_USERNAME"),
-        db_password_set=bool(get("DB_PASSWORD", "ACCOUNTING_PASSWORD")),
+        db_user=get("ACCOUNTING_USERNAME", "DB_USER"),
+        db_password_set=bool(get("ACCOUNTING_PASSWORD", "DB_PASSWORD")),
+        db_driver=get("ACCOUNTING_DRIVER", "DB_DRIVER"),
         port=port,
         allowed_ips=get("FIREWALL_ALLOWED_IPS"),
         bank_text=get("BANK_ACCOUNT_TEXT"),

@@ -201,6 +201,8 @@ class ShopAdminApp(QObject):
         # The port (and so the address) may have changed: this computer's own
         # management console follows. The wizard window closes the program.
         self.store.configure_connection(base_url, pem)
+        # v2.15.0: «راه‌اندازی سرور» on a server that has settings opens this mode too
+        self.store.set_setting("wizard_completed", True)
         self.store.audit("setup", "server_settings", "تنظیمات سرور فروشگاه تغییر کرد")
 
     def _server_setup_done(self, base_url: str, pem: str) -> None:

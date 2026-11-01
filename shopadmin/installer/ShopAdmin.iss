@@ -189,8 +189,11 @@ Name: "{autodesktop}\{#MyAppNameFa}"; Filename: "{app}\{#MyAppExeName}"; \
 #ifdef SERVER
 ; The server setup wizard. The installer already runs as administrator, so
 ; the wizard inherits that right (no second UAC prompt).
+; v2.15.0: only on a NEW server. An upgrade keeps every setting as it is (the
+; database, the allowed list, «ثبت واقعی», …); «تنظیمات سرور» changes them.
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--server-setup"; \
-    Description: "{cm:ServerSetupNow}"; Flags: nowait postinstall skipifsilent
+    Description: "{cm:ServerSetupNow}"; Flags: nowait postinstall skipifsilent; \
+    Check: IsNewServer
 #else
 ; Optional: start the program right away.
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchAfterInstall}"; \
@@ -330,6 +333,12 @@ begin
   Result := ExpandConstant('{commonappdata}\ShopServer');
   if not FileExists(AddBackslash(Result) + '.env') then
     Result := '';
+end;
+
+{ v2.15.0: no server settings on this computer yet (an upgrade has them). }
+function IsNewServer(): Boolean;
+begin
+  Result := OldDataDir = '';
 end;
 
 function DefaultDataDir(): String;
