@@ -389,8 +389,10 @@ def build_catalog(data: dict, photos: dict[str, str], *, generator: str = "ShopA
     return {"format": FORMAT, "version": VERSION,
             "generated_at": str(data.get("updated_at") or now_iso()),
             "generator": generator, "brands": brand_list,
-            # v2.14.0: the accessory categories that have items, in the manager's order
-            "groups": [g for g in groups if g["key"] in used], "items": items,
+            # v2.14.0: the accessory categories that have items, in the manager's order;
+            # v2.16.0: plus the manager's own categories (a new «به‌زودی» card on the site)
+            "groups": [g for g in groups if g["key"] in used or g["key"] not in GROUPS],
+            "items": items,
             "images": {path: {"sha256": sha} for path, sha in sorted(images.items())}}
 
 
