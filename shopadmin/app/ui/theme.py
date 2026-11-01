@@ -865,6 +865,16 @@ QCheckBox::indicator:checked {{
     background: {PRIMARY_DARK}; border-color: {PRIMARY_DARK};
     __CHECK_IMAGE__
 }}
+/* v2.15.0: the check box of a table row (bulk actions) looks like every check box */
+QTableView::indicator {{
+    width: 18px; height: 18px; border-radius: 5px;
+    border: 2px solid {TEXT_MUTED}; background: {SURFACE};
+}}
+QTableView::indicator:hover {{ border-color: {ACCENT}; }}
+QTableView::indicator:checked {{
+    background: {PRIMARY_DARK}; border-color: {PRIMARY_DARK};
+    __CHECK_IMAGE__
+}}
 QCheckBox:disabled {{ color: {TEXT_MUTED}; }}
 QCheckBox::indicator:disabled {{ border-color: {DISABLED_TEXT}; background: {DISABLED_BG}; }}
 

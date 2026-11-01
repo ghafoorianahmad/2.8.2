@@ -211,6 +211,52 @@ class SiteStore:
         self.save(data)
         return item
 
+    def delete_many(self, codes: list[str]) -> list[dict]:
+        """v2.15.0: several items in one go («انتخاب همه» › «حذف»): each one kept
+        48 hours in «حذف‌شده‌ها» like a single delete, marked with one batch id so
+        the whole group comes back at once."""
+        wanted = [c for c in dict.fromkeys(codes) if c]
+        data = self.load()
+        removed = [i for i in data["items"] if i["code"] in wanted]
+        if not removed:
+            return []
+        gone = {i["code"] for i in removed}
+        at = self.clock().isoformat(timespec="seconds")
+        batch = f"{at}#{len(removed)}"
+        data["items"] = [i for i in data["items"] if i["code"] not in gone]
+        deleted = [d for d in data.get("deleted") or [] if d.get("item", {}).get("code") not in gone]
+        deleted.extend({"at": at, "batch": batch, "item": item} for item in removed)
+        data["deleted"] = deleted
+        self.save(data)
+        return removed
+
+    def undelete_many(self, codes: list[str]) -> int:
+        """Bring several deleted items back (each within its 48 hours); returns how many."""
+        data = self.load()
+        present = {i["code"] for i in data["items"]}
+        recent = {d["item"].get("code"): d for d in self.recently_deleted()}
+        back = [c for c in dict.fromkeys(codes) if c in recent and c not in present]
+        if not back:
+            return 0
+        data["items"].extend(cat.clean_item(recent[c]["item"]) for c in back)
+        data["deleted"] = [d for d in data.get("deleted") or []
+                           if d.get("item", {}).get("code") not in set(back)]
+        self.save(data)
+        return len(back)
+
+    def set_hidden_many(self, codes: list[str], hidden: bool) -> int:
+        """v2.15.0: «پنهان» / «نمایش» for every chosen item; returns how many changed."""
+        wanted = set(codes)
+        data = self.load()
+        changed = 0
+        for row in data["items"]:
+            if row["code"] in wanted and bool(row.get("hidden")) != bool(hidden):
+                row["hidden"] = bool(hidden)
+                changed += 1
+        if changed:
+            self.save(data)
+        return changed
+
     def recently_deleted(self) -> list[dict]:
         limit = self.clock() - timedelta(hours=ROLLBACK_HOURS)
         out = []

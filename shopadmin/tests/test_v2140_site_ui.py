@@ -85,7 +85,7 @@ def test_pill_toggles_and_delete_with_undo(page, monkeypatch):
     code = page._phones[0]["code"]
     page._toggle_code(code)
     assert page.store.get(code)["hidden"]
-    pill = page.phones_table.cellWidget(0, 4).findChild(widgets.TogglePill)
+    pill = page.phones_table.cellWidget(0, 5).findChild(widgets.TogglePill)
     assert pill.text() == "پنهان"
     pill.clicked.emit()
     assert not page.store.get(code)["hidden"]

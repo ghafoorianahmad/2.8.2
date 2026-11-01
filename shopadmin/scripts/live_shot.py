@@ -3,10 +3,11 @@ server running on this computer - the same start as ShopAdmin.exe (client editio
 the saved session of this Windows user, no password typed by this script).
 
 Usage:
-    python scripts/live_shot.py <output_dir> <page>[,<page>...] [--look <palette>:<mode>]
+    python scripts/live_shot.py <output_dir> <page>[,<page>...] [--tick]
 
 For each page the main window is shown, the page opened and the window grabbed
-(``<page>.png``). Read-only: nothing is clicked or saved.
+(``<page>.png``). Read-only: nothing is saved. ``--tick`` ticks the first three
+rows of «سایت» › گوشی‌ها (only on the screen) for a picture of the bulk tools.
 """
 from __future__ import annotations
 
@@ -56,7 +57,12 @@ def main(argv: list[str]) -> int:
         window.navigate(page)
 
         def grab() -> None:
-            path = out / f"{page}.png"
+            if "--tick" in argv and page == "site":
+                table = window._pages["site"].phones_table
+                for row in range(min(3, table.rowCount())):
+                    table.item(row, 0).setCheckState(Qt.CheckState.Checked)
+                app.processEvents()
+            path = out / f"{page}{'_ticked' if '--tick' in argv else ''}.png"
             window.grab().save(str(path))
             print(f"saved {path} banner={window.banner.isVisible()} "
                   f"text={window.banner_label.text()!r}")

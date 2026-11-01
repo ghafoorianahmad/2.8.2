@@ -22,6 +22,7 @@ from typing import Callable, Optional
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFileDialog,
     QHBoxLayout,
@@ -55,8 +56,9 @@ from ..site_import import PdfImportDialog
 from ..site_look import LookTab
 
 NL = chr(10)
-PHONE_HEADERS = ("برند", "گوشی", "رنگ‌ها", "عکس", "در سایت")
-ACCESSORY_HEADERS = ("دسته", "عنوان", "برند", "عکس", "در سایت")
+#: v2.15.0: column 0 = the check box of «انتخاب همه» (bulk «حذف» / «پنهان» / «نمایش»)
+PHONE_HEADERS = ("", "برند", "گوشی", "رنگ‌ها", "عکس", "در سایت")
+ACCESSORY_HEADERS = ("", "دسته", "عنوان", "برند", "عکس", "در سایت")
 #: v2.14.0 tree nodes: (kind, key) in the item's UserRole
 NODE_PHONES, NODE_BRAND, NODE_PHONE = "phones", "brand", "phone"
 NODE_ACCESSORIES, NODE_GROUP, NODE_ACCESSORY = "accessories", "group", "accessory"
@@ -198,26 +200,50 @@ class SitePage(BasePage):
     def _item_bar(self, kind: str) -> tuple[QWidget, list]:
         holder = QWidget()
         bar = widgets.FlowLayout(holder, spacing=8)
+        # v2.15.0: «انتخاب همه» + bulk actions; with nothing ticked they act on the
+        # selected row (as before)
+        select_all = QCheckBox("انتخاب همه")
+        select_all.setTristate(False)
+        select_all.setEnabled(self.can_manage)
+        select_all.clicked.connect(lambda on: self._select_all(kind, on))
+        bar.addWidget(select_all)
         edit = widgets.button("ویرایش", icon_name="edit",
                               on_click=self._edit_phone if kind == cat.KIND_PHONE
                               else self._edit_accessory)
         delete = widgets.button("حذف", icon_name="trash", on_click=lambda: self._delete(kind))
-        buttons = [edit, delete]
+        hide = widgets.button("پنهان", icon_name="eye_off",
+                              on_click=lambda: self._set_hidden(kind, True),
+                              tooltip="از دید سایت پنهان شود (پس از «انتشار در سایت»)")
+        show = widgets.button("نمایش", icon_name="eye",
+                              on_click=lambda: self._set_hidden(kind, False),
+                              tooltip="در سایت نمایش داده شود (پس از «انتشار در سایت»)")
+        buttons = [edit, delete, hide, show]
         for b in buttons:
             b.setEnabled(self.can_manage)
             bar.addWidget(b)
+        count = widgets.label("", name="Muted")
+        bar.addWidget(count)
+        if kind == cat.KIND_PHONE:
+            self.phone_select_all, self.phone_checked_label = select_all, count
+            self.hide_phone_button, self.show_phone_button = hide, show
+        else:
+            self.accessory_select_all, self.accessory_checked_label = select_all, count
+            self.hide_accessory_button, self.show_accessory_button = hide, show
         return holder, buttons
 
     def _phones_panel(self) -> QWidget:
         panel = QWidget()
         box = QVBoxLayout(panel)
         box.setContentsMargins(10, 0, 10, 0)   # never flush against the tree
-        holder, (self.edit_phone_button, self.delete_phone_button) = self._item_bar(cat.KIND_PHONE)
+        holder, (self.edit_phone_button, self.delete_phone_button, _h, _s) = \
+            self._item_bar(cat.KIND_PHONE)
         self.phone_search = widgets.SearchBox("جستجوی گوشی…")
         self.phone_search.textChanged.connect(lambda _t: self.render())
         holder.layout().addWidget(self.phone_search)
         box.addWidget(holder)
         self.phones_table = widgets.DataTable(PHONE_HEADERS, selectable_rows=True, key="site_phones")
+        self.phones_table.enable_checks()
+        self.phones_table.checks_changed.connect(lambda: self._checks_changed(cat.KIND_PHONE))
         self.phones_table.set_empty_state("هنوز گوشی‌ای نیست",
                                           "در «انتشار و پشتیبان»، «خواندن از سایت» را بزنید.", "file")
         self.phones_table.setMinimumHeight(320)
@@ -231,7 +257,7 @@ class SitePage(BasePage):
         panel = QWidget()
         box = QVBoxLayout(panel)
         box.setContentsMargins(10, 0, 10, 0)   # never flush against the tree
-        holder, (self.edit_accessory_button, self.delete_accessory_button) = \
+        holder, (self.edit_accessory_button, self.delete_accessory_button, _h, _s) = \
             self._item_bar(cat.KIND_ACCESSORY)
         self.accessory_search = widgets.SearchBox("جستجوی لوازم جانبی…")
         self.accessory_search.textChanged.connect(lambda _t: self.render())
@@ -239,6 +265,9 @@ class SitePage(BasePage):
         box.addWidget(holder)
         self.accessories_table = widgets.DataTable(ACCESSORY_HEADERS, selectable_rows=True,
                                                    key="site_accessories")
+        self.accessories_table.enable_checks()
+        self.accessories_table.checks_changed.connect(
+            lambda: self._checks_changed(cat.KIND_ACCESSORY))
         self.accessories_table.set_empty_state("در این دسته هنوز کالایی نیست",
                                                "«افزودن از PDF…» یا «افزودن دستی» را بزنید.", "box")
         self.accessories_table.setMinimumHeight(320)
@@ -452,32 +481,42 @@ class SitePage(BasePage):
                                               or p["brand"] == branch)
                         and matches(p, self.phone_search.text())]
         table = self.phones_table
+        ticked = set(table.checked_keys())        # ticks survive a reload
+        table.blockSignals(True)
         table.setRowCount(0)
         for item in self._phones:
             i = table.rowCount()
             table.insertRow(i)
-            table.set_cell(i, 0, brands.get(item["brand"], item["brand"] or "—"))
-            table.set_cell(i, 1, item["name"], bold=True)
-            table.set_cell(i, 2, "، ".join(c["name"] for c in item["colors"]) or "—")
-            table.set_cell(i, 3, photo_state(self.store, item))
-            table.set_widget(i, 4, self._pill(item))
+            table.set_check(i, item["code"] in ticked)
+            table.set_cell(i, 1, brands.get(item["brand"], item["brand"] or "—"))
+            table.set_cell(i, 2, item["name"], bold=True)
+            table.set_cell(i, 3, "، ".join(c["name"] for c in item["colors"]) or "—")
+            table.set_cell(i, 4, photo_state(self.store, item))
+            table.set_widget(i, 5, self._pill(item))
             table.set_row_key(i, item["code"])
+        table.blockSignals(False)
         table._refresh_states()
         self._accessories = [a for a in accessories if (not branch or category != cat.KIND_ACCESSORY
                                                         or a["group"] == branch)
                              and matches(a, self.accessory_search.text())]
         table = self.accessories_table
+        ticked = set(table.checked_keys())
+        table.blockSignals(True)
         table.setRowCount(0)
         for item in self._accessories:
             i = table.rowCount()
             table.insertRow(i)
-            table.set_cell(i, 0, groups.get(item["group"], "سایر"))
-            table.set_cell(i, 1, item["name"], bold=True)
-            table.set_cell(i, 2, item["brand_name"] or "—")
-            table.set_cell(i, 3, photo_state(self.store, item))
-            table.set_widget(i, 4, self._pill(item))
+            table.set_check(i, item["code"] in ticked)
+            table.set_cell(i, 1, groups.get(item["group"], "سایر"))
+            table.set_cell(i, 2, item["name"], bold=True)
+            table.set_cell(i, 3, item["brand_name"] or "—")
+            table.set_cell(i, 4, photo_state(self.store, item))
+            table.set_widget(i, 5, self._pill(item))
             table.set_row_key(i, item["code"])
+        table.blockSignals(False)
         table._refresh_states()
+        self._checks_changed(cat.KIND_PHONE)
+        self._checks_changed(cat.KIND_ACCESSORY)
         if kind in (NODE_PHONE, NODE_ACCESSORY):
             target = self.phones_table if kind == NODE_PHONE else self.accessories_table
             target.select_key(key)
@@ -594,18 +633,70 @@ class SitePage(BasePage):
                                                      else "در سایت پنهان می‌شود."))
         self.render()
 
-    def _delete(self, kind: str) -> None:
-        table = self.phones_table if kind == cat.KIND_PHONE else self.accessories_table
-        item = self._selected(table, self._phones if kind == cat.KIND_PHONE else self._accessories)
-        if item is None:
+    # ---- v2.15.0 «انتخاب همه» and bulk actions ------------------------------------------
+    def _table(self, kind: str):
+        return self.phones_table if kind == cat.KIND_PHONE else self.accessories_table
+
+    def _rows(self, kind: str) -> list[dict]:
+        return self._phones if kind == cat.KIND_PHONE else self._accessories
+
+    def _select_all(self, kind: str, on: bool) -> None:
+        self._table(kind).set_all_checked(bool(on))
+
+    def _checks_changed(self, kind: str) -> None:
+        table = self._table(kind)
+        ticked = len(table.checked_rows())
+        total = table.rowCount()
+        box = self.phone_select_all if kind == cat.KIND_PHONE else self.accessory_select_all
+        label = self.phone_checked_label if kind == cat.KIND_PHONE else self.accessory_checked_label
+        box.blockSignals(True)
+        box.setChecked(bool(total) and ticked == total)
+        box.blockSignals(False)
+        label.setText(f"{format_int(ticked)} انتخاب‌شده" if ticked else "")
+
+    def _targets(self, kind: str) -> list[dict]:
+        """The ticked rows; with none ticked, the selected row (as before v2.15.0)."""
+        table, rows = self._table(kind), self._rows(kind)
+        ticked = [rows[r] for r in table.checked_rows() if 0 <= r < len(rows)]
+        if ticked:
+            return ticked
+        item = self._selected(table, rows)
+        return [item] if item is not None else []
+
+    def _set_hidden(self, kind: str, hidden: bool) -> None:
+        items = self._targets(kind)
+        if not items or not self.can_manage:
             return
-        if not widgets.confirm(self, "حذف", f"«{item['name']}» حذف شود؟" + NL + NL +
-                               "با «انتشار در سایت» از سایت هم برداشته می‌شود. تا ۴۸ ساعت با "
-                               "«برگرداندن حذف‌شده‌ها…» (یا «برگرداندن انتشار قبلی») برمی‌گردد.",
+        changed = self.store.set_hidden_many([i["code"] for i in items], hidden)
+        what = "پنهان می‌شود" if hidden else "نمایش داده می‌شود"
+        if len(items) == 1:
+            self.notify_success(f"«{items[0]['name']}» در سایت {what}.")
+        else:
+            self.notify_success(f"{format_int(changed)} مورد در سایت {what} "
+                                f"({format_int(len(items) - changed)} مورد از قبل همین بود).")
+        self.render()
+
+    def _delete(self, kind: str) -> None:
+        items = self._targets(kind)
+        if not items:
+            return
+        later = ("با «انتشار در سایت» از سایت هم برداشته می‌شود. تا ۴۸ ساعت با "
+                 "«برگرداندن حذف‌شده‌ها…» (یا «برگرداندن انتشار قبلی») برمی‌گردد.")
+        if len(items) == 1:
+            question = f"«{items[0]['name']}» حذف شود؟"
+        else:
+            names = "، ".join(f"«{i['name']}»" for i in items[:5])
+            more = f" و {format_int(len(items) - 5)} مورد دیگر" if len(items) > 5 else ""
+            question = f"{format_int(len(items))} مورد حذف شود؟{NL}{names}{more}"
+        if not widgets.confirm(self, "حذف", question + NL + NL + later,
                                confirm_text="حذف", kind="warning"):
             return
-        self.store.delete(item["code"])
-        self.notify_success(f"«{item['name']}» حذف شد.")
+        removed = self.store.delete_many([i["code"] for i in items])
+        self._table(kind).set_all_checked(False)
+        if len(removed) == 1:
+            self.notify_success(f"«{removed[0]['name']}» حذف شد.")
+        else:
+            self.notify_success(f"{format_int(len(removed))} مورد حذف شد (تا ۴۸ ساعت برمی‌گردد).")
         self.render()
 
     def _undelete(self) -> None:
@@ -614,9 +705,24 @@ class SitePage(BasePage):
             self.notify_warning("در ۴۸ ساعت گذشته چیزی حذف نشده است.")
             return
         names = [f"{e['item'].get('name')} — {format_shamsi(e.get('at'))}" for e in entries]
-        choice, ok = QInputDialog.getItem(self, "برگرداندن حذف‌شده‌ها", "کدام برگردد؟", names, 0,
-                                          False)
-        if not ok or choice not in names:
+        # v2.15.0: a bulk delete comes back at once (one line per group, first)
+        batches: dict[str, list[dict]] = {}
+        for entry in entries:
+            if entry.get("batch"):
+                batches.setdefault(entry["batch"], []).append(entry)
+        groups = [(f"همهٔ {format_int(len(group))} مورد حذف‌شده با هم — "
+                   f"{format_shamsi(group[0].get('at'))}", group)
+                  for group in batches.values() if len(group) > 1]
+        choices = [text for text, _g in groups] + names
+        choice, ok = QInputDialog.getItem(self, "برگرداندن حذف‌شده‌ها", "کدام برگردد؟", choices,
+                                          0, False)
+        if not ok or choice not in choices:
+            return
+        if choices.index(choice) < len(groups):
+            group = groups[choices.index(choice)][1]
+            back = self.store.undelete_many([e["item"].get("code", "") for e in group])
+            self.notify_success(f"{format_int(back)} مورد برگشت.")
+            self.render()
             return
         entry = entries[names.index(choice)]
         if self.store.undelete(entry["item"].get("code", "")):

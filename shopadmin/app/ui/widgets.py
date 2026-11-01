@@ -1085,6 +1085,59 @@ class DataTable(QTableWidget):
                      | QItemSelectionModel.SelectionFlag.Rows)
         model.setCurrentIndex(index, QItemSelectionModel.SelectionFlag.NoUpdate)
 
+    # ---- v2.15.0 a check box per row («انتخاب همه» + bulk actions) -----------------
+    checks_changed = Signal()
+    _checks = False
+    CHECK_COLUMN_WIDTH = 46
+
+    def enable_checks(self) -> None:
+        """Column 0 becomes a check box per row (its header text is left empty by
+        the caller): ``set_check`` fills it, ``checked_keys`` reads it. Only for
+        lists where a bulk action is safe (never accounting data, orders or customers)."""
+        if self._checks:
+            return
+        self._checks = True
+        self._keep = self._keep | {0}
+        self.itemChanged.connect(self._check_item_changed)
+        self.horizontalHeader().resizeSection(0, self.CHECK_COLUMN_WIDTH)
+
+    def set_check(self, row: int, checked: bool = False) -> None:
+        item = self.item(row, 0)
+        if item is None:
+            item = QTableWidgetItem("")
+            self.setItem(row, 0, item)
+        item.setText("")
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+                      | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setToolTip("انتخاب برای کار گروهی")
+        item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+
+    def checked_rows(self) -> list[int]:
+        if not self._checks:
+            return []
+        return [r for r in range(self.rowCount())
+                if self.item(r, 0) is not None
+                and self.item(r, 0).checkState() == Qt.CheckState.Checked]
+
+    def checked_keys(self) -> list[Any]:
+        return [self.row_key(r) for r in self.checked_rows()]
+
+    def set_all_checked(self, on: bool) -> None:
+        self.blockSignals(True)
+        try:
+            for row in range(self.rowCount()):
+                item = self.item(row, 0)
+                if item is not None and item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                    item.setCheckState(Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
+        finally:
+            self.blockSignals(False)
+        self.viewport().update()
+        self.checks_changed.emit()
+
+    def _check_item_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() == 0:
+            self.checks_changed.emit()
+
     def select_key(self, key: Any) -> bool:
         for row in range(self.rowCount()):
             if self.row_key(row) == key:
