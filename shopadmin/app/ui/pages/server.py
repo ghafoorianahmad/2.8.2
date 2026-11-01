@@ -135,8 +135,40 @@ class ServerPage(BasePage):
         layout.addStretch(1)
         scroll.setWidget(container)
         self.body.addWidget(scroll, 1)
+        self._scroll = scroll
         self._settings: dict = {}
         self._inputs: dict[str, QWidget] = {}
+        #: v2.15.0: a setting the yellow banner asked for, focused once the form is filled
+        self._pending_focus = ""
+
+    # ------------------------------------------------------------------ v2.15.0 banner
+    def focus_setting(self, key: str) -> None:
+        """Scroll to one server setting and put the cursor in it (the banner's
+        «تنظیم کد وضعیت سفارش»). Before the form is filled: once it is."""
+        field = getattr(self, "_inputs", {}).get(key)
+        if field is None:
+            self._pending_focus = key
+            return
+        self._pending_focus = ""
+        self.focused_setting = key
+        self._scroll.ensureWidgetVisible(field, 40, 120)
+        field.setFocus(Qt.FocusReason.OtherFocusReason)
+        if isinstance(field, QLineEdit):
+            field.selectAll()
+
+    def show_write_row(self) -> None:
+        """Scroll to «ثبت در حسابداری» (it says why real writing is off)."""
+        label = getattr(self, "status_labels", {}).get("write")
+        if label is not None:
+            self._scroll.ensureWidgetVisible(label, 40, 120)
+
+    def open_server_settings(self) -> bool:
+        """«تنظیمات سرور» (the wizard) when this is the server computer; False when
+        it can only be changed there."""
+        if not (server_settings_available() and self.context.can(SERVER_MANAGE)):
+            return False
+        self._open_server_settings()
+        return True
 
     # ------------------------------------------------------------------ status
     def _build_status_panel(self) -> QWidget:
@@ -372,6 +404,9 @@ class ServerPage(BasePage):
                  on_error=self._settings_unavailable)
 
     def _show_status(self, status: dict) -> None:
+        # v2.15.0: the yellow banner follows the freshest answer (it kept the one
+        # from start-up, so it still said «حالت آزمایشی» after writing was switched on)
+        self.context.apply_write_status(status)
         self._set("accounting", *accounting_text(status))
         self._set("write", *write_text(status))
         self._set("uptime", _uptime_fa(status.get("uptime_seconds", 0)))
@@ -530,6 +565,9 @@ class ServerPage(BasePage):
             field.setEnabled(self.context.can(SERVER_MANAGE))   # v2.8.2: «دیدن» only = read
             self.settings_form.addRow(widgets.label(caption + ":"), field)
         self.save_settings_button.setEnabled(self.context.can(SERVER_MANAGE))
+        if self._pending_focus:
+            key = self._pending_focus
+            QTimer.singleShot(0, lambda: self.focus_setting(key))
 
     def has_unsaved_changes(self) -> bool:
         return bool(getattr(self, "_inputs", None)) and bool(self._collect_changes())

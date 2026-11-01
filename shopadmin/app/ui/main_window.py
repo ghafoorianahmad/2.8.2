@@ -93,6 +93,13 @@ SIDEBAR_COMPACT = 68
 COMPACT_BELOW = 1100
 
 BANNER_TEXT ="حالت آزمایشی — سفارش‌ها واقعاً در حسابداری ثبت نمی‌شوند"
+#: v2.15.0: the banner's buttons, one per kind of missing condition
+BANNER_ACTIONS = {
+    "server_settings": "باز کردن «تنظیمات سرور»",
+    "status_code": "تنظیم «کد وضعیت سفارش»",
+}
+#: v2.15.0: how often the banner's server flags are read again
+SYSTEM_INFO_REFRESH_MS = 60_000
 
 log = get_logger("main_window")
 
@@ -150,6 +157,11 @@ class MainWindow(QMainWindow):
         self._clock.setInterval(30_000)
         self._clock.timeout.connect(self._refresh_clock)
         self._clock.start()
+        # v2.15.0: the banner's flags are read again every minute
+        self._info_timer = QTimer(self)
+        self._info_timer.setInterval(SYSTEM_INFO_REFRESH_MS)
+        self._info_timer.timeout.connect(self.refresh_system_info)
+        self._info_timer.start()
 
         self._inactivity = QTimer(self)
         self._inactivity.setInterval(15_000)
@@ -272,6 +284,14 @@ class MainWindow(QMainWindow):
         banner_layout.addWidget(banner_icon)
         self.banner_label = widgets.label(BANNER_TEXT, color=theme.WARNING_TEXT, bold=True, wrap=True)
         banner_layout.addWidget(self.banner_label, 1)
+        # v2.15.0: a button that opens exactly the missing setting
+        self.banner_buttons: dict[str, QPushButton] = {}
+        for action, text in BANNER_ACTIONS.items():
+            button = widgets.button(text, icon_name="settings",
+                                    on_click=lambda _c=False, a=action: self._banner_action(a))
+            button.setVisible(False)
+            banner_layout.addWidget(button)
+            self.banner_buttons[action] = button
         self.banner.setStyleSheet(
             f"QFrame#Banner {{ background: {theme.WARNING_BG}; "
             f"border-bottom: 1px solid {theme.BORDER}; }}"
@@ -601,6 +621,11 @@ class MainWindow(QMainWindow):
         self.server_retry_button.setVisible(state == ConnectionState.OFFLINE)
         self.server_retry_button.setEnabled(True)
         self.server_retry_button.setText("تلاش دوباره")
+        # v2.15.0: back after a restart (e.g. «تنظیمات سرور» saved): its write flags may differ
+        previous = getattr(self, "_last_server_state", None)
+        self._last_server_state = state
+        if state == ConnectionState.CONNECTED and previous not in (None, ConnectionState.CONNECTED):
+            self.refresh_system_info()
 
     def _on_server_unreachable(self, message: str) -> None:
         """«سرور در دسترس نیست» + address, with a retry; never blocks the app."""
@@ -620,9 +645,55 @@ class MainWindow(QMainWindow):
             self.retry_server()
 
     def _update_banner(self) -> None:
-        """Yellow banner whenever shopapi runs with accounting writes disabled."""
-        show = self.context.dry_run_mode
-        self.banner.setVisible(show)
+        """Yellow banner while orders would not really be written: v2.15.0 it says
+        exactly what is missing (database not allowed, «ثبت واقعی» off, «کد وضعیت
+        سفارش» not set) with a button to that setting; hidden when all is met."""
+        problems = self.context.write_problems()
+        self.banner.setVisible(bool(problems))
+        if not problems:
+            for button in self.banner_buttons.values():
+                button.setVisible(False)
+            return
+        dry_run = self.context.dry_run_mode
+        lead = "حالت آزمایشی — سفارش‌ها واقعاً در حسابداری ثبت نمی‌شوند" if dry_run else             "سفارش‌ها هنوز در حسابداری ثبت نمی‌شوند"
+        self.banner_label.setText(lead + ": " + "؛ ".join(text for text, _a in problems) + ".")
+        actions = {action for _t, action in problems}
+        can_fix = self.context.can(SERVER_VIEW)
+        for action, button in self.banner_buttons.items():
+            button.setVisible(can_fix and action in actions)
+
+    def _banner_action(self, action: str) -> None:
+        self.navigate("server")
+        page = self._pages.get("server")
+        if page is None:
+            return
+        if action == "status_code":
+            page.focus_setting("ACCOUNTING_STATUS_CODE")
+            return
+        if not page.open_server_settings():
+            page.show_write_row()
+            self.toasts.show_warning(
+                "پایگاه‌داده و «ثبت واقعی» فقط روی خود رایانهٔ سرور، در «تنظیمات سرور» "
+                "(میان‌بر روی میزکار) عوض می‌شوند.")
+
+    def refresh_system_info(self) -> None:
+        """v2.15.0: read the server's write flags again (every minute and after a
+        reconnection), so the banner never shows an old state. Quiet on failure."""
+        if not self.context.connection_ok or getattr(self, "_info_busy", False):
+            return
+        from .async_utils import run_async
+
+        self._info_busy = True
+
+        def done() -> None:
+            self._info_busy = False
+
+        def ok(info) -> None:
+            if info.reachable:
+                self.context.apply_system_info(info)
+
+        run_async(self.context.api.system_info, on_success=ok,
+                  on_error=lambda _m, _k: None, on_done=done)
 
     # ------------------------------------------------------------------ events
     def _connect_context(self) -> None:
@@ -797,6 +868,7 @@ class MainWindow(QMainWindow):
             return
         self._inactivity.stop()
         self._clock.stop()
+        self._info_timer.stop()
         # v2.9.4: the application-wide activity filter goes with the window (it
         # stayed after a sign-out; every later event, and every re-polish of a
         # new look, ran one more Python filter per closed window)

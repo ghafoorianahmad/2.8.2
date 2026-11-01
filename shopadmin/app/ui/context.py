@@ -90,6 +90,53 @@ class AppContext(QObject):
             return False
         return not self.system_info.accounting_write_enabled
 
+    def write_problems(self) -> list[tuple[str, str]]:
+        """v2.15.0: what keeps orders from really being written, as
+        (Persian sentence, action) pairs; empty = every condition is met and the
+        yellow banner stays hidden. Actions: ``server_settings`` (database /
+        «ثبت واقعی», changed in «تنظیمات سرور» on the server computer) and
+        ``status_code`` (the «کد وضعیت سفارش» field of «تنظیمات سرور فروشگاه»)."""
+        if not self.connection_ok or not self.system_info.write_mode_known:
+            return []
+        info = self.system_info
+        name = (info.accounting_database or "").strip()
+        problems: list[tuple[str, str]] = []
+        if not info.accounting_write_enabled:
+            reason = info.extra.get("write_block_reason")
+            if reason == "not_allowed" and name:
+                text = f"«{name}» در فهرست پایگاه‌داده‌های مجاز نیست"
+            elif reason == "write_off" and name:
+                text = f"«ثبت واقعی» برای «{name}» روشن نیست"
+            elif reason == "no_database":
+                text = "پایگاه‌دادهٔ حسابداری انتخاب نشده است"
+            else:
+                text = "ثبت واقعی در حسابداری خاموش است"
+            problems.append((text, "server_settings"))
+        if not info.status_code_configured:
+            problems.append(("«کد وضعیت سفارش» تنظیم نشده است", "status_code"))
+        return problems
+
+    def apply_write_status(self, status: dict) -> None:
+        """v2.15.0: the write flags of a fresh ``/admin/server/status`` answer (the
+        «تنظیمات سرور فروشگاه» page) replace the ones read at start-up."""
+        keys = ("accounting_write_enabled", "status_code_configured", "accounting_database",
+                "test_mode")
+        if not isinstance(status, dict) or "accounting_write_enabled" not in status:
+            return
+        info = self.system_info
+        if not info.write_mode_known:
+            return
+        changed = False
+        for key in keys:
+            if key in status and getattr(info, key) != status[key]:
+                setattr(info, key, status[key])
+                changed = True
+        if "write_block_reason" in status and                 info.extra.get("write_block_reason") != status["write_block_reason"]:
+            info.extra["write_block_reason"] = status["write_block_reason"]
+            changed = True
+        if changed:
+            self.system_info_changed.emit(info)
+
     # ---- connection state ------------------------------------------------
     def set_connection(self, ok: bool) -> None:
         if ok == self.connection_ok:
