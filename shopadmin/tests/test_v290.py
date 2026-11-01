@@ -109,7 +109,8 @@ def test_apply_theme_switches_palette_mode_and_effects(keep_look):
     assert used == "simple" and theme.PALETTE == "aurora" and theme.MODE == "dark"
     assert theme.PRIMARY == "#5850D8" and theme.window_background() == theme.BACKGROUND
     assert "qlineargradient" not in stub.sheet.split("QPushButton {")[1].split("}")[0]
-    assert not stub.filters                               # simple: no shadow filter
+    # v2.15.0: «ساده» = only the hover glow (no shadows at rest)
+    assert len(stub.filters) == 1 and stub.filters[0].hover_only
     theme.apply_theme(stub, "light", palette="emerald", effects="full")
     assert theme.PRIMARY == "#047857" and "qradialgradient" in theme.window_background()
     assert "qradialgradient" in stub.sheet and len(stub.filters) == 1

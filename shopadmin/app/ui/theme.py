@@ -569,18 +569,19 @@ def _diagonal(start: str, end: str) -> str:
 
 #: v2.15.0: the live site's «ثبت سفارش» (assets/theme.css, origin/main):
 #: ``linear-gradient(115deg, #7c6cff, mix 55%, #38d6ff)``, white text. The same in
-#: every palette and mode. The violet is the site's own; the blue and cyan stops are
-#: a little deeper (the site's #57A6FF / #38D6FF give white text 2.5 / 1.7:1): white
-#: bold text keeps at least 3:1 on every stop (contrast_audit).
-SITE_GRAD = ("#7C6CFF", "#4E95E6", "#1E9BD6")
+#: every palette and mode. The stops keep the site's hues but are deeper (the site's
+#: #7C6CFF / #57A6FF / #38D6FF give white text 3.9 / 2.5 / 1.7:1): white text keeps
+#: WCAG AA 4.5:1 on every stop (contrast_audit, test_rendered_buttons_meet_aa_*).
+SITE_GRAD = ("#6E5CF7", "#346FE3", "#1677B8")
 #: the site's soft violet glow under it (``0 16px 34px -14px #7c6cff``)
 SITE_GLOW = "#7C6CFF"
 #: the site's «مشخصات» hover edge / halo (``--t-cyan``)
 SITE_CYAN = "#38D6FF"
 
 
-def site_gradient(lighter: float = 0.0, darker: float = 0.0) -> str:
-    """The site's 115° gradient (violet on the left, cyan on the right)."""
+def site_gradient(lighter: float = 0.0, darker: float = 0.0, middle: float = 0.55) -> str:
+    """The site's 115° gradient (violet on the left, cyan on the right); a hovered
+    button moves the middle towards violet (``middle``: same colours, still AA)."""
     def tone(color: str) -> str:
         if lighter:
             color = mix(color, "#FFFFFF", lighter)
@@ -588,7 +589,7 @@ def site_gradient(lighter: float = 0.0, darker: float = 0.0) -> str:
             color = mix(color, "#000000", darker)
         return color
     a, b, c = (tone(x) for x in SITE_GRAD)
-    return (f"qlineargradient(x1:0, y1:0.25, x2:1, y2:0.75, stop:0 {a}, stop:0.55 {b}, "
+    return (f"qlineargradient(x1:0, y1:0.25, x2:1, y2:0.75, stop:0 {a}, stop:{middle} {b}, "
             f"stop:1 {c})")
 
 
@@ -673,7 +674,7 @@ def _stylesheet_template() -> str:
     # a light top edge like its inset highlight, a violet glow from «جلوه‌ها»)
     # «ساده» keeps the gradient too (cheap); only the glow / shadows go
     primary_fill = site_gradient()
-    primary_hover = site_gradient(lighter=0.04)
+    primary_hover = site_gradient(middle=0.35)
     primary_pressed = site_gradient(darker=0.15)
     primary_top = rgba("#FFFFFF", 0.35)
     success_fill = SUCCESS_FILL if simple else _diagonal(
