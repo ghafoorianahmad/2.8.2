@@ -147,7 +147,9 @@ def test_groups_brands_and_catalog_groups(tmp_path):
     assert store.group_name(key) == "ساعت هوشمند"
     store.upsert({"code": "w-1", "category": "accessory", "name": "Watch", "group": key})
     catalog, _files = store.build()
-    assert catalog["groups"] == [{"key": key, "name": "ساعت هوشمند"}]
+    # v2.16.0: the manager's own categories go too (an empty one = a «به‌زودی» card)
+    assert catalog["groups"] == [{"key": key, "name": "ساعت هوشمند"},
+                                 {"key": persian, "name": "محافظ صفحه"}]
     assert "product_code" not in str(catalog)
     assert store.add_brand("Honor") == "honor"
     store.rename_brand("honor", "آنر")

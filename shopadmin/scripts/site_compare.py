@@ -10,6 +10,7 @@ screenshots and compares them pixel by pixel.
 
 Usage:
     python scripts/site_compare.py compare <site repo> <out dir> [--ref origin/main]
+        [--pages index.html,...] [--local <folder>]   (e.g. the ShopAdmin preview folder)
     python scripts/site_compare.py shot <site folder> <out.png> <page> [--width 1366]
         [--theme dark|light] [--js "<script>"]... [--full]
 
@@ -264,11 +265,11 @@ def diff(a: Path, b: Path, out: Path) -> tuple[int, tuple | None, tuple, tuple]:
     return changed, d.getbbox(), ia.size, ib.size
 
 
-def compare(repo: Path, out: Path, ref: str, pages: list[str]) -> int:
+def compare(repo: Path, out: Path, ref: str, pages: list[str], local: Path | None = None) -> int:
     live_dir = Path(tempfile.mkdtemp(prefix="site-live-"))
     export_ref(repo, ref, live_dir)
     s1, live_url = serve(live_dir)
-    s2, local_url = serve(repo)
+    s2, local_url = serve(local or repo)
     browser = Browser()
     bad = 0
     try:
@@ -321,7 +322,8 @@ def main(argv: list[str]) -> int:
         pages = PAGES
         if "--pages" in argv:
             pages = argv[argv.index("--pages") + 1].split(",")
-        return compare(Path(argv[2]), Path(argv[3]), ref, pages)
+        local = Path(argv[argv.index("--local") + 1]) if "--local" in argv else None
+        return compare(Path(argv[2]), Path(argv[3]), ref, pages, local)
     if len(argv) >= 5 and argv[1] == "shot":
         width = int(argv[argv.index("--width") + 1]) if "--width" in argv else 1366
         theme = argv[argv.index("--theme") + 1] if "--theme" in argv else "dark"

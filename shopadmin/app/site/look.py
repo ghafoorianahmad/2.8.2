@@ -189,16 +189,19 @@ def clean_look(raw) -> dict:
     look["logo"] = image_name(raw.get("logo"))
     hero_raw = raw.get("hero") if isinstance(raw.get("hero"), dict) else {}
     hero = look["hero"]
+    # v2.16.0: an empty text = the page's own text (= the default), never a blank
     for key in ("eyebrow", "title", "highlight", "lede"):
-        if key in hero_raw:
+        if text(hero_raw.get(key), LIMITS[key]):
             hero[key] = text(hero_raw.get(key), LIMITS[key])
     badges = hero_raw.get("badges")
     if isinstance(badges, list):
         for n in range(BADGES):
             badge = badges[n] if n < len(badges) and isinstance(badges[n], dict) else {}
             if badge:
-                hero["badges"][n] = {"title": text(badge.get("title"), LIMITS["badge_title"]),
-                                     "text": text(badge.get("text"), LIMITS["badge_text"])}
+                base = hero["badges"][n]
+                hero["badges"][n] = {
+                    "title": text(badge.get("title"), LIMITS["badge_title"]) or base["title"],
+                    "text": text(badge.get("text"), LIMITS["badge_text"]) or base["text"]}
     images = [image_name(n) for n in hero_raw.get("images") or [] if image_name(n)]
     hero["images"] = list(dict.fromkeys(images))[:BANNER_MAX]
     sections, seen = [], set()
@@ -217,9 +220,9 @@ def clean_look(raw) -> dict:
     store_raw = raw.get("store") if isinstance(raw.get("store"), dict) else {}
     store = look["store"]
     for key in ("address", "address_short"):
-        if key in store_raw:
+        if text(store_raw.get(key), LIMITS[key]):
             store[key] = text(store_raw.get(key), LIMITS[key])
-    if "about" in store_raw:
+    if text(store_raw.get("about"), LIMITS["about"], multiline=True):
         store["about"] = text(store_raw.get("about"), LIMITS["about"], multiline=True)
     if "phone" in store_raw:
         store["phone"] = normalize_phone(store_raw.get("phone"))
@@ -231,7 +234,8 @@ def clean_look(raw) -> dict:
                 value = text(row[1], LIMITS["hours_value"])
                 if label or value:
                     hours.append([label, value])
-        store["hours"] = hours
+        if hours:
+            store["hours"] = hours
     for key in STORE_LINKS:
         if key in store_raw:
             store[key] = normalize_link(key, store_raw.get(key))[0]
@@ -273,6 +277,21 @@ def build_site_json(look: dict, brand_keys: list[str], visible_phones: list[str]
     visible = set(visible_phones)
     hero = dict(look["hero"])
     hero["images"] = [p for p in (photo(n) for n in hero["images"]) if p]
+    # v2.16.0: a text the manager did not change goes out empty, so every page keeps
+    # its own wording exactly as on the live site (the pages word the same address
+    # a little differently: «، مشهد» / «· مشهد» / «— مشهد.»)
+    base_hero, base_store = DEFAULT_LOOK["hero"], DEFAULT_LOOK["store"]
+    for key in ("eyebrow", "title", "highlight", "lede"):
+        if hero.get(key) == base_hero[key]:
+            hero[key] = ""
+    hero["badges"] = [{k: ("" if b.get(k) == base.get(k) else b.get(k, "")) for k in ("title", "text")}
+                      for b, base in zip(hero.get("badges") or [], base_hero["badges"])]
+    store = dict(look["store"])
+    for key in ("address", "address_short", "about"):
+        if store.get(key) == base_store[key]:
+            store[key] = ""
+    if store.get("hours") == base_store["hours"]:
+        store["hours"] = []
     out = {"format": FORMAT, "version": VERSION, "generated_at": generated_at,
            "generator": generator, "palette": look["palette"]}
     logo = photo(look["logo"])
@@ -284,7 +303,7 @@ def build_site_json(look: dict, brand_keys: list[str], visible_phones: list[str]
         "brand_order": list(brand_keys),
         "phone_order": look["phone_order"],
         "featured": [c for c in look["featured"] if c in visible],
-        "store": look["store"],
+        "store": store,
         "images": {path: {"sha256": sha} for path, sha in sorted(images.items())},
     })
     return out

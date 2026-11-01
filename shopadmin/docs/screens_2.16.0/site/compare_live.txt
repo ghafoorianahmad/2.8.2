@@ -1,0 +1,17 @@
+v2.16.0 — site_compare.py (real Edge headless screenshots, pixel by pixel against origin/main)
+
+1) Local site repo (products.js, no catalog.json) vs live: 28 of 28 SAME
+   (7 pages x desktop 1366 / phone 390 x dark / light), after:
+   - phone menu back to the live one-line scrolling menu
+   - galaxy-a57.jpg back to the live photo
+   - hidden accessory list no longer takes 23 px
+
+2) ShopAdmin preview (this computer's real data: 63 phones + 35 power banks,
+   catalog.json + default site.json) vs live:
+   - index: only «دیدن ۳۵ کالا» on the power bank card (was «به‌زودی تکمیل می‌شود»)
+   - about, contact, 404, apple: SAME
+   - samsung / xiaomi: the manager's own data only (3 hidden Samsung phones,
+     tier / colour count / photos set in ShopAdmin); same cards, same layout.
+
+Pictures here: live_* / local_* = the home page (live vs local, full page);
+acc_1_closed_* = accessories before a click; acc_2_open_* = after a click on «پاوربانک».
