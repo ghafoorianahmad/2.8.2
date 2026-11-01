@@ -436,15 +436,16 @@ def test_close_button_stands_out_and_a_faint_one_is_caught(admin_qapp, monkeypat
                 close = [b for b in dialog.findChildren(type(widgets.button("x")))
                          if b.text() == "بستن"][0]
                 measured = button_audit.edge_contrast(dialog.grab().toImage(), close, dialog)
-                assert measured is not None and measured >= 3.0, (palette, mode, measured)
+                assert measured is not None and measured >= button_audit.MIN_EDGE_CONTRAST,                     (palette, mode, measured)
                 dialog.close()
-        # the 2.9.3 look (a 1.3:1 frame) is reported
+        # a button that looks like plain text (no fill, no frame) is reported
         theme.set_mode("light", "ocean")
-        edge = theme.soft_border()          # v2.14.0: the accent edge of a normal button
+        edge = theme.soft_border()          # v2.15.0: the site's soft neutral edge
         faint = theme.stylesheet().replace("border: 1px solid " + edge,
-                                           "border: 1px solid " + theme.BORDER_STRONG)
-        faint = faint.replace("border-bottom: 2px solid " + edge,
-                              "border-bottom: 2px solid " + theme.BORDER_STRONG)
+                                           "border: 1px solid transparent")
+        faint = faint.replace("border-bottom: 2px solid " + theme.soft_shadow_edge(),
+                              "border-bottom: 2px solid transparent")
+        faint = faint.replace(theme.glass_fills(False)["fill"], "transparent")
         dialog = _dialog_with_close(faint)
         dialog.show()
         _pump(10)

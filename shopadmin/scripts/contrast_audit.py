@@ -86,6 +86,9 @@ def from_theme() -> list[tuple[str, str, str, float]]:
         ("TEXT_FAINT on SURFACE (auxiliary)", theme.TEXT_FAINT, theme.SURFACE, 4.5),
         ("INK on SURFACE (card value)", theme.INK, theme.SURFACE, 4.5),
         ("white on PRIMARY (primary button)", "#FFFFFF", theme.PRIMARY, 4.5),
+        # v2.15.0: the site's «ثبت سفارش» gradient (bold text; the site itself has 1.7:1)
+        *[(f"white bold on the primary gradient stop {c}", "#FFFFFF", c, 3.0)
+          for c in theme.SITE_GRAD],
         ("white on PRIMARY_DARK (hover)", "#FFFFFF", theme.PRIMARY_DARK, 4.5),
         ("white on PRIMARY_PRESSED", "#FFFFFF", theme.PRIMARY_PRESSED, 4.5),
         ("white on SUCCESS_FILL (confirm button)", "#FFFFFF", theme.SUCCESS_FILL, 4.5),

@@ -12,8 +12,10 @@ checks:
   are together on the right (the start in right-to-left), the other actions
   after them, and «بستن» / «انصراف» last on the left, never prominent;
 * v2.9.4: no button looks faint: its frame or its fill stands out from what is
-  around it by at least 3:1 (WCAG 1.4.11), measured on the screen's pixels
-  (the 2.9.3 «بستن» had a 1.3:1 frame and looked like plain text);
+  around it, measured on the screen's pixels (the 2.9.3 «بستن» had a 1.3:1
+  frame and looked like plain text). v2.15.0: the owner asked for the live
+  site's «مشخصات» (a filled soft button with a soft neutral edge, never a dark
+  or coloured frame): at least 1.4:1 - a button without fill and frame is 1:1;
 * the theme: every button rule has the same radius, every variant has a
   disabled look (flat, dashed edge, grey text), and a disabled button really
   looks different from an enabled one in every variant (pixels compared).
@@ -48,8 +50,9 @@ MIN_GAP = 6
 HEIGHT_SLACK = 1
 #: average pixel difference (0..255) a disabled button must have from an enabled one
 MIN_DISABLED_DIFF = 6.0
-#: v2.9.4: frame / fill against the surrounding background (WCAG non-text contrast)
-MIN_EDGE_CONTRAST = 3.0
+#: frame / fill against the surrounding background (v2.9.4: 3:1; v2.15.0: the
+#: site's soft «مشخصات» edge, 1.4:1)
+MIN_EDGE_CONTRAST = 1.4
 
 
 def _luminance(color) -> float:
@@ -165,7 +168,7 @@ def problems_in(root: QWidget, where: str, height: int) -> list[str]:
             measured = edge_contrast(image, button, root)
             if measured is not None and measured < MIN_EDGE_CONTRAST:
                 out.append(f"{tag}: looks faint (frame/fill {measured:.2f}:1 against the "
-                           f"background, at least {MIN_EDGE_CONTRAST:.0f}:1)")
+                           f"background, at least {MIN_EDGE_CONTRAST:.1f}:1)")
     # neighbours in one row: never touching
     rows: dict[tuple[int, int], list[QPushButton]] = {}
     for button in buttons:

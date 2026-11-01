@@ -567,60 +567,95 @@ def _diagonal(start: str, end: str) -> str:
     return f"qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {start}, stop:1 {end})"
 
 
-def _sheen(fill: str, dark: str) -> str:
-    """A coloured (prominent) button stays its own colour, deepening downwards
-    (never lighter than ``fill``: white text keeps WCAG AA, contrast_audit)."""
-    return f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {fill}, stop:1 {dark})"
+#: v2.15.0: the live site's «ثبت سفارش» (assets/theme.css, origin/main):
+#: ``linear-gradient(115deg, #7c6cff, mix 55%, #38d6ff)``, white text. The same in
+#: every palette and mode. The violet is the site's own; the blue and cyan stops are
+#: a little deeper (the site's #57A6FF / #38D6FF give white text 2.5 / 1.7:1): white
+#: bold text keeps at least 3:1 on every stop (contrast_audit).
+SITE_GRAD = ("#7C6CFF", "#4E95E6", "#1E9BD6")
+#: the site's soft violet glow under it (``0 16px 34px -14px #7c6cff``)
+SITE_GLOW = "#7C6CFF"
+#: the site's «مشخصات» hover edge / halo (``--t-cyan``)
+SITE_CYAN = "#38D6FF"
+
+
+def site_gradient(lighter: float = 0.0, darker: float = 0.0) -> str:
+    """The site's 115° gradient (violet on the left, cyan on the right)."""
+    def tone(color: str) -> str:
+        if lighter:
+            color = mix(color, "#FFFFFF", lighter)
+        if darker:
+            color = mix(color, "#000000", darker)
+        return color
+    a, b, c = (tone(x) for x in SITE_GRAD)
+    return (f"qlineargradient(x1:0, y1:0.25, x2:1, y2:0.75, stop:0 {a}, stop:0.55 {b}, "
+            f"stop:1 {c})")
 
 
 def glass_fills(simple: bool) -> dict[str, str]:
-    """The see-through fills of a normal button: at rest, hovered (lighter, a hint
-    of the accent = the «light glow») and pressed (darker). «ساده»: flat, still
-    see-through (no gradient)."""
+    """v2.15.0: a normal button = the site's «مشخصات»: a filled, light, soft button
+    (a faint tint of the text colour over the card), at rest / hovered (a hint of
+    the site's cyan) / pressed (darker). «ساده»: the same, flat."""
     if MODE == "dark":
         if simple:
-            return {"fill": rgba("#FFFFFF", 0.07), "hover": rgba(ACCENT, 0.22),
-                    "pressed": rgba("#000000", 0.25)}
+            return {"fill": rgba("#FFFFFF", 0.08), "hover": rgba(SITE_CYAN, 0.14),
+                    "pressed": rgba("#000000", 0.28)}
         return {
-            "fill": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba('#FFFFFF', 0.16)}, "
-                     f"stop:0.5 {rgba('#FFFFFF', 0.07)}, stop:1 {rgba('#FFFFFF', 0.04)})"),
-            "hover": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba('#FFFFFF', 0.24)}, "
-                      f"stop:1 {rgba(ACCENT, 0.24)})"),
+            "fill": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba('#FFFFFF', 0.11)}, "
+                     f"stop:1 {rgba('#FFFFFF', 0.05)})"),
+            "hover": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba(SITE_CYAN, 0.18)}, "
+                      f"stop:1 {rgba(SITE_CYAN, 0.08)})"),
             "pressed": rgba("#000000", 0.28),
         }
     if simple:
-        return {"fill": mix(PRIMARY_SOFT, "#FFFFFF", 0.4), "hover": PRIMARY_SOFT,
-                "pressed": PRIMARY_LIGHT}
-    # v2.14.0: a light, soft button (the site's «مشخصات»): white into the palette's tint
+        return {"fill": "#EEF1F6", "hover": mix("#EEF1F6", SITE_CYAN, 0.10),
+                "pressed": "#E1E6EE"}
     return {
-        "fill": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, "
-                 f"stop:1 {mix(PRIMARY_SOFT, '#FFFFFF', 0.25)})"),
-        "hover": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, "
-                  f"stop:1 {PRIMARY_SOFT})"),
-        "pressed": PRIMARY_LIGHT,
+        "fill": "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FAFBFD, stop:1 #ECEFF5)",
+        "hover": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {mix('#FAFBFD', SITE_CYAN, 0.06)}, "
+                  f"stop:1 {mix('#ECEFF5', SITE_CYAN, 0.10)})"),
+        "pressed": "#E1E6EE",
     }
 
 
 def soft_border() -> str:
-    """v2.14.0: the edge of a normal button - the accent, never black, and still
-    3:1 against every background (WCAG 1.4.11; scripts/button_audit.py)."""
+    """v2.15.0: the edge of a normal button = the site's soft neutral edge (never
+    the accent, never dark): light ``rgba(20,30,60,…)``, dark ``rgba(255,255,255,.17)``."""
     if MODE == "dark":
-        return mix(ACCENT, SURFACE, 0.22)
-    return mix(PRIMARY, "#FFFFFF", 0.16)
+        return rgba("#FFFFFF", 0.17)
+    return "rgba(20, 30, 60, 56)"
+
+
+def soft_shadow_edge() -> str:
+    """v2.15.0: the bottom edge = the site's small drop shadow under «مشخصات»."""
+    if MODE == "dark":
+        return rgba("#000000", 0.55)
+    return "rgba(20, 30, 60, 82)"
+
+
+def hover_border() -> str:
+    """The site's hover edge (``--t-cyan`` at 60%)."""
+    return mix(SITE_CYAN, SURFACE, 0.4)
 
 
 def rest_glow() -> QColor:
-    """v2.14.0: the soft glow under a coloured (primary) button at rest, like the
-    site's «ثبت سفارش»."""
-    color = QColor(GRAD_END or ACCENT)
-    color.setAlpha(150 if MODE == "dark" else 105)
+    """v2.15.0: the site's soft violet glow under «ثبت سفارش» at rest."""
+    color = QColor(SITE_GLOW)
+    color.setAlpha(170 if MODE == "dark" else 135)
     return color
 
 
 def glow_color() -> QColor:
-    """The soft halo around a hovered button («جلوه‌ها: کامل»)."""
-    color = QColor(ACCENT)
-    color.setAlpha(170 if MODE == "dark" else 120)
+    """The soft halo around a hovered button («جلوه‌ها: کامل»): violet under a
+    coloured button, the site's cyan around a normal one."""
+    color = QColor(SITE_GLOW)
+    color.setAlpha(200 if MODE == "dark" else 160)
+    return color
+
+
+def soft_glow_color() -> QColor:
+    color = QColor(SITE_CYAN)
+    color.setAlpha(150 if MODE == "dark" else 120)
     return color
 
 
@@ -634,17 +669,20 @@ def _stylesheet_template() -> str:
     simple = EFFECTS == "simple"
     glass = glass_fills(simple)
     button_fill, button_hover, button_pressed = glass["fill"], glass["hover"], glass["pressed"]
-    # v2.14.0: the site's «ثبت سفارش»: a diagonal blue -> purple gradient, no dark frame
-    primary_fill = PRIMARY if simple else _diagonal(PRIMARY, GRAD_END)
-    primary_hover = mix(PRIMARY, GRAD_END, 0.5) if simple else _diagonal(
-        mix(PRIMARY, "#FFFFFF", 0.1), mix(GRAD_END, "#FFFFFF", 0.1))
-    primary_pressed = PRIMARY_PRESSED if simple else _diagonal(
-        PRIMARY_PRESSED, mix(GRAD_END, "#000000", 0.18))
+    # v2.15.0: the live site's «ثبت سفارش» (violet -> cyan, white text, no frame,
+    # a light top edge like its inset highlight, a violet glow from «جلوه‌ها»)
+    # «ساده» keeps the gradient too (cheap); only the glow / shadows go
+    primary_fill = site_gradient()
+    primary_hover = site_gradient(lighter=0.04)
+    primary_pressed = site_gradient(darker=0.15)
+    primary_top = rgba("#FFFFFF", 0.35)
     success_fill = SUCCESS_FILL if simple else _diagonal(
         SUCCESS_FILL, mix(SUCCESS_FILL, "#0E6F8C", 0.45))
     danger_fill = DANGER_FILL if simple else _diagonal(
         DANGER_FILL, mix(DANGER_FILL, "#9D174D", 0.45))
     edge = soft_border()
+    shadow_edge = soft_shadow_edge()
+    hover_edge = hover_border()
     return f"""
 QWidget {{
     font-family: "__FONT_FAMILY__";
@@ -689,7 +727,7 @@ QLabel#EmptyHint {{ color: {TEXT_MUTED}; }}
    (no transparent text buttons; «Ghost» is only for an icon without text). */
 QPushButton {{
     background: {button_fill};
-    color: {TEXT}; border: 1px solid {edge}; border-bottom: 2px solid {edge};
+    color: {TEXT}; border: 1px solid {edge}; border-bottom: 2px solid {shadow_edge};
     border-radius: {RADIUS}px; padding: 8px 16px; font-size: {BASE_FONT_SIZE}pt; font-weight: 600;
     min-height: {BUTTON_CONTENT_HEIGHT}px; max-height: {BUTTON_CONTENT_HEIGHT}px;
 }}
@@ -697,9 +735,10 @@ QPushButton {{
    glow (the accent frame here, a coloured halo from «جلوه‌ها»); pressed = the
    button sinks (the thick edge moves to the top, the text 1px down, darker fill).
    The height never changes: 1 + 2 px of edges and 16 px of padding in every state. */
-QPushButton:hover {{ background: {button_hover}; border-color: {ACCENT}; color: {PRIMARY_TEXT}; }}
-QPushButton:pressed {{ background: {button_pressed}; border-top: 2px solid {ACCENT};
-                       border-bottom: 1px solid {ACCENT}; padding-top: 9px;
+QPushButton:hover {{ background: {button_hover}; border-color: {hover_edge};
+                     border-bottom-color: {hover_edge}; color: {INK}; }}
+QPushButton:pressed {{ background: {button_pressed}; border-top: 2px solid {shadow_edge};
+                       border-bottom: 1px solid {edge}; padding-top: 9px;
                        padding-bottom: 7px; }}
 QPushButton:disabled, QPushButton#Primary:disabled, QPushButton#Success:disabled,
 QPushButton#Danger:disabled, QPushButton#Ghost:disabled, QPushButton#Tab:disabled,
@@ -710,10 +749,11 @@ QPushButton#RowMenu:disabled {{
 
 QPushButton#Primary {{
     background: {primary_fill};
-    color: #FFFFFF; border: 1px solid transparent; border-bottom: 2px solid transparent;
-    font-weight: 700;
+    color: #FFFFFF; border: 1px solid transparent; border-top: 1px solid {primary_top};
+    border-bottom: 2px solid transparent; font-weight: 700;
 }}
-QPushButton#Primary:hover {{ background: {primary_hover}; color: #FFFFFF; border-color: transparent; }}
+QPushButton#Primary:hover {{ background: {primary_hover}; color: #FFFFFF; border-color: transparent;
+                             border-top: 1px solid {primary_top}; }}
 QPushButton#Primary:pressed {{ background: {primary_pressed}; border-top: 2px solid transparent;
                                border-bottom: 1px solid transparent; padding-top: 9px;
                                padding-bottom: 7px; }}
@@ -770,13 +810,16 @@ QPushButton#OptionCard:checked {{ border: 2px solid {ACCENT}; background: {PRIMA
                                   color: {PRIMARY_TEXT}; }}
 
 QPushButton#Tab {{
-    border: 1px solid {BUTTON_BORDER}; border-bottom: 2px solid {BUTTON_BORDER}; border-radius: {RADIUS}px;
+    border: 1px solid {edge}; border-bottom: 2px solid {shadow_edge}; border-radius: {RADIUS}px;
     padding: 8px 16px; background: {button_fill}; color: {TEXT}; font-size: {BASE_FONT_SIZE}pt;
     font-weight: 700;
 }}
-QPushButton#Tab:hover {{ background: {button_hover}; border-color: {ACCENT}; color: {PRIMARY_TEXT}; }}
-QPushButton#Tab:checked {{ background: {PRIMARY_SOFT}; color: {PRIMARY_TEXT};
-                           border: 1px solid {PRIMARY_TEXT}; border-bottom: 2px solid {PRIMARY_TEXT}; }}
+QPushButton#Tab:hover {{ background: {button_hover}; border-color: {hover_edge};
+                         border-bottom-color: {hover_edge}; color: {INK}; }}
+/* v2.15.0: the chosen tab = the site's active segment (the «ثبت سفارش» gradient) */
+QPushButton#Tab:checked {{ background: {primary_fill}; color: #FFFFFF;
+                           border: 1px solid transparent; border-top: 1px solid {primary_top};
+                           border-bottom: 2px solid transparent; }}
 
 QPushButton#LinkButton {{
     border: none; background: transparent; color: {PRIMARY_TEXT}; padding: 2px 4px;
@@ -952,20 +995,27 @@ def _panel_can_have_shadow(widget: QWidget) -> bool:
 
 
 class _Effects(QObject):
-    def __init__(self) -> None:
+    def __init__(self, *, hover_only: bool = False) -> None:
         super().__init__()
         self._anims: dict[int, object] = {}
+        #: v2.15.0 «ساده»: only the glow of the button under the mouse (nothing
+        #: drawn for idle widgets: no shadows on panels or buttons at rest)
+        self.hover_only = hover_only
 
     def eventFilter(self, obj, event):  # noqa: N802 - Qt naming
         from PySide6.QtCore import QEvent
         from PySide6.QtWidgets import QFrame, QGraphicsDropShadowEffect, QPushButton
 
         kind = event.type()
+        if self.hover_only:
+            if isinstance(obj, QPushButton) and obj.objectName() in GLOW_BUTTONS + SHADOW_BUTTONS:
+                self._glow(obj, kind)
+            return False
         if kind == QEvent.Type.Polish and isinstance(obj, QWidget) and obj.graphicsEffect() is None:
             name = obj.objectName()
             if isinstance(obj, QPushButton) and name in SHADOW_BUTTONS:
                 if not _inside_item_view(obj):
-                    _shadow(obj, 16, 3, button=True)
+                    _shadow(obj, 22, 5, button=True)
                     # v2.9.3: a disabled button is flat (no shadow)
                     obj.graphicsEffect().setEnabled(obj.isEnabled())
             elif isinstance(obj, QFrame) and name == "Panel" and _panel_can_have_shadow(obj):
@@ -978,14 +1028,14 @@ class _Effects(QObject):
             elif kind == QEvent.Type.Enter and obj.isEnabled():
                 # v2.13.0: the shadow turns into a soft light glow of the accent
                 effect.setColor(glow_color())
-                self._animate(obj, 24, 0)
+                self._animate(obj, 30, 6)
             elif kind == QEvent.Type.Leave:
                 effect.setColor(rest_glow())
-                self._animate(obj, 16, 3)
+                self._animate(obj, 22, 5)
             elif kind == QEvent.Type.MouseButtonPress:
                 self._animate(obj, 6, 0, 80)
             elif kind == QEvent.Type.MouseButtonRelease:
-                self._animate(obj, 24, 0, 120)
+                self._animate(obj, 30, 6, 120)
         elif isinstance(obj, QPushButton) and obj.objectName() in GLOW_BUTTONS:
             self._glow(obj, kind)
         return False
@@ -1001,7 +1051,8 @@ class _Effects(QObject):
         if kind == QEvent.Type.Enter and button.isEnabled() and effect is None \
                 and not _inside_item_view(button):
             glow = QGraphicsDropShadowEffect(button)
-            glow.setColor(glow_color())
+            glow.setColor(glow_color() if button.objectName() in SHADOW_BUTTONS
+                          else soft_glow_color())
             glow.setOffset(0, 0)
             glow.setBlurRadius(4)
             button.setGraphicsEffect(glow)
@@ -1074,6 +1125,9 @@ def _install_effects(app: QApplication) -> None:
     for widget in app.allWidgets():          # simple: take away the shadows already there
         if isinstance(widget.graphicsEffect(), QGraphicsDropShadowEffect):
             widget.setGraphicsEffect(None)
+    # v2.15.0: the hover glow in «ساده» too (made on enter, removed on leave)
+    _EFFECTS_FILTER = _Effects(hover_only=True)
+    app.installEventFilter(_EFFECTS_FILTER)
 
 
 # --------------------------------------------------------------------------

@@ -27,16 +27,19 @@ def test_every_look_has_glass_buttons(admin_qapp, palette, mode, effects, monkey
     try:
         sheet = theme.stylesheet()
         rule = sheet.split("QPushButton {", 1)[1].split("}", 1)[0]
-        # v2.14.0: a light soft button with the accent edge (never the old dark frame)
+        # v2.15.0: the site's «مشخصات»: a soft neutral edge (never dark, never coloured)
         assert theme.soft_border() in rule and theme.BUTTON_BORDER not in rule
+        assert theme.ACCENT not in rule and theme.PRIMARY not in rule
         assert "QPushButton:hover" in sheet and "QPushButton:pressed" in sheet
         pressed = sheet.split("QPushButton:pressed {", 1)[1].split("}", 1)[0]
         assert "border-top: 2px" in pressed and "border-bottom: 1px" in pressed
         primary = sheet.split("QPushButton#Primary {", 1)[1].split("}", 1)[0]
-        assert "rgba(" not in primary                       # prominent stays coloured
+        background = primary.split("background:", 1)[1].split(";", 1)[0]
+        assert "rgba(" not in background                    # prominent stays coloured
+        assert "border-top: 1px solid rgba(255, 255, 255" in primary   # the site's top highlight
         assert "transparent" in primary                     # no dark frame
-        if effects == "full":
-            assert "x2:1, y2:1" in primary and theme.GRAD_END in primary   # blue -> purple
+        # v2.15.0: the live site's «ثبت سفارش» gradient in every look
+        assert all(stop in primary for stop in theme.SITE_GRAD)
     finally:
         theme.set_mode(old_mode, old_palette)
 
@@ -51,7 +54,7 @@ def test_glow_on_hover_only(admin_qapp, monkeypatch):
     fx.eventFilter(button, QEvent(QEvent.Type.Enter))
     glow = button.graphicsEffect()
     assert glow is not None and glow.offset().y() == 0
-    assert glow.color().name().upper() == theme.ACCENT.upper()
+    assert glow.color().name().upper() == theme.SITE_CYAN.upper()   # v2.15.0: the site's hover
     fx.eventFilter(button, QEvent(QEvent.Type.Leave))
     assert button.graphicsEffect() is None
     # a coloured button: its shadow becomes a glow, and back
@@ -60,7 +63,7 @@ def test_glow_on_hover_only(admin_qapp, monkeypatch):
     effect = primary.graphicsEffect()
     assert effect is not None
     fx.eventFilter(primary, QEvent(QEvent.Type.Enter))
-    assert effect.color().name().upper() == theme.ACCENT.upper()
+    assert effect.color().name().upper() == theme.SITE_GLOW.upper()
     fx.eventFilter(primary, QEvent(QEvent.Type.Leave))
     # v2.14.0: at rest a soft glow of the gradient's colour (the site's «ثبت سفارش»)
     assert effect.color().name().upper() == theme.rest_glow().name().upper()
