@@ -13,7 +13,8 @@
   - روی **هر** «افزودن از PDF» خودکار (`pdf_import.prepare`، و پنجرهٔ قدیمی `AccessoryPdfDialog`).
   - «سایت» › «کالاها»: دکمه‌های «فارسی‌سازی توضیحات» (تیک‌خورده‌ها، وگرنه همهٔ شاخه؛ پرسش با نمونهٔ پیش/پس)، «واژه‌نامه…» (پنجرهٔ `WordsDialog`: «انگلیسی = فارسی» در هر خط، آزمایش زنده، جستجو در واژه‌های آماده) و «برگرداندن فارسی‌سازی» (تا ۴۸ ساعت، `store.farsi_undo`).
   - یک بار روی دادهٔ واقعی این رایانه با ShopAdmin واقعی (`scripts/live_farsi.py`): **۳۴ از ۳۵ پاوربانک** عوض شد (یکی از قبل درست بود)؛ پشتیبان پیش از آن: `%LOCALAPPDATA%\ShopAdmin\site_before_farsi_2.16.0.zip`. پنجرهٔ «مشخصات» سایت با همین داده در Edge دیده شد.
-  - تست `tests/test_v2160_farsi.py` (۳۸ ✓). عکس‌ها: `shopadmin/docs/screens_2.16.0/farsi/` (پیش/پس صفحهٔ «سایت»، واژه‌نامه) و `.../site/popup_*` (پنجرهٔ مشخصات، دسکتاپ و گوشی).
+  - تست `tests/test_v2160_farsi.py` (۳۸ ✓).
+- [x] ۴. تست‌ها: shopapi ۵۶۹، shopbots ۲۸۷، shoptg ۸۹، shopsystem ۸۴ (با TEMP مثل `build_all.bat`؛ با TEMP جعبهٔ شنی فقط `test_update_from_zip_and_keeps_three_backups` پاک کردن پوشهٔ موقت را «Access is denied» می‌گیرد)، shopadmin ۸۳۲ ✓. سه ممیزی در ۹ ظاهر: متن بریده ۰، RTL ۰، دکمه ۰ (پنجرهٔ «واژه‌نامه…» هم در `audit_screens.py`). نسخه ۲٫۱۶٫۰. عکس‌ها: `shopadmin/docs/screens_2.16.0/farsi/` (پیش/پس صفحهٔ «سایت»، واژه‌نامه) و `.../site/popup_*` (پنجرهٔ مشخصات، دسکتاپ و گوشی).
 
 ---
 
