@@ -2,7 +2,7 @@
 
 Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 
-## v2.15.0 — نوار «حالت آزمایشی»، ارتقا بی‌تغییر تنظیمات، دکمه‌های مثل سایت، چندانتخابی (2026-11-01، شاخهٔ `feature/order-flow-v250`) — در حال کار
+## v2.15.0 — نوار «حالت آزمایشی»، ارتقا بی‌تغییر تنظیمات، دکمه‌های مثل سایت، چندانتخابی (2026-11-01، شاخهٔ `feature/order-flow-v250`) — DONE in code, built (not installed: no admin rights)
 
 قاعدهٔ این دور (مالک، بی‌حضور): بی‌دسترسی مدیر (بی‌نصب، بی‌راه‌اندازی دوبارهٔ سرویس)، بی‌push، بی‌انتشار سایت، نوشتن فقط در «hesab5 t»؛ هر مورد با **عکس واقعی ShopAdmin در حال اجرا** (`shopadmin/scripts/live_shot.py`: همین کد، نسخهٔ کلاینت، نشست ذخیره‌شدهٔ همین کاربر ویندوز، سرور واقعی روی 127.0.0.1:8443؛ فقط خواندن). عکس‌ها: `shopadmin/docs/screens_2.15.0/`.
 
@@ -29,7 +29,7 @@ Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 - [x] تست همه + سه ممیزی + نسخه ۲٫۱۵٫۰
   - تست‌ها: shopapi ۵۶۹، shopbots ۲۸۷، shoptg ۸۹، shopsystem ۸۴ (با `TEMP` در پوشهٔ قابل نوشتن: `test_update_from_zip…` در `%TEMP%` این PC «Access is denied» می‌گیرد — مشکل قدیمی پوشهٔ موقت، فایل‌هایش از فاز ۴ دست نخورده)، shopadmin ۷۹۴ ✓.
   - سه ممیزی در ۹ ظاهر: متن بریده ۰، RTL ۰، دکمه ۰؛ contrast_audit ۴۲۷/۴۲۷ AA.
-- [ ] commit، بیلد، ProductVersion، Outputs
+- [x] commit، بیلد، ProductVersion، Outputs — بیلد از commit `86eee7d` (تست‌های داخل بیلد سبز: shopapi ۵۶۹، shopbots ۲۸۷، shoptg ۸۹، shopsystem ۸۴، shopadmin). ProductVersion هر دو 2.15.0. کپی با SHA-256 برابر در `E:\Outputs\ShopSystem\` (Server `DAEA1C3F…`، Admin `C8009DFB…`)؛ جفت‌های ۲٫۱۳٫۰ و ۲٫۱۴٫۰ پاک شدند (فقط جدیدترین جفت)؛ هر دو README_FA.txt به‌روز. چیزی نصب نشد؛ push نشد.
 
 ### تصمیم‌ها
 - ارتقا هیچ پنجرهٔ تنظیمی باز نمی‌کند؛ برای تغییر، میان‌بر «تنظیمات سرور» روی میزکار.
