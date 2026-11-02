@@ -19,8 +19,6 @@ _DEFAULT_ALLOWED_HOSTS = ("localhost", r".\SQLEXPRESS")
 # name is built in any more - the server owner lists them (or, better, uses the
 # per-database switch ACCOUNTING_WRITE_DATABASES).
 _DEFAULT_TEST_DATABASES: tuple[str, ...] = ()
-#: Status codes known to be wrong: refused even when configured.
-INVALID_STATUS_CODES = frozenset({6808})
 
 
 def _load_dotenv() -> None:
@@ -371,7 +369,8 @@ class Settings:
         """Why orders cannot be committed with the configured Status, or None."""
         if self.accounting_status_code is None:
             return "ACCOUNTING_STATUS_CODE is not set"
-        if self.accounting_status_code in INVALID_STATUS_CODES:
+        if self.accounting_status_code <= 0:
+            # v2.17.0: 0 shows as «بدون وضعیت» in «سازه حساب»: never written
             return f"ACCOUNTING_STATUS_CODE={self.accounting_status_code} is not a valid status"
         return None
 

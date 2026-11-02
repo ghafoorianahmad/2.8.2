@@ -133,14 +133,12 @@ def _hhmm(value: str) -> Optional[str]:
 
 def _status_code(value: str) -> Optional[str]:
     """ACCOUNTING_STATUS_CODE: the same rule as ``Settings.status_code_problem``
-    (required, a whole number, never a known-invalid code such as 6808)."""
-    from .config import INVALID_STATUS_CODES
-
+    (required, a whole number above zero; 0 = «بدون وضعیت» in «سازه حساب»)."""
     if value == "":
         return "ACCOUNTING_STATUS_CODE is required"
     if not re.fullmatch(r"\d{1,9}", value):
         return "must be a whole number between 0 and 999999999"
-    if int(value) in INVALID_STATUS_CODES:
+    if int(value) <= 0:
         return f"{int(value)} is not a valid status code"
     return None
 

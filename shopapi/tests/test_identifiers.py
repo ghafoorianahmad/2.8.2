@@ -63,7 +63,7 @@ def test_connection_string_keeps_a_spaced_database_name():
 def test_reader_brackets_the_database_name():
     conn = RecordingConn()
     reader = AccountingReader(
-        Settings(accounting_database="hesab5 t", accounting_allowed_databases=("hesab5 t",), accounting_write_databases=("hesab5 t",), accounting_status_code=0),
+        Settings(accounting_database="hesab5 t", accounting_allowed_databases=("hesab5 t",), accounting_write_databases=("hesab5 t",), accounting_status_code=6808),
         connection_factory=lambda: conn
     )
     reader.list_groups()
@@ -76,7 +76,7 @@ def test_reader_brackets_the_database_name():
 def test_writer_brackets_the_database_name():
     conn = FakeConn(max_codlp=0)
     writer = AccountingWriter(
-        Settings(accounting_database="hesab5 t", accounting_allowed_databases=("hesab5 t",), accounting_write_databases=("hesab5 t",), accounting_status_code=0),
+        Settings(accounting_database="hesab5 t", accounting_allowed_databases=("hesab5 t",), accounting_write_databases=("hesab5 t",), accounting_status_code=6808),
         connection_factory=lambda: conn
     )
     writer.write_order(1, 7001, [(101, 1.0, 100.0)])

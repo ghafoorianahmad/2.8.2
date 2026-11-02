@@ -127,25 +127,25 @@ def test_status_code_setting_and_validation():
     from app.server_settings import SETTINGS_FA, local_problem, translate_problem
 
     assert "ACCOUNTING_STATUS_CODE" in SETTINGS_FA
-    assert local_problem("ACCOUNTING_STATUS_CODE", "0") is None
+    assert local_problem("ACCOUNTING_STATUS_CODE", "6808") is None
     assert local_problem("ACCOUNTING_STATUS_CODE", "12") is None
-    for bad in ("", "6808", "-1", "x"):
+    for bad in ("", "0", "-1", "x"):
         assert local_problem("ACCOUNTING_STATUS_CODE", bad), bad
-    assert translate_problem("6808 is not a valid status code") == "کد وضعیت ۶۸۰۸ معتبر نیست"
+    assert translate_problem("0 is not a valid status code") == "کد وضعیت ۰ معتبر نیست"
     assert translate_problem("ACCOUNTING_STATUS_CODE is required") == "کد وضعیت الزامی است"
     assert local_problem("BANK_ACCOUNT_TEXT", "") is None
 
 
-def test_server_page_refuses_6808_before_sending(ui_context, admin_qapp, fake_api):
+def test_server_page_refuses_zero_before_sending(ui_context, admin_qapp, fake_api):
     from app.ui.pages.server import ServerPage
 
-    fake_api.server_settings["ACCOUNTING_STATUS_CODE"] = "0"
+    fake_api.server_settings["ACCOUNTING_STATUS_CODE"] = "7"
     context = make_context_with_role(ui_context, ROLE_SUPER_ADMIN)
     page = ServerPage(context)
     page.load()
     _pump(admin_qapp)
     field = page._inputs["ACCOUNTING_STATUS_CODE"]
-    field.setText("6808")
+    field.setText("0")
     page._save_settings()
     _pump(admin_qapp)
     assert fake_api.settings_puts == []

@@ -15,7 +15,7 @@ from .persian import to_persian_digits
 #: v2.8.2: no card / account / Sheba here: staff type the payment details for each
 #: order («ارسال اطلاعات پرداخت»).
 SETTINGS_FA: dict[str, tuple[str, str, str]] = {
-    "ACCOUNTING_STATUS_CODE": ("کد وضعیت سفارش در حسابداری (Status)", "کد وضعیتی که سفارش ثبت‌شده در «سازه حساب» می‌گیرد (KalaOrder.Status)؛ الزامی، عدد صحیح؛ ۶۸۰۸ معتبر نیست. پس از آزمایش در «سازه حساب» تعیین کنید.", "int"),
+    "ACCOUNTING_STATUS_CODE": ("کد وضعیت سفارش در حسابداری (Status)", "کد وضعیت «تایید» در «سازه حساب» (KalaOrder.Status)، مثلاً ۶۸۰۸ در سرور اصلی؛ عدد بزرگ‌تر از صفر. تا این کد درست نوشته نشود هیچ سفارشی در «سازه حساب» ثبت نمی‌شود.", "int"),
     "RECEIPT_DEADLINE_MINUTES": ("مهلت ارسال رسید (دقیقه)", "پس از این مدت سفارش بدون رسید خودکار لغو می‌شود (فقط در سرور فروشگاه، نه در حسابداری).", "int"),
     "SALES_WINDOWS_ENABLED": ("فروش گوشی طبق لیست قیمت", "بله = فروش گوشی فقط پس از لیست صبح (تا ۱۳:۳۰) یا عصر (تا ۲۰:۳۰)؛ جمعه بسته. لوازم جانبی همیشه قابل سفارش است.", "bool"),
     "SALES_MORNING_CLOSE": ("پایان فروش گوشی (لیست صبح)", "مثلاً 13:30 (ساعت ایران).", "text"),
@@ -63,8 +63,7 @@ _PROBLEMS = (
 )
 
 #: Same rule as the server (shopapi ``control._status_code`` /
-#: ``Settings.status_code_problem``): required, a whole number, not a known-invalid code.
-INVALID_STATUS_CODES = frozenset({6808})
+#: ``Settings.status_code_problem``): required, a whole number above zero.
 
 
 def local_problem(key: str, value: str) -> str | None:
@@ -76,7 +75,7 @@ def local_problem(key: str, value: str) -> str | None:
             return "ACCOUNTING_STATUS_CODE is required"
         if not re.fullmatch(r"\d{1,9}", value):
             return "must be a whole number between 0 and 999999999"
-        if int(value) in INVALID_STATUS_CODES:
+        if int(value) <= 0:
             return f"{int(value)} is not a valid status code"
     return None
 

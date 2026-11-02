@@ -260,9 +260,9 @@ def test_admin_orders_carry_the_person_name_and_code(client, reader):
 # ---- 9: ACCOUNTING_STATUS_CODE from ShopAdmin -------------------------------------------------
 def test_status_code_is_editable_with_the_same_validation():
     assert "ACCOUNTING_STATUS_CODE" in control.EDITABLE
-    assert control.validate_settings({"ACCOUNTING_STATUS_CODE": "0"}) == {}
+    assert control.validate_settings({"ACCOUNTING_STATUS_CODE": "6808"}) == {}
     assert control.validate_settings({"ACCOUNTING_STATUS_CODE": "12"}) == {}
-    for bad in ("6808", "", "-1", "abc", "1.5"):
+    for bad in ("0", "", "-1", "abc", "1.5"):
         assert "ACCOUNTING_STATUS_CODE" in control.validate_settings(
             {"ACCOUNTING_STATUS_CODE": bad}), bad
 

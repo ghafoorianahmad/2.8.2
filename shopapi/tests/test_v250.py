@@ -390,7 +390,7 @@ def test_real_writer_rechecks_the_number_after_commit():
             return super().fetchone()
 
     conn = DupAfter()
-    writer = AccountingWriter(Settings(accounting_database="hesab5 t", accounting_allowed_databases=("hesab5 t",), accounting_write_databases=("hesab5 t",), accounting_status_code=0),
+    writer = AccountingWriter(Settings(accounting_database="hesab5 t", accounting_allowed_databases=("hesab5 t",), accounting_write_databases=("hesab5 t",), accounting_status_code=6808),
                               connection_factory=lambda: conn)
     res = writer.write_order(1, 7001, [(101, 1.0, 100.0)])
     assert res.committed and res.codlp_rows_after_commit == 2 and res.duplicate_after_commit
@@ -399,7 +399,7 @@ def test_real_writer_rechecks_the_number_after_commit():
 
 
 # ---- Status as config --------------------------------------------------------------------
-@pytest.mark.parametrize("status_code", [None, 6808])
+@pytest.mark.parametrize("status_code", [None, 0, -1])
 def test_commit_needs_a_valid_configured_status(status_code):
     from app.accounting_writer import AccountingConfigError
 
@@ -417,10 +417,10 @@ def test_commit_needs_a_valid_configured_status(status_code):
 
 
 def test_status_from_env(monkeypatch):
-    monkeypatch.setenv("ACCOUNTING_STATUS_CODE", "0")
-    assert Settings.from_env().status_code_problem() is None
     monkeypatch.setenv("ACCOUNTING_STATUS_CODE", "6808")
-    assert "6808" in Settings.from_env().status_code_problem()
+    assert Settings.from_env().status_code_problem() is None
+    monkeypatch.setenv("ACCOUNTING_STATUS_CODE", "0")
+    assert Settings.from_env().status_code_problem()
 
 
 def test_approve_payment_without_status_is_a_clear_409(client, reader, writer, db, settings):
@@ -468,7 +468,7 @@ def test_dry_run_never_inserts_and_a_forced_real_write_is_refused():
     from app.accounting_writer import AccountingWriteRefused
 
     conn = FakeConn()
-    writer = AccountingWriter(Settings(accounting_database="hesab5", accounting_status_code=0),
+    writer = AccountingWriter(Settings(accounting_database="hesab5", accounting_status_code=6808),
                               connection_factory=lambda: conn)
     res = writer.write_order(1, 7001, [(101, 1.0, 100.0)])
     assert res.rolled_back and not res.committed

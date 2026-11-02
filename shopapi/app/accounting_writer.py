@@ -188,7 +188,7 @@ class AccountingWriter:
         if not dry_run:
             problem = self.settings.status_code_problem()
             if problem:
-                # Never guess KalaOrder.Status (6808 does not exist; GUI test G2).
+                # Never guess KalaOrder.Status: an empty one is «بدون وضعیت» in the software.
                 raise AccountingConfigError(problem)
 
         sharhlp = f"API-{our_order_id}"

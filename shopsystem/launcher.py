@@ -1252,8 +1252,8 @@ FIRST_RUN_DEFAULTS = {
     "ALLOW_SHARED_PERSON_CODE": "false",
     "PENDING_MAX_ORDER_ITEMS": "3",
     "INVOICE_SYNC_SECONDS": "300",
-    # ACCOUNTING_STATUS_CODE is deliberately NOT defaulted: 6808 does not exist
-    # and the real value comes from GUI test G2. Unset = orders are never committed.
+    # ACCOUNTING_STATUS_CODE is deliberately NOT defaulted: each database has its
+    # own code, entered in ShopAdmin. Unset = orders are never committed.
     "ACCOUNTING_USERCODE": "1",
     "ACCOUNTING_ANBARCODE": "1",
     "LOG_LEVEL": "INFO",

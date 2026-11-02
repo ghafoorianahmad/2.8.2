@@ -107,7 +107,7 @@ def test_groups_skip_the_root_group():
 
 
 def test_status_code_has_no_default(monkeypatch):
-    """Never guessed: 6808 does not exist and the real value comes from GUI test G2."""
+    """Never guessed: each database has its own code, entered in ShopAdmin."""
     monkeypatch.delenv("ACCOUNTING_STATUS_CODE", raising=False)
     assert Settings().accounting_status_code is None
     assert Settings.from_env().accounting_status_code is None

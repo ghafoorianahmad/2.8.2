@@ -95,7 +95,7 @@ def _writer(max_codlp=5, verify_count=1, idempotent_codlp=0):
     return writer, conn
 
 
-def _committing_writer(max_codlp=5, verify_count=1, idempotent_codlp=0, status=0):
+def _committing_writer(max_codlp=5, verify_count=1, idempotent_codlp=0, status=6808):
     """A writer on the allowlisted test copy with a configured Status."""
     conn = FakeConn(max_codlp=max_codlp, verify_count=verify_count,
                     idempotent_codlp=idempotent_codlp)
@@ -146,7 +146,7 @@ def test_empty_string_rule_for_sharh_fields_and_tavasot():
     assert header_params[5] == -100            # Codf
     assert header_params[7] == ""              # tavasot (empty string, not None)
     assert header_params[9] == 0               # va (sales order)
-    assert header_params[10] == 0              # Status = ACCOUNTING_STATUS_CODE (configured)
+    assert header_params[10] == 6808           # Status = ACCOUNTING_STATUS_CODE (configured)
     assert header_params[12] == 1              # usercode
     assert "Taf2" not in header_sql
     assert header_params[0] == 6               # Codlp
