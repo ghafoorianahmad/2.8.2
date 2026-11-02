@@ -40,13 +40,11 @@ def test_old_ticks_are_migrated_on_start(tmp_path):
     mina = again.get_staff(sales["id"])
     eff = st.effective_permissions(mina["role"], mina["perm_grant"], mina["perm_revoke"])
     assert {"dashboard.view", "products.view", "reports.view", "sales.edit", "assign.edit",
-            "orders.edit"} <= eff
-    # v2.8.3: «درخواست کالا» is always on; the old revoke tick is gone
-    assert "requests.view" in eff and "requests.edit" in eff
-    assert "requests" not in mina["perm_revoke"]
+            "receipts.edit"} <= eff
     chief = again.get_staff(boss["id"])
     eff = st.effective_permissions(chief["role"], chief["perm_grant"], chief["perm_revoke"])
-    assert "server.edit" not in eff and "staff.edit" not in eff and "orders.edit" in eff
+    # v2.17.0: «مدیر» always has everything, whatever was stored
+    assert "server.edit" in eff and "staff.edit" in eff and "receipts.edit" in eff
     assert again.get_staff(plain["id"])["perm_grant"] == ""              # nothing to move
     again._conn.close()
     assert OwnDB(path).get_staff(sales["id"])["perm_grant"] == mina["perm_grant"]  # idempotent
@@ -59,13 +57,13 @@ def test_view_without_edit_is_read_only(client, db, reader):
                                         "text": "گوشی"}, headers=h("bot"))
     looker = staff(db, "operator", "looker")
     row = db.get_staff_by_username("looker")
-    db.update_staff(row["id"], perm_revoke="requests.edit,orders.edit")
+    db.update_staff(row["id"], perm_revoke="requests.edit,receipts.edit")
     items = client.get("/admin/item-requests", headers=looker)
     assert items.status_code == 200
     req_id = items.json()[0]["id"]
-    # v2.8.3: «درخواست کالا» / «سفارش‌ها» cannot be taken away any more
+    # v2.17.0: «تغییر» can be taken away: read only
     assert client.put(f"/admin/item-requests/{req_id}/note", json={"note": "x"},
-                      headers=looker).status_code == 200
+                      headers=looker).status_code == 403
     viewer = staff(db, "operator", "looker2")
     db.update_staff(db.get_staff_by_username("looker2")["id"], perm_grant="groups.view")
     assert client.get("/admin/product-groups", headers=viewer).status_code == 200
@@ -74,9 +72,9 @@ def test_view_without_edit_is_read_only(client, db, reader):
     assert client.get("/admin/permission-sections", headers=looker).status_code == 403
     sections = client.get("/admin/permission-sections",
                           headers=staff(db, "super_admin", "boss")).json()
-    assert sections[0] == {"key": "products", "label": "محصولات و موجودی",
-                           "view": "products.view", "edit": None}
-    assert not {s["key"] for s in sections} & st.ALWAYS_SECTIONS
+    assert sections[0] == {"key": "dashboard", "label": "داشبورد",
+                           "view": "dashboard.view", "edit": None}
+    assert {s["key"] for s in sections} == {key for key, *_ in st.ALL_SECTIONS}
 
 
 # ---- 8: no «برمی‌دارم»; the first action takes; the second user is told -------------------------

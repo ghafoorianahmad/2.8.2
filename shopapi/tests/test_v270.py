@@ -25,19 +25,17 @@ def test_two_roles_and_effective_permissions():
     assert st.STAFF_ROLES == ("super_admin", "operator")
     assert st.PERMISSIONS["super_admin"] == st.ALL_PERMISSIONS
     sales = st.PERMISSIONS["operator"]
-    # v2.8.2: sections with «دیدن» / «تغییر»
-    assert {"orders.view", "orders.edit", "requests.view", "requests.edit",
-            "customers.view"} <= sales
-    # v2.8.3: the daily work is always on (never a tick)
-    assert st.ALWAYS_PERMISSIONS <= sales
+    # v2.17.0: a new sales user starts with the daily work; each is a real tick
+    assert {"orders.view", "receipts.edit", "payinfo.edit", "ship.edit", "cancel.edit",
+            "requests.view", "requests.edit", "customers.view"} <= sales
     assert {"dashboard.view", "customers.edit", "assign.edit", "archive.view",
             "reports.view"} <= sales
     for admin_only in ("sales.edit", "pricelist.edit", "groups.edit", "models.edit",
                        "staff.edit", "server.edit", "products.view", "activity.view"):
         assert admin_only not in sales
-    eff = st.effective_permissions("operator", "sales.edit,bogus", ["orders.edit"])
+    eff = st.effective_permissions("operator", "sales.edit,bogus", ["receipts.edit"])
     assert "sales.edit" in eff and "sales.view" in eff          # «تغییر» includes «دیدن»
-    assert "orders.edit" in eff and "bogus" not in eff          # an always-on tick is ignored
+    assert "receipts.edit" not in eff and "bogus" not in eff    # v2.17.0: a real tick
     assert set(st.PERMISSION_LABELS) == set(st.ALL_PERMISSIONS)
 
 
@@ -55,7 +53,6 @@ def test_old_roles_are_migrated_on_start(tmp_path):
 SALES_ALLOWED = [
     ("GET", "/admin/orders"), ("GET", "/admin/users"), ("GET", "/admin/item-requests"),
     ("GET", "/admin/events"), ("GET", "/admin/system-info"),
-    # v2.8.3: the dashboard (phone-sales state) is always on
     ("GET", "/admin/shop/state"),
     # v2.8.2: price inquiries belong to «درخواست کالا» too
     ("GET", "/admin/inquiries"),
@@ -104,26 +101,26 @@ def test_per_user_ticks_are_enforced(client, db, reader):
     token = login(client, "mina").json()["token"]
     assert client.post("/admin/sales/action", headers=bearer(token),
                        json={"action": "close"}).status_code == 403
-    # grant «فروش گوشی — تغییر» and «محصولات»; v2.8.3: «سفارش‌ها» stays on
+    # grant «فروش گوشی — تغییر» and «محصولات»; v2.17.0: «رد و تأیید رسید» can be taken
     r = client.patch(f"/admin/staff/{user['id']}", headers=bearer(owner), json={
-        "extra_permissions": ["sales.edit", "dashboard.view", "products.view"],
-        "removed_permissions": ["orders.edit"]})
+        "extra_permissions": ["sales.edit", "products.view"],
+        "removed_permissions": ["receipts.edit"]})
     assert r.status_code == 200
     body = r.json()
     assert body["extra_permissions"] == ["products.view", "sales.edit"]
-    assert body["removed_permissions"] == []
-    assert "orders.edit" in body["permissions"] and "sales.edit" in body["permissions"]
+    assert body["removed_permissions"] == ["receipts.edit"]
+    assert "receipts.edit" not in body["permissions"] and "sales.edit" in body["permissions"]
     # changed rights end the old session at once
     assert client.get("/auth/me", headers=bearer(token)).status_code == 401
     token = login(client, "mina").json()["token"]
     me = client.get("/auth/me", headers=bearer(token)).json()
-    assert "sales.edit" in me["permissions"] and "orders.edit" in me["permissions"]
+    assert "sales.edit" in me["permissions"] and "orders.view" in me["permissions"]
     assert client.post("/admin/sales/action", headers=bearer(token),
                        json={"action": "close"}).status_code == 200
     assert client.patch(f"/admin/staff/{user['id']}", headers=bearer(owner),
                         json={"extra_permissions": ["root"]}).status_code == 422
     labels = client.get("/admin/permissions", headers=bearer(owner)).json()
-    assert {p["name"] for p in labels} == set(st.ALL_PERMISSIONS - st.ALWAYS_PERMISSIONS)
+    assert {p["name"] for p in labels} == set(st.ALL_PERMISSIONS)
     assert client.get("/admin/permissions", headers=bearer(token)).status_code == 403
 
 

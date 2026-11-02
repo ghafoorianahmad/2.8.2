@@ -482,27 +482,38 @@ class OwnDB:
 
         for old, new in LEGACY_ROLE_MAP.items():
             self._conn.execute("UPDATE staff_users SET role=? WHERE role=?", (new, old))
+        # v2.17.0, once: every page and action has its own tick. (Until then the daily
+        # work was always on, so older databases first lose those ticks, v2.8.3.)
+        from .staff import migrate_ticks, strip_always, upgrade_ticks_2170
+
+        first = self._conn.execute(
+            "SELECT 1 FROM shop_state WHERE key='permissions_2170'").fetchone() is None
+        if first:
+            for row in self._conn.execute(
+                    "SELECT id, perm_grant, perm_revoke FROM staff_users").fetchall():
+                grant, revoke = strip_always(row["perm_grant"]), strip_always(row["perm_revoke"])
+                if grant is not None or revoke is not None:
+                    self._conn.execute(
+                        "UPDATE staff_users SET perm_grant=?, perm_revoke=? WHERE id=?",
+                        (row["perm_grant"] if grant is None else grant,
+                         row["perm_revoke"] if revoke is None else revoke, row["id"]))
         # v2.8.2: per-user ticks of the old permission names -> the same rights as
         # section ticks («دیدن» / «تغییر»); idempotent (new names are left alone).
-        from .staff import migrate_ticks
-
         for row in self._conn.execute(
                 "SELECT id, role, perm_grant, perm_revoke FROM staff_users").fetchall():
             moved = migrate_ticks(row["role"], row["perm_grant"] or "", row["perm_revoke"] or "")
             if moved is not None:
                 self._conn.execute("UPDATE staff_users SET perm_grant=?, perm_revoke=? WHERE id=?",
                                    (moved[0], moved[1], row["id"]))
-        # v2.8.3: the daily-work sections are always on (no tick): their old ticks go.
-        from .staff import strip_always
-
-        for row in self._conn.execute(
-                "SELECT id, perm_grant, perm_revoke FROM staff_users").fetchall():
-            grant, revoke = strip_always(row["perm_grant"]), strip_always(row["perm_revoke"])
-            if grant is not None or revoke is not None:
-                self._conn.execute(
-                    "UPDATE staff_users SET perm_grant=?, perm_revoke=? WHERE id=?",
-                    (row["perm_grant"] if grant is None else grant,
-                     row["perm_revoke"] if revoke is None else revoke, row["id"]))
+        if first:
+            for row in self._conn.execute(
+                    "SELECT id, role, perm_grant FROM staff_users").fetchall():
+                self._conn.execute("UPDATE staff_users SET perm_grant=? WHERE id=?",
+                                   (upgrade_ticks_2170(row["role"], row["perm_grant"] or ""),
+                                    row["id"]))
+            self._conn.execute(
+                "INSERT INTO shop_state (key, value, updated_at, updated_by) VALUES "
+                "('permissions_2170', '1', ?, 'migration')", (now_iso(),))
 
     # ---- low level ----
     def _fetchone(self, sql: str, params: tuple = ()) -> dict | None:

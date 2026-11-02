@@ -15,7 +15,7 @@ from ..config import Settings
 from ..db_own import OwnDB
 from ..pricelist import pdf_archive
 from ..security import Identity, get_identity, require_permission
-from ..staff import P_SERVER_MANAGE, P_SERVER_VIEW
+from ..staff import P_HEALTH, P_SERVER_MANAGE, P_SERVER_VIEW, P_STATUS_CODES_VIEW
 from ..util import now_utc
 
 router = APIRouter(prefix="/admin/server")
@@ -30,7 +30,8 @@ class SettingsUpdate(BaseModel):
 
 
 @router.get("/health")
-def server_health(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_SEE) -> dict:
+def server_health(db: OwnDB = Depends(deps.get_db),
+                  _: Identity = Depends(require_permission(P_HEALTH))) -> dict:
     """v2.14.0 «سلامت سیستم»: each check now (with a Persian fix) and the journal."""
     from .. import selfheal
 
@@ -333,7 +334,7 @@ def order_status_codes(reader: AccountingReader = Depends(deps.get_reader),
     """«راهنمای کد وضعیت سفارش»: Status values and counts of the accounting order
     table and the latest orders «سازه حساب» made itself. Read only."""
     if not (identity.kind == "service" or (not identity.must_change_password
-                                           and identity.can(P_SERVER_MANAGE))):
+                                           and identity.can(P_STATUS_CODES_VIEW))):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this account")
     try:
         return {"ok": True, **reader.order_status_overview()}

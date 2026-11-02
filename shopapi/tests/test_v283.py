@@ -141,22 +141,21 @@ def test_nightly_due_time():
     assert (due.day, due.hour, due.minute) == (20, 23, 59)
 
 
-# ---- 9: always-on daily work, migrated -------------------------------------------------------------
-def test_always_on_sections_are_not_ticks(tmp_path):
-    assert not {key for key, *_ in st.SECTIONS} & st.ALWAYS_SECTIONS
-    assert {"dashboard.view", "orders.view", "orders.edit", "requests.view", "requests.edit",
-            "archive.view", "reports.view", "customers.view", "customers.edit",
-            "assign.edit"} == set(st.ALWAYS_PERMISSIONS)
+# ---- 9: the always-on ticks of older databases, migrated once -----------------------------------------
+def test_old_always_on_ticks_go_once(tmp_path):
     path = tmp_path / "old.db"
     db = OwnDB(path)
     row = db.create_staff("mina", "", "operator", "x")
     db.update_staff(row["id"], perm_grant="pricelist.edit,assign.edit",
                     perm_revoke="orders.edit,customers.edit,groups.view")
+    db._conn.execute("DELETE FROM shop_state WHERE key='permissions_2170'")   # an older database
+    db._conn.commit()
     db._conn.close()
     again = OwnDB(path).get_staff(row["id"])
-    assert again["perm_grant"] == "pricelist.edit" and again["perm_revoke"] == "groups.view"
+    assert "pricelist.edit" in again["perm_grant"] and "assign.edit" not in again["perm_grant"]
+    assert again["perm_revoke"] == "groups.view"
     eff = st.effective_permissions(again["role"], again["perm_grant"], again["perm_revoke"])
-    assert st.ALWAYS_PERMISSIONS <= eff and "pricelist.edit" in eff
+    assert {"receipts.edit", "customers.edit", "pricelist.edit", "proxies.edit"} <= eff
     assert "products.view" not in eff
 
 

@@ -145,6 +145,14 @@ def event_visible(db: OwnDB, who: Identity, event: dict) -> bool:
     if ref is None:
         return True
     ref = int(ref)
+    if kind in _MESSAGE_EVENTS or kind in _REQUEST_EVENTS:
+        if not who.can("requests.view"):
+            return False
+    elif kind.startswith("customer_"):
+        if not who.can("customers.view"):
+            return False
+    elif (kind in _ORDER_EVENTS_EXTRA or "order" in kind) and not who.can("orders.view"):
+        return False
     if kind in _MESSAGE_EVENTS:
         message = db.get_item_request_message(ref)
         row = db.get_item_request(int(message["request_id"])) if message else None

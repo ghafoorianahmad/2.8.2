@@ -52,6 +52,7 @@ from ..staff import (
     P_ORDERS_SHIP,
     P_ORDERS_VIEW,
     P_PAYMENTS_DECIDE,
+    P_REPORTS,
     P_SALES_VIEW,
     P_SHOP_STATE,
 )
@@ -72,6 +73,9 @@ CAN_SET_SHOP_STATE = Depends(require_permission(P_SHOP_STATE))
 # v2.7.0: what a «کاربر فروش» needs, apart from the rest of the admin view
 CAN_VIEW_ORDERS = Depends(require_permission(P_ORDERS_VIEW))
 CAN_VIEW_CUSTOMERS = Depends(require_permission(P_CUSTOMERS_VIEW))
+#: v2.17.0: the lists behind «گزارش‌ها» / «گزارش فعالیت» (each with its own tick)
+CAN_LIST_ORDERS = Depends(require_any(P_ORDERS_VIEW, P_REPORTS))
+CAN_LIST_CUSTOMERS = Depends(require_any(P_CUSTOMERS_VIEW, P_REPORTS, P_ACTIVITY))
 # v2.8.2: every staff member gets the feed, filtered to what they may see
 CAN_VIEW_EVENTS = Depends(require_signed_in)
 CAN_CANCEL = Depends(require_permission(P_ORDERS_CANCEL))
@@ -115,7 +119,7 @@ def system_info(
 def list_users(
     status_filter: Optional[str] = Query(None, alias="status"),
     db: OwnDB = Depends(deps.get_db),
-    who: Identity = CAN_VIEW_CUSTOMERS,
+    who: Identity = CAN_LIST_CUSTOMERS,
 ) -> list[UserOut]:
     """v2.8.2: a sales user sees new customers and those of their own work."""
     return [UserOut(**u) for u in ownership.filter_customers(db, who, db.list_users(status_filter))]
@@ -265,7 +269,7 @@ def list_orders(
     mine: bool = Query(False),
     db: OwnDB = Depends(deps.get_db),
     reader: AccountingReader = Depends(deps.get_reader),
-    who: Identity = CAN_VIEW_ORDERS,
+    who: Identity = CAN_LIST_ORDERS,
 ) -> list[OrderOut]:
     """v2.8.0: a sales user sees free orders and their own (``mine``: own only);
     another user's order is never listed. Archived orders: /admin/archive/orders."""
