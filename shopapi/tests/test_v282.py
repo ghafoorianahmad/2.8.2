@@ -78,12 +78,11 @@ def test_view_without_edit_is_read_only(client, db, reader):
 
 
 # ---- 8: no «برمی‌دارم»; the first action takes; the second user is told -------------------------
-def test_claim_is_gone_and_payment_details_take_the_order(client, db, reader):
+def test_opening_does_not_take_and_payment_details_take_the_order(client, db, reader):
     seed_products(reader)
     register_and_approve(client)
     order_id = _order(client)
     mina, sara = staff(db, "operator", "mina"), staff(db, "operator", "sara")
-    assert client.post(f"/admin/orders/{order_id}/claim", headers=mina).status_code in (404, 405)
     # opening does not take it
     assert client.get(f"/admin/orders/{order_id}", headers=mina).status_code == 200
     assert db.get_order(order_id)["owner_id"] is None

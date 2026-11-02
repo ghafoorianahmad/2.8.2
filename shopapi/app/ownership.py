@@ -38,6 +38,7 @@ A_PAYMENT_INFO = "payment_info"       # v2.8.2: «ارسال اطلاعات پر
 A_PRICE_OFFER = "price_offer"         # v2.9.2: price sent to the customer
 A_OFFER_ACCEPT = "offer_accept"       # the customer: «تأیید و خرید» (order created)
 A_OFFER_DECLINE = "offer_decline"     # the customer: «نمی‌خواهم»
+A_WRITE_LATER = "write_later"         # v2.17.0: «ثبت در حسابداری»
 
 FINISHED_DETAIL = "Order is finished and read-only"
 REQUEST_FINISHED_DETAIL = "Request is finished and read-only"

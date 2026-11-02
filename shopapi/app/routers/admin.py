@@ -40,6 +40,7 @@ from ..schemas import (
 )
 from ..security import Identity, require_any, require_permission, require_signed_in
 from ..staff import (
+    P_ACCOUNTING_WRITE,
     P_ACTIVITY,
     P_ARCHIVE,
     P_CUSTOMERS_DECIDE,
@@ -56,7 +57,7 @@ from ..staff import (
     P_SALES_VIEW,
     P_SHOP_STATE,
 )
-from .public import shop_state
+from .public import same_database, shop_state
 
 router = APIRouter(prefix="/admin")
 
@@ -78,6 +79,7 @@ CAN_LIST_ORDERS = Depends(require_any(P_ORDERS_VIEW, P_REPORTS))
 CAN_LIST_CUSTOMERS = Depends(require_any(P_CUSTOMERS_VIEW, P_REPORTS, P_ACTIVITY))
 # v2.8.2: every staff member gets the feed, filtered to what they may see
 CAN_VIEW_EVENTS = Depends(require_signed_in)
+CAN_WRITE_ACCOUNTING = Depends(require_permission(P_ACCOUNTING_WRITE))
 CAN_CANCEL = Depends(require_permission(P_ORDERS_CANCEL))
 SIGNED_IN = Depends(require_signed_in)
 
@@ -250,6 +252,29 @@ def reject_user(
     return UserOut(**user)
 
 
+def _stages(reader: AccountingReader, settings: Settings, orders: list[dict]) -> dict[int, dict]:
+    """v2.17.0: {our order id: stage fields} for the orders written to the connected
+    database. The accounting database being down only leaves the stage empty."""
+    written = {int(o["accounting_order_no"]): int(o["id"]) for o in orders
+               if o.get("accounting_order_no") and o.get("status") == "written"
+               and same_database(o.get("accounting_db"), settings)}
+    if not written:
+        return {}
+    try:
+        found = reader.order_stages(list(written))
+    except Exception:  # noqa: BLE001 - the list works without the stage
+        return {}
+    out = {}
+    for codlp, order_id in written.items():
+        info = found.get(codlp)
+        out[order_id] = {
+            "sazeh_stage": tracking.order_stage(info, settings.accounting_status_code,
+                                                settings.accounting_handover_code),
+            "sazeh_status": (info or {}).get("status"),
+        }
+    return out
+
+
 def order_out(db: OwnDB, who: Identity, order: dict, **extra) -> OrderOut:
     """An order for ShopAdmin with the ownership fields for this viewer (v2.8.0)."""
     fields = {**order, **ownership.owner_fields(db, who, order), **extra}
@@ -269,6 +294,7 @@ def list_orders(
     mine: bool = Query(False),
     db: OwnDB = Depends(deps.get_db),
     reader: AccountingReader = Depends(deps.get_reader),
+    settings: Settings = Depends(deps.get_settings),
     who: Identity = CAN_LIST_ORDERS,
 ) -> list[OrderOut]:
     """v2.8.0: a sales user sees free orders and their own (``mine``: own only);
@@ -279,7 +305,9 @@ def list_orders(
         orders = [o for o in orders if o.get("owner_id") == who.user_id]
     # v2.6.0: the linked person's name from the accounting DB (one query).
     names = _person_names(reader, orders)
-    return [order_out(db, who, o, person_name=names.get(o.get("user_person_code")))
+    stages = _stages(reader, settings, orders)
+    return [order_out(db, who, o, person_name=names.get(o.get("user_person_code")),
+                      **stages.get(int(o["id"]), {}))
             for o in orders]
 
 
@@ -312,11 +340,13 @@ def get_order_admin(
     order_id: int,
     db: OwnDB = Depends(deps.get_db),
     reader: AccountingReader = Depends(deps.get_reader),
+    settings: Settings = Depends(deps.get_settings),
     who: Identity = CAN_VIEW_ORDERS,
 ) -> OrderOut:
     order = _visible_order(db, who, order_id)
     names = _person_names(reader, [order])
-    return order_out(db, who, order, person_name=names.get(order.get("user_person_code")))
+    return order_out(db, who, order, person_name=names.get(order.get("user_person_code")),
+                     **_stages(reader, settings, [order]).get(order_id, {}))
 
 
 @router.get("/orders/{order_id}/timeline")
@@ -497,57 +527,108 @@ def approve_payment(
                     status.HTTP_409_CONFLICT, f"Insufficient stock for product {kala_code}"
                 )
 
-        # v2.6.2: a phone line carries its color and part in the line description
-        write_items = [(it["kala_code"], it["qty"], it["unit_price"])
-                       + ((it["variant"],) if it.get("variant") else ()) for it in items]
+        if settings.status_code_problem():
+            # v2.17.0: without a valid status code nothing is ever written («بدون
+            # وضعیت» in «سازه حساب»). The payment decision stands; staff are warned and
+            # write the order later with «ثبت در حسابداری».
+            return order_out(db, who, _accept_without_writing(db, who, order_id))
         try:
-            result = writer.write_order(order_id, order["user_person_code"], write_items)
-        except AccountingLockTimeout:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Accounting is busy; try again") from None
+            written = _write_to_accounting(db, writer, settings, who, order, order_id)
         except AccountingConfigError as exc:
             db.audit(who.actor, "approve_payment_refused", f"order id={order_id} config: {exc}")
+            return order_out(db, who, _accept_without_writing(db, who, order_id))
+        if written is None:
+            db.audit(who.actor, "approve_payment_dry_run",
+                     f"order id={order_id} (rolled back, nothing written)")
+            return order_out(db, who, db.get_order(order_id))
+        db.set_payment_decided(order_id, "approved")
+        db.add_event("payment_approved", order_id, who.actor)
+        ownership.log(db, who, ownership.A_RECEIPT_APPROVE, "order", written)
+        return order_out(db, who, written)
+
+
+def _accept_without_writing(db: OwnDB, who: Identity, order_id: int) -> dict:
+    """v2.17.0: the receipt is accepted; the order waits for «ثبت در حسابداری»."""
+    order = db.set_order_status(order_id, "approved")
+    order = db.set_accounting_pending(order_id, True)
+    db.set_payment_decided(order_id, "approved")
+    db.audit(who.actor, "approve_payment_not_written",
+             f"order id={order_id} (no valid order status code)")
+    db.add_event("payment_approved", order_id, who.actor)
+    ownership.log(db, who, ownership.A_RECEIPT_APPROVE, "order", order)
+    return order
+
+
+def _write_to_accounting(db: OwnDB, writer: AccountingWriter, settings: Settings, who: Identity,
+                         order: dict, order_id: int) -> dict | None:
+    """Write one order to «سازه حساب». The fresh order once a row really exists there
+    (committed now, or an identical header was already there: an idempotent replay);
+    None for a dry run, which is rolled back and must NOT be reported as written,
+    otherwise the order could never be retried."""
+    # v2.6.2: a phone line carries its color and part in the line description
+    write_items = [(it["kala_code"], it["qty"], it["unit_price"])
+                   + ((it["variant"],) if it.get("variant") else ())
+                   for it in db.get_order_items(order_id)]
+    try:
+        result = writer.write_order(order_id, order["user_person_code"], write_items)
+    except AccountingLockTimeout:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Accounting is busy; try again") from None
+    except DuplicateOrderNumber as exc:
+        # Rolled back: nothing was written. Tell the admin; retry is safe.
+        db.audit(who.actor, "approve_payment_duplicate",
+                 f"order id={order_id} codlp={exc.codlp} rows={exc.count} (rolled back)")
+        db.add_event(EVENT_DUPLICATE_ORDER_NO, order_id, who.actor)
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Duplicate accounting order number; nothing was written") from None
+    if not (result.committed or result.idempotent):
+        return None
+    written = db.set_order_status(order_id, "written", result.accounting_order_no,
+                                  accounting_db=result.database or settings.database_name())
+    written = db.set_accounting_pending(order_id, False)
+    db.audit(
+        who.actor,
+        "approve_payment",
+        f"order id={order_id} accounting_order_no={result.accounting_order_no} "
+        f"db={result.database or settings.database_name()} "
+        f"committed={result.committed} idempotent={result.idempotent}",
+    )
+    if result.duplicate_after_commit:
+        # Another program wrote the same Codlp next to ours. Never delete
+        # anything in the accounting DB: only alert the admin.
+        db.audit("system:writer", "accounting_duplicate_order",
+                 f"order id={order_id} codlp={result.accounting_order_no} "
+                 f"rows={result.codlp_rows_after_commit}")
+        db.add_event(EVENT_DUPLICATE_ORDER_NO, order_id, "system:writer")
+    return written
+
+
+@router.post("/orders/{order_id}/write-accounting", response_model=OrderOut)
+def write_accounting_later(
+    order_id: int,
+    writer: AccountingWriter = Depends(deps.get_writer),
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+    who: Identity = CAN_WRITE_ACCOUNTING,
+) -> OrderOut:
+    """v2.17.0 «ثبت در حسابداری»: an order whose receipt was accepted while no valid
+    status code was set. Also after it was sent: «سازه حساب» still needs it."""
+    with db.reservation_guard():
+        order = _visible_order(db, who, order_id)
+        if not order.get("accounting_pending") or order["status"] != "approved":
+            raise HTTPException(status.HTTP_409_CONFLICT, "Order does not wait for accounting")
+        if settings.status_code_problem():
+            raise HTTPException(status.HTTP_409_CONFLICT, "Order status code is not configured")
+        if order["user_status"] != "approved" or order["user_person_code"] is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Customer is not approved yet")
+        try:
+            written = _write_to_accounting(db, writer, settings, who, order, order_id)
+        except AccountingConfigError:
             raise HTTPException(status.HTTP_409_CONFLICT,
                                 "Order status code is not configured") from None
-        except DuplicateOrderNumber as exc:
-            # Rolled back: nothing was written. Tell the admin; retry is safe.
-            db.audit(who.actor, "approve_payment_duplicate",
-                     f"order id={order_id} codlp={exc.codlp} rows={exc.count} (rolled back)")
-            db.add_event(EVENT_DUPLICATE_ORDER_NO, order_id, who.actor)
-            raise HTTPException(status.HTTP_409_CONFLICT,
-                                "Duplicate accounting order number; nothing was written") from None
-
-        # The order is only "written" when a row really exists in the accounting DB:
-        # either we committed it now, or an identical header was already there
-        # (idempotent replay). A dry-run is rolled back and must NOT be reported
-        # as written, otherwise the order could never be retried.
-        if result.committed or result.idempotent:
-            order = db.set_order_status(order_id, "written", result.accounting_order_no,
-                                        accounting_db=result.database or settings.database_name())
-            db.set_payment_decided(order_id, "approved")
-            db.audit(
-                who.actor,
-                "approve_payment",
-                f"order id={order_id} accounting_order_no={result.accounting_order_no} "
-                f"db={result.database or settings.database_name()} "
-                f"committed={result.committed} idempotent={result.idempotent}",
-            )
-            db.add_event("payment_approved", order_id, who.actor)
-            ownership.log(db, who, ownership.A_RECEIPT_APPROVE, "order", order)
-            if result.duplicate_after_commit:
-                # Another program wrote the same Codlp next to ours. Never delete
-                # anything in the accounting DB: only alert the admin.
-                db.audit("system:writer", "accounting_duplicate_order",
-                         f"order id={order_id} codlp={result.accounting_order_no} "
-                         f"rows={result.codlp_rows_after_commit}")
-                db.add_event(EVENT_DUPLICATE_ORDER_NO, order_id, "system:writer")
-        else:
-            db.audit(
-                who.actor,
-                "approve_payment_dry_run",
-                f"order id={order_id} would_be_codlp={result.accounting_order_no}",
-            )
-            order = db.get_order(order_id)
-        return order_out(db, who, order)
+        if written is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Accounting writes are disabled")
+        ownership.log(db, who, ownership.A_WRITE_LATER, "order", written)
+        return order_out(db, who, written)
 
 
 @router.post("/orders/{order_id}/reject-payment", response_model=OrderOut)

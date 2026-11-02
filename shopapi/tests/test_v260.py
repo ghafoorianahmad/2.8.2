@@ -187,6 +187,7 @@ def test_item_requests(client, reader, db):
     assert [r["id"] for r in rows] == [r2.json()["id"], r.json()["id"]]
     assert rows[0]["customer_name"] == "Ali" and rows[0]["person_code"] == 7001
     assert events(db).count("item_request") == 2
+    db.add_item_request_message(r.json()["id"], "موجود شد", "x")      # v2.17.0: never silently
     done = client.post(f"/admin/item-requests/{r.json()['id']}/status", json={"status": "done"},
                        headers=h("admin"))
     assert done.status_code == 200 and done.json()["status"] == "done"

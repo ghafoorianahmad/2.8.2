@@ -336,6 +336,38 @@ class AccountingReader:
             conn.close()
         return [int(r[0]) for r in rows]
 
+    def order_stages(self, codlps: list[int]) -> dict[int, dict]:
+        """v2.17.0 (read only): {Codlp: {"status", "ordered", "invoiced"}} from
+        ``KalaOrder`` / ``facto``. An order missing here is gone from accounting."""
+        codlps = [int(c) for c in codlps][:500]
+        if not codlps:
+            return {}
+        db = self._db()
+        conn = self.connection()
+        try:
+            rows = self._rows(
+                conn.execute(
+                    f"SELECT h.Codlp, h.Status, "
+                    f"(SELECT SUM(d.Meg) FROM {db}.dbo.KalaOrderDetail d "
+                    f"WHERE d.Codlp_ = h.Codlp) AS OrderedQty, "
+                    f"(SELECT SUM(f.Meg) FROM {db}.dbo.facto f "
+                    f"WHERE f.ordercode = h.Codlp) AS InvoicedQty "
+                    f"FROM {db}.dbo.KalaOrder h "
+                    f"WHERE h.Codlp IN ({self._in_placeholders(codlps)})",
+                    codlps,
+                )
+            )
+        finally:
+            conn.close()
+        return {
+            int(r["Codlp"]): {
+                "status": None if r["Status"] is None else int(r["Status"]),
+                "ordered": float(r["OrderedQty"] or 0),
+                "invoiced": float(r["InvoicedQty"] or 0),
+            }
+            for r in rows
+        }
+
     def invoice_progress(self, codlps: list[int]) -> dict[int, dict]:
         """Recipe R5 for our written orders: {Codlp: {"ordered", "invoiced"}}.
 

@@ -231,6 +231,7 @@ def due(db: OwnDB, platform: str, now: datetime | None = None) -> list[dict]:
     summary_key = f"{SUMMARY_KEY}:{platform}"
     today = local.date().isoformat()
     log = db.staff_alert_log(platform)
+    stamp = now.isoformat(timespec="seconds")
     if hours.is_open(local) and db.get_state(summary_key, "") != today:
         # opening: what came in while the shop was closed, in one message
         db.set_state(summary_key, today, "system:staff_alerts")
@@ -242,7 +243,8 @@ def due(db: OwnDB, platform: str, now: datetime | None = None) -> list[dict]:
             receivers = set()
             for it in waiting:
                 receivers |= chats[_needed(it)]
-                db.record_staff_alert(it["target_type"], it["target_id"], it["kind"], platform)
+                db.record_staff_alert(it["target_type"], it["target_id"], it["kind"], platform,
+                                      stamp)
             out.append({"kind": "summary", "counts": counts, "chats": sorted(receivers)})
             sent = {(it["target_type"], it["target_id"], it["kind"]) for it in waiting}
             items = [it for it in items
@@ -255,7 +257,7 @@ def due(db: OwnDB, platform: str, now: datetime | None = None) -> list[dict]:
         receivers = chats[_needed(it)]
         if not receivers:
             continue
-        db.record_staff_alert(it["target_type"], it["target_id"], it["kind"], platform)
+        db.record_staff_alert(it["target_type"], it["target_id"], it["kind"], platform, stamp)
         out.append({**it, "repeat": int(last["count"]) if last else 0,
                     "chats": sorted(receivers)})
     return out

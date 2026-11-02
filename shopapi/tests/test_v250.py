@@ -423,7 +423,8 @@ def test_status_from_env(monkeypatch):
     assert Settings.from_env().status_code_problem()
 
 
-def test_approve_payment_without_status_is_a_clear_409(client, reader, writer, db, settings):
+def test_approve_payment_when_the_writer_refuses_is_not_written(client, reader, writer, db,
+                                                                 settings):
     from app.accounting_writer import AccountingConfigError
 
     seed_products(reader)
@@ -434,8 +435,9 @@ def test_approve_payment_without_status_is_a_clear_409(client, reader, writer, d
 
     writer.write_order = refuse
     order_id, body = _written(client)
-    assert body["detail"] == "Order status code is not configured"
-    assert db.get_order(order_id)["status"] == "receipt_uploaded"
+    # v2.17.0: the receipt stands; the order waits for «ثبت در حسابداری»
+    assert body["status"] == "approved" and body["accounting_pending"] is True
+    assert db.get_order(order_id)["accounting_order_no"] is None
 
 
 # ---- DB allowlist / test mode -------------------------------------------------------------

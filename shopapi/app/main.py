@@ -19,7 +19,7 @@ from . import (archive, catalog_models, control, deps, monitor, order_timeout, s
 from .db_own import OwnDB
 from .pricelist import importer, pdf_archive
 from .routers import (
-    admin, auth, catalog, pricelist, public, server_admin, shop_catalog, staff_admin,
+    admin, auth, catalog, pricelist, public, server_admin, shop_catalog, shop_rules, staff_admin,
 )
 
 
@@ -112,6 +112,7 @@ def create_app() -> FastAPI:
     application.include_router(pricelist.router)
     application.include_router(catalog.router)
     application.include_router(shop_catalog.router)
+    application.include_router(shop_rules.router)
 
     @application.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:

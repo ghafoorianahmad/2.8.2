@@ -143,6 +143,11 @@ def _status_code(value: str) -> Optional[str]:
     return None
 
 
+def _optional_status_code(value: str) -> Optional[str]:
+    """v2.17.0: «تحویل به فروش»: empty, or the same rule as the order status."""
+    return None if value == "" else _status_code(value)
+
+
 def _token(value: str) -> Optional[str]:
     return None if value == "" or _TOKEN_RE.match(value) else "does not look like a bot token"
 
@@ -165,6 +170,7 @@ EDITABLE: dict[str, tuple[Callable[[str], Optional[str]], bool]] = {
     "RECEIPT_DEADLINE_MINUTES": (_int_range(5, 1440), False),
     # v2.6.0: KalaOrder.Status of written orders (see SAZEH_DB_REFERENCE §10 / G1-G4).
     "ACCOUNTING_STATUS_CODE": (_status_code, False),
+    "ACCOUNTING_HANDOVER_STATUS_CODE": (_optional_status_code, False),
     "SALES_WINDOWS_ENABLED": (_bool, False),
     "SALES_MORNING_CLOSE": (_hhmm, False),
     "SALES_EVENING_CLOSE": (_hhmm, False),
@@ -194,6 +200,10 @@ EDITABLE: dict[str, tuple[Callable[[str], Optional[str]], bool]] = {
     # TELEGRAM_TOKEN / TELEGRAM_PROXY / PROXY_URL were removed with the old
     # Telegram Bot-API channel (2026-10-11): they are refused as unknown keys.
 }
+
+
+#: v2.17.0: these two have their own tick («کدهای وضعیت») and take effect at once.
+STATUS_CODE_KEYS = frozenset({"ACCOUNTING_STATUS_CODE", "ACCOUNTING_HANDOVER_STATUS_CODE"})
 
 
 def validate_settings(changes: dict[str, str]) -> dict[str, str]:

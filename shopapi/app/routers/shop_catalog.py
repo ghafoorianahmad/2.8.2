@@ -39,6 +39,8 @@ router = APIRouter(prefix="/admin")
 # v2.8.3: «گروه‌های کالا — دیدن» only (the dashboard reads its warnings from /shop/state)
 CAN_VIEW = Depends(require_any(P_GROUPS_VIEW))
 #: «درخواست کالا»: «دیدن» for the lists, «تغییر» for every action
+#: v2.17.0: «رسیدگی شد» before anything was sent to the customer (ShopAdmin asks first).
+MESSAGE_FIRST_DETAIL = "Send the customer a message first"
 CAN_SEE_REQUESTS = Depends(require_permission(P_REQUESTS_VIEW))
 CAN_REQUESTS = Depends(require_permission(P_REQUESTS_EDIT))
 CAN_ARCHIVE = Depends(require_permission(P_ARCHIVE))
@@ -210,6 +212,9 @@ def set_item_request_status(
         # a purchase request ends with the customer's answer to a price or «ناموجود»
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Answer the purchase request: confirm stock or unavailable")
+    if payload.status == "done" and not db.request_has_message(request_id):
+        # v2.17.0: no request is closed silently: the customer always hears from us
+        raise HTTPException(status.HTTP_409_CONFLICT, MESSAGE_FIRST_DETAIL)
     row = db.set_item_request_status(request_id, payload.status, who.actor)
     db.audit(who.actor, "item_request_status", f"request id={request_id} status={payload.status}")
     ownership.log(db, who, ownership.A_REQUEST_STATUS, "request", current,

@@ -110,6 +110,8 @@ class Settings:
     #: exist (reference §9.2) and the real value comes from GUI test G2. Until
     #: it is set, orders are never committed (a dry run still works).
     accounting_status_code: int | None = None
+    #: v2.17.0: the Status of «تحویل به فروش» (optional; only read, to show the stage)
+    accounting_handover_code: int | None = None
     accounting_usercode: int = 1
     accounting_anbarcode: int = 1
     stock_warehouses: tuple[int, ...] = ()
@@ -236,6 +238,7 @@ class Settings:
             accounting_test_databases=_env_list(
                 "ACCOUNTING_TEST_DATABASES", _DEFAULT_TEST_DATABASES),
             accounting_status_code=_env_optional_int("ACCOUNTING_STATUS_CODE"),
+            accounting_handover_code=_env_optional_int("ACCOUNTING_HANDOVER_STATUS_CODE"),
             accounting_usercode=_env_int("ACCOUNTING_USERCODE", 1),
             accounting_anbarcode=_env_int("ACCOUNTING_ANBARCODE", 1),
             stock_warehouses=_env_int_list("STOCK_WAREHOUSES"),

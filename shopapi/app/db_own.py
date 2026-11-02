@@ -332,6 +332,27 @@ CREATE INDEX IF NOT EXISTS idx_ireq_messages_request ON item_request_messages(re
 
 -- v2.8.0: who did what (admin-only «گزارش فعالیت» and the order timeline).
 -- target_type: 'order' | 'request' | 'customer'. Never a token or a full phone.
+-- v2.17.0: a staff member's chat on each platform, linked once by sharing their phone.
+CREATE TABLE IF NOT EXISTS staff_links (
+    staff_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE CASCADE,
+    platform TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    linked_at TEXT NOT NULL,
+    PRIMARY KEY (staff_id, platform),
+    UNIQUE (platform, chat_id)
+);
+
+-- v2.17.0: when each unclaimed order / receipt / request was last announced to staff.
+CREATE TABLE IF NOT EXISTS staff_alert_log (
+    target_type TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    sent_at TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (target_type, target_id, kind, platform)
+);
+
 CREATE TABLE IF NOT EXISTS activity_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
@@ -438,6 +459,10 @@ MIGRATIONS = (
     ("catalog_models", "auto_suggest", "TEXT NOT NULL DEFAULT ''"),
     ("catalog_models", "source", "TEXT NOT NULL DEFAULT ''"),
     ("catalog_models", "kind", "TEXT NOT NULL DEFAULT 'phone'"),
+    # v2.17.0: payment accepted, but no valid status code: not written to «سازه حساب» yet
+    ("orders", "accounting_pending", "INTEGER NOT NULL DEFAULT 0"),
+    # v2.17.0: the mobile a manager entered; staff link their bot chat with it
+    ("staff_users", "mobile", "TEXT NOT NULL DEFAULT ''"),
 )
 
 #: Item request kinds (v2.6.1).
@@ -740,6 +765,14 @@ class OwnDB:
             self._commit()
             return self.get_order(order_id)
 
+    def set_accounting_pending(self, order_id: int, pending: bool) -> dict:
+        """v2.17.0: the order waits for «ثبت در حسابداری»."""
+        with self._lock:
+            self._conn.execute("UPDATE orders SET accounting_pending=?, updated_at=? WHERE id=?",
+                               (int(bool(pending)), now_iso(), order_id))
+            self._commit()
+            return self.get_order(order_id)
+
     def list_payments(self, order_id: int) -> list[dict]:
         with self._lock:
             return self._fetchall("SELECT id, status FROM payments WHERE order_id=?",
@@ -1003,6 +1036,13 @@ class OwnDB:
             self._commit()
             return self.get_item_request_message(cur.lastrowid)
 
+    def request_has_message(self, request_id: int) -> bool:
+        """A message to the customer that did not fail (sent, or waiting for the bot)."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT 1 FROM item_request_messages WHERE request_id=? AND status<>'failed' "
+                "LIMIT 1", (request_id,)).fetchone() is not None
+
     def get_item_request_message(self, message_id: int) -> dict | None:
         with self._lock:
             return self._fetchone(
@@ -1201,7 +1241,8 @@ class OwnDB:
         with self._lock:
             orders = self._conn.execute(
                 "UPDATE orders SET archived_at=? WHERE archived_at IS NULL AND updated_at<=? "
-                f"AND (status IN ({marks}) OR shipped_at IS NOT NULL)",
+                f"AND (status IN ({marks}) OR shipped_at IS NOT NULL) "
+                "AND accounting_pending=0",      # v2.17.0: still to be written
                 (ts, cutoff, *CLOSED_ORDER_STATUSES)).rowcount
             requests = self._conn.execute(
                 "UPDATE item_requests SET archived_at=? WHERE archived_at IS NULL "
@@ -1356,7 +1397,7 @@ class OwnDB:
     def update_staff(self, staff_id: int, **fields) -> dict | None:
         allowed = {"full_name", "role", "active", "password_hash", "must_change_password",
                    "failed_attempts", "locked_until", "last_login_at", "perm_grant",
-                   "perm_revoke"}
+                   "perm_revoke", "mobile"}
         sets = {k: v for k, v in fields.items() if k in allowed}
         with self._lock:
             if sets:
@@ -1367,6 +1408,82 @@ class OwnDB:
                 )
                 self._commit()
             return self.get_staff(staff_id)
+
+    # ---- staff notifications (v2.17.0) ----
+    def get_staff_by_mobile(self, mobile: str) -> dict | None:
+        with self._lock:
+            return self._fetchone("SELECT * FROM staff_users WHERE mobile=? AND mobile<>''",
+                                  (mobile,))
+
+    def set_staff_link(self, staff_id: int, platform: str, chat_id: str) -> None:
+        """One chat per staff member and platform; a chat belongs to one staff member."""
+        with self._lock:
+            self._conn.execute("DELETE FROM staff_links WHERE platform=? AND chat_id=?",
+                               (platform, chat_id))
+            self._conn.execute(
+                "INSERT OR REPLACE INTO staff_links (staff_id, platform, chat_id, linked_at) "
+                "VALUES (?,?,?,?)", (staff_id, platform, chat_id, now_iso()))
+            self._commit()
+
+    def delete_staff_links(self, staff_id: int, platform: str | None = None) -> None:
+        with self._lock:
+            if platform:
+                self._conn.execute("DELETE FROM staff_links WHERE staff_id=? AND platform=?",
+                                   (staff_id, platform))
+            else:
+                self._conn.execute("DELETE FROM staff_links WHERE staff_id=?", (staff_id,))
+            self._commit()
+
+    def staff_links_of(self, staff_id: int) -> list[str]:
+        with self._lock:
+            return [r["platform"] for r in self._fetchall(
+                "SELECT platform FROM staff_links WHERE staff_id=? ORDER BY platform",
+                (staff_id,))]
+
+    def staff_by_link(self, platform: str, chat_id: str) -> dict | None:
+        with self._lock:
+            return self._fetchone(
+                "SELECT s.* FROM staff_users s JOIN staff_links l ON l.staff_id=s.id "
+                "WHERE l.platform=? AND l.chat_id=?", (platform, chat_id))
+
+    def staff_links_for_platform(self, platform: str) -> list[dict]:
+        """Active staff with a linked chat on this platform (with their permission ticks)."""
+        with self._lock:
+            return self._fetchall(
+                "SELECT s.id, s.role, s.perm_grant, s.perm_revoke, l.chat_id FROM staff_users s "
+                "JOIN staff_links l ON l.staff_id=s.id WHERE l.platform=? AND s.active=1",
+                (platform,))
+
+    def unclaimed_orders(self) -> list[dict]:
+        with self._lock:
+            return self._fetchall(
+                "SELECT o.id, o.status, o.total, o.created_at, o.updated_at, "
+                "(SELECT i.name FROM order_items i WHERE i.order_id=o.id ORDER BY i.id LIMIT 1) "
+                "AS first_item FROM orders o WHERE o.owner_id IS NULL AND o.archived_at IS NULL "
+                "AND o.shipped_at IS NULL AND o.status IN ('awaiting_payment','receipt_uploaded') "
+                "ORDER BY o.id")
+
+    def unclaimed_requests(self) -> list[dict]:
+        with self._lock:
+            return self._fetchall(
+                "SELECT id, product_name, text, created_at FROM item_requests "
+                "WHERE owner_id IS NULL AND archived_at IS NULL AND status<>'done' ORDER BY id")
+
+    def staff_alert_log(self, platform: str) -> dict[tuple, dict]:
+        with self._lock:
+            return {(r["target_type"], r["target_id"], r["kind"]): r for r in self._fetchall(
+                "SELECT target_type, target_id, kind, sent_at, count FROM staff_alert_log "
+                "WHERE platform=?", (platform,))}
+
+    def record_staff_alert(self, target_type: str, target_id: int, kind: str,
+                           platform: str, sent_at: str | None = None) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO staff_alert_log (target_type, target_id, kind, platform, sent_at) "
+                "VALUES (?,?,?,?,?) ON CONFLICT (target_type, target_id, kind, platform) "
+                "DO UPDATE SET sent_at=excluded.sent_at, count=count+1",
+                (target_type, target_id, kind, platform, sent_at or now_iso()))
+            self._commit()
 
     def delete_staff(self, staff_id: int) -> None:
         with self._lock:

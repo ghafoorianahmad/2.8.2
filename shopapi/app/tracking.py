@@ -26,6 +26,32 @@ def invoice_state(ordered: float, invoiced: float) -> str | None:
     return STATE_FULL if invoiced >= ordered else STATE_PARTIAL
 
 
+#: v2.17.0: where a written order is in «سازه حساب» (ShopAdmin shows these in Persian).
+STAGE_APPROVED = "approved"       # تأیید
+STAGE_HANDOVER = "handover"       # تحویل به فروش
+STAGE_PARTIAL = "partial"         # بخشی فاکتور شد
+STAGE_INVOICED = "invoiced"       # فاکتور شد
+STAGE_OTHER = "other"             # another Status, set by hand in «سازه حساب»
+STAGE_MISSING = "missing"         # no such row: removed in «سازه حساب»
+
+
+def order_stage(info: dict | None, order_code: int | None, handover_code: int | None) -> str:
+    """The stage of one order from ``reader.order_stages``. An invoice beats any Status."""
+    if info is None:
+        return STAGE_MISSING
+    state = invoice_state(info.get("ordered") or 0, info.get("invoiced") or 0)
+    if state == STATE_FULL:
+        return STAGE_INVOICED
+    if state == STATE_PARTIAL:
+        return STAGE_PARTIAL
+    status = info.get("status")
+    if status is not None and status == handover_code:
+        return STAGE_HANDOVER
+    if status is not None and status == order_code:
+        return STAGE_APPROVED
+    return STAGE_OTHER
+
+
 def sync_invoices(db: OwnDB, reader, accounting_db: str,
                   actor: str = "system:tracking") -> int:
     """Record invoice progress for orders written to ``accounting_db`` (the

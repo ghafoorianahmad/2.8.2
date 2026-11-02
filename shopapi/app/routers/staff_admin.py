@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from .. import deps
+from .. import deps, staff_alerts
 from ..db_own import OwnDB
 from ..schemas import PasswordRequestOut, PasswordResetIn, StaffCreate, StaffOut, StaffUpdate
 from ..security import Identity, require_permission
@@ -70,9 +70,26 @@ def list_permission_sections(_: Identity = CAN_SEE_STAFF) -> list[dict]:
     return sections_out()
 
 
+def _staff_out(db: OwnDB, row: dict) -> StaffOut:
+    return staff_out(row).model_copy(update={
+        "mobile": row.get("mobile") or "", "linked_platforms": db.staff_links_of(int(row["id"]))})
+
+
+def _mobile(db: OwnDB, value: str, staff_id: int | None = None) -> str:
+    """v2.17.0: one staff member per mobile: it decides whose chat gets linked."""
+    try:
+        mobile = staff_alerts.clean_mobile(value)
+    except ValueError:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Not a mobile number") from None
+    other = db.get_staff_by_mobile(mobile) if mobile else None
+    if other is not None and other["id"] != staff_id:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Mobile belongs to another staff member")
+    return mobile
+
+
 @router.get("/staff", response_model=list[StaffOut])
 def list_staff(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_SEE_STAFF) -> list[StaffOut]:
-    return [staff_out(r) for r in db.list_staff()]
+    return [_staff_out(db, r) for r in db.list_staff()]
 
 
 @router.post("/staff", response_model=StaffOut, status_code=status.HTTP_201_CREATED)
@@ -84,12 +101,13 @@ def create_staff(payload: StaffCreate, db: OwnDB = Depends(deps.get_db),
     if db.get_staff_by_username(payload.username) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Username already exists")
     grants, revokes = _ticks(payload.extra_permissions), _ticks(payload.removed_permissions)
+    mobile = _mobile(db, payload.mobile)
     row = db.create_staff(payload.username, payload.full_name.strip(), _role(payload.role),
                           hash_password(payload.password), payload.must_change_password)
-    if grants or revokes:
-        row = db.update_staff(row["id"], perm_grant=grants, perm_revoke=revokes)
+    if grants or revokes or mobile:
+        row = db.update_staff(row["id"], perm_grant=grants, perm_revoke=revokes, mobile=mobile)
     db.audit(who.actor, "staff_create", f"staff id={row['id']} role={row['role']}")
-    return staff_out(row)
+    return _staff_out(db, row)
 
 
 @router.patch("/staff/{staff_id}", response_model=StaffOut)
@@ -112,6 +130,10 @@ def update_staff(staff_id: int, payload: StaffUpdate, db: OwnDB = Depends(deps.g
         fields["perm_grant"] = _ticks(payload.extra_permissions)
     if payload.removed_permissions is not None:
         fields["perm_revoke"] = _ticks(payload.removed_permissions)
+    if payload.mobile is not None:
+        fields["mobile"] = _mobile(db, payload.mobile, staff_id)
+        if fields["mobile"] != (row.get("mobile") or ""):
+            db.delete_staff_links(staff_id)    # another number: link again with it
     ticks_changed = any(k in fields and fields[k] != (row.get(k) or "")
                         for k in ("perm_grant", "perm_revoke"))
     updated = db.update_staff(staff_id, **fields)
@@ -119,7 +141,7 @@ def update_staff(staff_id: int, payload: StaffUpdate, db: OwnDB = Depends(deps.g
         # New rights take effect immediately: existing sessions are dropped.
         db.delete_sessions_for_user(staff_id)
     db.audit(who.actor, "staff_update", f"staff id={staff_id} fields={sorted(fields)}")
-    return staff_out(updated)
+    return _staff_out(db, updated)
 
 
 @router.post("/staff/{staff_id}/password", response_model=StaffOut)

@@ -136,6 +136,11 @@ class OrderOut(BaseModel):
     courier_name: Optional[str] = None
     courier_phone: Optional[str] = None
     has_receipt: bool = False
+    #: v2.17.0: payment accepted but not written to «سازه حساب» (no valid status code)
+    accounting_pending: bool = False
+    #: v2.17.0 (staff): the stage read from KalaOrder / facto (tracking.STAGE_*) and its Status
+    sazeh_stage: Optional[str] = None
+    sazeh_status: Optional[int] = None
     #: The customer is not approved yet: the order is written to accounting
     #: only after approval.
     customer_pending: bool = False
@@ -259,6 +264,9 @@ class StaffOut(BaseModel):
     extra_permissions: list[str] = []
     removed_permissions: list[str] = []
     permissions: list[str] = []
+    #: v2.17.0: the mobile a manager entered, and the platforms linked with it
+    mobile: str = ""
+    linked_platforms: list[str] = []
 
 
 class LoginOut(BaseModel):
@@ -284,16 +292,18 @@ class StaffCreate(BaseModel):
     role: StaffRole = "operator"          # v2.7.0: new users are «کاربر فروش»
     password: str = Field(min_length=1, max_length=128)
     must_change_password: bool = True
-    extra_permissions: list[str] = Field(default_factory=list, max_length=50)
-    removed_permissions: list[str] = Field(default_factory=list, max_length=50)
+    extra_permissions: list[str] = Field(default_factory=list, max_length=80)
+    removed_permissions: list[str] = Field(default_factory=list, max_length=80)
+    mobile: str = Field("", max_length=20)
 
 
 class StaffUpdate(BaseModel):
     full_name: Optional[str] = Field(None, max_length=100)
     role: Optional[StaffRole] = None
     active: Optional[bool] = None
-    extra_permissions: Optional[list[str]] = Field(None, max_length=50)
-    removed_permissions: Optional[list[str]] = Field(None, max_length=50)
+    extra_permissions: Optional[list[str]] = Field(None, max_length=80)
+    removed_permissions: Optional[list[str]] = Field(None, max_length=80)
+    mobile: Optional[str] = Field(None, max_length=20)
 
 
 class PasswordResetIn(BaseModel):
