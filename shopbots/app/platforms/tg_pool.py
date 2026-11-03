@@ -59,7 +59,8 @@ class ProxyPool:
         return response.json() if response.content else None
 
     async def candidates(self) -> list[ProxyLink | None]:
-        links: list[ProxyLink | None] = []
+        """v2.18.0: direct first: a proxy is only for when Telegram cannot be reached without."""
+        links: list[ProxyLink | None] = [None] if self._allow_direct else []
         if self._client is not None:
             try:
                 for item in await self._call("GET", "/worker/proxies"):
@@ -76,8 +77,6 @@ class ProxyPool:
             link = parse_proxy_link(raw)
             if link is not None and (link.host, link.port, link.secret) not in known:
                 links.append(link)
-        if self._allow_direct:
-            links.append(None)
         return links
 
     async def report(self, results: list[dict]) -> None:

@@ -233,6 +233,7 @@ class ChannelRowsDialog(widgets.ResponsiveDialog):
         picture = item.get("kind") == "image"
         headers = (["عکس ردیف"] if picture else []) + ["برند/بخش", "نام", "رنگ", "قیمت", "وضعیت"]
         self.table = QTableWidget(0, len(headers))
+        widgets.round_view_corners(self.table)
         self.table.setHorizontalHeaderLabels(headers)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)

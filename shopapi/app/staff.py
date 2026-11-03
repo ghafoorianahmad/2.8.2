@@ -50,6 +50,7 @@ ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("customers", "مشتریان (تأیید و رد مشتری)", True, True),
     ("assign", "ارجاع کار به همکار", False, True),
     ("archive", "بایگانی", True, False),
+    ("archive_manual", "بایگانی دستی سفارش‌ها و برگرداندن (هر کاربر)", False, True),
     ("products", "محصولات و موجودی", True, False),
     ("groups", "گروه‌های کالا", True, True),
     ("pricelist", "لیست قیمت و نگاشت", True, True),
@@ -107,6 +108,7 @@ P_CUSTOMERS_VIEW = "customers.view"
 P_CUSTOMERS_DECIDE = "customers.edit"
 P_ORDERS_ASSIGN = "assign.edit"          # hand an order / request to a colleague
 P_ARCHIVE = "archive.view"
+P_ARCHIVE_MANUAL = "archive_manual.edit"  # v2.18.0: archive / restore at once, any user's order
 P_PRODUCTS = "products.view"
 P_GROUPS_VIEW = "groups.view"
 P_GROUPS_EDIT = "groups.edit"

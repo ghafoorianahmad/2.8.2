@@ -27,12 +27,12 @@ def test_every_look_has_glass_buttons(admin_qapp, palette, mode, effects, monkey
     try:
         sheet = theme.stylesheet()
         rule = sheet.split("QPushButton {", 1)[1].split("}", 1)[0]
-        # v2.15.0: the site's «مشخصات»: a soft neutral edge (never dark, never coloured)
+        # v2.18.0: a soft tint of the look, never dark
         assert theme.soft_border() in rule and theme.BUTTON_BORDER not in rule
-        assert theme.ACCENT not in rule and theme.PRIMARY not in rule
         assert "QPushButton:hover" in sheet and "QPushButton:pressed" in sheet
         pressed = sheet.split("QPushButton:pressed {", 1)[1].split("}", 1)[0]
-        assert "border-top: 2px" in pressed and "border-bottom: 1px" in pressed
+        # v2.18.0: no dark bottom line in any state; the text moves 1px down instead
+        assert "padding-top: 9px" in pressed and "2px solid" not in rule
         primary = sheet.split("QPushButton#Primary {", 1)[1].split("}", 1)[0]
         background = primary.split("background:", 1)[1].split(";", 1)[0]
         assert "rgba(" not in background                    # prominent stays coloured

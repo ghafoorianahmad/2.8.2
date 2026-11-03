@@ -124,8 +124,6 @@ def test_requests_table_type_column_and_filter(ui_context, admin_qapp, fake_api)
     metrics = page.table.fontMetrics()
     text = page.table.item(0, COL_TIME).text()
     assert page.table.columnWidth(COL_TIME) >= metrics.horizontalAdvance(text) + 20
-    # the product header is the stretching last column
-    assert page.table.horizontalHeader().stretchLastSection()
     assert page.table._key == "item_requests_v261"
 
 

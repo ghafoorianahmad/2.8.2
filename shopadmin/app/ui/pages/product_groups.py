@@ -76,6 +76,7 @@ class ProductGroupsPage(BasePage):
         panel.body.addWidget(self.warning)
 
         self.tree = QTreeWidget()
+        widgets.round_view_corners(self.tree)
         self.tree.setColumnCount(len(HEADERS))
         self.tree.setHeaderLabels(list(HEADERS))
         self.tree.setLayoutDirection(Qt.LayoutDirection.RightToLeft)

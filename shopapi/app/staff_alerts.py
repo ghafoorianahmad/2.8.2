@@ -48,35 +48,64 @@ KIND_REQUEST = "request"
 
 @dataclass(frozen=True)
 class WorkHours:
+    """v2.18.0: a day may have several shifts (closed at midday). ``start`` / ``end`` stay
+    as the first opening and the last closing; a saved value without shifts is one shift."""
     start: str = DEFAULT_START
     end: str = DEFAULT_END
     days: tuple[int, ...] = DEFAULT_DAYS
+    shifts: tuple[tuple[str, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        shifts = tuple((str(a), str(b)) for a, b in self.shifts) or ((self.start, self.end),)
+        shifts = tuple(sorted(shifts, key=lambda s: parse_hhmm(s[0], time(0))))
+        object.__setattr__(self, "shifts", shifts)
+        object.__setattr__(self, "start", shifts[0][0])
+        object.__setattr__(self, "end", shifts[-1][1])
+
+    def _times(self) -> list[tuple[time, time]]:
+        return [(parse_hhmm(a, time(9, 0)), parse_hhmm(b, time(21, 0))) for a, b in self.shifts]
 
     def start_time(self) -> time:
-        return parse_hhmm(self.start, time(9, 0))
+        return self._times()[0][0]
 
     def end_time(self) -> time:
-        return parse_hhmm(self.end, time(21, 0))
+        return self._times()[-1][1]
 
     def is_open(self, local: datetime) -> bool:
         if local.weekday() not in self.days:
             return False
-        return self.start_time() <= local.time().replace(tzinfo=None) < self.end_time()
+        now = local.time().replace(tzinfo=None)
+        return any(begin <= now < end for begin, end in self._times())
 
     def period_start(self, day: date) -> datetime:
         return datetime.combine(day, self.start_time(), tzinfo=TEHRAN)
+
+    def shift_start(self, local: datetime) -> datetime | None:
+        """When the shift ``local`` is in began (None outside the working hours)."""
+        if local.weekday() not in self.days:
+            return None
+        now = local.time().replace(tzinfo=None)
+        for begin, end in self._times():
+            if begin <= now < end:
+                return datetime.combine(local.date(), begin, tzinfo=TEHRAN)
+        return None
 
     def next_start(self, local: datetime, *, after_today: bool = False) -> datetime | None:
         """The next opening after ``local`` (or after the whole of its day)."""
         first = 1 if after_today else 0
         for offset in range(first, 8):
             day = local.date() + timedelta(days=offset)
-            if day.weekday() in self.days and self.period_start(day) > local:
-                return self.period_start(day)
+            if day.weekday() not in self.days:
+                continue
+            for begin, _end in self._times():
+                moment = datetime.combine(day, begin, tzinfo=TEHRAN)
+                if moment > local:
+                    return moment
         return None
 
     def as_dict(self) -> dict:
-        return {"start": self.start, "end": self.end, "days": list(self.days)}
+        return {"start": self.start, "end": self.end, "days": list(self.days),
+                "shifts": [{"start": a, "end": b} for a, b in self.shifts]}
 
 
 def load_hours(db: OwnDB) -> WorkHours:
@@ -86,27 +115,36 @@ def load_hours(db: OwnDB) -> WorkHours:
     try:
         value = json.loads(raw)
         return WorkHours(str(value["start"]), str(value["end"]),
-                         tuple(sorted({int(d) for d in value["days"]})))
+                         tuple(sorted({int(d) for d in value["days"]})),
+                         tuple((str(s["start"]), str(s["end"]))
+                               for s in value.get("shifts") or ()))
     except (ValueError, KeyError, TypeError):
         return WorkHours()
 
 
-def hours_problem(start: str, end: str, days) -> str | None:
-    for value in (start, end):
-        try:
-            hours, minutes = str(value).split(":")
-            time(int(hours), int(minutes))
-        except (ValueError, TypeError):
-            return "Time must look like 09:00"
-    if parse_hhmm(start, time(0)) >= parse_hhmm(end, time(0)):
-        return "The end must be after the start"
+def hours_problem(start: str, end: str, days, shifts=()) -> str | None:
+    pairs = [(str(a), str(b)) for a, b in shifts] or [(start, end)]
+    for pair in pairs:
+        for value in pair:
+            try:
+                hours, minutes = str(value).split(":")
+                time(int(hours), int(minutes))
+            except (ValueError, TypeError):
+                return "Time must look like 09:00"
+        if parse_hhmm(pair[0], time(0)) >= parse_hhmm(pair[1], time(0)):
+            return "The end must be after the start"
+    ordered = sorted(pairs, key=lambda s: parse_hhmm(s[0], time(0)))
+    for before, after in zip(ordered, ordered[1:]):
+        if parse_hhmm(after[0], time(0)) < parse_hhmm(before[1], time(0)):
+            return "Shifts must not overlap"
     if any(int(d) not in range(7) for d in days):
         return "Unknown day"
     return None
 
 
-def save_hours(db: OwnDB, start: str, end: str, days, actor: str) -> WorkHours:
-    hours = WorkHours(start, end, tuple(sorted({int(d) for d in days})))
+def save_hours(db: OwnDB, start: str, end: str, days, actor: str, shifts=()) -> WorkHours:
+    hours = WorkHours(start, end, tuple(sorted({int(d) for d in days})),
+                      tuple((str(a), str(b)) for a, b in shifts))
     db.set_state(HOURS_KEY, json.dumps(hours.as_dict()), actor)
     return hours
 
@@ -229,13 +267,17 @@ def due(db: OwnDB, platform: str, now: datetime | None = None) -> list[dict]:
     hours = load_hours(db)
     local = now.astimezone(TEHRAN)
     summary_key = f"{SUMMARY_KEY}:{platform}"
-    today = local.date().isoformat()
     log = db.staff_alert_log(platform)
     stamp = now.isoformat(timespec="seconds")
-    if hours.is_open(local) and db.get_state(summary_key, "") != today:
+    opening = hours.shift_start(local)
+    # v2.18.0: once per shift, so what came in during the midday break gets its message too
+    # (the first shift's key is the plain date, as 2.17 saved it: no second summary on upgrade)
+    today = local.date().isoformat()
+    if opening is not None and opening != hours.period_start(local.date()):
+        today = f"{today}T{opening.strftime('%H:%M')}"
+    if opening is not None and db.get_state(summary_key, "") != today:
         # opening: what came in while the shop was closed, in one message
         db.set_state(summary_key, today, "system:staff_alerts")
-        opening = hours.period_start(local.date())
         waiting = [it for it in items if _older(it["since"], opening.astimezone(now.tzinfo))]
         if waiting:
             counts = {kind: sum(1 for it in waiting if it["kind"] == kind)

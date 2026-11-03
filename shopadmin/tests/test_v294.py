@@ -443,7 +443,7 @@ def test_close_button_stands_out_and_a_faint_one_is_caught(admin_qapp, monkeypat
         edge = theme.soft_border()          # v2.15.0: the site's soft neutral edge
         faint = theme.stylesheet().replace("border: 1px solid " + edge,
                                            "border: 1px solid transparent")
-        faint = faint.replace("border-bottom: 2px solid " + theme.soft_shadow_edge(),
+        faint = faint.replace("border-bottom: 1px solid " + theme.soft_border(),
                               "border-bottom: 2px solid transparent")
         faint = faint.replace(theme.glass_fills(False)["fill"], "transparent")
         dialog = _dialog_with_close(faint)

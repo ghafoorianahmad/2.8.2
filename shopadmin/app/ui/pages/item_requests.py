@@ -30,8 +30,10 @@ from .. import theme, widgets
 from ..async_utils import run_async
 from ..base_page import BasePage
 from ..rtl import RIGHT
+from .customers import person_text
 
-HEADERS = ("شماره", "زمان ثبت", "نوع", "مشتری", "کد شخص", "وضعیت", "مسئول", "کالای درخواستی")
+HEADERS = ("شماره", "زمان ثبت", "نوع", "مشتری", "شخص در «سازه حساب»", "وضعیت", "مسئول",
+           "کالای درخواستی")
 COL_TIME = 1
 COL_PRODUCT = 7
 STATUS_FA = {"new": "جدید", "seen": "دیده شد", "done": "رسیدگی شد"}
@@ -219,8 +221,7 @@ class ItemRequestsPage(BasePage):
                                     color=theme.PRIMARY if kind in ("inquiry", "purchase")
                                     else None, bold=kind == "purchase")
                 self.table.set_cell(row, 3, str(item.get("customer_name") or "—"), bold=True)
-                code = item.get("person_code")
-                self.table.set_cell(row, 4, to_persian_digits(code) if code is not None else "—")
+                self.table.set_cell(row, 4, person_text(item))
                 self.table.set_cell(row, 5, STATUS_FA.get(status, status),
                                     color=theme.WARNING_TEXT if status == "new" else None,
                                     bold=status == "new")
@@ -368,7 +369,7 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         rows = widgets.KeyValueList()
         rows.add("زمان ثبت", full_datetime(item.get("created_at")), selectable=True)
         rows.add("مشتری", str(item.get("customer_name") or "—"), selectable=True)
-        rows.add("کد شخص", to_persian_digits(code) if code is not None else "هنوز وصل نشده",
+        rows.add("شخص در «سازه حساب»", person_text(item) if code is not None else "هنوز وصل نشده",
                  selectable=True)
         phone_holder = QWidget()
         phone_row = QHBoxLayout(phone_holder)
@@ -431,6 +432,7 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
 
         msg_panel = widgets.Panel("پیام به مشتری (با همان رباتی که درخواست داده)")
         self.history = QTableWidget(0, 4)
+        widgets.round_view_corners(self.history)
         self.history.setHorizontalHeaderLabels(("زمان", "فرستنده", "وضعیت", "متن"))
         self.history.verticalHeader().setVisible(False)
         self.history.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)

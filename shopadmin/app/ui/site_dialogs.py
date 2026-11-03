@@ -142,6 +142,7 @@ class PhoneDialog(_FormDialog):
 
         self.root.addWidget(widgets.label("رنگ‌ها (هر رنگ عکس خودش را دارد):", bold=True))
         self.colors = QTableWidget(0, 2)
+        widgets.round_view_corners(self.colors)
         self.colors.setHorizontalHeaderLabels(["نام رنگ", "عکس"])
         self.colors.horizontalHeader().setStretchLastSection(True)
         self.colors.verticalHeader().setVisible(False)
@@ -489,6 +490,7 @@ class WordsDialog(widgets.ResponsiveDialog):
         self.search.textChanged.connect(lambda _t: self._fill())
         root.addWidget(self.search)
         self.table = QTableWidget(0, 2)
+        widgets.round_view_corners(self.table)
         self.table.setHorizontalHeaderLabels(["انگلیسی", "فارسی"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)

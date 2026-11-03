@@ -39,6 +39,7 @@ PASSWORDS_VIEW = "passwords.view"
 SERVER_VIEW = "server.view"              # v2.8.2: «تنظیمات سرور فروشگاه — دیدن»
 ORDERS_ASSIGN = "orders.assign"          # v2.8.0: hand any order / request to a colleague
 ARCHIVE_VIEW = "archive.view"            # v2.8.0: «بایگانی» (own rows; the manager: all)
+ARCHIVE_MANUAL = "archive_manual.edit"   # v2.18.0: archive / restore at once, any user's order
 ACTIVITY_VIEW = "activity.view"          # v2.8.0: «گزارش فعالیت» (manager only)
 SHOP_STATE = "shop.state"                # open / close phone sales
 ORDERS_WRITE_ACCOUNTING = "orders.write_accounting"   # v2.17.0: «ثبت در حسابداری»
@@ -93,6 +94,7 @@ ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("customers", "مشتریان (تأیید و رد مشتری)", True, True),
     ("assign", "ارجاع کار به همکار", False, True),
     ("archive", "بایگانی", True, False),
+    ("archive_manual", "بایگانی دستی سفارش‌ها و برگرداندن (هر کاربر)", False, True),
     ("products", "محصولات و موجودی", True, False),
     ("groups", "گروه‌های کالا", True, True),
     ("pricelist", "لیست قیمت و نگاشت", True, True),
@@ -154,6 +156,7 @@ SERVER_TO_CLIENT: dict[str, frozenset[str]] = {
     "customers.edit": frozenset({CUSTOMERS_APPROVE, CUSTOMERS_REJECT}),
     "assign.edit": frozenset({ORDERS_ASSIGN}),
     "archive.view": frozenset({ARCHIVE_VIEW}),
+    "archive_manual.edit": frozenset({ARCHIVE_MANUAL}),
     "products.view": frozenset({PRODUCTS_VIEW}),
     "groups.view": frozenset({GROUPS_VIEW}),
     "groups.edit": frozenset({GROUPS_MANAGE}),

@@ -117,6 +117,16 @@ def contact_keyboard(label: str) -> dict:
     }
 
 
+def web_app_keyboard(rows: Iterable[Sequence[tuple[str, str]]]) -> dict:
+    """v2.18.0: a reply keyboard of mini app buttons, each (label, https url). Only a page opened
+    from a reply keyboard may send data back to the bot (web_app_data)."""
+    return {
+        "keyboard": [[{"text": label, "web_app": {"url": url}} for label, url in row]
+                     for row in rows],
+        "resize_keyboard": True,
+    }
+
+
 def remove_keyboard() -> dict:
     return {"remove_keyboard": True}
 

@@ -69,12 +69,13 @@ def test_split_name_drops_symbols():
 
 def test_name_problem_rules():
     assert name_problem("علی", "رضایی") == ""
-    assert name_problem("", "رضایی") == ""
+    assert name_problem("", "رضایی") != ""              # v2.18.0: both are required
     assert name_problem("علی", "") != ""
     assert name_problem("علی", "رضایی😀") != ""
     assert name_problem("علی2", "رضایی") != ""
-    assert name_problem("علی", "x" * 51) != ""
-    assert name_problem("سید‌علی", "رضایی-نژاد") == ""
+    assert name_problem("Ali", "رضایی") != ""           # Persian letters only
+    assert name_problem("علی", "ی" * 51) != ""
+    assert name_problem("سید‌علی", "رضایی نژاد") == ""
 
 
 def test_approve_dialog_create_mode(ui_context, fake_api, admin_qapp):
@@ -88,9 +89,14 @@ def test_approve_dialog_create_mode(ui_context, fake_api, admin_qapp):
     dialog._submit()
     assert dialog.error_label.isVisibleTo(dialog) and dialog.result() == 0
     dialog.last_name_input.setText("  محمدی  ")
+    dialog._submit()                                     # v2.18.0: still no national code
+    assert dialog.result() == 0 and "کد ملی" in dialog.error_label.text()
+    dialog.fields.inputs["national_code"].setText("۰۰۸۴۵۷۵۹۴۸")
+    dialog.fields.inputs["address"].setText("مشهد، خیابان نمونه، پلاک ۱")
     dialog._submit()
     assert dialog.person_code is None
-    assert (dialog.first_name, dialog.last_name) == ("زهرا", "محمدی")
+    assert dialog.values == {"first_name": "زهرا", "last_name": "محمدی",
+                             "national_code": "0084575948", "address": "مشهد، خیابان نمونه، پلاک ۱"}
     dialog.close()
 
 

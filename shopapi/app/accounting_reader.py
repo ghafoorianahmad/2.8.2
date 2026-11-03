@@ -12,6 +12,7 @@ without the grant the name is simply missing.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 import pyodbc
@@ -334,6 +335,42 @@ class AccountingReader:
         return {"first_name": text(row["fname"]), "last_name": text(row["Name"]),
                 "national_code": text(row["Codemelli"]),
                 "address": text(row["Addres2"]) or text(row["Addres"])}
+
+    def persons_for_matching(self) -> list[dict]:
+        """v2.18.0: code, name and national code of every person, for the comparison in
+        Python (the software mixes ی/ي and ک/ك, so SQL's = cannot do it). Never logged."""
+        db = self._db()
+        conn = self.connection()
+        try:
+            rows = self._rows(conn.execute(
+                f"SELECT Code, fname, Name, Codemelli FROM {db}.dbo.name_mo"))
+        finally:
+            conn.close()
+        return [{"code": int(r["Code"]), "first_name": str(r["fname"] or "").strip(),
+                 "last_name": str(r["Name"] or "").strip(),
+                 "national_code": str(r["Codemelli"] or "").strip()} for r in rows]
+
+    def person_phone_tails(self, codes) -> dict[int, str]:
+        """{person code: the last two digits of a mobile}: enough to tell two people with
+        the same name apart, without showing anyone's number. Types 1 and 3, as recipe R4."""
+        codes = sorted({int(c) for c in codes if c is not None})[:50]
+        if not codes:
+            return {}
+        db = self._db()
+        conn = self.connection()
+        try:
+            rows = self._rows(conn.execute(
+                f"SELECT IDMaster, Comment FROM {db}.dbo.DetailTBL "
+                f"WHERE Va = 0 AND TabaghehBandiID IN (1, 3) "
+                f"AND IDMaster IN ({self._in_placeholders(codes)})", codes))
+        finally:
+            conn.close()
+        out: dict[int, str] = {}
+        for row in rows:
+            digits = re.sub(r"\D", "", normalize_fa(row["Comment"]))
+            if len(digits) >= 10:
+                out.setdefault(int(row["IDMaster"]), digits[-2:])
+        return out
 
     def find_person_by_mobile(self, mobile: str) -> Optional[dict]:
         """The single person whose mobile matches (recipe R4), as ``{"code": …}``.

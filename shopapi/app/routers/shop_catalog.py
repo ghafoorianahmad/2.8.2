@@ -117,12 +117,22 @@ def request_out(db: OwnDB, who: Identity, row: dict) -> dict:
             **ownership.owner_fields(db, who, row, "request")}
 
 
+def with_person_names(reader: AccountingReader, rows: list[dict]) -> list[dict]:
+    """v2.18.0: the linked person's name in «سازه حساب» (a list without it still works)."""
+    try:
+        names = reader.person_names(r.get("person_code") for r in rows)
+    except Exception:  # noqa: BLE001 - permission denied, accounting down
+        return rows
+    return [{**r, "person_name": names.get(r.get("person_code"))} for r in rows]
+
+
 @router.get("/item-requests", response_model=list[ItemRequestOut])
 def list_item_requests(
     status_filter: Optional[str] = Query(None, alias="status", pattern="^(new|seen|done)$"),
     kind: Optional[str] = Query(None, pattern=KIND_PATTERN),
     mine: bool = Query(False),
     db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
     who: Identity = CAN_SEE_REQUESTS,
 ) -> list[dict]:
     """v2.8.0: a sales user sees free requests and their own (``mine``: own only)."""
@@ -130,7 +140,7 @@ def list_item_requests(
                                   viewer_id=ownership.viewer_id(who), mine_only=mine)
     if mine and ownership.is_manager(who) and who.user_id is not None:
         rows = [r for r in rows if r.get("owner_id") == who.user_id]
-    return [request_out(db, who, r) for r in rows]
+    return with_person_names(reader, [request_out(db, who, r) for r in rows])
 
 
 @router.get("/archive/item-requests", response_model=list[ItemRequestOut])

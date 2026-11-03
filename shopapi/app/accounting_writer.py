@@ -160,6 +160,16 @@ PERSON_FILL_COLUMNS = {"first_name": "fname", "last_name": "Name",
                        "national_code": "Codemelli", "address": "Addres2"}
 
 
+@dataclass
+class PersonPhone:
+    """v2.18.0: one more number for a person. ``done``: nothing is left to do for it."""
+    person_code: int
+    done: bool = False
+    added: bool = False
+    #: the number belongs to this other person: nothing was written
+    other_person: int | None = None
+
+
 class AccountingWriter:
     def __init__(self, settings: Settings, connection_factory=None):
         self.settings = settings
@@ -380,6 +390,62 @@ class AccountingWriter:
         finally:
             conn.close()
         result.committed = True
+        return result
+
+    def add_person_phone(self, person_code: int, mobile: str,
+                         dry_run: bool | None = None) -> PersonPhone:
+        """v2.18.0, one person with several numbers: the customer's number joins the person's
+        phones (DetailTBL type 3, not the main one; the display text ``telephons`` follows).
+        Nothing is written if the person has it already or it is another person's. Only an
+        INSERT and that one column: sql/grant_shop_app.sql already allows both."""
+        key = mobile_key(mobile)
+        if key is None:
+            raise ValueError("not a mobile number")
+        dry_run = self._resolve_dry_run(dry_run)
+        result = PersonPhone(person_code=int(person_code))
+        db = self._db()
+        phone = "0" + key
+        conn = self.connection()
+        try:
+            conn.autocommit = False
+            conn.execute("SET LOCK_TIMEOUT 5000")
+            try:
+                take_applock(conn, PERSON_LOCK)
+                owners = [int(r[0]) for r in conn.execute(person_codes_by_mobile_sql(db),
+                                                          key).fetchall()]
+                if int(person_code) in owners:
+                    conn.rollback()
+                    result.done = True
+                    return result
+                if owners:
+                    conn.rollback()
+                    result.done = True
+                    result.other_person = owners[0]
+                    return result
+                if dry_run:
+                    conn.rollback()
+                    return result
+                sql, params = insert_statement(
+                    f"{db}.dbo.DetailTBL",
+                    ("IDMaster", "TabaghehBandiID", "Comment", "Va", "darfn"),
+                    (int(person_code), 3, phone, 0, 0),
+                )
+                conn.execute(sql, *params)
+                size = self._person_column_sizes(conn, ["telephons"]).get("telephons")
+                if size is not None:
+                    limit = size if size > 0 else 4000
+                    conn.execute(
+                        f"UPDATE {db}.dbo.name_mo SET telephons = LEFT(CASE WHEN "
+                        f"LTRIM(RTRIM(ISNULL(telephons, ''))) = '' THEN ? "
+                        f"ELSE RTRIM(telephons) + ', ' + ? END, ?) WHERE Code = ?",
+                        phone, phone, limit, int(person_code))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        finally:
+            conn.close()
+        result.done = result.added = True
         return result
 
     def _person_column_sizes(self, conn, columns: list[str]) -> dict[str, int]:

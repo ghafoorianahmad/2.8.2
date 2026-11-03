@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...api_client import ApiError
-from ...logging_setup import mask_phone
+from ... import validators
 from ...permissions import CUSTOMERS_APPROVE, CUSTOMERS_REJECT
 from ...persian import format_phone, format_shamsi, normalize_fa, to_english_digits, to_persian_digits
 from ...statuses import (
@@ -37,7 +37,8 @@ from ..base_page import BasePage
 from ..context import AppContext
 from ..rtl import RIGHT, mark_ltr
 
-HEADERS = ("نام مشتری", "پلتفرم", "شماره موبایل", "کد شخص", "وضعیت", "تاریخ ثبت", "عملیات")
+HEADERS = ("نام مشتری", "پلتفرم", "شماره موبایل", "شخص در «سازه حساب»", "وضعیت", "تاریخ ثبت",
+           "عملیات")
 
 TABS = (
     ("all", "همهٔ مشتریان", None),
@@ -67,7 +68,7 @@ class CustomersPage(BasePage):
             self._tab_buttons[key] = tab
             bar.addWidget(tab)
 
-        self.search = widgets.SearchBox("جستجو بر اساس نام یا شماره موبایل…")
+        self.search = widgets.SearchBox("نام یا شماره موبایل…")
         self.search.textChanged.connect(self._on_search)
         bar.addWidget(self.search)
         self.body.addWidget(bar_holder)
@@ -144,11 +145,9 @@ class CustomersPage(BasePage):
                 self.table.insertRow(row)
                 self.table.set_cell(row, 0, str(customer.get("name") or "—"), bold=True)
                 self.table.set_cell(row, 1, platform_fa(customer.get("platform")))
-                self.table.set_cell(row, 2, format_phone(mask_phone(customer.get("phone"))))
-                code = customer.get("person_code")
-                self.table.set_cell(
-                    row, 3, to_persian_digits(code) if code else "—"
-                )
+                # v2.18.0: the whole number: staff call it, and search by it
+                self.table.set_cell(row, 2, format_phone(customer.get("phone")))
+                self.table.set_cell(row, 3, person_text(customer))
                 self.table.set_widget(row, 4, widgets.pill_cell(
                     widgets.StatusPill(
                         customer_status_fa(customer.get("status")), customer.get("status")
@@ -188,7 +187,11 @@ class CustomersPage(BasePage):
         if not is_pending:
             # v2.6.0: a decided customer has no Approve/Reject buttons at all
             # (they used to stay visible and looked clickable).
-            layout.addWidget(widgets.label("تصمیم گرفته شده", name="Muted"))
+            if self.context.can(CUSTOMERS_APPROVE):
+                layout.addWidget(widgets.button("اطلاعات", icon_name="edit",
+                                                on_click=lambda c=customer: self._edit_details(c)))
+            else:
+                layout.addWidget(widgets.label("تصمیم گرفته شده", name="Muted"))
             layout.addStretch(1)
             return holder
         can_approve = self.context.can(CUSTOMERS_APPROVE)
@@ -216,20 +219,35 @@ class CustomersPage(BasePage):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         person_code = dialog.person_code
-        first_name, last_name = dialog.first_name, dialog.last_name
-        if person_code is None and not last_name:
+        values = dialog.values
+        if person_code is None and not values:
             return
 
         busy = "در حال تأیید مشتری…" if person_code else "در حال ساخت شخص در حسابداری…"
         self.table.set_busy(True, busy)
         run_async(
-            lambda: self.context.api.approve_customer(
-                int(customer["id"]), person_code, first_name=first_name, last_name=last_name
-            ),
+            lambda: self.context.api.approve_customer(int(customer["id"]), person_code, **values),
             on_success=lambda result: self._approved(customer, result),
             on_error=self._approve_failed,
             on_done=lambda: self.table.set_busy(False),
         )
+
+    def _edit_details(self, customer: dict) -> None:
+        """v2.18.0: what the customer told staff; an order needs all four to be written."""
+        dialog = CustomerDetailsDialog(customer, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        values = dialog.values
+        run_async(
+            lambda: self.context.api.put_customer_details(int(customer["id"]), **values),
+            on_success=lambda _r: self._details_saved(customer),
+            on_error=self._approve_failed,
+        )
+
+    def _details_saved(self, customer: dict) -> None:
+        self.context.audit("customer_details", f"customer id={customer.get('id')}")
+        self.notify_success("اطلاعات مشتری ثبت شد")
+        self.load()
 
     def _approved(self, customer: dict, _result: object) -> None:
         name = str(customer.get("name") or "")
@@ -272,20 +290,19 @@ class CustomersPage(BasePage):
             self.context.mark_offline()
 
 
-def details_lines(customer: dict) -> str:
-    """v2.17.0: what the customer told the bot; these go into the new person."""
-    parts = []
-    if customer.get("national_code"):
-        parts.append(f"کد ملی: {to_persian_digits(customer['national_code'])}")
-    if customer.get("address"):
-        parts.append(f"آدرس: {customer['address']}")
-    return "\n".join(parts)
+def person_text(customer: dict) -> str:
+    """v2.18.0: the linked person as «سازه حساب» has it: name and code."""
+    code = customer.get("person_code")
+    if not code:
+        return "—"
+    name = str(customer.get("person_name") or "").strip()
+    code_fa = to_persian_digits(code)
+    return f"{name} (کد {code_fa})" if name else f"کد {code_fa}"
 
 
-#: Letters (any script), spaces, ZWNJ, hyphen, dot and apostrophe: Bale profile
-#: names may hold emoji or symbols that must not reach the accounting software.
-_NAME_RE = re.compile(r"^[^\W\d_]+(?:[ \u200c\-.'][^\W\d_]+)*$")
-MAX_NAME_PART = 50
+#: v2.18.0: names are Persian letters only (validators.py = the form's own rules): Bale
+#: profile names may hold emoji or Latin that must not reach the accounting software.
+MAX_NAME_PART = validators.MAX_NAME
 
 
 def split_name(full_name: str) -> tuple[str, str]:
@@ -302,19 +319,64 @@ def split_name(full_name: str) -> tuple[str, str]:
 
 def name_problem(first: str, last: str) -> str:
     """'' when the name may be written to the accounting software."""
-    if not last:
-        return "نام خانوادگی را وارد کنید."
-    for part in (first, last):
-        if part and (len(part) > MAX_NAME_PART or not _NAME_RE.match(part)):
-            return "نام فقط می‌تواند حروف، فاصله و نیم‌فاصله داشته باشد (بدون شکلک، عدد یا نماد)."
+    for check in (validators.validate_first_name(first), validators.validate_last_name(last)):
+        if not check.valid:
+            return check.error
     return ""
+
+
+class CustomerFields(QWidget):
+    """The four details, the same in the approval dialog and in «اطلاعات»."""
+
+    FIELDS = (("first_name", "نام"), ("last_name", "نام خانوادگی"),
+              ("national_code", "کد ملی (یا شناسهٔ ۱۱ رقمی اتباع)"), ("address", "نشانی"))
+
+    def __init__(self, customer: dict, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        form = QFormLayout(self)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
+        first, last = split_name(str(customer.get("name") or ""))
+        # what the customer typed in the bot beats the guess from the profile
+        known = {"first_name": str(customer.get("first_name") or first),
+                 "last_name": str(customer.get("last_name") or last),
+                 "national_code": str(customer.get("national_code") or ""),
+                 "address": str(customer.get("address") or "")}
+        self.inputs: dict[str, QLineEdit] = {}
+        for field, caption in self.FIELDS:
+            box = QLineEdit(known[field])
+            if field == "national_code":
+                box.setText(to_persian_digits(known[field]))
+            self.inputs[field] = box
+            form.addRow(widgets.label(caption), box)
+
+    def problem(self, *, required: bool) -> tuple[str, QWidget | None]:
+        """The first broken rule (the form's own words) and its box."""
+        for field, box in self.inputs.items():
+            text = box.text()
+            if not required and not text.strip():
+                continue
+            check = validators.VALIDATORS[field](text)
+            if not check.valid:
+                return check.error, box
+        return "", None
+
+    def values(self) -> dict:
+        """{field: clean value} of the filled ones."""
+        out = {}
+        for field, box in self.inputs.items():
+            check = validators.VALIDATORS[field](box.text())
+            if box.text().strip() and check.valid:
+                out[field] = check.normalized
+        return out
 
 
 def _matches(customer: dict, needle: str) -> bool:
     if not needle:
         return True
     haystack = " ".join(
-        normalize_fa(customer.get(field, "")) for field in ("name", "phone", "chat_id")
+        normalize_fa(customer.get(field) or "")
+        for field in ("name", "phone", "chat_id", "person_name", "first_name", "last_name")
     )
     return needle in haystack
 
@@ -331,8 +393,7 @@ class ApproveCustomerDialog(widgets.ResponsiveDialog):
         self.context = context
         self.customer = customer
         self.person_code: Optional[int] = None
-        self.first_name = ""
-        self.last_name = ""
+        self.values: dict = {}
 
         self.setWindowTitle("تأیید مشتری")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -358,15 +419,33 @@ class ApproveCustomerDialog(widgets.ResponsiveDialog):
         form.addRow(widgets.label("پلتفرم"), widgets.label(platform_fa(customer.get("platform"))))
         form.addRow(
             widgets.label("شماره موبایل"),
-            widgets.label(format_phone(mask_phone(customer.get("phone")))),
+            widgets.label(format_phone(customer.get("phone"))),
         )
         form.addRow(widgets.label("تاریخ ثبت"), widgets.label(format_shamsi(customer.get("created_at"))))
         form.addRow(widgets.label("وضعیت"), widgets.label(customer_status_fa(customer.get("status"))))
         info.body.addLayout(form)
-        details = details_lines(customer)
-        if details:
-            info.body.addWidget(widgets.label(details, name="Muted", wrap=True))
         root.addWidget(info)
+
+        # v2.18.0: is this somebody «سازه حساب» already knows?
+        # (the answer comes from the server, so its panel is built then and put in this slot)
+        self.candidates_panel: Optional[widgets.Panel] = None
+        self.candidates_slot = QVBoxLayout()
+        root.addLayout(self.candidates_slot)
+
+        # New person: the Bale profile name is only a suggestion; staff fix it
+        # (it may be a nickname or emoji) before it is written to accounting.
+        self.create_panel = widgets.Panel("اطلاعات مشتری برای «سازه حساب»")
+        self.fields = CustomerFields(customer)
+        self.first_name_input = self.fields.inputs["first_name"]
+        self.last_name_input = self.fields.inputs["last_name"]
+        self.create_panel.body.addWidget(self.fields)
+        self.create_panel.body.addWidget(widgets.label(
+            "برای ساخت شخص تازه هر چهار مورد لازم است. اگر به شخص موجود وصل کنید، فقط جاهای خالی "
+            "همان شخص پر می‌شود و شمارهٔ این مشتری به شماره‌های او اضافه می‌شود. "
+            "برای جدا کردن دو نفر هم‌نام چیزی به نام اضافه نکنید.",
+            name="Muted", wrap=True,
+        ))
+        root.addWidget(self.create_panel)
 
         mode_row = QHBoxLayout()
         self.mode_link = QRadioButton("اتصال به شخص موجود")
@@ -409,28 +488,6 @@ class ApproveCustomerDialog(widgets.ResponsiveDialog):
         code_panel.body.addLayout(suggestion_row)
         root.addWidget(code_panel)
 
-        # New person: the Bale profile name is only a suggestion; staff fix it
-        # (it may be a nickname or emoji) before it is written to accounting.
-        self.create_panel = widgets.Panel("نام شخص جدید در حسابداری")
-        first, last = split_name(str(customer.get("name") or ""))
-        # v2.17.0: what the customer typed in the bot beats the guess from the profile
-        first = str(customer.get("first_name") or first)
-        last = str(customer.get("last_name") or last)
-        name_form = QFormLayout()
-        name_form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
-        self.first_name_input = QLineEdit(first)
-        self.first_name_input.setMaxLength(MAX_NAME_PART)
-        self.last_name_input = QLineEdit(last)
-        self.last_name_input.setMaxLength(MAX_NAME_PART)
-        name_form.addRow(widgets.label("نام"), self.first_name_input)
-        name_form.addRow(widgets.label("نام خانوادگی"), self.last_name_input)
-        self.create_panel.body.addLayout(name_form)
-        self.create_panel.body.addWidget(widgets.label(
-            "شخص با همین نام و شمارهٔ موبایل تأییدشدهٔ مشتری در حسابداری ساخته می‌شود. "
-            "اگر شماره قبلاً در حسابداری باشد، به همان شخص وصل می‌شود.",
-            name="Muted", wrap=True,
-        ))
-        root.addWidget(self.create_panel)
         self.mode_link.toggled.connect(self._mode_changed)
 
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
@@ -449,6 +506,7 @@ class ApproveCustomerDialog(widgets.ResponsiveDialog):
         self._suggested_name = ""
         self._mode_changed()
         QTimer.singleShot(0, self._fetch_suggestion)
+        QTimer.singleShot(0, self._fetch_candidates)
 
     @property
     def creating(self) -> bool:
@@ -456,7 +514,6 @@ class ApproveCustomerDialog(widgets.ResponsiveDialog):
 
     def _mode_changed(self, *_args) -> None:
         self.code_panel.setVisible(not self.creating)
-        self.create_panel.setVisible(self.creating)
         self.confirm_button.setText("ساخت شخص و تأیید" if self.creating else "تأیید مشتری")
         self.error_label.setVisible(False)
 
@@ -502,6 +559,62 @@ class ApproveCustomerDialog(widgets.ResponsiveDialog):
         if self._suggested_code is not None:
             self.code_input.setValue(self._suggested_code)
 
+    # ---- v2.18.0: the same person, by national code or by name --------------
+    def _fetch_candidates(self) -> None:
+        if not hasattr(self.context.api, "person_candidates"):
+            return
+        run_async(
+            lambda: self.context.api.person_candidates(int(self.customer["id"])),
+            on_success=self._got_candidates,
+            on_error=lambda _message, _kind: None,   # staff can still type a code
+        )
+
+    def _got_candidates(self, result: object) -> None:
+        result = result if isinstance(result, dict) else {}
+        owner = result.get("national_code")
+        found = [c for c in result.get("candidates") or () if isinstance(c, dict) and c.get("code")]
+        if not found and not (isinstance(owner, dict) and owner.get("code")):
+            return
+        panel = widgets.Panel("شاید همین شخص در حسابداری باشد")
+        self.candidates_panel = panel
+        if isinstance(owner, dict) and owner.get("code"):
+            # the same national code: this IS that person
+            panel.body.addWidget(self._candidate_line(
+                f"کد ملی این مشتری در حسابداری به نام «{owner.get('name') or '—'}» "
+                f"(کد {to_persian_digits(owner['code'])}) ثبت است؛ مشتری به همین شخص وصل می‌شود."))
+            self._link_to(int(owner["code"]))
+        else:
+            for candidate in found:
+                self._add_candidate(panel, candidate)
+            if found[0].get("verdict") == "same":
+                self._link_to(int(found[0]["code"]))
+        self.candidates_slot.addWidget(panel)
+
+    @staticmethod
+    def _candidate_line(text: str) -> QWidget:
+        return widgets.label(text, wrap=True, color=theme.WARNING_TEXT)
+
+    def _add_candidate(self, panel: widgets.Panel, candidate: dict) -> None:
+        tail = str(candidate.get("phone_tail") or "")
+        phone = f" با شمارهٔ …{to_persian_digits(tail)}" if tail else ""
+        panel.body.addWidget(self._candidate_line(
+            f"«{candidate.get('name') or '—'}»{phone} در حسابداری هست. همین شخص است؟"))
+        row = QHBoxLayout()
+        code = int(candidate["code"])
+        row.addWidget(widgets.button("همین شخص است", icon_name="check", variant="success",
+                                     on_click=lambda c=code: self._link_to(c)))
+        row.addWidget(widgets.button("شخص دیگری است", on_click=self._not_this_person))
+        row.addStretch(1)
+        panel.body.addLayout(row)
+
+    def _link_to(self, code: int) -> None:
+        self.mode_link.setChecked(True)
+        self.code_input.setValue(code)
+
+    def _not_this_person(self) -> None:
+        self.code_input.setValue(0)
+        self.mode_create.setChecked(True)
+
     # ---- submit ----------------------------------------------------------
     def _show_error(self, message: str, widget: QWidget) -> None:
         self.error_label.setText(message)
@@ -511,15 +624,13 @@ class ApproveCustomerDialog(widgets.ResponsiveDialog):
         widget.style().polish(widget)
 
     def _submit(self) -> None:
+        problem, box = self.fields.problem(required=self.creating)
+        if problem:
+            self._show_error(problem, box)
+            return
         if self.creating:
-            first = " ".join(self.first_name_input.text().split())
-            last = " ".join(self.last_name_input.text().split())
-            problem = name_problem(first, last)
-            if problem:
-                self._show_error(problem, self.last_name_input)
-                return
             self.person_code = None
-            self.first_name, self.last_name = first, last
+            self.values = self.fields.values()
             self.accept()
             return
         code = int(self.code_input.value())
@@ -531,6 +642,48 @@ class ApproveCustomerDialog(widgets.ResponsiveDialog):
             self.code_input.style().polish(self.code_input)
             return
         self.person_code = code
+        self.values = self.fields.values()
+        self.accept()
+
+
+class CustomerDetailsDialog(widgets.ResponsiveDialog):
+    """v2.18.0 «اطلاعات»: staff type what a customer told them. All four are required, with
+    the same rules as the bot's form; a person in «سازه حساب» only gets its empty fields filled."""
+
+    def __init__(self, customer: dict, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.values: dict = {}
+        self.setWindowTitle("اطلاعات مشتری")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumWidth(520)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(14)
+        root.addWidget(widgets.label("اطلاعات مشتری", size=14, bold=True))
+        root.addWidget(widgets.label(
+            f"{customer.get('name') or '—'} — {format_phone(customer.get('phone'))}", wrap=True))
+        root.addWidget(widgets.label(
+            "تا هر چهار مورد کامل نشود، سفارش این مشتری در «سازه حساب» ثبت نمی‌شود.",
+            name="Muted", wrap=True))
+        self.fields = CustomerFields(customer)
+        root.addWidget(self.fields)
+        self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
+        self.error_label.setVisible(False)
+        root.addWidget(self.error_label)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(widgets.button("ذخیره", icon_name="save", variant="primary",
+                                         on_click=self._submit))
+        buttons.addWidget(widgets.button("انصراف", on_click=self.reject))
+        root.addLayout(buttons)
+
+    def _submit(self) -> None:
+        problem, _box = self.fields.problem(required=True)
+        if problem:
+            self.error_label.setText(problem)
+            self.error_label.setVisible(True)
+            return
+        self.values = self.fields.values()
         self.accept()
 
 

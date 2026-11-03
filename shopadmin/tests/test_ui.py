@@ -778,7 +778,7 @@ def test_dashboard_never_leaves_the_spinner_when_the_api_fails(ui_context, fake_
     page.close()
 
 
-def test_customers_page_lists_customers_with_masked_phones(ui_context, fake_api, admin_qapp):
+def test_customers_page_shows_and_searches_the_whole_number(ui_context, fake_api, admin_qapp):
     fake_api.add_customer(name="زهرا محمدی", phone="09121234567", status="pending")
     context = make_context_with_role(ui_context, ROLE_ADMIN)
     page = CustomersPage(context)
@@ -788,9 +788,12 @@ def test_customers_page_lists_customers_with_masked_phones(ui_context, fake_api,
     assert page.table.rowCount() == 1
     assert page.table.item(0, 0).text() == "زهرا محمدی"
     phone_cell = page.table.item(0, 2).text()
-    # The masked phone must not expose the full number.
-    assert "09121234567" not in phone_cell
-    assert "*" in phone_cell
+    # v2.18.0: the whole number (Persian digits), and it can be searched for
+    assert "۰۹۱۲۱۲۳۴۵۶۷" in phone_cell and "*" not in phone_cell
+    page.search.setText("۰۹۱۲۱۲۳")
+    assert page.table.rowCount() == 1
+    page.search.setText("0912999")
+    assert page.table.rowCount() == 0
     page.close()
 
 

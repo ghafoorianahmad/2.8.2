@@ -431,8 +431,8 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         # v2.17.0: for staff and the courier
         left.add("آدرس ارسال", str(order.get("ship_address") or "—"))
         code = order.get("user_person_code")
-        left.add("کد شخص در حسابداری",
-                 to_persian_digits(code) if code is not None else "هنوز وصل نشده")
+        left.add("شخص در «سازه حساب»",
+                 customer_label(order) if code is not None else "هنوز وصل نشده")
         left.add("تاریخ ثبت", format_shamsi(order.get("created_at")))
         # v2.8.2: payment details are sent per order; the deadline starts then
         if order.get("status") == "awaiting_payment":
@@ -463,6 +463,7 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         # ---- items -------------------------------------------------------
         items_panel = widgets.Panel("اقلام سفارش")
         self.items_table = QTableWidget(0, 4)
+        widgets.round_view_corners(self.items_table)
         self.items_table.setHorizontalHeaderLabels(("کد کالا", "نام کالا", "تعداد", "قیمت واحد"))
         self.items_table.verticalHeader().setVisible(False)
         self.items_table.setShowGrid(False)

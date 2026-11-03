@@ -64,7 +64,7 @@ OTHER_FIRST_SCAN = 10
 ROLES_TTL = 5 * 60
 CHANNELS_INTERVAL_SEC = 6 * 3600
 #: during sales hours (Tehran 07:00-21:00) the price channel is read at least this often
-SALES_HOURS_MAX_INTERVAL = 20 * 60
+SALES_HOURS_MAX_INTERVAL = 10 * 60
 
 #: Extra working proxies kept beyond TG_PROXY_POOL_SIZE (a failure must not empty it).
 POOL_SPARE = 2
@@ -154,9 +154,10 @@ class Worker:
 
     # ---- proxies / connection -----------------------------------------------------
     async def candidates(self) -> list[ProxyLink | None]:
-        """Pool ranking (best first), the local TG_PROXY links, then direct
-        (``None``) when TG_ALLOW_DIRECT is on."""
-        links: list[ProxyLink | None] = []
+        """v2.18.0: direct (``None``) first when TG_ALLOW_DIRECT is on: a proxy is only for
+        when Telegram cannot be reached without one. Then the pool ranking (best first), and
+        the local TG_PROXY links."""
+        links: list[ProxyLink | None] = [None] if self.s.allow_direct else []
         try:
             for item in await self.api.proxies():
                 link = from_pool(item)
@@ -164,13 +165,11 @@ class Worker:
                     links.append(link)
         except ApiError as exc:
             log.warning("proxy pool unavailable: %s", exc)
-        known = {(p.host, p.port, p.secret) for p in links}
+        known = {(p.host, p.port, p.secret) for p in links if p is not None}
         for raw in self.s.local_proxies:
             link = parse_proxy_link(raw)
             if link is not None and (link.host, link.port, link.secret) not in known:
                 links.append(link)
-        if self.s.allow_direct:
-            links.append(None)
         return links
 
     async def _report(self, results: list[dict]) -> None:
@@ -248,7 +247,10 @@ class Worker:
         await self.ensure_connected()
 
     async def probe_tick(self) -> None:
-        """Test up to TG_PROBE_MAX other proxies (rotating through the pool)."""
+        """Test up to TG_PROBE_MAX other proxies (rotating through the pool). v2.18.0: not
+        while Telegram answers directly: no proxy is used at all then."""
+        if self.tg.proxy is None:
+            return
         try:
             pool = [p for p in (from_pool(i) for i in await self.api.proxies()) if p]
         except ApiError as exc:

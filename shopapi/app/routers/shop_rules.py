@@ -36,10 +36,17 @@ class StatusCodesIn(BaseModel):
     handover_status: str = Field("", max_length=12)
 
 
-class WorkHoursIn(BaseModel):
+class ShiftIn(BaseModel):
     start: str = Field(max_length=5)
     end: str = Field(max_length=5)
+
+
+class WorkHoursIn(BaseModel):
+    start: str = Field(default="", max_length=5)
+    end: str = Field(default="", max_length=5)
     days: list[int] = Field(default_factory=list, max_length=7)
+    #: v2.18.0: several shifts a day (closed at midday); empty = start..end as one shift
+    shifts: list[ShiftIn] = Field(default_factory=list, max_length=6)
 
 
 class AlertActionIn(BaseModel):
@@ -114,11 +121,14 @@ def put_status_codes(payload: StatusCodesIn, settings: Settings = Depends(deps.g
 @router.put("/admin/shop-rules/work-hours")
 def put_work_hours(payload: WorkHoursIn, db: OwnDB = Depends(deps.get_db),
                    who: Identity = Depends(require_permission(P_WORK_HOURS_EDIT))) -> dict:
-    problem = staff_alerts.hours_problem(payload.start, payload.end, payload.days)
+    shifts = [(shift.start, shift.end) for shift in payload.shifts]
+    problem = staff_alerts.hours_problem(payload.start, payload.end, payload.days, shifts)
     if problem:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, problem)
-    hours = staff_alerts.save_hours(db, payload.start, payload.end, payload.days, who.actor)
-    db.audit(who.actor, "work_hours", f"{hours.start}-{hours.end} days={list(hours.days)}")
+    hours = staff_alerts.save_hours(db, payload.start, payload.end, payload.days, who.actor,
+                                    shifts)
+    db.audit(who.actor, "work_hours",
+             f"{[f'{a}-{b}' for a, b in hours.shifts]} days={list(hours.days)}")
     return hours.as_dict()
 
 

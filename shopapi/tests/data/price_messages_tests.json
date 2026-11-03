@@ -1,0 +1,1790 @@
+[
+  {
+    "id": 1,
+    "message": "A17 256 / 95.500",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "A17",
+          "storage_gb": 256,
+          "ram_gb": null,
+          "color": null,
+          "price": 95500
+        }
+      ]
+    }
+  },
+  {
+    "id": 2,
+    "message": "A57 256-12 / 180.000 / A57 512-12 / 210.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "A57",
+          "storage_gb": 256,
+          "ram_gb": 12,
+          "color": null,
+          "price": 180000
+        },
+        {
+          "brand": "Samsung",
+          "model": "A57",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": null,
+          "price": 210000
+        }
+      ]
+    }
+  },
+  {
+    "id": 3,
+    "message": "S25 Fe / Jet 235.000 / Navy 233.000 / Ice Blue 233.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "S25 FE",
+          "storage_gb": null,
+          "ram_gb": null,
+          "color": "Jet",
+          "price": 235000
+        },
+        {
+          "brand": "Samsung",
+          "model": "S25 FE",
+          "storage_gb": null,
+          "ram_gb": null,
+          "color": "Navy",
+          "price": 233000
+        },
+        {
+          "brand": "Samsung",
+          "model": "S25 FE",
+          "storage_gb": null,
+          "ram_gb": null,
+          "color": "Ice Blue",
+          "price": 233000
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "message": "تی سی اچ مدل One Pro / دو سیم کارت / ظرفیت 128 گیگابایت و رم 8 گیگابایت / قیمت : 48.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "TCH",
+          "model": "One Pro",
+          "storage_gb": 128,
+          "ram_gb": 8,
+          "color": null,
+          "price": 48000
+        }
+      ]
+    }
+  },
+  {
+    "id": 5,
+    "message": "لیست قیمت محصولات برند TCH",
+    "context_brand": null,
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 6,
+    "message": "One Pro 128-8 / 48.000",
+    "context_brand": "TCH",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "TCH",
+          "model": "One Pro",
+          "storage_gb": 128,
+          "ram_gb": 8,
+          "color": null,
+          "price": 48000
+        }
+      ]
+    }
+  },
+  {
+    "id": 7,
+    "message": "Z1 64-4 / مشکی 31.500 / آبی 31.000",
+    "context_brand": "TCH",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "TCH",
+          "model": "Z1",
+          "storage_gb": 64,
+          "ram_gb": 4,
+          "color": "Black",
+          "price": 31500
+        },
+        {
+          "brand": "TCH",
+          "model": "Z1",
+          "storage_gb": 64,
+          "ram_gb": 4,
+          "color": "Blue",
+          "price": 31000
+        }
+      ]
+    }
+  },
+  {
+    "id": 8,
+    "message": "مدل Z1 Pro / ظرفیت ۱۲۸ گیگابایت و رم ۶ گیگابایت / رنگ سفید / قیمت : ۳۶.۵۰۰",
+    "context_brand": "TCH",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "TCH",
+          "model": "Z1 Pro",
+          "storage_gb": 128,
+          "ram_gb": 6,
+          "color": "White",
+          "price": 36500
+        }
+      ]
+    }
+  },
+  {
+    "id": 9,
+    "message": "A10 64-4 / 28.500\nA20 128-4 / 33.000",
+    "context_brand": "TCH",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "TCH",
+          "model": "A10",
+          "storage_gb": 64,
+          "ram_gb": 4,
+          "color": null,
+          "price": 28500
+        },
+        {
+          "brand": "TCH",
+          "model": "A20",
+          "storage_gb": 128,
+          "ram_gb": 4,
+          "color": null,
+          "price": 33000
+        }
+      ]
+    }
+  },
+  {
+    "id": 10,
+    "message": "S1 128-6 / طلایی 34.200",
+    "context_brand": "TCH",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "TCH",
+          "model": "S1",
+          "storage_gb": 128,
+          "ram_gb": 6,
+          "color": "Gold",
+          "price": 34200
+        }
+      ]
+    }
+  },
+  {
+    "id": 11,
+    "message": "تی سی اچ مدل One Plus / دو سیم کارت / ظرفیت 256 گیگابایت و رم 8 گیگابایت / قیمت : 54.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "TCH",
+          "model": "One Plus",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": null,
+          "price": 54000
+        }
+      ]
+    }
+  },
+  {
+    "id": 12,
+    "message": "1405.08.12 / Tuesday",
+    "context_brand": null,
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 13,
+    "message": "۱۴۰۵/۰۸/۱۳ - چهارشنبه / لیست به روز رسانی شد",
+    "context_brand": null,
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 14,
+    "message": "سلام و عرض ادب خدمت همکاران گرامی 🌹 فروش ویژه امروز آغاز شد",
+    "context_brand": null,
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 15,
+    "message": "🔥💥⚡📱🍏💎✨",
+    "context_brand": null,
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 16,
+    "message": "ارسال فوری به سراسر کشور / تسویه نقدی / تماس: 021-66778899",
+    "context_brand": null,
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 17,
+    "message": "🔴 لیست قیمت محصولات برند Samsung 🔴",
+    "context_brand": null,
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 18,
+    "message": "🍏 لیست قیمت آیفون (Apple) 🍏",
+    "context_brand": null,
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 19,
+    "message": "=== لیست قیمت شیائومی Xiaomi ===",
+    "context_brand": null,
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 20,
+    "message": "لیست قیمت محصولات برند Honor",
+    "context_brand": null,
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 21,
+    "message": "اصلاحیه: لیست قبلی منقضی شد، قیمت‌های جدید تا دقایقی دیگر درج می‌شود",
+    "context_brand": null,
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 22,
+    "message": "ساعت کاری انبار: ۱۰ صبح الی ۱۹ عصر - جمعه تعطیل می‌باشد",
+    "context_brand": null,
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 23,
+    "message": "تمامی دستگاه‌ها ۱۸ ماه گارانتی شرکتی و کد رجیستری دارند ✅",
+    "context_brand": null,
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 24,
+    "message": "1405-08-14 / Thursday",
+    "context_brand": "Samsung",
+    "expected": {
+      "status": "ignored",
+      "items": []
+    }
+  },
+  {
+    "id": 25,
+    "message": "اصلاحیه: A17 256 / 94.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "A17",
+          "storage_gb": 256,
+          "ram_gb": null,
+          "color": null,
+          "price": 94000
+        }
+      ]
+    }
+  },
+  {
+    "id": 26,
+    "message": "⚠️ اصلاحیه قیمت\nA57 256-12 / 178.500\nA57 512-12 / 207.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "A57",
+          "storage_gb": 256,
+          "ram_gb": 12,
+          "color": null,
+          "price": 178500
+        },
+        {
+          "brand": "Samsung",
+          "model": "A57",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": null,
+          "price": 207000
+        }
+      ]
+    }
+  },
+  {
+    "id": 27,
+    "message": "#اصلاحیه S25 Fe / Jet 232.000 / Navy 230.500",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "S25 FE",
+          "storage_gb": null,
+          "ram_gb": null,
+          "color": "Jet",
+          "price": 232000
+        },
+        {
+          "brand": "Samsung",
+          "model": "S25 FE",
+          "storage_gb": null,
+          "ram_gb": null,
+          "color": "Navy",
+          "price": 230500
+        }
+      ]
+    }
+  },
+  {
+    "id": 28,
+    "message": "اصلاحیه تی سی اچ مدل One Pro / ظرفیت 128 گیگابایت و رم 8 گیگابایت / قیمت جدید : 46.500",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "TCH",
+          "model": "One Pro",
+          "storage_gb": 128,
+          "ram_gb": 8,
+          "color": null,
+          "price": 46500
+        }
+      ]
+    }
+  },
+  {
+    "id": 29,
+    "message": "اصلاحیه قیمت 👇\niPhone 16 Pro Max 256 Desert / 598.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Apple",
+          "model": "iPhone 16 Pro Max",
+          "storage_gb": 256,
+          "ram_gb": null,
+          "color": "Desert",
+          "price": 598000
+        }
+      ]
+    }
+  },
+  {
+    "id": 30,
+    "message": "ویرایش قیمت: Poco X6 Pro 512-12 / مشکی ۱۵۱.۵۰۰",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Poco",
+          "model": "X6 Pro",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Black",
+          "price": 151500
+        }
+      ]
+    }
+  },
+  {
+    "id": 31,
+    "message": "A05s 128-4 / 58.500 / A05s 128-6 / 63.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "A05s",
+          "storage_gb": 128,
+          "ram_gb": 4,
+          "color": null,
+          "price": 58500
+        },
+        {
+          "brand": "Samsung",
+          "model": "A05s",
+          "storage_gb": 128,
+          "ram_gb": 6,
+          "color": null,
+          "price": 63000
+        }
+      ]
+    }
+  },
+  {
+    "id": 32,
+    "message": "A15 128-4 / سرمه ای 73.500 / آبی یخی 74.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "A15",
+          "storage_gb": 128,
+          "ram_gb": 4,
+          "color": "Navy",
+          "price": 73500
+        },
+        {
+          "brand": "Samsung",
+          "model": "A15",
+          "storage_gb": 128,
+          "ram_gb": 4,
+          "color": "Ice Blue",
+          "price": 74000
+        }
+      ]
+    }
+  },
+  {
+    "id": 33,
+    "message": "🔥 A16 128-6   /   ۸۴.۵۰۰ 🔥",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "A16",
+          "storage_gb": 128,
+          "ram_gb": 6,
+          "color": null,
+          "price": 84500
+        }
+      ]
+    }
+  },
+  {
+    "id": 34,
+    "message": "Samsong A35 256-8 / Blak 138.000 / Wite 137.500 / Lemon 136.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "A35",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Black",
+          "price": 138000
+        },
+        {
+          "brand": "Samsung",
+          "model": "A35",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "White",
+          "price": 137500
+        },
+        {
+          "brand": "Samsung",
+          "model": "A35",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Yellow",
+          "price": 136000
+        }
+      ]
+    }
+  },
+  {
+    "id": 35,
+    "message": "A55 8/256\nمشکی 162.000\nیاسی 161.500\nآبی یخی 161.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "A55",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Black",
+          "price": 162000
+        },
+        {
+          "brand": "Samsung",
+          "model": "A55",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Lavender",
+          "price": 161500
+        },
+        {
+          "brand": "Samsung",
+          "model": "A55",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Ice Blue",
+          "price": 161000
+        }
+      ]
+    }
+  },
+  {
+    "id": 36,
+    "message": "سامسونگ مدل S24 Ultra / دو سیم کارت / ظرفیت 256 گیگابایت و رم 12 گیگابایت / رنگ تیتانیوم / قیمت : 465.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "S24 Ultra",
+          "storage_gb": 256,
+          "ram_gb": 12,
+          "color": "Titanium",
+          "price": 465000
+        }
+      ]
+    }
+  },
+  {
+    "id": 37,
+    "message": "S25 Utra 512-12 / Titaniom 545.000 / Black 540.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "S25 Ultra",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Titanium",
+          "price": 545000
+        },
+        {
+          "brand": "Samsung",
+          "model": "S25 Ultra",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Black",
+          "price": 540000
+        }
+      ]
+    }
+  },
+  {
+    "id": 38,
+    "message": "S24 FE 256-8 / Graphite 212.000 / Mint 210.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "S24 FE",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Graphite",
+          "price": 212000
+        },
+        {
+          "brand": "Samsung",
+          "model": "S24 FE",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Mint",
+          "price": 210000
+        }
+      ]
+    }
+  },
+  {
+    "id": 39,
+    "message": "Galaxy Z Fold 6 512-12 / Silver 680.000 / Navy 675.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "Z Fold 6",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Silver",
+          "price": 680000
+        },
+        {
+          "brand": "Samsung",
+          "model": "Z Fold 6",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Navy",
+          "price": 675000
+        }
+      ]
+    }
+  },
+  {
+    "id": 40,
+    "message": "M55 256-8 / مشکی 134.000\nM35 256-8 / آبی 108.500",
+    "context_brand": "Samsung",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "M55",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Black",
+          "price": 134000
+        },
+        {
+          "brand": "Samsung",
+          "model": "M35",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Blue",
+          "price": 108500
+        }
+      ]
+    }
+  },
+  {
+    "id": 41,
+    "message": "iPhone 13 CH 128 / Midnight 258.000 / Starlight 259.500",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Apple",
+          "model": "iPhone 13",
+          "storage_gb": 128,
+          "ram_gb": null,
+          "color": "Midnight",
+          "price": 258000
+        },
+        {
+          "brand": "Apple",
+          "model": "iPhone 13",
+          "storage_gb": 128,
+          "ram_gb": null,
+          "color": "Starlight",
+          "price": 259500
+        }
+      ]
+    }
+  },
+  {
+    "id": 42,
+    "message": "16 Pro 256 ZAA / Desert 510.000 / Natural 505.000 / White 502.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Apple",
+          "model": "iPhone 16 Pro",
+          "storage_gb": 256,
+          "ram_gb": null,
+          "color": "Desert",
+          "price": 510000
+        },
+        {
+          "brand": "Apple",
+          "model": "iPhone 16 Pro",
+          "storage_gb": 256,
+          "ram_gb": null,
+          "color": "Natural",
+          "price": 505000
+        },
+        {
+          "brand": "Apple",
+          "model": "iPhone 16 Pro",
+          "storage_gb": 256,
+          "ram_gb": null,
+          "color": "White",
+          "price": 502000
+        }
+      ]
+    }
+  },
+  {
+    "id": 43,
+    "message": "آیفون ۱۶ پرو مکس / ظرفیت ۵۱۲ گیگابایت / صحرایی ۶۶۵.۰۰۰",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Apple",
+          "model": "iPhone 16 Pro Max",
+          "storage_gb": 512,
+          "ram_gb": null,
+          "color": "Desert",
+          "price": 665000
+        }
+      ]
+    }
+  },
+  {
+    "id": 44,
+    "message": "iPhone 16 Promax 1TB / Black 740.000 / Natural 748.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Apple",
+          "model": "iPhone 16 Pro Max",
+          "storage_gb": 1024,
+          "ram_gb": null,
+          "color": "Black",
+          "price": 740000
+        },
+        {
+          "brand": "Apple",
+          "model": "iPhone 16 Pro Max",
+          "storage_gb": 1024,
+          "ram_gb": null,
+          "color": "Natural",
+          "price": 748000
+        }
+      ]
+    }
+  },
+  {
+    "id": 45,
+    "message": "16 Normal 128 CH\nUltramarine 392.000\nTeal 391.000\nPink 390.000",
+    "context_brand": "Apple",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Apple",
+          "model": "iPhone 16",
+          "storage_gb": 128,
+          "ram_gb": null,
+          "color": "Ultramarine",
+          "price": 392000
+        },
+        {
+          "brand": "Apple",
+          "model": "iPhone 16",
+          "storage_gb": 128,
+          "ram_gb": null,
+          "color": "Teal",
+          "price": 391000
+        },
+        {
+          "brand": "Apple",
+          "model": "iPhone 16",
+          "storage_gb": 128,
+          "ram_gb": null,
+          "color": "Pink",
+          "price": 390000
+        }
+      ]
+    }
+  },
+  {
+    "id": 46,
+    "message": "15 Plus 256 / آبی 378.000 / صورتی 376.500",
+    "context_brand": "Apple",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Apple",
+          "model": "iPhone 15 Plus",
+          "storage_gb": 256,
+          "ram_gb": null,
+          "color": "Blue",
+          "price": 378000
+        },
+        {
+          "brand": "Apple",
+          "model": "iPhone 15 Plus",
+          "storage_gb": 256,
+          "ram_gb": null,
+          "color": "Pink",
+          "price": 376500
+        }
+      ]
+    }
+  },
+  {
+    "id": 47,
+    "message": "آیفن 16e 128 / مشکی 315.000 / سفید 314.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Apple",
+          "model": "iPhone 16e",
+          "storage_gb": 128,
+          "ram_gb": null,
+          "color": "Black",
+          "price": 315000
+        },
+        {
+          "brand": "Apple",
+          "model": "iPhone 16e",
+          "storage_gb": 128,
+          "ram_gb": null,
+          "color": "White",
+          "price": 314000
+        }
+      ]
+    }
+  },
+  {
+    "id": 48,
+    "message": "Xiaomi 14T Pro 512-12 / Gray 318.000 / Black 316.500",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Xiaomi",
+          "model": "14T Pro",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Gray",
+          "price": 318000
+        },
+        {
+          "brand": "Xiaomi",
+          "model": "14T Pro",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Black",
+          "price": 316500
+        }
+      ]
+    }
+  },
+  {
+    "id": 49,
+    "message": "14T 256-12 / مشکی 234.000 / خاکستری 235.000 / سبز لیمویی 233.500",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Xiaomi",
+          "model": "14T",
+          "storage_gb": 256,
+          "ram_gb": 12,
+          "color": "Black",
+          "price": 234000
+        },
+        {
+          "brand": "Xiaomi",
+          "model": "14T",
+          "storage_gb": 256,
+          "ram_gb": 12,
+          "color": "Gray",
+          "price": 235000
+        },
+        {
+          "brand": "Xiaomi",
+          "model": "14T",
+          "storage_gb": 256,
+          "ram_gb": 12,
+          "color": "Green",
+          "price": 233500
+        }
+      ]
+    }
+  },
+  {
+    "id": 50,
+    "message": "شیاومی مدل 14 Ultra / ظرفیت 512 گیگابایت و رم 16 گیگابایت / رنگ مشکی / قیمت : 485.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Xiaomi",
+          "model": "14 Ultra",
+          "storage_gb": 512,
+          "ram_gb": 16,
+          "color": "Black",
+          "price": 485000
+        }
+      ]
+    }
+  },
+  {
+    "id": 51,
+    "message": "Xiamo 13T 256-12 / Blue 198.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Xiaomi",
+          "model": "13T",
+          "storage_gb": 256,
+          "ram_gb": 12,
+          "color": "Blue",
+          "price": 198000
+        }
+      ]
+    }
+  },
+  {
+    "id": 52,
+    "message": "15 Ultra 512-16 / Silver 560.000 / Black 555.000",
+    "context_brand": "Xiaomi",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Xiaomi",
+          "model": "15 Ultra",
+          "storage_gb": 512,
+          "ram_gb": 16,
+          "color": "Silver",
+          "price": 560000
+        },
+        {
+          "brand": "Xiaomi",
+          "model": "15 Ultra",
+          "storage_gb": 512,
+          "ram_gb": 16,
+          "color": "Black",
+          "price": 555000
+        }
+      ]
+    }
+  },
+  {
+    "id": 53,
+    "message": "Mix Flip 512-12 / بنفش 412.000",
+    "context_brand": "Xiaomi",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Xiaomi",
+          "model": "Mix Flip",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Purple",
+          "price": 412000
+        }
+      ]
+    }
+  },
+  {
+    "id": 54,
+    "message": "Redmi Note 13 Pro 5G 512-12 / Black 156.000 / Purple 155.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Redmi",
+          "model": "Note 13 Pro 5G",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Black",
+          "price": 156000
+        },
+        {
+          "brand": "Redmi",
+          "model": "Note 13 Pro 5G",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Purple",
+          "price": 155000
+        }
+      ]
+    }
+  },
+  {
+    "id": 55,
+    "message": "Note 13 4G 256-8 / 89.500\nNote 13 Pro 4G 256-8 / 114.000\nNote 13 Pro+ 512-12 / 178.000",
+    "context_brand": "Redmi",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Redmi",
+          "model": "Note 13 4G",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": null,
+          "price": 89500
+        },
+        {
+          "brand": "Redmi",
+          "model": "Note 13 Pro 4G",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": null,
+          "price": 114000
+        },
+        {
+          "brand": "Redmi",
+          "model": "Note 13 Pro Plus",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": null,
+          "price": 178000
+        }
+      ]
+    }
+  },
+  {
+    "id": 56,
+    "message": "ردمیی 14C 256-8 / مشکی ۵۴.۵۰۰ / آبی ۵۴.۰۰۰",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Redmi",
+          "model": "14C",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Black",
+          "price": 54500
+        },
+        {
+          "brand": "Redmi",
+          "model": "14C",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Blue",
+          "price": 54000
+        }
+      ]
+    }
+  },
+  {
+    "id": 57,
+    "message": "Redmi A3 128-4 / Green 39.500 / Black 40.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Redmi",
+          "model": "A3",
+          "storage_gb": 128,
+          "ram_gb": 4,
+          "color": "Green",
+          "price": 39500
+        },
+        {
+          "brand": "Redmi",
+          "model": "A3",
+          "storage_gb": 128,
+          "ram_gb": 4,
+          "color": "Black",
+          "price": 40000
+        }
+      ]
+    }
+  },
+  {
+    "id": 58,
+    "message": "Note 14 Pro 256-8 / مشکی 132.000 / بنفش 131.500",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Redmi",
+          "model": "Note 14 Pro",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Black",
+          "price": 132000
+        },
+        {
+          "brand": "Redmi",
+          "model": "Note 14 Pro",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Purple",
+          "price": 131500
+        }
+      ]
+    }
+  },
+  {
+    "id": 59,
+    "message": "13C 128-4 / 48.000 / 13C 256-8 / 56.500",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Redmi",
+          "model": "13C",
+          "storage_gb": 128,
+          "ram_gb": 4,
+          "color": null,
+          "price": 48000
+        },
+        {
+          "brand": "Redmi",
+          "model": "13C",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": null,
+          "price": 56500
+        }
+      ]
+    }
+  },
+  {
+    "id": 60,
+    "message": "Poco X6 Pro 512-12 / Yellow 154.000 / Gray 152.500 / Black 153.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Poco",
+          "model": "X6 Pro",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Yellow",
+          "price": 154000
+        },
+        {
+          "brand": "Poco",
+          "model": "X6 Pro",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Gray",
+          "price": 152500
+        },
+        {
+          "brand": "Poco",
+          "model": "X6 Pro",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Black",
+          "price": 153000
+        }
+      ]
+    }
+  },
+  {
+    "id": 61,
+    "message": "پوکو مدل F6 Pro / دو سیم کارت / ظرفیت 512 گیگابایت و رم 12 گیگابایت / رنگ سفید / قیمت : 228.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Poco",
+          "model": "F6 Pro",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "White",
+          "price": 228000
+        }
+      ]
+    }
+  },
+  {
+    "id": 62,
+    "message": "C65 256-8 / 55.000 / M6 Pro 256-8 / 92.000 / M6 Pro 512-12 / 108.000",
+    "context_brand": "Poco",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Poco",
+          "model": "C65",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": null,
+          "price": 55000
+        },
+        {
+          "brand": "Poco",
+          "model": "M6 Pro",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": null,
+          "price": 92000
+        },
+        {
+          "brand": "Poco",
+          "model": "M6 Pro",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": null,
+          "price": 108000
+        }
+      ]
+    }
+  },
+  {
+    "id": 63,
+    "message": "Poko X7 Pro 512-12 / زرد 189.000 / مشکی 187.500",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Poco",
+          "model": "X7 Pro",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Yellow",
+          "price": 189000
+        },
+        {
+          "brand": "Poco",
+          "model": "X7 Pro",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Black",
+          "price": 187500
+        }
+      ]
+    }
+  },
+  {
+    "id": 64,
+    "message": "C75 128-6 / طلایی 49.500 / سبز 49.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Poco",
+          "model": "C75",
+          "storage_gb": 128,
+          "ram_gb": 6,
+          "color": "Gold",
+          "price": 49500
+        },
+        {
+          "brand": "Poco",
+          "model": "C75",
+          "storage_gb": 128,
+          "ram_gb": 6,
+          "color": "Green",
+          "price": 49000
+        }
+      ]
+    }
+  },
+  {
+    "id": 65,
+    "message": "Honor X9b 256-12 / نارنجی 142.000 / سبز 141.000 / مشکی 141.500",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Honor",
+          "model": "X9b",
+          "storage_gb": 256,
+          "ram_gb": 12,
+          "color": "Orange",
+          "price": 142000
+        },
+        {
+          "brand": "Honor",
+          "model": "X9b",
+          "storage_gb": 256,
+          "ram_gb": 12,
+          "color": "Green",
+          "price": 141000
+        },
+        {
+          "brand": "Honor",
+          "model": "X9b",
+          "storage_gb": 256,
+          "ram_gb": 12,
+          "color": "Black",
+          "price": 141500
+        }
+      ]
+    }
+  },
+  {
+    "id": 66,
+    "message": "آنر مدل 200 Pro / ظرفیت 512 گیگابایت و رم 12 گیگابایت / رنگ سفید / قیمت : 246.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Honor",
+          "model": "200 Pro",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "White",
+          "price": 246000
+        }
+      ]
+    }
+  },
+  {
+    "id": 67,
+    "message": "X7b 256-8 / 76.500 / X8b 512-8 / 98.000",
+    "context_brand": "Honor",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Honor",
+          "model": "X7b",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": null,
+          "price": 76500
+        },
+        {
+          "brand": "Honor",
+          "model": "X8b",
+          "storage_gb": 512,
+          "ram_gb": 8,
+          "color": null,
+          "price": 98000
+        }
+      ]
+    }
+  },
+  {
+    "id": 68,
+    "message": "Honer Magic 6 Pro 512-12 / Green 395.000 / Black 392.000",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Honor",
+          "model": "Magic 6 Pro",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Green",
+          "price": 395000
+        },
+        {
+          "brand": "Honor",
+          "model": "Magic 6 Pro",
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Black",
+          "price": 392000
+        }
+      ]
+    }
+  },
+  {
+    "id": 69,
+    "message": "X9c 256-12\nبنفش 164.000\nسبز آبی 163.500",
+    "context_brand": "Honor",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Honor",
+          "model": "X9c",
+          "storage_gb": 256,
+          "ram_gb": 12,
+          "color": "Purple",
+          "price": 164000
+        },
+        {
+          "brand": "Honor",
+          "model": "X9c",
+          "storage_gb": 256,
+          "ram_gb": 12,
+          "color": "Teal",
+          "price": 163500
+        }
+      ]
+    }
+  },
+  {
+    "id": 70,
+    "message": "200 Lite 256-8 / آبی 112.000 / مشکی 111.500",
+    "context_brand": "Honor",
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Honor",
+          "model": "200 Lite",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Blue",
+          "price": 112000
+        },
+        {
+          "brand": "Honor",
+          "model": "200 Lite",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Black",
+          "price": 111500
+        }
+      ]
+    }
+  },
+  {
+    "id": 71,
+    "message": "A26 256-8 / ١١٥.٥٠٠",
+    "context_brand": null,
+    "expected": {
+      "status": "applied",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "A26",
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": null,
+          "price": 115500
+        }
+      ]
+    }
+  },
+  {
+    "id": 72,
+    "message": "A17 / 95.500",
+    "context_brand": null,
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "A17",
+          "storage_gb": null,
+          "ram_gb": null,
+          "color": null,
+          "price": 95500
+        }
+      ]
+    }
+  },
+  {
+    "id": 73,
+    "message": "iPhone 16 Pro / 495.000",
+    "context_brand": null,
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": "Apple",
+          "model": "iPhone 16 Pro",
+          "storage_gb": null,
+          "ram_gb": null,
+          "color": null,
+          "price": 495000
+        }
+      ]
+    }
+  },
+  {
+    "id": 74,
+    "message": "A55 128-256 / 155.000",
+    "context_brand": null,
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "A55",
+          "storage_gb": null,
+          "ram_gb": null,
+          "color": null,
+          "price": 155000
+        }
+      ]
+    }
+  },
+  {
+    "id": 75,
+    "message": "iPhone 15 128/256 / مشکی 365.000",
+    "context_brand": null,
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": "Apple",
+          "model": "iPhone 15",
+          "storage_gb": null,
+          "ram_gb": null,
+          "color": "Black",
+          "price": 365000
+        }
+      ]
+    }
+  },
+  {
+    "id": 76,
+    "message": "One Pro 128-8 / 48.000",
+    "context_brand": null,
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": null,
+          "model": "One Pro",
+          "storage_gb": 128,
+          "ram_gb": 8,
+          "color": null,
+          "price": 48000
+        }
+      ]
+    }
+  },
+  {
+    "id": 77,
+    "message": "Z1 64-4 / مشکی 31.500",
+    "context_brand": null,
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": null,
+          "model": "Z1",
+          "storage_gb": 64,
+          "ram_gb": 4,
+          "color": "Black",
+          "price": 31500
+        }
+      ]
+    }
+  },
+  {
+    "id": 78,
+    "message": "سامسونگ 256-8 / مشکی 120.000",
+    "context_brand": null,
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": null,
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "Black",
+          "price": 120000
+        }
+      ]
+    }
+  },
+  {
+    "id": 79,
+    "message": "256-8 / سفید 92.000",
+    "context_brand": null,
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": null,
+          "model": null,
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": "White",
+          "price": 92000
+        }
+      ]
+    }
+  },
+  {
+    "id": 80,
+    "message": "Pro Max 256 Desert / 595.000",
+    "context_brand": "Apple",
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": "Apple",
+          "model": null,
+          "storage_gb": 256,
+          "ram_gb": null,
+          "color": "Desert",
+          "price": 595000
+        }
+      ]
+    }
+  },
+  {
+    "id": 81,
+    "message": "A17 150 / 95.500",
+    "context_brand": null,
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": "Samsung",
+          "model": "A17",
+          "storage_gb": null,
+          "ram_gb": null,
+          "color": null,
+          "price": 95500
+        }
+      ]
+    }
+  },
+  {
+    "id": 82,
+    "message": "Poco X6 Pro 500-12 / 152.000",
+    "context_brand": null,
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": "Poco",
+          "model": "X6 Pro",
+          "storage_gb": null,
+          "ram_gb": 12,
+          "color": null,
+          "price": 152000
+        }
+      ]
+    }
+  },
+  {
+    "id": 83,
+    "message": "Note Pro 256-8 / 115.000",
+    "context_brand": "Redmi",
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": "Redmi",
+          "model": null,
+          "storage_gb": 256,
+          "ram_gb": 8,
+          "color": null,
+          "price": 115000
+        }
+      ]
+    }
+  },
+  {
+    "id": 84,
+    "message": "Ultra 512-12 / Black 480.000",
+    "context_brand": null,
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": null,
+          "model": null,
+          "storage_gb": 512,
+          "ram_gb": 12,
+          "color": "Black",
+          "price": 480000
+        }
+      ]
+    }
+  },
+  {
+    "id": 85,
+    "message": "Redmi Note 13 Pro / مشکی 114.000",
+    "context_brand": null,
+    "expected": {
+      "status": "uncertain",
+      "items": [
+        {
+          "brand": "Redmi",
+          "model": "Note 13 Pro",
+          "storage_gb": null,
+          "ram_gb": null,
+          "color": "Black",
+          "price": 114000
+        }
+      ]
+    }
+  }
+]

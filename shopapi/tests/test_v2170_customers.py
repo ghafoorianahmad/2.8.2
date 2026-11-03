@@ -34,29 +34,29 @@ def test_good_national_codes(code):
 
 
 @pytest.mark.parametrize("code", ["0499370898", "1111111111", "0000000000", "123456789",
-                                  "12345678901", "abcdefghij", ""])
+                                  "11111111111", "abcdefghij", ""])
 def test_bad_national_codes(code):
     assert not cd.national_code_ok(code)
 
 
 def test_values_are_cleaned():
     values, problem = cd.clean_values({"first_name": "  علي ", "last_name": "رضايي",
-                                       "national_code": "۰۴۹۹-۳۷۰۸۹۹", "address": " تهران   ولیعصر "})
+                                       "national_code": "۰۴۹۹۳۷۰۸۹۹", "address": " تهران   ولیعصر "})
     assert problem is None
     assert values == {"first_name": "علی", "last_name": "رضایی",
                       "national_code": "0499370899", "address": "تهران ولیعصر"}
 
 
 @pytest.mark.parametrize("field,value,problem", [
-    ("first_name", "ع", cd.INVALID_NAME),
-    ("first_name", "علی۱۲", cd.INVALID_NAME),
-    ("last_name", "!!!", cd.INVALID_NAME),
-    ("national_code", "1111111111", cd.INVALID_NATIONAL_CODE),
-    ("address", "کم", cd.INVALID_ADDRESS),
-    ("address", "ا" * 501, cd.INVALID_ADDRESS),
+    ("first_name", "ع", "نام"),
+    ("first_name", "علی۱۲", "نام"),
+    ("last_name", "!!!", "نام"),
+    ("national_code", "1111111111", "کد ملی"),
+    ("address", "کم", "نشانی"),
+    ("address", "ا" * 501, "نشانی"),
 ])
 def test_bad_values(field, value, problem):
-    assert cd.clean_values({field: value})[1] == problem
+    assert problem in cd.clean_values({field: value})[1]
 
 
 # ---- asking -------------------------------------------------------------------------------------
@@ -87,20 +87,21 @@ def test_accounting_down_nothing_is_asked(client, reader):
     assert view["known"] is False and view["missing"] == []
 
 
-def test_the_view_never_carries_the_name_or_the_code(client, reader):
+def test_the_view_carries_what_the_form_opens_with(client, reader):
     seed_products(reader)
     register_and_approve(client)
     reader.person_details = lambda code: {"first_name": "علی", "last_name": "رضایی",
                                           "national_code": "0499370899", "address": "تهران"}
     view = _details(client).json()
-    assert set(view) == {"missing", "address", "asked", "known"}
-    assert "علی" not in str(view) and "0499370899" not in str(view)
+    assert set(view) == {"missing", "address", "asked", "known", "prefill"}
+    # v2.18.0: the owner's form opens filled in (?fn=&ln=&nc=&addr=)
+    assert view["prefill"]["first_name"] == "علی"
 
 
 def test_bad_answer_is_refused_and_nothing_stored(client, db):
     user = _register(client)
     r = _save(client, "222", national_code="1111111111", first_name="علی")
-    assert r.status_code == 422 and r.json()["detail"] == cd.INVALID_NATIONAL_CODE
+    assert r.status_code == 422 and "کد ملی" in r.json()["detail"]
     assert db.get_user_by_id(user["id"])["first_name"] == ""
 
 
@@ -139,7 +140,8 @@ def test_new_customer_all_goes_into_the_new_person(client, db, writer):
 
 def test_staff_can_still_correct_the_name_when_creating(client, db, writer):
     user = _register(client)
-    _save(client, "222", first_name="علی", last_name="رضایی")
+    _save(client, "222", first_name="علی", last_name="رضایی", national_code="0499370899",
+          address="تهران، ولیعصر، پلاک 1")
     client.post(f"/admin/users/{user['id']}/approve", headers=h("admin"),
                 json={"first_name": "علیرضا", "last_name": "رضایی"})
     assert ("create_person", "علیرضا", "رضایی", "09124445555") in writer.calls
@@ -396,7 +398,7 @@ def test_bad_address_is_refused_and_no_order_made(client, reader, db):
     seed_products(reader)
     register_and_approve(client)
     r = _order(client, ship_address="کم")
-    assert r.status_code == 422 and r.json()["detail"] == cd.INVALID_ADDRESS
+    assert r.status_code == 422 and "نشانی" in r.json()["detail"]
     assert db.list_orders("awaiting_payment") == []
 
 

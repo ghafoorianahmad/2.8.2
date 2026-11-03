@@ -252,7 +252,7 @@ def pool_with(responses, **kw):
     return pool, calls
 
 
-def test_pool_ranking_is_kept_local_proxies_follow_and_direct_is_last():
+def test_direct_is_first_then_the_pool_ranking_then_local_proxies():
     items = [{"id": 5, "host": "Best.Example", "port": 443, "secret": EE_SECRET},
              {"id": 6, "host": "second.example", "port": 8443, "secret": DD_SECRET},
              {"id": 7, "host": "broken"}]
@@ -263,7 +263,7 @@ def test_pool_ranking_is_kept_local_proxies_follow_and_direct_is_last():
         pool, calls = pool_with(lambda r: httpx.Response(200, json=items), local_proxies=local)
         got = await pool.candidates()
         assert [(p.host, p.id) if p else None for p in got] == [
-            ("best.example", 5), ("second.example", 6), ("mine.example", None), None]
+            None, ("best.example", 5), ("second.example", 6), ("mine.example", None)]
         assert calls[0][:3] == ("GET", "/worker/proxies", "worker-key")
         await pool.report([{"id": 5, "ok": True, "latency_ms": 90}, {"id": None, "ok": False}])
         assert calls[1][1] == "/worker/proxies/report"
@@ -718,6 +718,6 @@ def test_real_telethon_client_accepts_our_options(tmp_path):
             assert client.parse_mode is None
             assert client._connection is ConnectionTcpMTProxyFakeTLS
             adapter._register(client)
-            assert len(client.list_event_handlers()) == 2
+            assert len(client.list_event_handlers()) == 3
             assert client.session is not None
     asyncio.run(scenario())

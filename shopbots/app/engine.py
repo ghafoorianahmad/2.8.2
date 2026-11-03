@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import time
+from urllib.parse import urlencode
 from typing import Any
 
 import asyncio
@@ -40,6 +41,7 @@ from .platforms import (
     contact_keyboard,
     inline_keyboard,
     remove_keyboard,
+    web_app_keyboard,
     reply_keyboard,
 )
 from .ratelimit import RateLimiter, WarnOnce
@@ -89,7 +91,10 @@ DETAIL_QUESTIONS = {"first_name": "ASK_FIRST_NAME", "last_name": "ASK_LAST_NAME"
 DETAIL_INVALID = {"first_name": "INVALID_NAME", "last_name": "INVALID_NAME",
                   "national_code": "INVALID_NATIONAL_CODE", "address": "INVALID_ADDRESS"}
 MIN_ADDRESS_LEN = 5
-MAX_ADDRESS_LEN = 500
+MAX_ADDRESS_LEN = 300
+#: v2.18.0: what a mini app may send in one message, and of one field of it
+WEB_APP_DATA_MAX = 4096
+DETAIL_FIELD_MAX = 400
 
 # --- callback payloads ------------------------------------------------------
 # "action" or "action:int[:int]"; every action has a fixed argument count.
@@ -156,7 +161,7 @@ CALLBACK_ARG_COUNTS: dict[str, int] = {
     "psl": 0,
     # v2.8.3: «مرحلهٔ قبل» (one screen back, the earlier choices kept)
     "back": 0,
-    # v2.17.0: details «فعلاً نه»; the order's address (same / new; of a placed order);
+    # v2.17.0: (an old details «فعلاً نه» button asks again); the order's address (same / new; of a placed order);
     # «برداشت» of an order / a request by a linked staff member
     "dno": 0,
     "cok": 0,
@@ -443,6 +448,8 @@ class BotEngine:
                 "sender": sender,
                 "text": message.get("text") or message.get("caption"),
                 "contact": message.get("contact"),
+                "web_app_data": (message.get("web_app_data") or {}).get("data")
+                if isinstance(message.get("web_app_data"), dict) else None,
                 "photo": message.get("photo"),
                 "document": message.get("document"),
             }
@@ -684,6 +691,9 @@ class BotEngine:
     async def _handle_message(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, event: dict
     ) -> None:
+        if event.get("web_app_data"):
+            await self._web_app_data(adapter, platform, chat_id, str(event["web_app_data"]))
+            return
         raw_text = event.get("text") or ""
         if len(raw_text) > self.settings.max_input_len:
             await self._send_text(adapter, chat_id, texts.TEXT_TOO_LONG)
@@ -951,7 +961,66 @@ class BotEngine:
         if isinstance(model_ref, str) and model_ref:
             if await self._show_model(adapter, platform, chat_id, model_ref):
                 return
+        if after.get("checkout"):
+            await self._checkout(adapter, platform, chat_id)
+            return
         await self._show_main_menu(adapter, platform, chat_id, status=status)
+
+    # ================= what a mini app sends (v2.18.0) ====================
+    async def _web_app_data(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                            raw: str) -> None:
+        """The form and the shop page talk to the bot with one JSON message. Everything in it
+        is checked again here and on the server: it comes from a page the customer holds."""
+        try:
+            payload = json.loads(raw) if len(raw) <= WEB_APP_DATA_MAX else None
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict) or payload.get("v") != 1:
+            await self._send_text(adapter, chat_id, texts.WEB_APP_UNREADABLE)
+            return
+        kind = payload.get("type")
+        user = await self.api.get_user(platform, chat_id)
+        status = self.customers.status_of(user)
+        if status == STATUS_NEW:
+            await self._begin_registration(adapter, platform, chat_id)
+            return
+        if status == STATUS_REJECTED:
+            await self._show_not_approved(adapter, platform, chat_id, status)
+            return
+        if kind == "customer":
+            await self._web_app_customer(adapter, platform, chat_id, payload)
+        else:
+            await self._send_text(adapter, chat_id, texts.WEB_APP_UNREADABLE)
+
+    async def _web_app_customer(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                                payload: dict) -> None:
+        fields = {f: str(payload.get(f) or "")[:DETAIL_FIELD_MAX] for f in DETAIL_QUESTIONS}
+        _state, current = self.store.get_conversation(platform, chat_id)
+        after = (current or {}).get("after") or {}
+        try:
+            await self.api.save_customer_details(platform, chat_id, **fields)
+        except ShopApiRejected as exc:
+            if exc.status != 422:
+                raise
+            await self._send_text(adapter, chat_id, exc.message_fa, self._form_keyboard(fields))
+            return
+        await self._send_text(adapter, chat_id, texts.DETAILS_DONE, remove_keyboard())
+        await self._finish_details(adapter, platform, chat_id, after)
+
+    def _form_url(self, values: dict | None) -> str:
+        """The form at /app/form/, opened with what we already know (?fn=&ln=&nc=&addr=)."""
+        names = (("fn", "first_name"), ("ln", "last_name"), ("nc", "national_code"),
+                 ("addr", "address"))
+        query = {key: (values or {}).get(field) for key, field in names}
+        query = {key: str(value) for key, value in query.items() if value}
+        base = self.settings.miniapp_url + "form/"
+        return base + ("?" + urlencode(query) if query else "")
+
+    def _form_keyboard(self, values: dict | None) -> dict:
+        """The form's button, or (no mini app published yet) no keyboard at all."""
+        if not self.settings.miniapp_url:
+            return remove_keyboard()
+        return web_app_keyboard([[(texts.BTN_DETAILS_FORM, self._form_url(values))]])
 
     # ================= the customer's details (v2.17.0) ===================
     async def _details(self, platform: str, chat_id: str) -> dict | None:
@@ -964,24 +1033,30 @@ class BotEngine:
 
     async def _start_details(self, adapter: PlatformAdapter, platform: str, chat_id: str,
                              after: dict) -> bool:
-        """The first conversation: ask once for what neither we nor «سازه حساب» know.
+        """Ask for what neither we nor «سازه حساب» know, and (v2.18.0) keep asking until all
+        four are there: nothing is written to «سازه حساب» before that. With the mini app
+        published the customer may fill in the form instead of answering one by one.
         True = a question was asked and the conversation waits for its answer."""
         details = await self._details(platform, chat_id)
-        if details is None or details.get("asked") or not details.get("known"):
+        if details is None or not details.get("known"):
             return False
         queue = [f for f in details.get("missing") or () if f in DETAIL_QUESTIONS]
         if not queue:
             return False
-        await self._send_text(adapter, chat_id, texts.DETAILS_INTRO, remove_keyboard())
+        intro = texts.DETAILS_INTRO_FORM if self.settings.miniapp_url else texts.DETAILS_INTRO
+        await self._send_text(adapter, chat_id, intro,
+                              self._form_keyboard(details.get("prefill")))
         await self._ask_detail(adapter, platform, chat_id, queue, after)
         return True
 
     async def _ask_detail(self, adapter: PlatformAdapter, platform: str, chat_id: str,
-                          queue: list[str], after: dict, *, invalid: bool = False) -> None:
+                          queue: list[str], after: dict, *, invalid: bool = False,
+                          problem: str = "") -> None:
         field = queue[0]
-        text = getattr(texts, DETAIL_INVALID[field] if invalid else DETAIL_QUESTIONS[field])
+        text = problem or getattr(texts, DETAIL_INVALID[field] if invalid
+                                  else DETAIL_QUESTIONS[field])
         await self._send_options(
-            adapter, platform, chat_id, text, [[(texts.BTN_DETAILS_LATER, "dno")]],
+            adapter, platform, chat_id, text, [],
             state=STATE_AWAIT_DETAILS, data={"queue": queue, "after": after},
         )
 
@@ -1001,14 +1076,19 @@ class BotEngine:
             await self.api.save_customer_details(platform, chat_id, **{field: answer})
         except ShopApiRejected as exc:
             if exc.status == 422:
-                await self._ask_detail(adapter, platform, chat_id, queue, after, invalid=True)
+                # the rule that was broken (the server's own sentence), and the question again
+                detail = exc.message_fa if exc.message_fa == exc.detail else ""
+                await self._ask_detail(
+                    adapter, platform, chat_id, queue, after, invalid=True,
+                    problem=f"{detail}\n{getattr(texts, DETAIL_QUESTIONS[field])}"
+                    if detail else "")
                 return
             raise
         rest = queue[1:]
         if rest:
             await self._ask_detail(adapter, platform, chat_id, rest, after)
             return
-        await self._send_text(adapter, chat_id, texts.DETAILS_DONE)
+        await self._send_text(adapter, chat_id, texts.DETAILS_DONE, remove_keyboard())
         await self._finish_details(adapter, platform, chat_id, after)
 
     async def _finish_details(self, adapter: PlatformAdapter, platform: str, chat_id: str,
@@ -1870,6 +1950,10 @@ class BotEngine:
         if details is None:
             await self._place_order(adapter, platform, chat_id, None)
             return
+        # v2.18.0: no order before the four details: «سازه حساب» could not take it anyway
+        if details.get("known") and details.get("missing") and await self._start_details(
+                adapter, platform, chat_id, {"checkout": 1}):
+            return
         saved = str(details.get("address") or "").strip()
         if saved:
             await self._send_options(
@@ -1897,7 +1981,6 @@ class BotEngine:
         if not self._address_ok(text):
             await self._ask_checkout_address(adapter, platform, chat_id, texts.INVALID_ADDRESS)
             return
-        self.store.clear_conversation(platform, chat_id)
         await self._place_order(adapter, platform, chat_id, text)
 
     async def _checkout_same_address(self, adapter: PlatformAdapter, platform: str,
@@ -1933,6 +2016,10 @@ class BotEngine:
         try:
             result = await self.orders.checkout(platform, chat_id, ship_address)
         except ShopApiRejected as exc:
+            if exc.status == 422 and ship_address:
+                # v2.18.0: the address broke a rule: say which and ask for it again
+                await self._ask_checkout_address(adapter, platform, chat_id, exc.message_fa)
+                return
             if exc.status == 409 and "payment details" in (exc.detail or "").lower():
                 self._shop_state = None
                 await self._send_options(
@@ -2924,10 +3011,12 @@ class BotEngine:
                                      state=STATE_AWAIT_ORDER_ADDRESS, data={"order_id": args[0]})
         elif action == "dno":
             await self._answer_callback(adapter, callback_id)
+            # v2.18.0: the button of an older message: there is no «فعلاً نه» any more
             current_state, current = self.store.get_conversation(platform, chat_id)
-            await self._finish_details(adapter, platform, chat_id,
-                                       (current or {}).get("after") or {}
-                                       if current_state == STATE_AWAIT_DETAILS else {})
+            after = (current or {}).get("after") or {} if current_state == STATE_AWAIT_DETAILS \
+                else {}
+            if not await self._start_details(adapter, platform, chat_id, after):
+                await self._finish_details(adapter, platform, chat_id, after)
         elif action == "orders":
             await self._answer_callback(adapter, callback_id)
             await self._show_orders(adapter, platform, chat_id)

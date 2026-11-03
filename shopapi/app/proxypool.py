@@ -27,6 +27,11 @@ v2.9.3:
   reader then collects again to refill the pool (target ``TG_PROXY_POOL_SIZE``,
   now 10);
 * a **manual** proxy is never retired automatically: its status is only shown.
+
+v2.18.0: the list used to fill up with «قطع» rows nobody added: the reader collects links from
+the proxy channels, and each one that fails its first test is kept (state ``retired``) so it is
+not tested again. Now a collected proxy that has been down for ``DELETE_AFTER`` is deleted (if a
+channel still offers it, it gets one fresh test a day at most). Manual ones are never deleted.
 """
 from __future__ import annotations
 
@@ -62,6 +67,8 @@ NEW_DEAD_AFTER = timedelta(hours=1)
 #: v2.9.3: "the internet works": some proxy worked this recently
 NETWORK_UP_WINDOW = timedelta(minutes=30)
 MANUAL_SOURCE = "manual"
+#: v2.18.0: a collected proxy down this long is deleted
+DELETE_AFTER = timedelta(hours=24)
 
 ACTIVE_STATES = ("main", "probation")
 #: v2.9.0: the worker tests new links before adding them; never more usable
@@ -227,6 +234,36 @@ class ProxyPool:
             cur = self.db._conn.execute("DELETE FROM proxies WHERE id=?", (int(proxy_id),))
             self.db._commit()
             return cur.rowcount > 0
+
+    def is_down(self, proxy: dict) -> bool:
+        """«قطع»: retired, or failing at its last check."""
+        return proxy["state"] == "retired" or bool(proxy.get("failing_now"))
+
+    def delete_many(self, ids) -> int:
+        with self.db._lock:
+            count = 0
+            for proxy_id in ids:
+                count += self.db._conn.execute("DELETE FROM proxies WHERE id=?",
+                                               (int(proxy_id),)).rowcount
+            self.db._commit()
+        return count
+
+    def down_ids(self) -> list[int]:
+        return [p["id"] for p in self.list_all() if self.is_down(p)]
+
+    def prune_dead(self) -> list[int]:
+        """Collected proxies down for ``DELETE_AFTER``: not while the network itself is out
+        (a day without any working proxy says nothing about them)."""
+        proxies = self.list_all()
+        if not self._network_up(proxies):
+            return []
+        limit = (self.clock() - DELETE_AFTER).isoformat(timespec="seconds")
+        gone = [p["id"] for p in proxies
+                if p.get("source") != MANUAL_SOURCE and self.is_down(p)
+                and str(p.get("added_at") or "") < limit
+                and str(p.get("last_ok_at") or "") < limit]
+        self.delete_many(gone)
+        return gone
 
     def record(self, proxy_id: int, ok: bool, latency_ms: int | None = None,
                at: datetime | None = None) -> bool:

@@ -6,6 +6,7 @@ acting account's username.
 """
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from typing import Optional
 
@@ -24,6 +25,8 @@ from ..accounting_writer import (
 from ..config import Settings
 from ..db_own import OwnDB
 from ..util import now_utc
+from pydantic import BaseModel, Field
+
 from ..schemas import ShipIn
 from ..schemas import (
     ApprovePaymentIn,
@@ -37,6 +40,7 @@ from ..schemas import (
     SalesActionIn,
     ShopStateIn,
     ShopStateOut,
+    CustomerDetailsIn,
     UserOut,
 )
 from ..security import Identity, require_any, require_permission, require_signed_in
@@ -44,6 +48,7 @@ from ..staff import (
     P_ACCOUNTING_WRITE,
     P_ACTIVITY,
     P_ARCHIVE,
+    P_ARCHIVE_MANUAL,
     P_CUSTOMERS_DECIDE,
     P_CUSTOMERS_VIEW,
     P_DASHBOARD,
@@ -59,6 +64,8 @@ from ..staff import (
     P_SHOP_STATE,
 )
 from .public import same_database, shop_state
+
+logger = logging.getLogger("shopapi.admin")
 
 router = APIRouter(prefix="/admin")
 
@@ -122,10 +129,14 @@ def system_info(
 def list_users(
     status_filter: Optional[str] = Query(None, alias="status"),
     db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
     who: Identity = CAN_LIST_CUSTOMERS,
 ) -> list[UserOut]:
-    """v2.8.2: a sales user sees new customers and those of their own work."""
-    return [UserOut(**u) for u in ownership.filter_customers(db, who, db.list_users(status_filter))]
+    """v2.8.2: a sales user sees new customers and those of their own work.
+    v2.18.0: with the linked person's name in «سازه حساب»."""
+    users = ownership.filter_customers(db, who, db.list_users(status_filter))
+    names = _names_of(reader, [u.get("person_code") for u in users])
+    return [UserOut(**u, person_name=names.get(u.get("person_code"))) for u in users]
 
 
 @router.get("/persons/match", response_model=PersonMatch)
@@ -144,28 +155,82 @@ def match_person(
 def get_user(
     user_id: int,
     db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
     who: Identity = CAN_VIEW_CUSTOMERS,
 ) -> UserOut:
     user = db.get_user_by_id(user_id)
     if not ownership.customer_visible(db, who, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
-    return UserOut(**user)
+    names = _names_of(reader, [user.get("person_code")])
+    return UserOut(**user, person_name=names.get(user.get("person_code")))
+
+
+@router.get("/users/{user_id}/person-candidates")
+def person_candidates(
+    user_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    who: Identity = CAN_DECIDE_CUSTOMERS,
+) -> dict:
+    """v2.18.0, approving a customer: who in «سازه حساب» has this national code or a name
+    like this one. Empty when accounting cannot be read (staff can still type a code)."""
+    user = db.get_user_by_id(user_id)
+    if not ownership.customer_visible(db, who, user):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    try:
+        return customer_details.person_candidates(
+            reader, str(user.get("first_name") or ""), str(user.get("last_name") or ""),
+            str(user.get("national_code") or ""))
+    except Exception as exc:  # noqa: BLE001 - no suggestion is no reason to stop
+        logger.warning("person candidates not read: %s", type(exc).__name__)
+        return {"national_code": None, "candidates": [], "unavailable": True}
+
+
+@router.put("/users/{user_id}/details", response_model=UserOut)
+def put_user_details(
+    user_id: int,
+    payload: CustomerDetailsIn,
+    db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    writer: AccountingWriter = Depends(deps.get_writer),
+    who: Identity = CAN_DECIDE_CUSTOMERS,
+) -> UserOut:
+    """v2.18.0: staff fill in what a customer told them (the same rules as the bot's form)."""
+    user = db.get_user_by_id(user_id)
+    if not ownership.customer_visible(db, who, user):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    values, problem = customer_details.clean_values(payload.model_dump())
+    if problem:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, problem)
+    if values:
+        user = customer_details.save(db, writer, user, values)
+        # never the values: personal data stays out of the log
+        db.audit(who.actor, "customer_details", f"user id={user_id} fields={sorted(values)}")
+    names = _names_of(reader, [user.get("person_code")])
+    return UserOut(**user, person_name=names.get(user.get("person_code")))
 
 
 def _create_person(writer: AccountingWriter, user: dict, payload: ApproveUserIn) -> int:
-    """Recipe §5.1 for a customer without a person code. Returns the code."""
-    first = (payload.first_name or "").strip() or str(user.get("first_name") or "")
-    last = (payload.last_name or "").strip() or str(user.get("last_name") or "")
-    if not last:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "last_name is required to create a person (or give person_code)",
-        )
+    """Recipe §5.1 for a customer without a person code. Returns the code. v2.18.0: never
+    with an empty field: first name, last name, national code and address are all required."""
+    values, problem = customer_details.clean_values({
+        "first_name": (payload.first_name or "").strip() or str(user.get("first_name") or ""),
+        "last_name": (payload.last_name or "").strip() or str(user.get("last_name") or ""),
+        "national_code": (payload.national_code or "").strip()
+        or str(user.get("national_code") or ""),
+        "address": (payload.address or "").strip() or str(user.get("address") or ""),
+    })
+    if problem:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, problem)
+    if set(values) != set(customer_details.FIELDS):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "برای ساخت شخص در حسابداری، نام، نام خانوادگی، کد ملی و نشانی همه لازم است.")
+    first, last = values["first_name"], values["last_name"]
     try:
         # v2.17.0: all a new customer told the bot goes into the new person at once
         result = writer.create_person(first, last, user["phone"],
-                                      address=str(user.get("address") or ""),
-                                      national_code=str(user.get("national_code") or ""))
+                                      address=values["address"],
+                                      national_code=values["national_code"])
     except AccountingLockTimeout:
         raise HTTPException(status.HTTP_409_CONFLICT, "Accounting is busy; try again") from None
     except AccountingWriteRefused:
@@ -203,14 +268,26 @@ def approve_user(
     if not ownership.customer_visible(db, who, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     created = False
+    typed, problem = customer_details.clean_values(payload.model_dump(
+        include={"first_name", "last_name", "national_code", "address"}))
+    if problem:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, problem)
+    if payload.person_code is None:
+        # v2.18.0: this national code belongs to a person already: link, never a second one
+        same_code = None
+        try:
+            same_code = customer_details.national_code_person(
+                reader, typed.get("national_code") or str(user.get("national_code") or ""))
+        except Exception as exc:  # noqa: BLE001 - the writer's own checks still run
+            logger.warning("national code not looked up: %s", type(exc).__name__)
+        if same_code is not None:
+            payload = payload.model_copy(update={"person_code": same_code})
     if payload.person_code is None:
         person_code = _create_person(writer, user, payload)
         created = True
-        names = {"first_name": (payload.first_name or "").strip(),
-                 "last_name": (payload.last_name or "").strip()}
-        names = {key: value for key, value in names.items() if value}
-        if names:
-            db.update_user_details(user_id, **names)
+    if typed:
+        db.update_user_details(user_id, **typed)
+    if created:
         row = db.get_user_by_id(user_id)
         name = f"{row.get('first_name') or ''} {row.get('last_name') or ''}".strip()
         if name:
@@ -295,17 +372,22 @@ def order_out(db: OwnDB, who: Identity, order: dict, **extra) -> OrderOut:
     return OrderOut(**fields)
 
 
-def _person_names(reader: AccountingReader, orders: list[dict]) -> dict:
+def _names_of(reader: AccountingReader, codes) -> dict:
     try:
-        return reader.person_names(o.get("user_person_code") for o in orders)
+        return reader.person_names(codes)
     except Exception:  # noqa: BLE001 - the list works without names (ShopAdmin shows the code)
         return {}
+
+
+def _person_names(reader: AccountingReader, orders: list[dict]) -> dict:
+    return _names_of(reader, [o.get("user_person_code") for o in orders])
 
 
 @router.get("/orders", response_model=list[OrderOut])
 def list_orders(
     status_filter: str = Query("receipt_uploaded", alias="status"),
     mine: bool = Query(False),
+    include_archived: bool = Query(False),
     db: OwnDB = Depends(deps.get_db),
     reader: AccountingReader = Depends(deps.get_reader),
     settings: Settings = Depends(deps.get_settings),
@@ -315,6 +397,12 @@ def list_orders(
     another user's order is never listed. Archived orders: /admin/archive/orders."""
     orders = db.query_orders(status=status_filter or None, viewer_id=ownership.viewer_id(who),
                              mine_only=mine)
+    if include_archived:
+        # v2.18.0: search and reports still find what was archived by hand
+        viewer = None if ownership.is_manager(who) else who.user_id
+        orders += db.query_orders(status=status_filter or None, viewer_id=viewer, archived=True,
+                                  accounting_db=None if ownership.is_manager(who)
+                                  else settings.database_name())
     if mine and ownership.is_manager(who) and who.user_id is not None:
         orders = [o for o in orders if o.get("owner_id") == who.user_id]
     # v2.6.0: the linked person's name from the accounting DB (one query).
@@ -489,6 +577,45 @@ def archived_orders(
             for o in orders]
 
 
+class OrderIdsIn(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=500)
+
+
+@router.post("/archive/orders")
+def archive_orders_now(
+    payload: OrderIdsIn,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = Depends(require_permission(P_ARCHIVE_MANUAL)),
+) -> dict:
+    """v2.18.0: one order or many, at once, of any user: only finished ones (see
+    ``archive_orders``). They stay in search and reports; nothing is deleted."""
+    done, refused = db.archive_orders(payload.ids)
+    for order_id in done:
+        db.audit(who.actor, "order_archive", f"order id={order_id}")
+        db.log_activity(staff_id=ownership.staff_id(who), actor=who.actor,
+                        action=ownership.A_ARCHIVE, target_type="order", target_id=order_id)
+    if done:
+        db.add_event(archive.EVENT_ARCHIVED, None, who.actor)
+    return {"archived": done, "refused": refused}
+
+
+@router.post("/archive/orders/restore")
+def restore_archived_orders(
+    payload: OrderIdsIn,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = Depends(require_permission(P_ARCHIVE_MANUAL)),
+) -> dict:
+    """Out of the archive again. A finished order goes back with the weekly run."""
+    done, refused = db.restore_orders(payload.ids)
+    for order_id in done:
+        db.audit(who.actor, "order_restore", f"order id={order_id}")
+        db.log_activity(staff_id=ownership.staff_id(who), actor=who.actor,
+                        action=ownership.A_RESTORE, target_type="order", target_id=order_id)
+    if done:
+        db.add_event(archive.EVENT_ARCHIVED, None, who.actor)
+    return {"restored": done, "refused": refused}
+
+
 @router.post("/archive/run")
 def run_archive(
     db: OwnDB = Depends(deps.get_db),
@@ -542,10 +669,12 @@ def approve_payment(
                     status.HTTP_409_CONFLICT, f"Insufficient stock for product {kala_code}"
                 )
 
-        if settings.status_code_problem():
+        if settings.status_code_problem() or customer_details.write_problem(
+                db, reader, order["user_id"]):
             # v2.17.0: without a valid status code nothing is ever written («بدون
-            # وضعیت» in «سازه حساب»). The payment decision stands; staff are warned and
-            # write the order later with «ثبت در حسابداری».
+            # وضعیت» in «سازه حساب»); v2.18.0: nor without the customer's four details. The
+            # payment decision stands; staff are warned and write the order later with
+            # «ثبت در حسابداری».
             _record_payer(db, order, payload)
             return order_out(db, who, _accept_without_writing(db, who, order_id))
         try:
@@ -637,6 +766,7 @@ def _write_to_accounting(db: OwnDB, writer: AccountingWriter, settings: Settings
 def write_accounting_later(
     order_id: int,
     writer: AccountingWriter = Depends(deps.get_writer),
+    reader: AccountingReader = Depends(deps.get_reader),
     db: OwnDB = Depends(deps.get_db),
     settings: Settings = Depends(deps.get_settings),
     who: Identity = CAN_WRITE_ACCOUNTING,
@@ -651,6 +781,8 @@ def write_accounting_later(
             raise HTTPException(status.HTTP_409_CONFLICT, "Order status code is not configured")
         if order["user_status"] != "approved" or order["user_person_code"] is None:
             raise HTTPException(status.HTTP_409_CONFLICT, "Customer is not approved yet")
+        if customer_details.write_problem(db, reader, order["user_id"]):
+            raise HTTPException(status.HTTP_409_CONFLICT, customer_details.DETAILS_INCOMPLETE)
         try:
             written = _write_to_accounting(db, writer, settings, who, order, order_id)
         except AccountingConfigError:

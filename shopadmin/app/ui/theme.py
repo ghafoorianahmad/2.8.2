@@ -303,7 +303,7 @@ RADIUS = 14          # v2.9.0: rounder buttons (radius never changes a widget's 
 RADIUS_LG = 20
 #: v2.9.3: the text area of every push button (padding and edges are the same in
 #: every variant, so every button is equally tall; scripts/button_audit.py)
-BUTTON_CONTENT_HEIGHT = 24
+BUTTON_CONTENT_HEIGHT = 25   # v2.18.0: 1 + 1 px of edges (was 1 + 2): the same height
 SPACE_XS = 4
 SPACE_SM = 8
 SPACE = 16
@@ -370,6 +370,9 @@ def app_font(size: int = BASE_FONT_SIZE, bold: bool = False) -> QFont:
     font = QFont(resolve_font_family(), size)
     font.setBold(bold)
     font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    # v2.18.0: Windows' hinting snaps Persian dots and strokes to whole pixels: at 125% «قیمت»
+    # lost a dot («فیمت») and «گروه» its top stroke («کروه»), mostly at the sidebar's size
+    font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
     return font
 
 
@@ -594,44 +597,38 @@ def site_gradient(lighter: float = 0.0, darker: float = 0.0, middle: float = 0.5
 
 
 def glass_fills(simple: bool) -> dict[str, str]:
-    """v2.15.0: a normal button = the site's «مشخصات»: a filled, light, soft button
-    (a faint tint of the text colour over the card), at rest / hovered (a hint of
-    the site's cyan) / pressed (darker). «ساده»: the same, flat."""
+    """v2.18.0: a normal button = glass with a soft tint of the look (so it stands out from
+    the card without a dark line), at rest / hovered (more of the tint) / pressed (deeper).
+    «ساده»: the same, flat."""
     if MODE == "dark":
+        tint = mix(ACCENT, "#FFFFFF", 0.35)
         if simple:
-            return {"fill": rgba("#FFFFFF", 0.08), "hover": rgba(SITE_CYAN, 0.14),
+            return {"fill": rgba(tint, 0.16), "hover": rgba(tint, 0.26),
                     "pressed": rgba("#000000", 0.28)}
         return {
-            "fill": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba('#FFFFFF', 0.11)}, "
-                     f"stop:1 {rgba('#FFFFFF', 0.05)})"),
-            "hover": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba(SITE_CYAN, 0.18)}, "
-                      f"stop:1 {rgba(SITE_CYAN, 0.08)})"),
+            "fill": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba(tint, 0.24)}, "
+                     f"stop:1 {rgba(tint, 0.10)})"),
+            "hover": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {rgba(tint, 0.36)}, "
+                      f"stop:1 {rgba(tint, 0.18)})"),
             "pressed": rgba("#000000", 0.28),
         }
+    top, bottom = mix("#FFFFFF", ACCENT, 0.07), mix("#FFFFFF", ACCENT, 0.16)
     if simple:
-        return {"fill": "#EEF1F6", "hover": mix("#EEF1F6", SITE_CYAN, 0.10),
-                "pressed": "#E1E6EE"}
+        return {"fill": bottom, "hover": mix("#FFFFFF", ACCENT, 0.24),
+                "pressed": mix("#FFFFFF", ACCENT, 0.30)}
     return {
-        "fill": "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FAFBFD, stop:1 #ECEFF5)",
-        "hover": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {mix('#FAFBFD', SITE_CYAN, 0.06)}, "
-                  f"stop:1 {mix('#ECEFF5', SITE_CYAN, 0.10)})"),
-        "pressed": "#E1E6EE",
+        "fill": f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {top}, stop:1 {bottom})",
+        "hover": (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {mix('#FFFFFF', ACCENT, 0.13)}, "
+                  f"stop:1 {mix('#FFFFFF', ACCENT, 0.24)})"),
+        "pressed": mix("#FFFFFF", ACCENT, 0.30),
     }
 
 
 def soft_border() -> str:
-    """v2.15.0: the edge of a normal button = the site's soft neutral edge (never
-    the accent, never dark): light ``rgba(20,30,60,…)``, dark ``rgba(255,255,255,.17)``."""
+    """v2.18.0: the edge of a normal button: a soft tint of the look, never dark."""
     if MODE == "dark":
-        return rgba("#FFFFFF", 0.17)
-    return "rgba(20, 30, 60, 56)"
-
-
-def soft_shadow_edge() -> str:
-    """v2.15.0: the bottom edge = the site's small drop shadow under «مشخصات»."""
-    if MODE == "dark":
-        return rgba("#000000", 0.55)
-    return "rgba(20, 30, 60, 82)"
+        return rgba(mix(ACCENT, "#FFFFFF", 0.45), 0.52)
+    return rgba(ACCENT, 0.50)
 
 
 def hover_border() -> str:
@@ -682,7 +679,6 @@ def _stylesheet_template() -> str:
     danger_fill = DANGER_FILL if simple else _diagonal(
         DANGER_FILL, mix(DANGER_FILL, "#9D174D", 0.45))
     edge = soft_border()
-    shadow_edge = soft_shadow_edge()
     hover_edge = hover_border()
     return f"""
 QWidget {{
@@ -720,56 +716,55 @@ QLabel#Faint {{ color: {TEXT_FAINT}; }}
 QLabel#EmptyTitle {{ color: {TEXT}; font-size: 13pt; font-weight: 700; }}
 QLabel#EmptyHint {{ color: {TEXT_MUTED}; }}
 
-/* ---------------- buttons (raised, Phone Bridge) ----------------
+/* ---------------- buttons ----------------
    v2.9.3 (scripts/button_audit.py): every button has the same height (the same
-   padding, a 1px border and a 2px bottom edge in every variant and state), the
-   same radius, and a disabled look that cannot be mistaken: flat, dashed edge,
-   grey text, no raised edge and no shadow. A button never looks like plain text
-   (no transparent text buttons; «Ghost» is only for an icon without text). */
+   padding and border in every variant and state), the same radius, and a disabled
+   look that cannot be mistaken: flat, dashed edge, grey text, no shadow. A button
+   never looks like plain text (no transparent text buttons; «Ghost» is only for an
+   icon without text). v2.18.0: no dark bottom line: glass with a soft tint of the look. */
 QPushButton {{
     background: {button_fill};
-    color: {TEXT}; border: 1px solid {edge}; border-bottom: 2px solid {shadow_edge};
+    color: {TEXT}; border: 1px solid {edge};
     border-radius: {RADIUS}px; padding: 8px 16px; font-size: {BASE_FONT_SIZE}pt; font-weight: 600;
     min-height: {BUTTON_CONTENT_HEIGHT}px; max-height: {BUTTON_CONTENT_HEIGHT}px;
 }}
-/* v2.13.0 glass: a see-through fill with a light top edge; hover = a soft light
-   glow (the accent frame here, a coloured halo from «جلوه‌ها»); pressed = the
-   button sinks (the thick edge moves to the top, the text 1px down, darker fill).
-   The height never changes: 1 + 2 px of edges and 16 px of padding in every state. */
+/* v2.13.0 glass: a see-through fill; hover = a soft light glow (the accent frame here,
+   a coloured halo from «جلوه‌ها»); pressed = the button sinks (the text 1px down, darker
+   fill). The height never changes: 1 + 1 px of edges and 16 px of padding in every state. */
 QPushButton:hover {{ background: {button_hover}; border-color: {hover_edge};
-                     border-bottom-color: {hover_edge}; color: {INK}; }}
-QPushButton:pressed {{ background: {button_pressed}; border-top: 2px solid {shadow_edge};
+                     color: {INK}; }}
+QPushButton:pressed {{ background: {button_pressed}; border-top: 1px solid {edge};
                        border-bottom: 1px solid {edge}; padding-top: 9px;
                        padding-bottom: 7px; }}
 QPushButton:disabled, QPushButton#Primary:disabled, QPushButton#Success:disabled,
 QPushButton#Danger:disabled, QPushButton#Ghost:disabled, QPushButton#Tab:disabled,
 QPushButton#RowMenu:disabled {{
     background: {DISABLED_BG}; color: {DISABLED_TEXT}; font-weight: 400;
-    border: 1px dashed {TEXT_FAINT}; border-bottom: 2px dashed {TEXT_FAINT};
+    border: 1px dashed {TEXT_FAINT}; border-bottom: 1px dashed {TEXT_FAINT};
 }}
 
 QPushButton#Primary {{
     background: {primary_fill};
     color: #FFFFFF; border: 1px solid transparent; border-top: 1px solid {primary_top};
-    border-bottom: 2px solid transparent; font-weight: 700;
+    border-bottom: 1px solid transparent; font-weight: 700;
 }}
 QPushButton#Primary:hover {{ background: {primary_hover}; color: #FFFFFF; border-color: transparent;
                              border-top: 1px solid {primary_top}; }}
-QPushButton#Primary:pressed {{ background: {primary_pressed}; border-top: 2px solid transparent;
+QPushButton#Primary:pressed {{ background: {primary_pressed}; border-top: 1px solid transparent;
                                border-bottom: 1px solid transparent; padding-top: 9px;
                                padding-bottom: 7px; }}
 
 QPushButton#Success {{ background: {success_fill}; color: #FFFFFF; border: 1px solid transparent;
-                       border-bottom: 2px solid transparent; font-weight: 700; }}
+                       border-bottom: 1px solid transparent; font-weight: 700; }}
 QPushButton#Success:hover {{ background: {SUCCESS_FILL_DARK}; color: #FFFFFF; }}
-QPushButton#Success:pressed {{ background: {SUCCESS_FILL_DARK}; border-top: 2px solid transparent;
+QPushButton#Success:pressed {{ background: {SUCCESS_FILL_DARK}; border-top: 1px solid transparent;
                                border-bottom: 1px solid transparent; padding-top: 9px;
                                padding-bottom: 7px; }}
 
 QPushButton#Danger {{ background: {danger_fill}; color: #FFFFFF; border: 1px solid transparent;
-                      border-bottom: 2px solid transparent; font-weight: 700; }}
+                      border-bottom: 1px solid transparent; font-weight: 700; }}
 QPushButton#Danger:hover {{ background: {DANGER_FILL_DARK}; color: #FFFFFF; }}
-QPushButton#Danger:pressed {{ background: {DANGER_FILL_DARK}; border-top: 2px solid transparent;
+QPushButton#Danger:pressed {{ background: {DANGER_FILL_DARK}; border-top: 1px solid transparent;
                               border-bottom: 1px solid transparent; padding-top: 9px;
                               padding-bottom: 7px; }}
 
@@ -811,16 +806,16 @@ QPushButton#OptionCard:checked {{ border: 2px solid {ACCENT}; background: {PRIMA
                                   color: {PRIMARY_TEXT}; }}
 
 QPushButton#Tab {{
-    border: 1px solid {edge}; border-bottom: 2px solid {shadow_edge}; border-radius: {RADIUS}px;
+    border: 1px solid {edge}; border-radius: {RADIUS}px;
     padding: 8px 16px; background: {button_fill}; color: {TEXT}; font-size: {BASE_FONT_SIZE}pt;
     font-weight: 700;
 }}
 QPushButton#Tab:hover {{ background: {button_hover}; border-color: {hover_edge};
-                         border-bottom-color: {hover_edge}; color: {INK}; }}
+                         color: {INK}; }}
 /* v2.15.0: the chosen tab = the site's active segment (the «ثبت سفارش» gradient) */
 QPushButton#Tab:checked {{ background: {primary_fill}; color: #FFFFFF;
                            border: 1px solid transparent; border-top: 1px solid {primary_top};
-                           border-bottom: 2px solid transparent; }}
+                           border-bottom: 1px solid transparent; }}
 
 QPushButton#LinkButton {{
     border: none; background: transparent; color: {PRIMARY_TEXT}; padding: 2px 4px;
@@ -892,19 +887,20 @@ QRadioButton:disabled {{ color: {TEXT_MUTED}; }}
 
 /* ---------------- tables ---------------- */
 QTableWidget, QTableView, QTreeWidget {{
-    background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS}px;
+    background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS_LG}px;
     gridline-color: transparent; selection-background-color: {SELECTED_BG};
     selection-color: {INK}; alternate-background-color: {ALT_ROW};
 }}
-QTableWidget::item {{ padding: 6px 8px; border-bottom: 1px solid {ROW_LINE}; }}
+/* v2.18.0: no vertical padding: Qt takes it off a button's or pill's cell too, and a 43px
+   button in a 33px cell lost its bottom. The row's height already centres the text. */
+QTableWidget::item {{ padding: 0px 8px; border-bottom: 1px solid {ROW_LINE}; }}
 QTableWidget::item:selected {{ background: {SELECTED_BG}; color: {INK}; }}
 QHeaderView {{ background: transparent; }}
 QHeaderView::section {{
     background: {HEADER_BG}; color: {TEXT_MUTED}; padding: 9px 10px; border: none;
     border-left: 1px solid {BORDER}; border-bottom: 1px solid {BORDER}; font-weight: 700;
 }}
-QHeaderView::section:first {{ border-top-right-radius: {RADIUS}px; }}
-QHeaderView::section:last {{ border-top-left-radius: {RADIUS}px; }}
+/* v2.18.0: the corners are cut by widgets.round_view_corners: the header sits inside the frame */
 QTableCornerButton::section {{ background: {HEADER_BG}; border: none; }}
 QAbstractScrollArea::corner {{ background: transparent; border: none; }}
 
@@ -955,6 +951,7 @@ def apply_theme(app: QApplication, mode: str | None = None, *, palette: str | No
     family = resolve_font_family(loaded)
     font = QFont(family, BASE_FONT_SIZE)
     font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)   # see app_font
     app.setFont(font)
     # Full RTL everywhere: layout direction, alignment and widget mirroring.
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)

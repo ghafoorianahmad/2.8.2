@@ -17,6 +17,7 @@ def run(coro):
 # ---- connection / failover ----------------------------------------------------------
 def test_connects_through_best_pool_proxy_and_reports(env):
     worker, tg, shop, _ = env
+    tg.direct_ok = False                # v2.18.0: direct comes first
     shop.pool = [pool_entry(1, "a.example"), pool_entry(2, "b.example")]
     assert run(worker.ensure_connected())
     assert worker.tg.proxy.id == 1
@@ -26,6 +27,7 @@ def test_connects_through_best_pool_proxy_and_reports(env):
 
 def test_dead_proxy_is_skipped_and_reported(env):
     worker, tg, shop, _ = env
+    tg.direct_ok = False                # v2.18.0: direct comes first
     shop.pool = [pool_entry(1, "a.example"), pool_entry(2, "b.example")]
     tg.dead_proxies.add(("a.example", 443))
     assert run(worker.ensure_connected())
@@ -35,27 +37,40 @@ def test_dead_proxy_is_skipped_and_reported(env):
 
 def test_local_tg_proxy_is_the_fallback(env, settings):
     worker, tg, shop, _ = env
+    tg.direct_ok = False                # v2.18.0: direct comes first
     shop.down = True                       # no pool at all
     settings.local_proxies = [f"tg://proxy?server=local.example&port=443&secret=dd{'ab' * 16}"]
     assert run(worker.ensure_connected())
     assert worker.tg.proxy.host == "local.example" and worker.tg.proxy.id is None
 
 
-def test_direct_connection_is_the_last_resort(env, settings):
+def test_direct_comes_first_and_no_proxy_is_used_then(env, settings):
+    """v2.18.0: if Telegram connects directly, proxies are not used at all."""
     worker, tg, shop, _ = env
+    tg.direct_ok = True
     shop.pool = [pool_entry(1, "a.example")]
-    tg.dead_proxies.add(("a.example", 443))
     assert run(worker.ensure_connected())
     assert worker.tg.proxy is None
-    assert tg.calls[-1] == "connect:direct:True"
-    assert shop.reports == [{"id": 1, "ok": False}]     # direct is not a pool entry
+    assert tg.calls == ["connect:direct:True"]
+    assert shop.reports == []                           # direct is not a pool entry
+    clients = len(tg.clients)
+    run(worker.probe_tick())                            # no testing of proxies either
+    assert shop.reports == [] and len(tg.clients) == clients
     run(worker.tg.disconnect())
+    tg.calls.clear()
+    tg.direct_ok = False                                # blocked: now the pool
+    assert run(worker.ensure_connected())
+    assert worker.tg.proxy is not None
+    run(worker.tg.disconnect())
+    tg.dead_proxies.add(("a.example", 443))             # and when direct is switched off
+    tg.direct_ok = True
     settings.allow_direct = False
     assert not run(worker.ensure_connected())
 
 
 def test_health_failure_switches_to_next_proxy(env):
     worker, tg, shop, _ = env
+    tg.direct_ok = False                # v2.18.0: direct comes first
     shop.pool = [pool_entry(1, "a.example"), pool_entry(2, "b.example")]
     run(worker.ensure_connected())
     tg.dead_proxies.add(("a.example", 443))
@@ -79,6 +94,7 @@ def test_health_failure_switches_to_next_proxy(env):
 
 def test_healthy_ping_reports_ok(env):
     worker, tg, shop, _ = env
+    tg.direct_ok = False                # v2.18.0: direct comes first
     shop.pool = [pool_entry(7, "a.example")]
     run(worker.ensure_connected())
     shop.reports.clear()
@@ -121,6 +137,7 @@ def test_revoked_session_raises_login_alert(env):
 
 def test_probe_uses_anonymous_clients_and_rotates(env, settings):
     worker, tg, shop, _ = env
+    tg.direct_ok = False                # v2.18.0: direct comes first
     settings.probe_max = 2
     shop.pool = [pool_entry(i, f"p{i}.example", state="probation") for i in range(1, 5)]
     run(worker.ensure_connected())          # connected via p1
@@ -131,7 +148,7 @@ def test_probe_uses_anonymous_clients_and_rotates(env, settings):
     shop.reports.clear()
     run(worker.probe_tick())
     assert [r["id"] for r in shop.reports] == [4, 2]
-    probes = [c for c in tg.clients[1:]]
+    probes = [c for c in tg.clients[2:]]    # after the failed direct try and p1 itself
     assert probes and all(c.session_str == "" for c in probes)
 
 
@@ -439,6 +456,7 @@ def test_oversized_pdf_alerts_once(env, settings):
 # ---- loop ---------------------------------------------------------------------------------
 def test_step_runs_due_jobs_and_publishes_status(env):
     worker, tg, shop, clock = env
+    tg.direct_ok = False                # v2.18.0: direct comes first
     shop.pool = [pool_entry(1, "a.example")]
     _channel(tg, [fake_message(3, pdf=PDF)])
     run(worker.step())

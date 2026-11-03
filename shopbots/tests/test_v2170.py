@@ -30,7 +30,10 @@ def details(shopapi):
             return httpx.Response(status, json=payload, request=request)
 
         def view():
-            return {k: state[k] for k in ("missing", "address", "asked", "known")}
+            out = {k: state[k] for k in ("missing", "address", "asked", "known")}
+            if state.get("prefill"):
+                out["prefill"] = state["prefill"]
+            return out
 
         if path.endswith("/details") and path.startswith("/users/"):
             if method == "POST":
@@ -39,7 +42,7 @@ def details(shopapi):
                         state["asked"] = bool(value)
                         continue
                     if field in state["refuse"]:
-                        return reply(422, {"detail": "Invalid value"})
+                        return reply(422, {"detail": state.get("refuse_text") or "Invalid value"})
                     state["saved"].append((field, value))
                     state["missing"] = [f for f in state["missing"] if f != field]
                     if field == "address":
@@ -123,16 +126,18 @@ def test_a_bad_national_code_is_asked_again(env, bot_apis, shopapi, details):
     env(scenario)
 
 
-def test_later_stops_asking_and_shows_the_menu(env, bot_apis, shopapi, details):
+def test_there_is_no_later_any_more(env, bot_apis, shopapi, details):
+    """v2.18.0: an old «فعلاً نه» button and every /start ask again until all four are there."""
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
         await _contact(engine, 2, CUSTOMER_CHAT)
+        assert "BTN_DETAILS_LATER" not in vars(texts)
         await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "dno")
-        assert details["asked"] is True
-        assert texts.MAIN_MENU in _texts(bot_apis)[-1]
+        assert details["asked"] is False
+        assert _texts(bot_apis)[-1].startswith(texts.ASK_FIRST_NAME)
         count = len(_texts(bot_apis))
         await push_message(engine, "bale", 4, CUSTOMER_CHAT, text="/start")
-        assert texts.ASK_FIRST_NAME not in "\n".join(_texts(bot_apis)[count:])
+        assert texts.ASK_FIRST_NAME in "\n".join(_texts(bot_apis)[count:])
 
     env(scenario)
 

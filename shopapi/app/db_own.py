@@ -186,6 +186,25 @@ CREATE TABLE IF NOT EXISTS price_notes (
     created_at TEXT NOT NULL
 );
 
+-- v2.18.0: what each post of the channel changed: old and new price of every row (kept for good)
+CREATE TABLE IF NOT EXISTS price_note_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id INTEGER NOT NULL,
+    list_id INTEGER,
+    row_key TEXT NOT NULL,
+    section TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    color TEXT NOT NULL DEFAULT '',
+    old_naghd INTEGER,
+    new_naghd INTEGER,
+    old_price_rial INTEGER,
+    new_price_rial INTEGER,
+    held INTEGER NOT NULL DEFAULT 0,
+    actor TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_price_note_changes ON price_note_changes(note_id);
+
 -- v2.6.2: rows whose automatic mapping staff undid: never matched automatically again.
 CREATE TABLE IF NOT EXISTS price_auto_rejects (
     row_key TEXT PRIMARY KEY,
@@ -1299,6 +1318,36 @@ class OwnDB:
                 (ts, cutoff)).rowcount
             self._commit()
         return {"orders": int(orders), "requests": int(requests)}
+
+    def archive_orders(self, order_ids: list[int]) -> tuple[list[int], list[int]]:
+        """v2.18.0 manual archive: at once, finished orders only: written to accounting,
+        sent, rejected, cancelled or expired, and nothing still waiting to be written.
+        Returns (archived, refused)."""
+        marks = ",".join("?" for _ in CLOSED_ORDER_STATUSES)
+        done, refused = [], []
+        ts = now_iso()
+        with self._lock:
+            for order_id in order_ids:
+                count = self._conn.execute(
+                    "UPDATE orders SET archived_at=? WHERE id=? AND archived_at IS NULL "
+                    f"AND (status='written' OR status IN ({marks}) OR shipped_at IS NOT NULL) "
+                    "AND accounting_pending=0",
+                    (ts, int(order_id), *CLOSED_ORDER_STATUSES)).rowcount
+                (done if count else refused).append(int(order_id))
+            self._commit()
+        return done, refused
+
+    def restore_orders(self, order_ids: list[int]) -> tuple[list[int], list[int]]:
+        """Back out of the archive. Nothing else about the order changes."""
+        done, refused = [], []
+        with self._lock:
+            for order_id in order_ids:
+                count = self._conn.execute(
+                    "UPDATE orders SET archived_at=NULL WHERE id=? AND archived_at IS NOT NULL",
+                    (int(order_id),)).rowcount
+                (done if count else refused).append(int(order_id))
+            self._commit()
+        return done, refused
 
     def archive_abandoned(self, cutoff: str) -> dict[str, int]:
         """v2.8.3 (nightly): orders nobody took that the customer cancelled or that

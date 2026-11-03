@@ -101,6 +101,9 @@ class ShopApiClient:
             return texts.RECEIPT_TOO_LATE
         if status == 503:
             return texts.SERVICE_UNAVAILABLE
+        # v2.18.0: the form's rules answer in Persian: that sentence is what the customer needs
+        if status == 422 and detail and any("\u0600" <= ch <= "\u06ff" for ch in detail):
+            return detail
         return _STATUS_MESSAGES.get(status, "خطای نامشخص از سامانهٔ فروش.")
 
     async def _request(

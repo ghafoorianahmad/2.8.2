@@ -81,7 +81,7 @@ def test_approve_without_code_creates_person_with_edited_name(client, reader, wr
     seed_products(reader)
     user_id = register(client, name="🦄 xx").json()["id"]
     r = client.post(f"/admin/users/{user_id}/approve",
-                    json={"first_name": "علی", "last_name": "رضایی"}, headers=h("admin"))
+                    json={"first_name": "علی", "last_name": "رضایی", "national_code": "0084575948", "address": "مشهد، خیابان نمونه، پلاک ۱"}, headers=h("admin"))
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "approved" and body["person_code"] == 8001
@@ -101,8 +101,8 @@ def test_approve_create_person_dry_run_is_honest(client, reader, writer):
     seed_products(reader)
     writer.committed = False
     user_id = register(client).json()["id"]
-    r = client.post(f"/admin/users/{user_id}/approve", json={"last_name": "رضایی"},
-                    headers=h("admin"))
+    r = client.post(f"/admin/users/{user_id}/approve", headers=h("admin"),
+                    json={"first_name": "علی", "last_name": "رضایی", "national_code": "0084575948", "address": "مشهد، خیابان نمونه، پلاک ۱"})
     assert r.status_code == 409 and "disabled" in r.json()["detail"]
     assert client.get("/users/bale/111", headers=h("bot")).json()["status"] == "pending"
 
@@ -111,8 +111,8 @@ def test_approve_create_person_links_existing_mobile(client, reader, writer):
     seed_products(reader)
     writer.person_result = PersonResult(person_code=7001, existing=True)
     user_id = register(client).json()["id"]
-    r = client.post(f"/admin/users/{user_id}/approve", json={"last_name": "x"},
-                    headers=h("admin"))
+    r = client.post(f"/admin/users/{user_id}/approve", headers=h("admin"),
+                    json={"first_name": "علی", "last_name": "رضایی", "national_code": "0084575948", "address": "مشهد، خیابان نمونه، پلاک ۱"})
     assert r.status_code == 200 and r.json()["person_code"] == 7001
 
 
@@ -120,8 +120,8 @@ def test_approve_create_person_shared_mobile_needs_code(client, reader, writer):
     seed_products(reader)
     writer.person_result = PersonResult(person_code=7001, existing=True, ambiguous=True)
     user_id = register(client).json()["id"]
-    r = client.post(f"/admin/users/{user_id}/approve", json={"last_name": "x"},
-                    headers=h("admin"))
+    r = client.post(f"/admin/users/{user_id}/approve", headers=h("admin"),
+                    json={"first_name": "علی", "last_name": "رضایی", "national_code": "0084575948", "address": "مشهد، خیابان نمونه، پلاک ۱"})
     assert r.status_code == 409
 
 

@@ -112,6 +112,9 @@ def pinned_context(pem: str) -> ssl.SSLContext:
 _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"insufficient stock for product (\d+)", re.I),
      "موجودی کافی نیست (کد کالا: {0})."),
+    (re.compile(r"customer details are incomplete", re.I),
+     "اطلاعات مشتری کامل نیست: نام، نام خانوادگی، کد ملی و نشانی همه لازم است. در صفحهٔ «مشتریان» "
+     "با دکمهٔ «اطلاعات» کامل کنید."),
     (re.compile(r"person_code (\d+) not found", re.I),
      "کد شخص {0} در حسابداری یافت نشد."),
     (re.compile(r"person_code (\d+) is already linked to another user", re.I),
@@ -675,14 +678,24 @@ class ShopApiClient:
         return payload if isinstance(payload, dict) else None
 
     def approve_customer(self, user_id: int, person_code: Optional[int],
-                         *, first_name: str = "", last_name: str = "") -> dict:
+                         *, first_name: str = "", last_name: str = "", national_code: str = "",
+                         address: str = "") -> dict:
         """Link to an existing person, or (``person_code=None``) create one in
-        the accounting software with the given, staff-corrected name."""
+        the accounting software with the given, staff-corrected details."""
+        body: dict[str, Any] = {key: value for key, value in (
+            ("first_name", first_name), ("last_name", last_name),
+            ("national_code", national_code), ("address", address)) if value}
         if person_code is not None:
-            body: dict[str, Any] = {"person_code": int(person_code)}
-        else:
-            body = {"first_name": first_name or None, "last_name": last_name}
+            body["person_code"] = int(person_code)
         return self._request("POST", f"/admin/users/{int(user_id)}/approve", json_body=body)
+
+    def person_candidates(self, user_id: int) -> dict:
+        """v2.18.0: who in «سازه حساب» has this customer's national code or a similar name."""
+        payload = self._request("GET", f"/admin/users/{int(user_id)}/person-candidates")
+        return payload if isinstance(payload, dict) else {}
+
+    def put_customer_details(self, user_id: int, **fields) -> dict:
+        return self._request("PUT", f"/admin/users/{int(user_id)}/details", json_body=fields) or {}
 
     def reject_customer(self, user_id: int, reason: str = "") -> dict:
         return self._request(
@@ -778,9 +791,12 @@ class ShopApiClient:
         return self._request("PUT", "/admin/shop-rules/status-codes", json_body={
             "order_status": order_status, "handover_status": handover_status})
 
-    def put_work_hours(self, start: str, end: str, days: list[int]) -> dict:
-        return self._request("PUT", "/admin/shop-rules/work-hours", json_body={
-            "start": start, "end": end, "days": list(days)})
+    def put_work_hours(self, start: str, end: str, days: list[int],
+                       shifts: Optional[list[tuple[str, str]]] = None) -> dict:
+        body: dict[str, Any] = {"start": start, "end": end, "days": list(days)}
+        if shifts:
+            body["shifts"] = [{"start": a, "end": b} for a, b in shifts]
+        return self._request("PUT", "/admin/shop-rules/work-hours", json_body=body)
 
     def staff_alert_state(self) -> dict:
         return self._request("GET", "/admin/staff-alerts/state") or {}

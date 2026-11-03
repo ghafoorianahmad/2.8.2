@@ -131,17 +131,16 @@ def test_address_and_payer_are_on_the_order(ui_context, admin_qapp):
 
 
 def test_new_customer_details_fill_the_approve_dialog(ui_context, admin_qapp):
-    from app.ui.pages.customers import ApproveCustomerDialog, details_lines
+    from app.ui.pages.customers import ApproveCustomerDialog
 
     customer = {"id": 3, "name": "نام پروفایل", "platform": "bale", "phone": "09124445555",
                 "status": "pending", "created_at": "2026-11-01T10:00:00+00:00",
                 "first_name": "علی", "last_name": "رضایی", "national_code": "0499370899",
                 "address": "تهران، ولیعصر"}
-    assert "کد ملی" in details_lines(customer) and "تهران، ولیعصر" in details_lines(customer)
-    assert details_lines({}) == ""
     dialog = ApproveCustomerDialog(make_context_with_role(ui_context, ROLE_SUPER_ADMIN), customer)
     assert dialog.first_name_input.text() == "علی" and dialog.last_name_input.text() == "رضایی"
-    assert "تهران، ولیعصر" in _texts(dialog)
+    assert dialog.fields.inputs["address"].text() == "تهران، ولیعصر"
+    assert dialog.fields.inputs["national_code"].text() == "۰۴۹۹۳۷۰۸۹۹"
 
 
 # ---- #11 Windows start, ✕, exit ---------------------------------------------------------------------

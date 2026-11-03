@@ -88,6 +88,25 @@ class FakeReader:
         return {int(c): self.person_name_map[int(c)] for c in codes
                 if c is not None and int(c) in self.person_name_map}
 
+    #: v2.18.0: {person code: details}; a person not listed has complete details
+    person_detail_map: dict = {}
+    #: v2.18.0: rows of name_mo for the comparison by name and national code
+    matching_persons: list = []
+    phone_tails: dict = {}
+
+    def person_details(self, code):
+        if getattr(self, "down", False):
+            raise RuntimeError("accounting down")
+        return self.person_detail_map.get(int(code), {
+            "first_name": "نام", "last_name": "خانوادگی", "national_code": "0084575948",
+            "address": "مشهد، خیابان نمونه، پلاک ۱"})
+
+    def persons_for_matching(self):
+        return list(self.matching_persons)
+
+    def person_phone_tails(self, codes):
+        return {int(c): self.phone_tails[int(c)] for c in codes if int(c) in self.phone_tails}
+
     def find_person_by_mobile(self, mobile):
         if getattr(self, "down", False):
             raise RuntimeError("accounting down")
@@ -134,6 +153,13 @@ class FakeWriter:
 
         self.calls.append(("fill_person_empty", person_code, dict(values)))
         return PersonFill(person_code=person_code, filled=sorted(values), committed=self.committed)
+
+    def add_person_phone(self, person_code, mobile, dry_run=None):
+        from app.accounting_writer import PersonPhone
+
+        # apart from ``calls``: those are what a test says «سازه حساب» was asked for an order
+        self.__dict__.setdefault("phone_calls", []).append((person_code, mobile))
+        return PersonPhone(person_code=person_code, done=self.committed, added=self.committed)
 
     def create_person(self, first_name, last_name, mobile, address="", dry_run=None,
                       national_code=""):

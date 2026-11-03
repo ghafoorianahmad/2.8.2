@@ -18,7 +18,14 @@ The distributor posts the PDF list and, later, short text posts:
 * **sales closed** («فروش بسته», «فروش موقتاً بسته است», …): phone sales close at
   once (until the next list) and the admin is alerted.
 
-Anything else is stored and ignored.
+v2.18.0: real corrections rarely look like that. Every other post goes through
+``price_message`` (formats, per-color prices, a brand header for the following posts):
+
+* **applied**: the parser is sure and each item finds its rows (a color only its color);
+* **uncertain**: nothing changes until a member of staff confirms (the 95% rule);
+* **not recognized**: a date, a greeting, a post without a price. «اعمال دستی» can still use it.
+
+Every changed row is kept in ``price_note_changes`` (old -> new) and staff are told.
 
 Price guard (also for new lists, see ``importer``): a mapped row whose price
 moves more than ``PRICE_GUARD_PCT`` (10 %) is not applied automatically; the old
@@ -33,6 +40,7 @@ from dataclasses import dataclass, field
 
 from ..db_own import OwnDB
 from ..util import now_iso
+from . import price_message
 from .matching import model_key
 from .pricing import change_pct, customer_price_rial
 from .repo import PriceListRepo
@@ -40,6 +48,10 @@ from .repo import PriceListRepo
 KIND_CORRECTION = "correction"
 KIND_CLOSED = "sales_closed"
 KIND_IGNORED = "ignored"
+#: v2.18.0: a post that names prices but is not certain enough to change them by itself
+KIND_UNCERTAIN = "uncertain"
+#: a brand header («لیست قیمت محصولات برند TCH»): the brand of the posts that follow
+CONTEXT_BRAND_KEY = "price_channel_brand"
 
 FLAG_CORRECTION = "correction"
 FLAG_HELD = "held"
@@ -317,10 +329,16 @@ class NoteResult:
     held: list[str] = field(default_factory=list)          # row keys waiting for approval
     unmatched: list[str] = field(default_factory=list)     # correction lines
     list_id: int | None = None
+    #: v2.18.0: what the post says (for the staff member who confirms it)
+    items: list[dict] = field(default_factory=list)
+    #: what was changed: {row_key, section, description, color, old_*, new_*, held}
+    changes: list[dict] = field(default_factory=list)
+    brand_header: str = ""
 
     def as_dict(self) -> dict:
         return {"kind": self.kind, "note_id": self.note_id, "applied": len(self.applied),
-                "held": len(self.held), "unmatched": self.unmatched, "list_id": self.list_id}
+                "held": len(self.held), "unmatched": self.unmatched, "list_id": self.list_id,
+                "items": self.items, "brand_header": self.brand_header}
 
 
 def set_row_price(db: OwnDB, list_id: int, row: dict, naghd: int | None, raval: int | None,
@@ -373,19 +391,180 @@ def apply_correction(db: OwnDB, settings, text: str, *, guard_pct: float,
             result.unmatched.append(line.line)
             continue
         for row in matched:
-            raval, estimated = raval_for(db, row, line.naghd, rows, fallback)
-            price = customer_price_rial(line.naghd, raval, unit_rial=settings.pricelist_unit_rial,
-                                        cash_surcharge_rial=settings.pricelist_cash_surcharge_rial)
-            pct = change_pct(row.get("price_rial"), price)
-            note = line.line
-            if row.get("action") == "map" and pct is not None and pct > guard_pct:
-                hold_row_price(db, active["id"], row, line.naghd, raval, price,
-                               source=FLAG_CORRECTION, note=note, estimated=estimated)
-                result.held.append(row["row_key"])
-            else:
-                set_row_price(db, active["id"], row, line.naghd, raval, price,
-                              flag=FLAG_CORRECTION, note=note, estimated=estimated)
-                result.applied.append(row["row_key"])
+            _apply_price(db, settings, active["id"], row, rows, line.naghd, line.line,
+                         guard_pct=guard_pct, fallback=fallback, result=result)
+    return result
+
+
+def _apply_price(db: OwnDB, settings, list_id: int, row: dict, rows: list[dict], naghd: int,
+                 note: str, *, guard_pct: float, fallback: int, result: NoteResult) -> None:
+    """One row at the new cash price (held when it moves more than the guard allows)."""
+    raval, estimated = raval_for(db, row, naghd, rows, fallback)
+    price = customer_price_rial(naghd, raval, unit_rial=settings.pricelist_unit_rial,
+                                cash_surcharge_rial=settings.pricelist_cash_surcharge_rial)
+    pct = change_pct(row.get("price_rial"), price)
+    held = row.get("action") == "map" and pct is not None and pct > guard_pct
+    if held:
+        hold_row_price(db, list_id, row, naghd, raval, price, source=FLAG_CORRECTION, note=note,
+                       estimated=estimated)
+        result.held.append(row["row_key"])
+    else:
+        set_row_price(db, list_id, row, naghd, raval, price, flag=FLAG_CORRECTION, note=note,
+                      estimated=estimated)
+        result.applied.append(row["row_key"])
+    result.changes.append({"row_key": row["row_key"], "section": row.get("section") or "",
+                           "description": row.get("description") or "",
+                           "color": row.get("color") or "", "old_naghd": row.get("naghd"),
+                           "new_naghd": naghd, "old_price_rial": row.get("price_rial"),
+                           "new_price_rial": price, "held": held})
+
+
+# --------------------------------------------------------------------------
+# v2.18.0: the other formats of the channel
+# --------------------------------------------------------------------------
+def rows_for_item(rows: list[dict], item: price_message.Item) -> list[dict]:
+    """The rows a parsed price belongs to; empty unless that is certain: same model, storage,
+    RAM and (when the post names one) color. A price for one color never touches the others."""
+    if not item.model:
+        return []
+    model = _compact_model(item.model.split())
+    storage = item.storage_gb
+    if storage is None:
+        # a flagship's colors without a storage: only if the model has a single storage
+        sizes = {row_model(r["description"]).storage for r in rows
+                 if row_model(r["description"]).model == model}
+        if len(sizes) != 1:
+            return []
+        storage = next(iter(sizes))
+        if storage is None:
+            return []
+    line = CorrectionLine(line="", model=model, storage=storage, ram=item.ram_gb, note="",
+                          naghd=item.price)
+    matched = match_rows(rows, line)
+    if item.color:
+        matched = [r for r in matched
+                   if price_message.extract_color(str(r.get("color") or "")) == item.color]
+    return matched
+
+
+def _parsed_post(db: OwnDB, settings, text: str, *, guard_pct: float,
+                 result: NoteResult) -> NoteResult:
+    parsed = price_message.parse(text, db.get_state(CONTEXT_BRAND_KEY, "") or None)
+    result.items = [item.as_dict() for item in parsed.items]
+    if parsed.context_brand:
+        db.set_state(CONTEXT_BRAND_KEY, parsed.context_brand, "worker")
+        result.brand_header = parsed.context_brand
+    if parsed.status == price_message.IGNORED:
+        return result
+    repo = PriceListRepo(db)
+    active = repo.active_list()
+    if active is None:
+        result.kind = KIND_UNCERTAIN
+        return result
+    result.list_id = int(active["id"])
+    rows = repo.rows(active["id"])
+    # all or nothing: half a post applied is harder to check than none
+    found = [rows_for_item(rows, item) for item in parsed.items]
+    if parsed.status != price_message.APPLIED or not all(found):
+        result.kind = KIND_UNCERTAIN
+        result.unmatched = [_item_text(item) for item, hit in zip(parsed.items, found) if not hit]
+        return result
+    result.kind = KIND_CORRECTION
+    fallback = settings.pricelist_cash_surcharge_rial // max(1, settings.pricelist_unit_rial)
+    for item, matched in zip(parsed.items, found):
+        for row in matched:
+            _apply_price(db, settings, active["id"], row, rows, item.price, _item_text(item),
+                         guard_pct=guard_pct, fallback=fallback, result=result)
+    return result
+
+
+def _item_text(item: price_message.Item) -> str:
+    parts = [item.model or "؟"]
+    if item.storage_gb:
+        parts.append(str(item.storage_gb) + (f"-{item.ram_gb}" if item.ram_gb else ""))
+    if item.color:
+        parts.append(item.color)
+    parts.append(str(item.price))
+    return " ".join(parts)
+
+
+def handle_post(db: OwnDB, settings, text: str, *, guard_pct: float) -> NoteResult:
+    """A text post of the price channel: what it is, and what was done."""
+    kind = classify(text)
+    result = NoteResult(kind=kind)
+    active = PriceListRepo(db).active_list()
+    result.list_id = int(active["id"]) if active else None
+    if kind == KIND_CORRECTION:
+        apply_correction(db, settings, text, guard_pct=guard_pct, result=result)
+    elif kind == KIND_IGNORED:
+        _parsed_post(db, settings, text, guard_pct=guard_pct, result=result)
+    return result
+
+
+def record_changes(db: OwnDB, note_id: int, list_id: int | None, changes: list[dict],
+                   actor: str) -> None:
+    now = now_iso()
+    with db._lock:
+        for change in changes:
+            db._conn.execute(
+                "INSERT INTO price_note_changes (note_id, list_id, row_key, section, description, "
+                "color, old_naghd, new_naghd, old_price_rial, new_price_rial, held, actor, "
+                "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (int(note_id), list_id, change["row_key"], change["section"],
+                 change["description"], change["color"], change["old_naghd"], change["new_naghd"],
+                 change["old_price_rial"], change["new_price_rial"], int(bool(change["held"])),
+                 actor, now))
+        db._commit()
+
+
+def note_changes(db: OwnDB, note_id: int) -> list[dict]:
+    with db._lock:
+        return db._fetchall("SELECT * FROM price_note_changes WHERE note_id=? ORDER BY id",
+                            (int(note_id),))
+
+
+def get_note(db: OwnDB, note_id: int) -> dict | None:
+    with db._lock:
+        row = db._fetchone("SELECT * FROM price_notes WHERE id=?", (int(note_id),))
+    if row is None:
+        return None
+    try:
+        row["result"] = json.loads(row["result"] or "{}")
+    except ValueError:
+        row["result"] = {}
+    row["changes"] = note_changes(db, note_id)
+    return row
+
+
+def apply_manual(db: OwnDB, settings, note: dict, picks: list[tuple[str, int]], *, actor: str,
+                 guard_pct: float) -> NoteResult:
+    """«اعمال دستی»: staff chose the rows and prices of a post the parser left alone."""
+    repo = PriceListRepo(db)
+    active = repo.active_list()
+    result = NoteResult(kind=KIND_CORRECTION)
+    if active is None:
+        return result
+    result.list_id = int(active["id"])
+    rows = repo.rows(active["id"])
+    by_key = {row["row_key"]: row for row in rows}
+    fallback = settings.pricelist_cash_surcharge_rial // max(1, settings.pricelist_unit_rial)
+    for row_key, naghd in picks:
+        row = by_key.get(row_key)
+        if row is None:
+            result.unmatched.append(row_key)
+            continue
+        _apply_price(db, settings, active["id"], row, rows, int(naghd),
+                     str(note.get("text") or "")[:200], guard_pct=guard_pct, fallback=fallback,
+                     result=result)
+    saved = dict(note.get("result") or {})
+    saved.update(applied=int(saved.get("applied") or 0) + len(result.applied),
+                 held=int(saved.get("held") or 0) + len(result.held), manual_by=actor, unmatched=[])
+    with db._lock:
+        db._conn.execute("UPDATE price_notes SET kind=?, list_id=?, result=? WHERE id=?",
+                         (KIND_CORRECTION, result.list_id,
+                          json.dumps(saved, ensure_ascii=False)[:4000], int(note["id"])))
+        db._commit()
+    record_changes(db, int(note["id"]), result.list_id, result.changes, actor)
     return result
 
 
@@ -409,4 +588,5 @@ def list_notes(db: OwnDB, limit: int = 30) -> list[dict]:
             row["result"] = json.loads(row["result"] or "{}")
         except ValueError:
             row["result"] = {}
+        row["changes"] = note_changes(db, row["id"])
     return rows

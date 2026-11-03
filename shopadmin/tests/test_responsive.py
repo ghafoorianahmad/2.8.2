@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import QHeaderView, QWidget
 
 from app.persian import LRI, PDI, format_phone, isolate_ltr
@@ -56,18 +56,56 @@ def test_table_columns_are_user_resizable(admin_qapp):
     header = table.horizontalHeader()
     assert all(header.sectionResizeMode(i) == QHeaderView.ResizeMode.Interactive for i in range(2))
     assert header.stretchLastSection()
-    assert table.textElideMode() == Qt.TextElideMode.ElideRight
+    assert table.textElideMode() == Qt.TextElideMode.ElideNone
 
 
-def test_table_default_widths_fit_the_viewport(admin_qapp):
+def test_a_value_is_never_cut_a_scroll_bar_appears_instead(admin_qapp):
     table = widgets.DataTable(("شمارهٔ سفارش", "مشتری", "مبلغ کل", "تاریخ ثبت"), key="t1")
     table.resize(420, 300)
     table.show()
     table.fill([["۱۰۴۱", "یک نام خیلی خیلی طولانی برای مشتری", "۱٬۲۵۰٬۰۰۰ ریال", "۱۴۰۵/۰۷/۱۵"]])
     _pump(admin_qapp, 5)
-    total = sum(table.columnWidth(c) for c in range(table.columnCount()))
-    assert total <= table.viewport().width() + 4          # nothing forces a scroll bar
-    assert all(table.columnWidth(c) >= widgets.DataTable.MIN_COLUMN for c in range(4))
+    metrics = table.fontMetrics()
+    for column in range(4):
+        text = table.item(0, column).text()
+        assert table.columnWidth(column) >= metrics.horizontalAdvance(text) + 16, text
+    # v2.18.0: it does not fit in 420px: the last column keeps its width and the bar scrolls
+    assert not table.horizontalHeader().stretchLastSection()
+    assert table.horizontalScrollBar().maximum() > 0
+    table.close()
+
+
+def test_a_longer_value_later_widens_its_column(admin_qapp):
+    table = widgets.DataTable(("مشتری", "مبلغ"), key="t2")
+    table.resize(900, 300)
+    table.show()
+    table.fill([["کوتاه", "۱"]])
+    _pump(admin_qapp, 3)
+    before = table.columnWidth(0)
+    long_name = "یک نام خیلی خیلی طولانی برای مشتری با چند کلمهٔ اضافه"
+    table.fill([[long_name, "۱"]])
+    _pump(admin_qapp, 3)
+    assert table.columnWidth(0) > before
+    assert table.columnWidth(0) >= table.fontMetrics().horizontalAdvance(long_name) + 16
+    table.close()
+
+
+def test_a_saved_narrow_width_does_not_cut_a_value(admin_qapp, table_store):
+    table_store.set_setting("table_widths.t3", [80, 80])
+    table = widgets.DataTable(("مشتری", "مبلغ"), key="t3")
+    long_name = "یک نام خیلی خیلی طولانی برای مشتری"
+    table.fill([[long_name, "۱"]])
+    assert table.columnWidth(0) >= table.fontMetrics().horizontalAdvance(long_name) + 16
+
+
+def test_table_top_corners_are_cut_to_the_card(admin_qapp):
+    table = widgets.DataTable(("الف", "ب"))
+    table.resize(300, 200)
+    table.show()
+    _pump(admin_qapp, 3)
+    assert not table.mask().isEmpty()
+    assert not table.mask().contains(QPoint(0, 0))
+    assert table.mask().contains(QPoint(150, 0)) and table.mask().contains(QPoint(150, 100))
     table.close()
 
 

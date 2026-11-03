@@ -144,9 +144,9 @@ def test_login_tries_typed_proxy_then_pool_then_direct(settings):
     gw = TelegramGateway(settings.api_id, settings.api_hash, timeout=2, client_factory=tg.factory)
     flow = LoginFlow(settings, gateway=gw, pool=pool, save=lambda *a: None)
     typed = f"tg://proxy?server=typed.example&port=443&secret=dd{'ab' * 16}"
+    tg.direct_ok = False                 # v2.18.0: direct comes before the pool
     events = run(flow.start("+989120000000", typed))
     assert events[0] == {"event": "connected", "via": "pool.example:443 (dd)"}
-    tg.direct_ok = False
     tg.dead_proxies.add(("pool.example", 443))
     assert run(flow.start("+989120000000", typed)) == [
         {"event": "error", "code": "no_connection", "retry": True}]

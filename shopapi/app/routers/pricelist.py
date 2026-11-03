@@ -451,6 +451,43 @@ def pricelist_notes(
     return notes.list_notes(db, limit)
 
 
+class NotePick(BaseModel):
+    row_key: str = Field(min_length=1, max_length=300)
+    #: the cash price in the list's unit, as the channel writes it (95.500 = 95500)
+    naghd: int = Field(gt=0, le=50_000_000)
+
+
+class NoteApplyIn(BaseModel):
+    picks: list[NotePick] = Field(min_length=1, max_length=100)
+
+
+@router.post("/admin/pricelists/notes/{note_id}/apply")
+def apply_note_by_hand(
+    note_id: int,
+    payload: NoteApplyIn,
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+    who: Identity = CAN_PRICELIST,
+) -> dict:
+    """v2.18.0 «اعمال دستی» and the confirmation of an uncertain post: the rows and prices a
+    member of staff chose. Nothing is ever applied here without them."""
+    note = notes.get_note(db, note_id)
+    if note is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Note not found")
+    result = notes.apply_manual(db, settings, note,
+                                [(p.row_key, p.naghd) for p in payload.picks],
+                                actor=who.actor, guard_pct=settings.price_guard_pct)
+    if result.list_id is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "No active price list")
+    db.audit(who.actor, "pricelist_note_manual",
+             f"note id={note_id} applied={len(result.applied)} held={len(result.held)}")
+    if result.applied or result.held:
+        db.add_event("pricelist_corrected", result.list_id, who.actor)
+    if result.held:
+        db.add_event("price_held", result.list_id, who.actor)
+    return notes.get_note(db, note_id)
+
+
 def _can_channels(identity: Identity = Depends(get_identity)) -> Identity:
     """«تنظیمات سرور» on the server (service key) or a manager."""
     if identity.kind == "service":
@@ -757,6 +794,31 @@ def set_proxy_state(
     return _proxy_out(row, with_secret=False)
 
 
+class ProxyIdsIn(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=1000)
+
+
+@router.post("/admin/proxies/delete")
+def delete_proxies(
+    payload: ProxyIdsIn,
+    db: OwnDB = Depends(deps.get_db),
+    who: Identity = CAN_PROXIES,
+) -> dict:
+    """v2.18.0 «حذف انتخاب‌شده‌ها»."""
+    count = ProxyPool(db).delete_many(payload.ids)
+    db.audit(who.actor, "proxy_delete_many", f"count={count}")
+    return {"deleted": count}
+
+
+@router.post("/admin/proxies/delete-down")
+def delete_down_proxies(db: OwnDB = Depends(deps.get_db), who: Identity = CAN_PROXIES) -> dict:
+    """v2.18.0 «حذف همهٔ قطع‌ها»: also manual ones: a person asked for it, and confirmed."""
+    pool = ProxyPool(db)
+    count = pool.delete_many(pool.down_ids())
+    db.audit(who.actor, "proxy_delete_down", f"count={count}")
+    return {"deleted": count}
+
+
 @router.delete("/admin/proxies/{proxy_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_proxy(
     proxy_id: int,
@@ -796,18 +858,13 @@ def worker_pricelist_note(
 ) -> dict:
     """v2.9.1: a text post after the list: a correction («اصلاحیه») is applied to
     the active list, «فروش بسته» closes phone sales; anything else is ignored."""
-    kind = notes.classify(payload.text)
-    result = notes.NoteResult(kind=kind)
-    active = PriceListRepo(db).active_list()
-    result.list_id = int(active["id"]) if active else None
-    if kind == notes.KIND_CORRECTION:
-        notes.apply_correction(db, settings, payload.text, guard_pct=settings.price_guard_pct,
-                               result=result)
-        if result.applied or result.held:
-            db.audit("worker", "pricelist_correction",
-                     f"list id={result.list_id} applied={len(result.applied)} "
-                     f"held={len(result.held)} unmatched={len(result.unmatched)}")
-            db.add_event("pricelist_corrected", result.list_id, "worker")
+    result = notes.handle_post(db, settings, payload.text, guard_pct=settings.price_guard_pct)
+    kind = result.kind
+    if kind == notes.KIND_CORRECTION and (result.applied or result.held):
+        db.audit("worker", "pricelist_correction",
+                 f"list id={result.list_id} applied={len(result.applied)} "
+                 f"held={len(result.held)} unmatched={len(result.unmatched)}")
+        db.add_event("pricelist_corrected", result.list_id, "worker")
         if result.held:
             db.add_event("price_held", result.list_id, "worker")
     elif kind == notes.KIND_CLOSED:
@@ -816,7 +873,10 @@ def worker_pricelist_note(
                                posted_at=payload.posted_at, text=payload.text,
                                result=result.as_dict())
     result.note_id = note_id
-    if result.unmatched:
+    notes.record_changes(db, note_id, result.list_id, result.changes, "worker")
+    if kind == notes.KIND_UNCERTAIN:
+        db.add_event("price_note_uncertain", note_id, "worker")
+    elif result.unmatched:
         db.add_event("price_correction_unmatched", note_id, "worker")
     return result.as_dict()
 
@@ -864,6 +924,8 @@ def worker_proxy_report(
     changes = pool.evaluate()
     for proxy_id, state in changes:
         db.audit("worker", "proxy_auto_state", f"proxy id={proxy_id} state={state}")
+    for proxy_id in pool.prune_dead():
+        db.audit("worker", "proxy_auto_delete", f"proxy id={proxy_id}")
     alerted = pool.should_alert_all_dead()
     if alerted:
         db.add_event("proxies_all_dead", None, "worker")

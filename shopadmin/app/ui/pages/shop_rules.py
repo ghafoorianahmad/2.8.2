@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLineEdit,
     QScrollArea,
@@ -35,6 +36,8 @@ DAYS_FA = (("شنبه", 5), ("یکشنبه", 6), ("دوشنبه", 0), ("سه‌�
 ORDER_KEY = "ACCOUNTING_STATUS_CODE"
 HANDOVER_KEY = "ACCOUNTING_HANDOVER_STATUS_CODE"
 AUTO_INVOICE_NOTE = "در نسخه‌های بعد"
+#: v2.18.0: how many shifts a day the form offers
+SHIFT_ROWS = 3
 
 
 class ShopRulesPage(BasePage):
@@ -154,17 +157,27 @@ class ShopRulesPage(BasePage):
             "در ساعت کار، هر سفارش، رسید یا درخواست تازهٔ بی‌صاحب به همهٔ همکارانِ وصل‌شده در بله و "
             "تلگرام می‌رود و هر ۵ دقیقه تکرار می‌شود تا کسی «برداشت» بزند. بیرون از ساعت کار پیامی "
             "نمی‌رود و هنگام شروع کار یک خلاصه فرستاده می‌شود.", name="Muted", wrap=True))
-        form = QFormLayout()
-        form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
-        self.start_input = mark_ltr(QLineEdit())
-        self.end_input = mark_ltr(QLineEdit())
+        panel.body.addWidget(widgets.label(
+            "اگر میان روز تعطیل هستید، نوبت دوم را هم پر کنید (مثلاً ۰۹:۰۰ تا ۱۳:۰۰ و ۱۶:۰۰ تا ۲۱:۰۰). "
+            "نوبتِ خالی به حساب نمی‌آید.", name="Muted", wrap=True))
         editable = self.context.can(WORK_HOURS_EDIT)
-        for field in (self.start_input, self.end_input):
-            field.setEnabled(editable)
-            field.setMaximumWidth(120)
-        form.addRow(widgets.label("شروع کار:"), self.start_input)
-        form.addRow(widgets.label("پایان کار:"), self.end_input)
-        panel.body.addLayout(form)
+        # v2.18.0: up to SHIFT_ROWS shifts a day; the first row keeps the old field names
+        self.shift_inputs: list[tuple[QLineEdit, QLineEdit]] = []
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        for index in range(SHIFT_ROWS):
+            begin, end = mark_ltr(QLineEdit()), mark_ltr(QLineEdit())
+            for field in (begin, end):
+                field.setEnabled(editable)
+                field.setMaximumWidth(120)
+            grid.addWidget(widgets.label(f"نوبت {to_persian_digits(index + 1)} — شروع:"), index, 0)
+            grid.addWidget(begin, index, 1)
+            grid.addWidget(widgets.label("پایان:"), index, 2)
+            grid.addWidget(end, index, 3)
+            self.shift_inputs.append((begin, end))
+        grid.setColumnStretch(4, 1)
+        self.start_input, self.end_input = self.shift_inputs[0]
+        panel.body.addLayout(grid)
         days = QHBoxLayout()
         days.setSpacing(14)
         self.day_checks: dict[int, QCheckBox] = {}
@@ -189,10 +202,17 @@ class ShopRulesPage(BasePage):
         return panel
 
     def _save_hours(self) -> None:
-        start = to_english_digits(self.start_input.text()).strip()
-        end = to_english_digits(self.end_input.text()).strip()
+        shifts = []
+        for begin, end in self.shift_inputs:
+            pair = (to_english_digits(begin.text()).strip(), to_english_digits(end.text()).strip())
+            if any(pair):
+                shifts.append(pair)
+        if not shifts:
+            self._hours_note("دست‌کم یک نوبت کاری بنویسید.", ok=False)
+            return
+        start, end = shifts[0][0], shifts[-1][1]
         days = sorted(value for value, check in self.day_checks.items() if check.isChecked())
-        self.run(lambda: self.context.api.put_work_hours(start, end, days),
+        self.run(lambda: self.context.api.put_work_hours(start, end, days, shifts),
                  on_success=self._hours_saved,
                  on_error=lambda message, _kind: self._hours_note(message, ok=False))
 
@@ -207,8 +227,12 @@ class ShopRulesPage(BasePage):
         self.hours_message.setVisible(True)
 
     def _show_hours(self, hours: dict) -> None:
-        self.start_input.setText(str(hours.get("start") or ""))
-        self.end_input.setText(str(hours.get("end") or ""))
+        shifts = list(hours.get("shifts") or ()) \
+            or [{"start": hours.get("start"), "end": hours.get("end")}]
+        for index, (begin, end) in enumerate(self.shift_inputs):
+            shift = shifts[index] if index < len(shifts) else {}
+            begin.setText(str(shift.get("start") or ""))
+            end.setText(str(shift.get("end") or ""))
         chosen = set(hours.get("days") or ())
         for value, check in self.day_checks.items():
             check.setChecked(value in chosen)
@@ -245,5 +269,6 @@ def hours_text(hours: dict) -> str:
     """«۰۹:۰۰ تا ۲۱:۰۰، شنبه، یکشنبه، …»"""
     chosen = set((hours or {}).get("days") or ())
     days = "، ".join(text for text, value in DAYS_FA if value in chosen) or "هیچ روزی"
-    return to_persian_digits(f"{(hours or {}).get('start', '')} تا {(hours or {}).get('end', '')}") \
-        + f"، {days}"
+    shifts = (hours or {}).get("shifts") or [hours or {}]
+    times = " و ".join(f"{s.get('start', '')} تا {s.get('end', '')}" for s in shifts)
+    return to_persian_digits(times) + f"، {days}"

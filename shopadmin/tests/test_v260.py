@@ -80,7 +80,8 @@ def test_decided_customers_have_no_decision_buttons(ui_context, admin_qapp):
         holder = page._actions_for({"id": 1, "name": "x", "phone": "09121234567",
                                     "status": status, "person_code": 7001})
         buttons = holder.findChildren(type(page.refresh_button))
-        assert buttons == [], status
+        # v2.18.0: only «اطلاعات»: never «تأیید» or «رد» again
+        assert [b.text() for b in buttons] == ["اطلاعات"], status
     holder = page._actions_for({"id": 2, "name": "y", "phone": "09121234567", "status": "pending"})
     assert len([b for b in holder.findChildren(type(page.refresh_button)) if b.isEnabled()]) == 2
 

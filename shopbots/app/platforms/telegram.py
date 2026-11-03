@@ -87,7 +87,14 @@ def to_buttons(reply_markup: dict | None):
             out = []
             for btn in row:
                 text = str(btn["text"])
-                if btn.get("request_contact"):
+                if btn.get("web_app"):
+                    # the reply keyboard's kind: the page may send data back (Bot API web_app)
+                    from telethon.tl.types import ButtonTypeSimpleWebView, KeyboardButton
+                    out.append(Button(
+                        KeyboardButton(text, ButtonTypeSimpleWebView(str(btn["web_app"]["url"]))),
+                        resize=resize, single_use=once, selective=None, persistent=None,
+                        placeholder=None))
+                elif btn.get("request_contact"):
                     out.append(Button.request_phone(text, resize=resize, single_use=once))
                 else:
                     out.append(Button.text(text, resize=resize, single_use=once))
@@ -161,6 +168,8 @@ class TelethonBotAdapter(PlatformAdapter):
         from telethon import events
         client.add_event_handler(self._on_message, events.NewMessage(incoming=True))
         client.add_event_handler(self._on_callback, events.CallbackQuery())
+        from telethon.tl.types import UpdateNewMessage
+        client.add_event_handler(self._on_raw, events.Raw(UpdateNewMessage))
 
     async def _ensure_connected(self) -> None:
         if self._client is not None:
@@ -304,6 +313,25 @@ class TelethonBotAdapter(PlatformAdapter):
                                    "file_name": getattr(file, "name", None),
                                    "file_size": getattr(file, "size", None)}
         self._push({"message": message})
+
+    async def _on_raw(self, update) -> None:
+        """v2.18.0: what a mini app sent (a service message: NewMessage never shows these)."""
+        message = getattr(update, "message", None)
+        action = getattr(message, "action", None)
+        if type(action).__name__ != "MessageActionWebViewDataSentMe":
+            return
+        peer = getattr(message, "peer_id", None)
+        user_id = getattr(peer, "user_id", None)
+        if user_id is None:
+            return
+        data = getattr(action, "data", "")
+        self._push({"message": {
+            "message_id": getattr(message, "id", 0),
+            "chat": {"id": user_id, "type": "private"},
+            "from": {"id": user_id},
+            "text": "",
+            "web_app_data": {"data": data},
+        }})
 
     async def _on_callback(self, event) -> None:
         data = getattr(event, "data", b"") or b""

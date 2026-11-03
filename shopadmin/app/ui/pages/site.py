@@ -196,6 +196,7 @@ class SitePage(BasePage):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
         self.tree = QTreeWidget()
+        widgets.round_view_corners(self.tree)
         self.tree.setHeaderHidden(True)
         self.tree.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.tree.setMinimumWidth(230)

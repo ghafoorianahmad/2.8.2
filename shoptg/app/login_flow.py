@@ -111,8 +111,10 @@ class LoginFlow:
             if key not in seen:
                 seen.add(key)
                 unique.append(link)
+        # v2.18.0: direct comes right after the one the person typed: a pool proxy is only
+        # for when Telegram cannot be reached without one
         if self.s.allow_direct:
-            unique.append(None)
+            unique.insert(1 if first is not None else 0, None)
         return unique
 
     async def _connect(self, typed: str) -> ProxyLink | None | bool:

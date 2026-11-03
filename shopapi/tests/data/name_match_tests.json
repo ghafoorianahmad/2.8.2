@@ -1,0 +1,530 @@
+[
+  {
+    "id": "TC-001",
+    "new": { "first": "علی", "last": "رضایی", "national_code": "0012345678" },
+    "existing": { "name": "علی رضایی", "national_code": "0012345678" },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-002",
+    "new": { "first": "محمد", "last": "کریمی", "national_code": "۰۰۱۲۳۴۵۶۷۸" },
+    "existing": { "name": "محمد کریمی", "national_code": "0012345678" },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-003",
+    "new": { "first": "حسین", "last": "احمدی", "national_code": "٠٩١٢٣٤٥٦٧٨" },
+    "existing": { "name": "حسین احمدی", "national_code": "۰۹۱۲۳۴۵۶۷۸" },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-004",
+    "new": { "first": "رضا", "last": "موسوی", "national_code": "127-456789-0" },
+    "existing": { "name": "رضا موسوی", "national_code": "۱۲۷۴۵۶۷۸۹۰" },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-005",
+    "new": { "first": "مریم", "last": "حسینی", "national_code": "0081122334" },
+    "existing": { "name": "مریم صادقی (قبل ازدواج)", "national_code": "0081122334" },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-006",
+    "new": { "first": "کامران", "last": "نجفی", "national_code": "0491234567" },
+    "existing": { "name": "کامیار نجفی", "national_code": "0491234567" },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-007",
+    "new": { "first": "علی", "last": "رضایی", "national_code": "0012345678" },
+    "existing": { "name": "علی رضایی", "national_code": "0012345679" },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-008",
+    "new": { "first": "محمدرضا", "last": "اکبری", "national_code": "۱۲۳۴۵۶۷۸۹۰" },
+    "existing": { "name": "محمد رضا اکبری", "national_code": "۰۹۸۷۶۵۴۳۲۱" },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-009",
+    "new": { "first": "سارا", "last": "مرادی", "national_code": "0065544332" },
+    "existing": { "name": "خانم سارا مرادی", "national_code": "0065544331" },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-010",
+    "new": { "first": "سید مهدی", "last": "هاشمی", "national_code": "1112223334" },
+    "existing": { "name": "سید مهدی هاشمی", "national_code": "2223334445" },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-011",
+    "new": { "first": "مهدی", "last": "کاظمی", "national_code": null },
+    "existing": { "name": "مهدي كاظمي", "national_code": "0019988776" },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-012",
+    "new": { "first": "على", "last": "ملكي", "national_code": "0023344556" },
+    "existing": { "name": "علی ملکی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-013",
+    "new": { "first": "فاطمه", "last": "نعمتی", "national_code": null },
+    "existing": { "name": "فاطمة نعمتي", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-014",
+    "new": { "first": "طاهره", "last": "ستوده", "national_code": null },
+    "existing": { "name": "طاهرة ستودة", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-015",
+    "new": { "first": "امیر", "last": "آهنگران", "national_code": null },
+    "existing": { "name": "أمير آهنگران", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-016",
+    "new": { "first": "ایمان", "last": "ابراهیمی", "national_code": null },
+    "existing": { "name": "إيمان إبراهيمي", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-017",
+    "new": { "first": "مؤمن", "last": "رئوفی", "national_code": null },
+    "existing": { "name": "مومن ریوفی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-018",
+    "new": { "first": "پویا", "last": "کامکار", "national_code": null },
+    "existing": { "name": "پويا كامكار", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-019",
+    "new": { "first": "محمدرضا", "last": "صادقی", "national_code": null },
+    "existing": { "name": "مُحَمَّدرِضا صادِقی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-020",
+    "new": { "first": "امیرحسین", "last": "جعفری", "national_code": null },
+    "existing": { "name": "امیر‌حسین   جعفری", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-021",
+    "new": { "first": "بهرام", "last": "سلیمانی", "national_code": null },
+    "existing": { "name": "بهـــرام سلــیمانی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-022",
+    "new": { "first": "پریسا", "last": "رحمانی", "national_code": null },
+    "existing": { "name": "پریسا رحمانی ۱۲۴", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-023",
+    "new": { "first": "سعید", "last": "توکلی", "national_code": null },
+    "existing": { "name": "آقای سعید توکلی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-024",
+    "new": { "first": "زهرا", "last": "شریفی", "national_code": null },
+    "existing": { "name": "خانم زهرا شریفی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-025",
+    "new": { "first": "مسعود", "last": "زارعی", "national_code": null },
+    "existing": { "name": "جناب آقای مسعود زارعی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-026",
+    "new": { "first": "مینا", "last": "قاسمی", "national_code": null },
+    "existing": { "name": "سرکار خانم مینا قاسمی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-027",
+    "new": { "first": "سید علی", "last": "هاشمی", "national_code": null },
+    "existing": { "name": "علی هاشمی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-028",
+    "new": { "first": "نرگس", "last": "موسوی", "national_code": null },
+    "existing": { "name": "سیده نرگس موسوی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-029",
+    "new": { "first": "حاج عباس", "last": "نادری", "national_code": null },
+    "existing": { "name": "آقای عباس نادری", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-030",
+    "new": { "first": "حمید", "last": "طاهری", "national_code": null },
+    "existing": { "name": "مهندس حمید طاهری", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-031",
+    "new": { "first": "فرهاد", "last": "پزشکیان", "national_code": null },
+    "existing": { "name": "دکتر فرهاد پزشکیان", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-032",
+    "new": { "first": "محمدرضا", "last": "نوری", "national_code": null },
+    "existing": { "name": "محمد رضا نوری", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-033",
+    "new": { "first": "محمد رضا", "last": "نوری", "national_code": null },
+    "existing": { "name": "محمد‌رضا نوری", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-034",
+    "new": { "first": "علیرضا", "last": "باقری", "national_code": null },
+    "existing": { "name": "علی رضا باقری", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-035",
+    "new": { "first": "عبدالله", "last": "نصیری", "national_code": null },
+    "existing": { "name": "عبد الله نصیری", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-036",
+    "new": { "first": "عبداله", "last": "نصیری", "national_code": null },
+    "existing": { "name": "عبدالله نصیری", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-037",
+    "new": { "first": "روح‌الله", "last": "عزیزی", "national_code": null },
+    "existing": { "name": "روح الله عزیزی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-038",
+    "new": { "first": "امیرحسین", "last": "رستمی", "national_code": null },
+    "existing": { "name": "امیر حسین رستمی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-039",
+    "new": { "first": "غلامرضا", "last": "تاجیک", "national_code": null },
+    "existing": { "name": "غلام رضا تاجیک", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-040",
+    "new": { "first": "ابوالفضل", "last": "گودرزی", "national_code": null },
+    "existing": { "name": "ابو الفضل گودرزی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-041",
+    "new": { "first": "پیمان", "last": "حسینی‌پور", "national_code": null },
+    "existing": { "name": "پیمان حسینی پور", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-042",
+    "new": { "first": "نیما", "last": "پاکنژاد", "national_code": null },
+    "existing": { "name": "نیما پاک نژاد", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-043",
+    "new": { "first": "احسان", "last": "ملک‌زاده", "national_code": null },
+    "existing": { "name": "احسان ملک زاده", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-044",
+    "new": { "first": "اسماعیل", "last": "حیدری", "national_code": null },
+    "existing": { "name": "اسمعیل حیدری", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-045",
+    "new": { "first": "مصطفی", "last": "فتحی", "national_code": null },
+    "existing": { "name": "مصطفا فتحی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-046",
+    "new": { "first": "مرتضی", "last": "خلیلی", "national_code": null },
+    "existing": { "name": "مرتضا خلیلی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-047",
+    "new": { "first": "مجتبی", "last": "قربانی", "national_code": null },
+    "existing": { "name": "مجتبا قربانی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-048",
+    "new": { "first": "موسی", "last": "بیات", "national_code": null },
+    "existing": { "name": "موسا بیات", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-049",
+    "new": { "first": "ابراهیم", "last": "داوودی", "national_code": null },
+    "existing": { "name": "ابرهیم داودی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-050",
+    "new": { "first": "اسحاق", "last": "رحمانی", "national_code": null },
+    "existing": { "name": "اسحق رحمنی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-051",
+    "new": { "first": "یحیی", "last": "اسماعیلی", "national_code": null },
+    "existing": { "name": "یحیا اسمعیلی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-052",
+    "new": { "first": "کبری", "last": "طهماسبی", "national_code": null },
+    "existing": { "name": "کبرا تهماسبی", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-053",
+    "new": { "first": "سید محمد رضا", "last": "اسمعیل زاده", "national_code": null },
+    "existing": { "name": "جناب آقاي محمدرضا اسماعيل‌زاده", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-054",
+    "new": { "first": "حاج عبد اله", "last": "مصطفا پور", "national_code": null },
+    "existing": { "name": "عبدالله مصطفی‌پور", "national_code": null },
+    "expected_verdict": "same"
+  },
+  {
+    "id": "TC-055",
+    "new": { "first": "رضایی", "last": "علی", "national_code": null },
+    "existing": { "name": "علی رضایی", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-056",
+    "new": { "first": "محمدرضا", "last": "اکبری", "national_code": null },
+    "existing": { "name": "اکبری محمد رضا", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-057",
+    "new": { "first": "کریمی", "last": "فاطمه", "national_code": null },
+    "existing": { "name": "خانم فاطمه کریمی", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-058",
+    "new": { "first": "جواد", "last": "مظفری", "national_code": null },
+    "existing": { "name": "جواد مظفريان", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-059",
+    "new": { "first": "بابک", "last": "سلیمانی", "national_code": null },
+    "existing": { "name": "بابک سلمانی", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-060",
+    "new": { "first": "محسن", "last": "غفاری", "national_code": null },
+    "existing": { "name": "محسن غفاریان", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-061",
+    "new": { "first": "بهروز", "last": "شمس", "national_code": null },
+    "existing": { "name": "بهروژ شمس", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-062",
+    "new": { "first": "کیوان", "last": "اردشیر", "national_code": null },
+    "existing": { "name": "کیوان اردشیری", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-063",
+    "new": { "first": "سهراب", "last": "بختیاری", "national_code": null },
+    "existing": { "name": "سهراب بختیار", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-064",
+    "new": { "first": "ارشیا", "last": "تبریزی", "national_code": null },
+    "existing": { "name": "عرشیا تبریزی", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-065",
+    "new": { "first": "داریوش", "last": "صادقی", "national_code": null },
+    "existing": { "name": "داریوش سادقی", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-066",
+    "new": { "first": "پژمان", "last": "غفوری", "national_code": null },
+    "existing": { "name": "پژمان قفوری", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-067",
+    "new": { "first": "منصور", "last": "ظفری", "national_code": null },
+    "existing": { "name": "منصور زفری", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-068",
+    "new": { "first": "یاشار", "last": "طلایی", "national_code": null },
+    "existing": { "name": "یاشار تلایی", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-069",
+    "new": { "first": "مهدی", "last": "حسینی", "national_code": null },
+    "existing": { "name": "مهدی حسینی‌پور", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-070",
+    "new": { "first": "سیاوش", "last": "احمدی‌نژاد", "national_code": null },
+    "existing": { "name": "سیاوش احمدی", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-071",
+    "new": { "first": "محمد", "last": "خلج", "national_code": null },
+    "existing": { "name": "محمدرضا خلج", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-072",
+    "new": { "first": "علیرضا", "last": "کمالی", "national_code": null },
+    "existing": { "name": "علی کمالی", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-073",
+    "new": { "first": "افشین", "last": "نوروزی", "national_code": null },
+    "existing": { "name": "آقای نوروزی", "national_code": null },
+    "expected_verdict": "similar"
+  },
+  {
+    "id": "TC-074",
+    "new": { "first": "علی", "last": "رضایی", "national_code": null },
+    "existing": { "name": "علی محمدی", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-075",
+    "new": { "first": "محمد", "last": "حسینی", "national_code": null },
+    "existing": { "name": "محمد کریمی", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-076",
+    "new": { "first": "محمدرضا", "last": "احمدی", "national_code": null },
+    "existing": { "name": "محمدرضا جلالی", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-077",
+    "new": { "first": "زهرا", "last": "مرادی", "national_code": null },
+    "existing": { "name": "زهرا عباسی", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-078",
+    "new": { "first": "امیرحسین", "last": "صادقی", "national_code": null },
+    "existing": { "name": "امیرحسین صالحی", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-079",
+    "new": { "first": "مهدی", "last": "کریمی", "national_code": null },
+    "existing": { "name": "مهدی رحیمی", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-080",
+    "new": { "first": "حسن", "last": "رضایی", "national_code": null },
+    "existing": { "name": "حسین رضایی", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-081",
+    "new": { "first": "زهرا", "last": "کاظمی", "national_code": null },
+    "existing": { "name": "زهره کاظمی", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-082",
+    "new": { "first": "محمد", "last": "جعفری", "national_code": null },
+    "existing": { "name": "محمود جعفری", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-083",
+    "new": { "first": "اکبر", "last": "توسلی", "national_code": null },
+    "existing": { "name": "اصغر توسلی", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-084",
+    "new": { "first": "حمید", "last": "فرهادی", "national_code": null },
+    "existing": { "name": "حامد فرهادی", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-085",
+    "new": { "first": "سارا", "last": "نوری", "national_code": null },
+    "existing": { "name": "مریم نوری", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-086",
+    "new": { "first": "شهاب", "last": "مظلومی", "national_code": null },
+    "existing": { "name": "فرزاد کوهستانی", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-087",
+    "new": { "first": "نازنین", "last": "بهرامی", "national_code": null },
+    "existing": { "name": "الهام شمسایی", "national_code": null },
+    "expected_verdict": "different"
+  },
+  {
+    "id": "TC-088",
+    "new": { "first": "پژمان", "last": "جمشیدی", "national_code": null },
+    "existing": { "name": "سامان گوران", "national_code": null },
+    "expected_verdict": "different"
+  }
+]

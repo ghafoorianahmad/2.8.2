@@ -15,6 +15,7 @@ from .base import (
     InlineButtonRow,
     PlatformAdapter,
     contact_keyboard,
+    web_app_keyboard,
     inline_keyboard,
     remove_keyboard,
     reply_keyboard,

@@ -41,6 +41,13 @@ def _env_bool(key: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _miniapp_url(value: str) -> str:
+    """Bale and Telegram open a mini app only over https; anything else means no button."""
+    if not value.lower().startswith("https://"):
+        return ""
+    return value if value.endswith("/") else value + "/"
+
+
 def _tg_api_id() -> int:
     raw = _env("TG_API_ID")
     if raw and not raw.isdigit():
@@ -124,11 +131,15 @@ class Settings:
     admin_chat_order_notices: bool = False
     #: Operator copy of messages.fa.json ("" = built-in texts only).
     messages_file: str = ""
+    #: v2.18.0: the published mini app, e.g. https://asrertebatat2.ir/app/ (form at form/).
+    #: Empty until the owner has published it: the bot then simply has no web_app buttons.
+    miniapp_url: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
         _load_dotenv()
         return cls(
+            miniapp_url=_miniapp_url(_env("MINIAPP_URL", "")),
             shopapi_base_url=_env("SHOPAPI_BASE_URL", cls.shopapi_base_url),
             shopapi_ca_file=_env("SHOPAPI_CA_FILE", ""),
             bot_api_key=_env("BOT_API_KEY", ""),

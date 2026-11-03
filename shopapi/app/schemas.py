@@ -66,6 +66,8 @@ class UserOut(BaseModel):
     phone: str
     status: str
     person_code: Optional[int] = None
+    #: v2.18.0: the linked person's name in «سازه حساب»
+    person_name: Optional[str] = None
     created_at: str
     #: v2.17.0: what the customer told the bot (staff use them to create the person)
     first_name: str = ""
@@ -82,7 +84,7 @@ class CustomerDetailsIn(BaseModel):
     last_name: Optional[str] = Field(None, max_length=100)
     national_code: Optional[str] = Field(None, max_length=30)
     address: Optional[str] = Field(None, max_length=1000)
-    #: The bot finished asking (answered or «فعلاً نه»): it does not ask again.
+    #: The bot finished asking (v2.18.0: only ever with nothing left to ask).
     finished: bool = False
 
 
@@ -204,6 +206,9 @@ class ApproveUserIn(BaseModel):
     #: Name for the new person - staff correct the Bale profile name here.
     first_name: Optional[str] = Field(None, max_length=50)
     last_name: Optional[str] = Field(None, max_length=50)
+    #: v2.18.0: all four are required before a new person is written
+    national_code: Optional[str] = Field(None, max_length=30)
+    address: Optional[str] = Field(None, max_length=1000)
 
 
 class ApprovePaymentIn(BaseModel):
@@ -489,6 +494,8 @@ class ItemRequestOut(BaseModel):
     handled_by: str = ""
     customer_name: Optional[str] = None
     person_code: Optional[int] = None
+    #: v2.18.0: the linked person's name in «سازه حساب»
+    person_name: Optional[str] = None
     platform: Optional[str] = None
     #: v2.6.1
     kind: str = "unavailable"

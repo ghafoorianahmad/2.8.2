@@ -9,8 +9,10 @@ import re
 from typing import Any, Callable, Iterable, Sequence
 
 from PySide6.QtCore import (QEasingCurve, QEvent, QItemSelectionModel, QObject, QPropertyAnimation,
+                            QRectF,
                             QRect, QSize, Qt, QTimer, Signal)
-from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter, QPixmap
+from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter,
+                           QPainterPath, QPen, QPixmap, QRegion)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QBoxLayout,
@@ -818,6 +820,54 @@ class BidiDelegate(QStyledItemDelegate):
             option.direction = Qt.LayoutDirection.LeftToRight
 
 
+class _FrameCorners(QWidget):
+    """v2.18.0: a table's header and rows are square child widgets that paint over the rounded
+    frame. This cuts the view to the card's radius (the page shows through the corners, whatever
+    is behind it) and draws the frame's line again on top, smooth, over the cut edge."""
+
+    def __init__(self, view: QWidget) -> None:
+        super().__init__(view)
+        self._view = view
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self._size = QSize()
+        view.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt naming
+        # only a real change of size: this filter runs for every event of the view, and
+        # changing geometry here starts more events through the app-wide filters
+        try:
+            if watched is self._view and event.type() == QEvent.Type.Resize \
+                    and self._view.size() != self._size:
+                self._fit()
+        except (RuntimeError, AttributeError):   # the view is going away
+            pass
+        return False
+
+    def _fit(self) -> None:
+        self._size = self._view.size()
+        rect = self._view.rect()
+        self.setGeometry(rect)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(rect), theme.RADIUS_LG, theme.RADIUS_LG)
+        self._view.setMask(QRegion(path.toFillPolygon().toPolygon()))
+        self.raise_()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt naming
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(theme.BORDER), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+                                theme.RADIUS_LG, theme.RADIUS_LG)
+
+
+def round_view_corners(view: QWidget) -> QWidget:
+    """Every table and tree: rounded top corners with the header inside the frame."""
+    _FrameCorners(view)
+    return view
+
+
 class DataTable(QTableWidget):
     """A read-only table that knows how to show loading and empty states."""
 
@@ -827,7 +877,12 @@ class DataTable(QTableWidget):
     #: column widths survive restarts. ``None`` in tests and before login.
     settings_store: Any = None
     MIN_COLUMN = 72
-    MAX_AUTO_COLUMN = 280
+    #: v2.18.0: only against a pathological value; a column is otherwise as wide as its text
+    MAX_AUTO_COLUMN = 1400
+    #: how many rows are measured
+    MEASURED_ROWS = 400
+    #: v2.18.0: a 43px button with 2px around it, and the row's 1px line
+    ROW_HEIGHT = 48
 
     def __init__(self, headers: Sequence[str], *, selectable_rows: bool = False,
                  key: str = "", keep_columns: Iterable[int] = (),
@@ -872,12 +927,12 @@ class DataTable(QTableWidget):
         header.setCascadingSectionResizes(False)
         header.setDefaultAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
         header.sectionResized.connect(self._on_section_resized)
-        # Long text is cut with an ellipsis (tooltip shows it all); a horizontal
-        # scroll bar appears only when the columns really do not fit.
-        self.setTextElideMode(Qt.TextElideMode.ElideRight)
+        # v2.18.0: a value is never cut: the columns are as wide as their text and a
+        # horizontal scroll bar appears when they do not fit.
+        self.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.verticalHeader().setDefaultSectionSize(46)
+        self.verticalHeader().setDefaultSectionSize(self.ROW_HEIGHT)
         if self._fit_width:
             header.setStretchLastSection(False)
             header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -890,6 +945,7 @@ class DataTable(QTableWidget):
         self._header_floor = [self.header_width(text) for text in self._headers]
         self._apply_widths(self._header_floor)
         self._restore_widths()
+        round_view_corners(self)
 
         self._empty_title = "موردی برای نمایش وجود ندارد"
         self._empty_hint = ""
@@ -995,45 +1051,69 @@ class DataTable(QTableWidget):
         self._auto_size()
 
     def _auto_size(self) -> None:
-        """Sensible first widths: content width clamped to [MIN, MAX_AUTO]."""
-        if self._auto_sized or self.rowCount() == 0:
+        """v2.18.0: after every load each column is as wide as its widest value and its
+        header (a later, longer value used to be cut because this ran only once)."""
+        if self.rowCount() == 0:
             return
         self._auto_sized = True
-        metrics = self.fontMetrics()
         widths = []
-        floors = []
         for column in range(self.columnCount()):
             # v2.7.0: headers are drawn bold, so they are measured bold (no cut header)
-            floor = self.header_width(self._headers[column]) + 8
-            floors.append(floor)
-            wanted = floor
-            for row in range(min(self.rowCount(), 30)):
+            wanted = self.header_width(self._headers[column]) + 8
+            for row in range(min(self.rowCount(), self.MEASURED_ROWS)):
                 item = self.item(row, column)
                 if item is not None:
-                    wanted = max(wanted, metrics.horizontalAdvance(item.text()) + 36)
+                    metrics = QFontMetrics(item.font() if item.font().bold() else self.font())
+                    icon = 28 if item.flags() & Qt.ItemFlag.ItemIsUserCheckable else 0
+                    wanted = max(wanted, max(metrics.horizontalAdvance(line)
+                                             for line in (item.text().split("\n") or [""]))
+                                 + 36 + icon)
                 elif self.cellWidget(row, column) is not None:
-                    hint = self.cellWidget(row, column).sizeHint().width() + 24
-                    wanted = max(wanted, hint)
-                    floors[column] = max(floors[column], hint)   # never squeeze a pill/button
-            width = min(max(wanted, self.MIN_COLUMN), self.MAX_AUTO_COLUMN)
-            if column in self._keep:
-                floors[column] = max(floors[column], width)
-            widths.append(width)
-        self._natural, self._floor = widths, floors
+                    wanted = max(wanted, self.cellWidget(row, column).sizeHint().width() + 24)
+            widths.append(min(max(wanted, self.MIN_COLUMN), self.MAX_AUTO_COLUMN))
+        self._natural, self._floor = widths, list(widths)
         self._fit_to_viewport()
 
     def _fit_to_viewport(self) -> None:
-        """Shrink the roomy columns (never below their header) so nothing is cut off."""
-        if self._user_sized or not self._natural:
-            return
+        """Nothing is cut: a column the user made wider stays so, none is narrower than its
+        text, and when they do not all fit the scroll bar appears (the last column must not
+        stretch then: Qt would squeeze it to its minimum)."""
+        header = self.horizontalHeader()
         available = self.viewport().width() or self.width()
+        if self._fit_width:
+            self._fit_stretch(available)
+            return
+        if not self._natural:
+            return
         widths = list(self._natural)
-        excess = sum(widths) - available
-        slack = sum(w - f for w, f in zip(widths, self._floor))
-        if excess > 0 and slack > 0 and available > 0:
-            factor = min(1.0, excess / slack)
-            widths = [round(w - (w - f) * factor) for w, f in zip(widths, self._floor)]
+        if self._user_sized:
+            widths = [max(w, self.columnWidth(c)) for c, w in enumerate(widths)]
+        last = len(widths) - 1
+        others = sum(widths[:last])
+        fits = others + widths[last] <= available
+        header.setStretchLastSection(fits)
         self._apply_widths(widths)
+        if not fits and header.sectionSize(last) != widths[last]:
+            self._sizing = True
+            try:
+                header.resizeSection(last, widths[last])
+            finally:
+                self._sizing = False
+
+    def _fit_stretch(self, available: int) -> None:
+        """``fit_width``: the stretching column takes the rest, but never less than its text."""
+        header = self.horizontalHeader()
+        stretch = next((c for c in range(self.columnCount())
+                        if header.sectionResizeMode(c) == QHeaderView.ResizeMode.Stretch
+                        or getattr(self, "_stretch_column", None) == c), None)
+        if stretch is None:
+            return
+        self._stretch_column = stretch
+        total = sum(self.sizeHintForColumn(c) for c in range(self.columnCount()))
+        wanted = (QHeaderView.ResizeMode.Stretch if total <= available
+                  else QHeaderView.ResizeMode.ResizeToContents)
+        if header.sectionResizeMode(stretch) != wanted:
+            header.setSectionResizeMode(stretch, wanted)
 
     # ---- helpers ---------------------------------------------------------
     def _emit_row(self, row: int, _column: int) -> None:
