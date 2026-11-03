@@ -1,7 +1,7 @@
 # HANDOVER — «عصر ارتباطات ۲» shop system (for the next AI agent)
 
-Written 2026-11-01 at version **2.16.0** (unattended session, no admin rights, nothing pushed,
-nothing published, nothing installed). Persian, simple version for the owner: `HANDOVER_FA.md`.
+Written 2026-11-01 at version 2.16.0, brought up to **2.17.0** on 2026-11-03 (unattended, no admin
+rights, nothing pushed, nothing published, nothing installed). Persian, simple version for the owner: `HANDOVER_FA.md`.
 
 Read in this order before touching anything:
 1. this file;
@@ -130,6 +130,32 @@ ShopAdmin real-app screenshots: `scripts/live_shot.py`, `scripts/live_farsi.py`.
      PDF import; buttons «فارسی‌سازی توضیحات», «واژه‌نامه…», «برگرداندن فارسی‌سازی» (48 h). Applied once
      to this PC's 35 power banks (34 changed; backup `%LOCALAPPDATA%\ShopAdmin\site_before_farsi_2.16.0.zip`).
   Screenshots: `shopadmin/docs/screens_2.16.0/` (`site/`, `farsi/`).
+
+## 5b. 2.17.0
+
+* Production facts: server 192.168.20.150, SQL 2008 R2 `.\SAZEHHESAB`, DB `hesab5`; login `shopbot` in role
+  `shop_app` (`NT SERVICE\ShopServer` cannot be used: SQL error 15404); firewall allow-list 192.168.0.0/16;
+  order status «تایید» = 6808, «تحویل به فروش» = 6914; bot/site price level 3; staff make the invoice with
+  «مرحله بعد». `shopapi/sql/upgrade_2_17_0.sql` must be run once on `hesab5` as `sa`.
+* Status: `Settings.status_code_problem` wants a code above zero. Without it `approve-payment` accepts the
+  receipt, sets `orders.accounting_pending`, never calls the writer; `POST /admin/orders/{id}/write-accounting`
+  («ثبت در حسابداری») writes later. Stage: `tracking.order_stage` + `reader.order_stages`.
+* `app/routers/shop_rules.py` + ShopAdmin `pages/shop_rules.py`: codes (in force at once), working hours,
+  auto-invoice placeholder. The codes left the server form; `PUT /admin/server/settings` refuses them without
+  `status_codes.edit`.
+* `app/customer_details.py` and `AccountingWriter.fill_person_empty`: the condition «field is empty» is inside
+  each UPDATE, so nothing is ever overwritten. What cannot reach accounting stays in SQLite (`users.details_sync`)
+  and is retried every 5 minutes. `name_mo.Addres2` is the address (recipe §5.1), not checked in the GUI of production.
+* `app/staff_alerts.py`: shopapi decides what is due (`GET /admin/staff-alerts/due?platform=`), the bots only
+  deliver (`staff_alerts_loop`). `/staff` links a chat that is already a customer.
+* Permissions: `staff.ALL_SECTIONS` (32 rows) mirrored in ShopAdmin `permissions.py`; there is no always-on
+  section any more. A new page or action = a new row in both, `SERVER_TO_CLIENT`, and a server check;
+  `test_a_user_without_ticks_is_refused_everywhere` walks every `/admin` route. Migration key `permissions_2170`.
+* Tests: shopapi 699, shopbots 313, shoptg 89, shopsystem 84, shopadmin 899 ✓; three audits 0 in 9 looks. Real bot engine against real shopapi over
+  HTTP (fake accounting and Bale): 16 of 16. **NOT run on real SQL:** this session's token gets «Access denied» on
+  the SQL Server pipe, also without the sandbox; the owner tests it after installing.
+* A test that opens a modal dialog hangs forever offscreen: run the suite with `-o faulthandler_timeout=200`
+  and a `timeout`, and read its output from a file (a whole night was lost to one such hang).
 
 ## 6. Pending (owner or next agent)
 
