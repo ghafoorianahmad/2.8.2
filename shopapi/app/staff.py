@@ -70,6 +70,10 @@ ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("staff_alerts", "اعلان کارکنان (دیدن = دریافت در بله/تلگرام، تغییر = روشن و خاموش)",
      True, True),
     ("auto_invoice", "صدور خودکار فاکتور", True, True),
+    ("auto_quote", "پاسخ خودکار قیمت کالای غیرموجود (و گزارش آن)", True, True),
+    ("product_alias", "یاد دادن نام کالا به ربات", False, True),
+    ("faq", "پاسخ‌گوی خودکار ربات", True, True),
+    ("staff_chat", "گفت‌وگوی همکاران (دیدن = خواندن، تغییر = فرستادن)", True, True),
     ("app_settings", "تنظیمات برنامه (همین رایانه)", True, True),
     ("own_prefs", "اعلان‌ها و ظاهرِ خودم", False, True),
 )
@@ -133,6 +137,13 @@ P_SERVER_MANAGE = "server.edit"
 P_HEALTH = "health.view"
 P_STATUS_CODES_VIEW = "status_codes.view"
 P_STATUS_CODES_EDIT = "status_codes.edit"
+P_AUTO_QUOTE_VIEW = "auto_quote.view"
+P_AUTO_QUOTE_EDIT = "auto_quote.edit"
+P_PRODUCT_ALIAS = "product_alias.edit"
+P_FAQ_VIEW = "faq.view"
+P_FAQ_EDIT = "faq.edit"
+P_STAFF_CHAT_VIEW = "staff_chat.view"
+P_STAFF_CHAT_SEND = "staff_chat.edit"
 P_WORK_HOURS_VIEW = "work_hours.view"
 P_WORK_HOURS_EDIT = "work_hours.edit"
 P_STAFF_ALERTS_VIEW = "staff_alerts.view"

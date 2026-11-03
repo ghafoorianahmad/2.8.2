@@ -167,7 +167,8 @@ def publisher(fake: FakeGitHub, token: str = TOKEN) -> GitHubPublisher:
     return GitHubPublisher(token, fake.repo, fake.branch, transport=fake.transport())
 
 
-def test_publish_commits_catalog_and_photos_then_only_changes(store, site_folder):
+def test_publish_commits_catalog_and_photos_then_only_changes(store, site_folder, monkeypatch):
+    monkeypatch.setattr(pub, "miniapp_files", dict)     # v2.18.0: test_v2180_miniapp covers it
     store.seed_from_folder(site_folder)
     fake = FakeGitHub(files={"index.html": b"<html>"})
     with publisher(fake) as gh:

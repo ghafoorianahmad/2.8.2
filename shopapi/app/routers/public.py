@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 
 from .. import customer_details, deps, groups as group_config, order_timeout, phone_search
-from .. import purchase, receipts
+from .. import auto_quote, faq, product_aliases, purchase, receipts
 from .. import sales, security_watch
 from ..accounting_reader import AccountingReader
 from ..accounting_writer import AccountingWriter
@@ -17,6 +17,7 @@ from ..db_own import OwnDB
 from ..pricelist import catalog as phone_catalog
 from ..pricelist.repo import PriceListRepo
 from ..schemas import (
+    AutoQuoteIn,
     GroupOut,
     InquiryIn,
     InquiryOut,
@@ -896,27 +897,62 @@ def phones_search(
     only requested (``purchase``: not mapped, or no stock)."""
     active, rows = purchase.active_rows(db, settings)
     state = sales.compute(db, settings)
-    found = phone_search.search(rows, q)
+    found = phone_search.search(rows, q, product_aliases.load_learned(db))
     level = settings.price_level_for(role)
+    quote_ok = auto_quote.enabled(db)
     codes = [int(r["kala_code"]) for r in found if r.get("action") == "map" and r.get("kala_code")]
     stock = purchase.orderable_codes(db, reader, settings, level, codes)
     items = []
     for r in found:
         code = int(r["kala_code"]) if r.get("action") == "map" and r.get("kala_code") else None
         can_order = code is not None and (code in stock or not settings.phone_stock_required)             and not r.get("price_held")
+        # v2.18.0: an item we do not stock is quoted only with «پاسخ خودکار قیمت» on
+        no_quote = code is None and not quote_ok
         items.append({
             "row_key": r["row_key"], "model_index": r["model_index"], "model": r["model"],
             "section": r["section"], "description": r["description"],
             "color": (r.get("color_label") or r.get("color") or "").strip(),
-            "part": r["part"], "price": int(r["price_rial"]) if r.get("price_rial") else None,
+            "part": r["part"],
+            "price": int(r["price_rial"]) if r.get("price_rial") and not no_quote else None,
             "kala_code": code,
             "variant_id": r.get("mapping_id") if code else None,
             "action": "order" if can_order else "purchase", "score": r["score"],
             # v2.9.2: the price waits for a manager: «درخواست خرید - استعلام قیمت»
-            "price_held": bool(r.get("price_held")),
+            "price_held": bool(r.get("price_held")) or no_quote,
         })
     return {"list_ready": bool(rows), "list_date": (active or {}).get("list_date") or "",
             "sales_open": state.open, "items": items}
+
+
+@router.get("/faq/answer")
+def faq_answer(
+    q: str = Query(min_length=2, max_length=300),
+    role: str = Depends(get_api_identity),
+    db: OwnDB = Depends(deps.get_db),
+) -> dict:
+    """v2.18.0: what the bot may answer by itself ({} = nothing confident enough)."""
+    if role not in ("bot", "admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not available on this channel")
+    return faq.answer(db, q)
+
+
+@router.post("/auto-quotes", status_code=status.HTTP_201_CREATED)
+def record_auto_quote(
+    payload: AutoQuoteIn,
+    role: str = Depends(get_api_identity),
+    db: OwnDB = Depends(deps.get_db),
+    settings: Settings = Depends(deps.get_settings),
+) -> dict:
+    """v2.18.0: the bot gave the price of an item we do not stock: for the report."""
+    if role not in ("bot", "admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not available on this channel")
+    active, rows = purchase.active_rows(db, settings)
+    row = next((r for r in rows if r["row_key"] == payload.row_key), None)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Row not found")
+    auto_quote.record(db, payload.platform, payload.chat_id, payload.query, row,
+                      (active or {}).get("id"))
+    return {"recorded": True}
 
 
 @router.post("/purchase-requests", response_model=ItemRequestOut,

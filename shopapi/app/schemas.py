@@ -88,6 +88,13 @@ class CustomerDetailsIn(BaseModel):
     finished: bool = False
 
 
+class AutoQuoteIn(BaseModel):
+    platform: str = Field(max_length=20)
+    chat_id: str = Field(min_length=1, max_length=64)
+    row_key: str = Field(min_length=1, max_length=300)
+    query: str = Field(default="", max_length=200)
+
+
 class OrderAddressIn(BaseModel):
     platform: Platform
     chat_id: str = Field(min_length=1)

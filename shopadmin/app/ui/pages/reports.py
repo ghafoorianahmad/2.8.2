@@ -129,7 +129,8 @@ class ReportsPage(BasePage):
 
         def work() -> dict:
             api = self.context.api
-            orders = api.list_orders(status) if status else _all_orders(api)
+            orders = api.list_orders(status, include_archived=True) if status \
+                else _all_orders(api)
             customers = api.list_customers()
             return {"orders": orders, "customers": customers}
 
@@ -231,7 +232,7 @@ def _all_orders(api) -> list[dict]:
     """Fetch every order status the app can display, without duplicates."""
     collected: dict[object, dict] = {}
     for status in DEFAULT_ORDER_STATUSES:
-        for order in api.list_orders(status) or []:
+        for order in api.list_orders(status, include_archived=True) or []:
             collected[order.get("id")] = order
     return list(collected.values())
 

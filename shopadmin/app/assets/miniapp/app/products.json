@@ -1,0 +1,2060 @@
+{
+  "schema_version": 1,
+  "shop_name": "عصر ارتباطات ۲ — مشهد",
+  "updated_at": "1405-08-12T12:00:00Z",
+  "products": [
+    {
+      "id": "ip17pm",
+      "name": "گوشی اپل آیفون ۱۷ پرو مکس ۲۵۶ گیگابایت",
+      "name_en": "Apple iPhone 17 Pro Max 256GB",
+      "aliases": [
+        "ایفون17پرومکس",
+        "آیفون ۱۷ پرومکس",
+        "17promax",
+        "ایفون18پرومکس",
+        "iphone 18 pro max"
+      ],
+      "type": "phone",
+      "brand": "Apple",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "cosmic-orange",
+          "name": "نارنجی کیهانی",
+          "hex": "#E2713A",
+          "image": "./images/ip17pm-cosmic-orange.jpg"
+        },
+        {
+          "id": "deep-blue",
+          "name": "آبی تیره",
+          "hex": "#354154",
+          "image": "./images/ip17pm-deep-blue.jpg"
+        },
+        {
+          "id": "silver",
+          "name": "نقره‌ای",
+          "hex": "#E3E4E6",
+          "image": "./images/ip17pm-silver.jpg"
+        },
+        {
+          "id": "black-titanium",
+          "name": "تیتانیوم مشکی",
+          "hex": "#2B2B2E",
+          "image": null
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۲۵۶ گیگابایت / ۱۲ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۹ اینچ Super Retina XDR ProMotion"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Apple A19 Pro (۳ نانومتری)"
+        },
+        {
+          "label": "دوربین اصلی",
+          "value": "سه لنز ۴۸ مگاپیکسل با زوم اپتیکال ۵ برابر"
+        },
+        {
+          "label": "پارت نامبر",
+          "value": "ZAA دو سیم‌کارت (نات‌اکتیو شرکتی)"
+        }
+      ],
+      "images": [
+        "./images/ip17pm-cosmic-orange.jpg",
+        "./images/ip17pm-deep-blue.jpg",
+        "./images/ip17pm-silver.jpg"
+      ]
+    },
+    {
+      "id": "ip17p",
+      "name": "گوشی اپل آیفون ۱۷ پرو ۲۵۶ گیگابایت",
+      "name_en": "Apple iPhone 17 Pro 256GB",
+      "aliases": [
+        "ایفون17پرو",
+        "آیفون ۱۷ پرو",
+        "17pro",
+        "iphone17pro"
+      ],
+      "type": "phone",
+      "brand": "Apple",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "cosmic-orange",
+          "name": "نارنجی کیهانی",
+          "hex": "#E2713A",
+          "image": "./images/ip17p-cosmic-orange.jpg"
+        },
+        {
+          "id": "deep-blue",
+          "name": "آبی تیره",
+          "hex": "#354154",
+          "image": "./images/ip17p-deep-blue.jpg"
+        },
+        {
+          "id": "silver",
+          "name": "نقره‌ای",
+          "hex": "#E3E4E6",
+          "image": "./images/ip17p-silver.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۲۵۶ گیگابایت / ۱۲ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۳ اینچ LTPO OLED 120Hz"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Apple A19 Pro"
+        },
+        {
+          "label": "دوربین اصلی",
+          "value": "سه‌گانه ۴۸ مگاپیکسل تله‌فوتو پریسکوپ"
+        },
+        {
+          "label": "پارت نامبر",
+          "value": "ZAA دو سیم‌کارت"
+        }
+      ],
+      "images": [
+        "./images/ip17p-cosmic-orange.jpg",
+        "./images/ip17p-deep-blue.jpg",
+        "./images/ip17p-silver.jpg"
+      ]
+    },
+    {
+      "id": "ip17",
+      "name": "گوشی اپل آیفون ۱۷ حافظه ۱۲۸ گیگابایت",
+      "name_en": "Apple iPhone 17 128GB",
+      "aliases": [
+        "ایفون17",
+        "آیفون ۱۷ نرمال",
+        "iphone17"
+      ],
+      "type": "phone",
+      "brand": "Apple",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "black",
+          "name": "مشکی",
+          "hex": "#2E3033",
+          "image": "./images/ip17-black.jpg"
+        },
+        {
+          "id": "lavender",
+          "name": "یاسی",
+          "hex": "#DFCEE8",
+          "image": "./images/ip17-lavender.jpg"
+        },
+        {
+          "id": "mist-blue",
+          "name": "آبی مه",
+          "hex": "#A9C0D9",
+          "image": "./images/ip17-mist-blue.jpg"
+        },
+        {
+          "id": "sage",
+          "name": "سبز مریم‌گلی",
+          "hex": "#B4C6A6",
+          "image": "./images/ip17-sage.jpg"
+        },
+        {
+          "id": "white",
+          "name": "سفید",
+          "hex": "#F5F6F8",
+          "image": "./images/ip17-white.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۱۲۸ گیگابایت / ۸ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۱ اینچ Super Retina XDR 120Hz"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Apple A19"
+        },
+        {
+          "label": "دوربین اصلی",
+          "value": "دوگانه ۴۸ و ۱۲ مگاپیکسل"
+        },
+        {
+          "label": "پارت نامبر",
+          "value": "CH/A دو سیم‌کارت"
+        }
+      ],
+      "images": [
+        "./images/ip17-black.jpg",
+        "./images/ip17-lavender.jpg",
+        "./images/ip17-mist-blue.jpg",
+        "./images/ip17-sage.jpg",
+        "./images/ip17-white.jpg"
+      ]
+    },
+    {
+      "id": "ipair",
+      "name": "گوشی اپل آیفون ایر (iPhone Air) ۲۵۶ گیگابایت",
+      "name_en": "Apple iPhone Air 256GB",
+      "aliases": [
+        "ایفون ایر",
+        "آیفون17ایر",
+        "iphone air",
+        "iphone17air"
+      ],
+      "type": "phone",
+      "brand": "Apple",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "sky-blue",
+          "name": "آبی آسمانی",
+          "hex": "#D4E5F2",
+          "image": "./images/ipair-sky-blue.jpg"
+        },
+        {
+          "id": "space-black",
+          "name": "مشکی فضایی",
+          "hex": "#28292B",
+          "image": "./images/ipair-space-black.jpg"
+        },
+        {
+          "id": "light-gold",
+          "name": "طلایی روشن",
+          "hex": "#EFE5D4",
+          "image": "./images/ipair-light-gold.jpg"
+        },
+        {
+          "id": "cloud-white",
+          "name": "سفید ابری",
+          "hex": "#F4F5F7",
+          "image": "./images/ipair-cloud-white.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۲۵۶ گیگابایت / ۸ گیگابایت رم"
+        },
+        {
+          "label": "ضخامت بدنه",
+          "value": "فوق باریک ۵.۵ میلی‌متر فریم تیتانیوم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۶ اینچ OLED ProMotion 120Hz"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Apple A19"
+        },
+        {
+          "label": "دوربین",
+          "value": "۴۸ مگاپیکسل Fusion"
+        }
+      ],
+      "images": [
+        "./images/ipair-sky-blue.jpg",
+        "./images/ipair-space-black.jpg",
+        "./images/ipair-light-gold.jpg",
+        "./images/ipair-cloud-white.jpg"
+      ]
+    },
+    {
+      "id": "ip17e",
+      "name": "گوشی اپل آیفون ۱۷e حافظه ۱۲۸ گیگابایت",
+      "name_en": "Apple iPhone 17e 128GB",
+      "aliases": [
+        "ایفون17e",
+        "آیفون ۱۷ ای",
+        "iphone17e",
+        "ایفون16e"
+      ],
+      "type": "phone",
+      "brand": "Apple",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "black",
+          "name": "مشکی",
+          "hex": "#2C2D30",
+          "image": "./images/ip17e-black.jpg"
+        },
+        {
+          "id": "white",
+          "name": "سفید",
+          "hex": "#F5F6F8",
+          "image": "./images/ip17e-white.jpg"
+        },
+        {
+          "id": "pink",
+          "name": "صورتی",
+          "hex": "#F4D3D8",
+          "image": "./images/ip17e-pink.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۱۲۸ گیگابایت / ۸ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۱ اینچ Super Retina XDR OLED"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Apple A18 با پشتیبانی از Apple Intelligence"
+        },
+        {
+          "label": "دوربین",
+          "value": "۴۸ مگاپیکسل ۲ در ۱ با زوم ۲ برابر"
+        },
+        {
+          "label": "درگاه شارژ",
+          "value": "USB-C"
+        }
+      ],
+      "images": [
+        "./images/ip17e-black.jpg",
+        "./images/ip17e-white.jpg",
+        "./images/ip17e-pink.jpg"
+      ]
+    },
+    {
+      "id": "ip16pm",
+      "name": "گوشی اپل آیفون ۱۶ پرو مکس ۲۵۶ گیگابایت",
+      "name_en": "Apple iPhone 16 Pro Max 256GB",
+      "aliases": [
+        "ایفون16پرومکس",
+        "آیفون ۱۶ پرومکس",
+        "16promax",
+        "iphone16promax"
+      ],
+      "type": "phone",
+      "brand": "Apple",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "desert-titanium",
+          "name": "تیتانیوم صحرایی",
+          "hex": "#C5A880",
+          "image": "./images/ip16pm-desert-titanium.jpg"
+        },
+        {
+          "id": "natural-titanium",
+          "name": "تیتانیوم طبیعی",
+          "hex": "#ACA79E",
+          "image": "./images/ip16pm-natural-titanium.jpg"
+        },
+        {
+          "id": "black-titanium",
+          "name": "تیتانیوم مشکی",
+          "hex": "#2F3033",
+          "image": "./images/ip16pm-black-titanium.jpg"
+        },
+        {
+          "id": "white-titanium",
+          "name": "تیتانیوم سفید",
+          "hex": "#F1F0EC",
+          "image": "./images/ip16pm-white-titanium.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۲۵۶ گیگابایت / ۸ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۹ اینچ Super Retina XDR ProMotion"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Apple A18 Pro"
+        },
+        {
+          "label": "دوربین",
+          "value": "سه‌گانه ۴۸ مگاپیکسل با دکمه Camera Control"
+        },
+        {
+          "label": "پارت نامبر",
+          "value": "ZAA دو سیم‌کارت"
+        }
+      ],
+      "images": [
+        "./images/ip16pm-desert-titanium.jpg",
+        "./images/ip16pm-natural-titanium.jpg",
+        "./images/ip16pm-black-titanium.jpg",
+        "./images/ip16pm-white-titanium.jpg"
+      ]
+    },
+    {
+      "id": "ip16",
+      "name": "گوشی اپل آیفون ۱۶ حافظه ۱۲۸ گیگابایت",
+      "name_en": "Apple iPhone 16 128GB",
+      "aliases": [
+        "ایفون16",
+        "آیفون ۱۶ نرمال",
+        "iphone16"
+      ],
+      "type": "phone",
+      "brand": "Apple",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "ultramarine",
+          "name": "آبی اولترامارین",
+          "hex": "#5D73E6",
+          "image": "./images/ip16-ultramarine.jpg"
+        },
+        {
+          "id": "teal",
+          "name": "سبز تیل",
+          "hex": "#7BB5B3",
+          "image": "./images/ip16-teal.jpg"
+        },
+        {
+          "id": "pink",
+          "name": "صورتی",
+          "hex": "#EAA0C6",
+          "image": "./images/ip16-pink.jpg"
+        },
+        {
+          "id": "white",
+          "name": "سفید",
+          "hex": "#F5F6F8",
+          "image": "./images/ip16-white.jpg"
+        },
+        {
+          "id": "black",
+          "name": "مشکی",
+          "hex": "#2B2D30",
+          "image": "./images/ip16-black.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۱۲۸ گیگابایت / ۸ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۱ اینچ Super Retina XDR"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Apple A18"
+        },
+        {
+          "label": "دوربین",
+          "value": "۴۸ مگاپیکسل همراه با Action Button"
+        },
+        {
+          "label": "پارت نامبر",
+          "value": "CH/A دو سیم‌کارت"
+        }
+      ],
+      "images": [
+        "./images/ip16-ultramarine.jpg",
+        "./images/ip16-teal.jpg",
+        "./images/ip16-pink.jpg",
+        "./images/ip16-white.jpg",
+        "./images/ip16-black.jpg"
+      ]
+    },
+    {
+      "id": "ip15",
+      "name": "گوشی اپل آیفون ۱۵ حافظه ۱۲۸ گیگابایت",
+      "name_en": "Apple iPhone 15 128GB",
+      "aliases": [
+        "ایفون15",
+        "آیفون ۱۵",
+        "iphone15"
+      ],
+      "type": "phone",
+      "brand": "Apple",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "black",
+          "name": "مشکی",
+          "hex": "#2E3033",
+          "image": "./images/ip15-black.jpg"
+        },
+        {
+          "id": "blue",
+          "name": "آبی",
+          "hex": "#D5E2EC",
+          "image": "./images/ip15-blue.jpg"
+        },
+        {
+          "id": "green",
+          "name": "سبز",
+          "hex": "#D8E8D4",
+          "image": "./images/ip15-green.jpg"
+        },
+        {
+          "id": "pink",
+          "name": "صورتی",
+          "hex": "#F4D4DA",
+          "image": "./images/ip15-pink.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۱۲۸ گیگابایت / ۶ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۱ اینچ OLED با Dynamic Island"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Apple A16 Bionic"
+        },
+        {
+          "label": "دوربین",
+          "value": "۴۸ مگاپیکسل اصلی"
+        },
+        {
+          "label": "درگاه",
+          "value": "USB Type-C"
+        }
+      ],
+      "images": [
+        "./images/ip15-black.jpg",
+        "./images/ip15-blue.jpg",
+        "./images/ip15-green.jpg",
+        "./images/ip15-pink.jpg"
+      ]
+    },
+    {
+      "id": "s26u",
+      "name": "گوشی سامسونگ گلکسی S26 اولترا ۵۱۲ گیگابایت",
+      "name_en": "Samsung Galaxy S26 Ultra 512GB",
+      "aliases": [
+        "اس26اولترا",
+        "اس۲۶اولترا",
+        "s26ultra",
+        "گلکسی اس 26 اولترا"
+      ],
+      "type": "phone",
+      "brand": "Samsung",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "titanium-violet",
+          "name": "تیتانیوم بنفش",
+          "hex": "#6E6A8E",
+          "image": "./images/s26u-titanium-violet.jpg"
+        },
+        {
+          "id": "titanium-silver",
+          "name": "تیتانیوم نقره‌ای",
+          "hex": "#C4C6CA",
+          "image": "./images/s26u-titanium-silver.jpg"
+        },
+        {
+          "id": "titanium-gold",
+          "name": "تیتانیوم طلایی",
+          "hex": "#DFCFC2",
+          "image": "./images/s26u-titanium-gold.jpg"
+        },
+        {
+          "id": "titanium-black",
+          "name": "تیتانیوم مشکی",
+          "hex": "#2A2B2E",
+          "image": null
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۵۱۲ گیگابایت / ۱۶ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۹ اینچ Dynamic AMOLED 2X 120Hz"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Snapdragon 8 Elite Gen 2 for Galaxy"
+        },
+        {
+          "label": "دوربین اصلی",
+          "value": "۲۰۰ مگاپیکسل + دو لنز تله‌فوتو ۵۰ مگاپیکسل"
+        },
+        {
+          "label": "اقلام همراه",
+          "value": "قلم هوشمند S-Pen داخلی"
+        }
+      ],
+      "images": [
+        "./images/s26u-titanium-violet.jpg",
+        "./images/s26u-titanium-silver.jpg",
+        "./images/s26u-titanium-gold.jpg"
+      ]
+    },
+    {
+      "id": "s25u",
+      "name": "گوشی سامسونگ گلکسی S25 اولترا ۲۵۶ گیگابایت",
+      "name_en": "Samsung Galaxy S25 Ultra 256GB",
+      "aliases": [
+        "اس25اولترا",
+        "اس۲۵اولترا",
+        "s25ultra",
+        "گلکسی اس ۲۵ الترا"
+      ],
+      "type": "phone",
+      "brand": "Samsung",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "titanium-silverblue",
+          "name": "تیتانیوم آبی نقره‌ای",
+          "hex": "#94A3B8",
+          "image": "./images/s25u-titanium-silverblue.jpg"
+        },
+        {
+          "id": "titanium-black",
+          "name": "تیتانیوم مشکی",
+          "hex": "#27272A",
+          "image": "./images/s25u-titanium-black.jpg"
+        },
+        {
+          "id": "titanium-gray",
+          "name": "تیتانیوم خاکستری",
+          "hex": "#A6A29A",
+          "image": "./images/s25u-titanium-gray.jpg"
+        },
+        {
+          "id": "titanium-whitesilver",
+          "name": "تیتانیوم سفید نقره‌ای",
+          "hex": "#E4E4E7",
+          "image": "./images/s25u-titanium-whitesilver.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۲۵۶ گیگابایت / ۱۲ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۹ اینچ Dynamic LTPO AMOLED 2X"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Snapdragon 8 Elite for Galaxy"
+        },
+        {
+          "label": "دوربین",
+          "value": "۲۰۰ مگاپیکسل + ۵۰ مگاپیکسل اولتراواید"
+        },
+        {
+          "label": "باتری",
+          "value": "۵۰۰۰ میلی‌آمپر با شارژ سریع ۴۵ وات"
+        }
+      ],
+      "images": [
+        "./images/s25u-titanium-silverblue.jpg",
+        "./images/s25u-titanium-black.jpg",
+        "./images/s25u-titanium-gray.jpg",
+        "./images/s25u-titanium-whitesilver.jpg"
+      ]
+    },
+    {
+      "id": "s25p",
+      "name": "گوشی سامسونگ گلکسی S25 پلاس ۲۵۶ گیگابایت",
+      "name_en": "Samsung Galaxy S25+ 256GB",
+      "aliases": [
+        "اس25پلاس",
+        "s25plus",
+        "s25+",
+        "گلکسی اس ۲۵ پلاس"
+      ],
+      "type": "phone",
+      "brand": "Samsung",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "navy",
+          "name": "سرمه‌ای",
+          "hex": "#283C66",
+          "image": "./images/s25p-navy.jpg"
+        },
+        {
+          "id": "icyblue",
+          "name": "آبی یخی",
+          "hex": "#C8D7E8",
+          "image": "./images/s25p-icyblue.jpg"
+        },
+        {
+          "id": "mint",
+          "name": "سبز نعنایی",
+          "hex": "#C8E2D4",
+          "image": "./images/s25p-mint.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۲۵۶ گیگابایت / ۱۲ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۷ اینچ QHD+ Dynamic AMOLED 2X"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Snapdragon 8 Elite"
+        },
+        {
+          "label": "دوربین",
+          "value": "۵۰ مگاپیکسل سه‌گانه با زوم اپتیکال ۳ برابر"
+        },
+        {
+          "label": "باتری",
+          "value": "۴۹۰۰ میلی‌آمپر ساعت"
+        }
+      ],
+      "images": [
+        "./images/s25p-navy.jpg",
+        "./images/s25p-icyblue.jpg",
+        "./images/s25p-mint.jpg"
+      ]
+    },
+    {
+      "id": "zfold7",
+      "name": "گوشی سامسونگ گلکسی Z Fold 7 حافظه ۵۱۲ گیگابایت",
+      "name_en": "Samsung Galaxy Z Fold 7 512GB",
+      "aliases": [
+        "زدفولد7",
+        "زدفولد6",
+        "zfold7",
+        "zfold6",
+        "فولد ۷"
+      ],
+      "type": "phone",
+      "brand": "Samsung",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "blue-shadow",
+          "name": "آبی سایه",
+          "hex": "#263B6A",
+          "image": "./images/zfold7-blue-shadow.jpg"
+        },
+        {
+          "id": "silver-shadow",
+          "name": "نقره‌ای سایه",
+          "hex": "#9CA3AF",
+          "image": "./images/zfold7-silver-shadow.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۵۱۲ گیگابایت / ۱۲ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر تاشو",
+          "value": "۸.۰ اینچ داخلی + ۶.۵ اینچ بیرونی 120Hz"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Snapdragon 8 Elite for Galaxy"
+        },
+        {
+          "label": "دوربین اصلی",
+          "value": "۲۰۰ مگاپیکسل پرچمدار"
+        },
+        {
+          "label": "مقاومت",
+          "value": "گواهی IP48 و فریم Armor Aluminum"
+        }
+      ],
+      "images": [
+        "./images/zfold7-blue-shadow.jpg",
+        "./images/zfold7-silver-shadow.jpg"
+      ]
+    },
+    {
+      "id": "zflip6",
+      "name": "گوشی سامسونگ گلکسی Z Flip 6 حافظه ۲۵۶ گیگابایت",
+      "name_en": "Samsung Galaxy Z Flip 6 256GB",
+      "aliases": [
+        "زدفلیپ6",
+        "zflip6",
+        "فلیپ ۶",
+        "گلکسی زد فلیپ"
+      ],
+      "type": "phone",
+      "brand": "Samsung",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "yellow",
+          "name": "زرد طلایی",
+          "hex": "#F3DF99",
+          "image": "./images/zflip6-yellow.jpg"
+        },
+        {
+          "id": "mint",
+          "name": "سبز نعنایی",
+          "hex": "#BFE3D0",
+          "image": null
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۲۵۶ گیگابایت / ۱۲ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۷ اینچ تاشو + نمایشگر کاور ۳.۴ اینچ"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Snapdragon 8 Gen 3"
+        },
+        {
+          "label": "دوربین",
+          "value": "۵۰ مگاپیکسل اصلی + ۱۲ مگاپیکسل اولتراواید"
+        },
+        {
+          "label": "باتری",
+          "value": "۴۰۰۰ میلی‌آمپر ساعت"
+        }
+      ],
+      "images": [
+        "./images/zflip6-yellow.jpg"
+      ]
+    },
+    {
+      "id": "a56",
+      "name": "گوشی سامسونگ گلکسی A56 5G حافظه ۲۵۶ گیگابایت",
+      "name_en": "Samsung Galaxy A56 5G 256GB",
+      "aliases": [
+        "a56",
+        "آ۵۶",
+        "ای56",
+        "سامسونگa56",
+        "گلکسی آ 56"
+      ],
+      "type": "phone",
+      "brand": "Samsung",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "awesome-olive",
+          "name": "سبز زیتونی",
+          "hex": "#A3AE9E",
+          "image": "./images/a56-awesome-olive.jpg"
+        },
+        {
+          "id": "awesome-graphite",
+          "name": "خاکستری تیره",
+          "hex": "#3B3E45",
+          "image": null
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۲۵۶ گیگابایت / ۸ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۷ اینچ Super AMOLED 120Hz"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Exynos 1580 (۴ نانومتری)"
+        },
+        {
+          "label": "دوربین",
+          "value": "۵۰ مگاپیکسل با لرزشگیر اپتیکال OIS"
+        },
+        {
+          "label": "شارژ سریع",
+          "value": "پشتیبانی از سوپر فست شارژ ۴۵ وات"
+        }
+      ],
+      "images": [
+        "./images/a56-awesome-olive.jpg"
+      ]
+    },
+    {
+      "id": "a55",
+      "name": "گوشی سامسونگ گلکسی A55 5G حافظه ۲۵۶ گیگابایت",
+      "name_en": "Samsung Galaxy A55 5G 256GB",
+      "aliases": [
+        "a55",
+        "آ۵۵",
+        "ای55",
+        "سامسونگa55",
+        "a35",
+        "a36"
+      ],
+      "type": "phone",
+      "brand": "Samsung",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "awesome-iceblue",
+          "name": "آبی یخی",
+          "hex": "#D7E6F5",
+          "image": "./images/a55-awesome-iceblue.jpg"
+        },
+        {
+          "id": "awesome-lilac",
+          "name": "یاسی",
+          "hex": "#DBD2EC",
+          "image": "./images/a55-awesome-lilac.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۲۵۶ گیگابایت / ۸ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۶ اینچ Super AMOLED 120Hz"
+        },
+        {
+          "label": "بدنه",
+          "value": "فریم فلزی آلومینیومی و پشت شیشه‌ای Victus+"
+        },
+        {
+          "label": "دوربین",
+          "value": "۵۰ مگاپیکسل سه‌گانه با OIS"
+        },
+        {
+          "label": "باتری",
+          "value": "۵۰۰۰ میلی‌آمپر ساعت"
+        }
+      ],
+      "images": [
+        "./images/a55-awesome-iceblue.jpg",
+        "./images/a55-awesome-lilac.jpg"
+      ]
+    },
+    {
+      "id": "xm17",
+      "name": "گوشی شیائومی ۱۷ حافظه ۵۱۲ گیگابایت",
+      "name_en": "Xiaomi 17 512GB",
+      "aliases": [
+        "شیائومی17",
+        "xiaomi17",
+        "شیاومی ۱۷"
+      ],
+      "type": "phone",
+      "brand": "Xiaomi",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "jade-green",
+          "name": "سبز یشمی",
+          "hex": "#5D7B6F",
+          "image": "./images/xm17-jade-green.jpg"
+        },
+        {
+          "id": "lilac",
+          "name": "یاسی روشن",
+          "hex": "#CBD2EE",
+          "image": "./images/xm17-lilac.jpg"
+        },
+        {
+          "id": "black",
+          "name": "مشکی مات",
+          "hex": "#2E3136",
+          "image": "./images/xm17-black.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۵۱۲ گیگابایت / ۱۲ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۳۶ اینچ LTPO OLED 120Hz (۳۲۰۰ نیت)"
+        },
+        {
+          "label": "دوربین",
+          "value": "سه‌گانه ۵۰ مگاپیکسل با لنز Leica Summilux"
+        },
+        {
+          "label": "باتری",
+          "value": "۵۵۰۰ میلی‌آمپر سیلیکون-کربن با شارژ ۹۰ وات"
+        },
+        {
+          "label": "مقاومت",
+          "value": "گواهی ضدآب و گردوغبار IP68"
+        }
+      ],
+      "images": [
+        "./images/xm17-jade-green.jpg",
+        "./images/xm17-lilac.jpg",
+        "./images/xm17-black.jpg"
+      ]
+    },
+    {
+      "id": "xm15u",
+      "name": "گوشی شیائومی ۱۵ اولترا ۵۱۲ گیگابایت",
+      "name_en": "Xiaomi 15 Ultra 512GB",
+      "aliases": [
+        "شیائومی15اولترا",
+        "xiaomi15ultra",
+        "15ultra",
+        "شیائومی ۱۷ اولترا"
+      ],
+      "type": "phone",
+      "brand": "Xiaomi",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "silver-chrome",
+          "name": "نقره‌ای کروم (طرح دوربین لایکا)",
+          "hex": "#B7BBC2",
+          "image": "./images/xm15u-silver-chrome.jpg"
+        },
+        {
+          "id": "black",
+          "name": "مشکی بافت‌دار",
+          "hex": "#26272B",
+          "image": "./images/xm15u-black.jpg"
+        },
+        {
+          "id": "white",
+          "name": "سفید صدفی",
+          "hex": "#F3F4F6",
+          "image": null
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۵۱۲ گیگابایت / ۱۶ گیگابایت رم"
+        },
+        {
+          "label": "دوربین",
+          "value": "سنسور ۱ اینچی لایکا + پریسکوپ ۲۰۰ مگاپیکسل"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Snapdragon 8 Elite"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۷۳ اینچ WQHD+ AMOLED 120Hz"
+        },
+        {
+          "label": "شارژ",
+          "value": "۹۰ وات سیمی و ۸۰ وات بی‌سیم"
+        }
+      ],
+      "images": [
+        "./images/xm15u-silver-chrome.jpg",
+        "./images/xm15u-black.jpg"
+      ]
+    },
+    {
+      "id": "xm15",
+      "name": "گوشی شیائومی ۱۵ حافظه ۵۱۲ گیگابایت",
+      "name_en": "Xiaomi 15 512GB",
+      "aliases": [
+        "شیائومی15",
+        "xiaomi15",
+        "شیاومی ۱۵"
+      ],
+      "type": "phone",
+      "brand": "Xiaomi",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "black",
+          "name": "مشکی",
+          "hex": "#2B2E33",
+          "image": "./images/xm15-black.jpg"
+        },
+        {
+          "id": "lilac",
+          "name": "آبی یاسی",
+          "hex": "#CED6F0",
+          "image": "./images/xm15-lilac.jpg"
+        },
+        {
+          "id": "green",
+          "name": "سبز",
+          "hex": "#628275",
+          "image": "./images/xm15-green.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۵۱۲ گیگابایت / ۱۲ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۳۶ اینچ OLED حاشیه فوق باریک ۱.۳۸ میلی‌متر"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Snapdragon 8 Elite"
+        },
+        {
+          "label": "دوربین",
+          "value": "سه‌گانه ۵۰ مگاپیکسل Leica"
+        },
+        {
+          "label": "باتری",
+          "value": "۵۲۴۰ میلی‌آمپر با شارژ سریع ۹۰ وات"
+        }
+      ],
+      "images": [
+        "./images/xm15-black.jpg",
+        "./images/xm15-lilac.jpg",
+        "./images/xm15-green.jpg"
+      ]
+    },
+    {
+      "id": "rn14pp",
+      "name": "گوشی شیائومی ردمی نوت ۱۴ پرو پلاس 5G حافظه ۵۱۲ گیگابایت",
+      "name_en": "Xiaomi Redmi Note 14 Pro+ 5G 512GB",
+      "aliases": [
+        "ردمی نوت 14 پرو پلاس",
+        "نوت۱۴پروپلاس",
+        "note14proplus",
+        "redminote14"
+      ],
+      "type": "phone",
+      "brand": "Xiaomi",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "frost-blue",
+          "name": "آبی یخی",
+          "hex": "#9AB8C2",
+          "image": "./images/rn14pp-frost-blue.jpg"
+        },
+        {
+          "id": "midnight-black",
+          "name": "مشکی نیمه‌شب",
+          "hex": "#26282B",
+          "image": null
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۵۱۲ گیگابایت / ۱۲ گیگابایت رم"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۶۷ اینچ 1.5K AMOLED خمیده 120Hz"
+        },
+        {
+          "label": "دوربین",
+          "value": "۲۰۰ مگاپیکسل با لرزشگیر اپتیکال OIS"
+        },
+        {
+          "label": "شارژر داخل جعبه",
+          "value": "۱۲۰ وات HyperCharge"
+        },
+        {
+          "label": "مقاومت",
+          "value": "ضدآب کامل با استاندارد IP68"
+        }
+      ],
+      "images": [
+        "./images/rn14pp-frost-blue.jpg"
+      ]
+    },
+    {
+      "id": "pocox7p",
+      "name": "گوشی شیائومی پوکو X7 پرو 5G حافظه ۵۱۲ گیگابایت",
+      "name_en": "Xiaomi POCO X7 Pro 5G 512GB",
+      "aliases": [
+        "پوکوx7پرو",
+        "پوکو ایکس ۷ پرو",
+        "pocox7pro",
+        "x7pro",
+        "pocof6pro"
+      ],
+      "type": "phone",
+      "brand": "Xiaomi",
+      "category": "گوشی موبایل",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "yellow",
+          "name": "زرد و مشکی (چرم مصنوعی)",
+          "hex": "#EAB308",
+          "image": "./images/pocox7p-yellow.jpg"
+        },
+        {
+          "id": "black",
+          "name": "مشکی",
+          "hex": "#26272B",
+          "image": "./images/pocox7p-black.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حافظه و رم",
+          "value": "۵۱۲ گیگابایت / ۱۲ گیگابایت رم UFS 4.0"
+        },
+        {
+          "label": "پردازنده",
+          "value": "Dimensity 8400-Ultra (فوق‌العاده برای گیمینگ)"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "۶.۶۷ اینچ CrystalRes AMOLED 120Hz"
+        },
+        {
+          "label": "باتری",
+          "value": "۶۰۰۰ میلی‌آمپر با شارژ سریع ۹۰ وات"
+        },
+        {
+          "label": "دوربین",
+          "value": "۵۰ مگاپیکسل سونی با OIS"
+        }
+      ],
+      "images": [
+        "./images/pocox7p-yellow.jpg",
+        "./images/pocox7p-black.jpg"
+      ]
+    },
+    {
+      "id": "ank-maggo-10k",
+      "name": "پاوربانک مگ‌سیف اولترا اسلیم انکر MagGo ظرفیت ۱۰۰۰۰ میلی‌آمپر",
+      "name_en": "Anker MagGo Power Bank 10000mAh Qi2 Ultra-Slim",
+      "aliases": [
+        "پاوربانک انکر",
+        "پاوربانک مگ سیف",
+        "anker maggo",
+        "پاوربانک آیفون"
+      ],
+      "type": "accessory",
+      "brand": "Anker",
+      "category": "پاوربانک",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "black",
+          "name": "مشکی مات",
+          "hex": "#2E3136",
+          "image": "./images/ank-maggo-10k-black.jpg"
+        },
+        {
+          "id": "white",
+          "name": "سفید",
+          "hex": "#F1F3F5",
+          "image": "./images/ank-maggo-10k-white.jpg"
+        },
+        {
+          "id": "green",
+          "name": "سبز نعنایی",
+          "hex": "#CDE2DF",
+          "image": "./images/ank-maggo-10k-green.jpg"
+        },
+        {
+          "id": "pink",
+          "name": "صورتی پاستلی",
+          "hex": "#E9D2DF",
+          "image": "./images/ank-maggo-10k-pink.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "ظرفیت",
+          "value": "۱۰٬۰۰۰ میلی‌آمپر ساعت"
+        },
+        {
+          "label": "شارژ بی‌سیم",
+          "value": "۱۵ وات واقعی استاندارد Qi2 مگ‌سیف"
+        },
+        {
+          "label": "شارژ با سیم",
+          "value": "۳۰ وات دوطرفه از درگاه USB-C"
+        },
+        {
+          "label": "طراحی",
+          "value": "فوق باریک، مناسب سری آیفون ۱۲ تا ۱۷"
+        }
+      ],
+      "images": [
+        "./images/ank-maggo-10k-black.jpg",
+        "./images/ank-maggo-10k-white.jpg",
+        "./images/ank-maggo-10k-green.jpg",
+        "./images/ank-maggo-10k-pink.jpg"
+      ]
+    },
+    {
+      "id": "ank-nano-10k",
+      "name": "پاوربانک انکر Nano ظرفیت ۱۰۰۰۰ میلی‌آمپر ۴۵ وات کابل سرخود",
+      "name_en": "Anker Nano Power Bank 10000mAh 45W Built-in USB-C Cable",
+      "aliases": [
+        "پاوربانک نانو انکر",
+        "anker nano 10000",
+        "پاوربانک کابل سرخود"
+      ],
+      "type": "accessory",
+      "brand": "Anker",
+      "category": "پاوربانک",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "black",
+          "name": "مشکی",
+          "hex": "#30343B",
+          "image": "./images/ank-nano-10k-black.jpg"
+        },
+        {
+          "id": "white",
+          "name": "سفید",
+          "hex": "#E9ECEF",
+          "image": "./images/ank-nano-10k-white.jpg"
+        },
+        {
+          "id": "green",
+          "name": "سبز",
+          "hex": "#B7CECE",
+          "image": "./images/ank-nano-10k-green.jpg"
+        },
+        {
+          "id": "pink",
+          "name": "صورتی",
+          "hex": "#DFBCCF",
+          "image": "./images/ank-nano-10k-pink.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "ظرفیت",
+          "value": "۱۰٬۰۰۰ میلی‌آمپر ساعت"
+        },
+        {
+          "label": "توان خروجی",
+          "value": "۴۵ وات سوپر فست شارژ"
+        },
+        {
+          "label": "کابل متصل",
+          "value": "کابل تایپ‌سی سرخود مقاوم (قابل استفاده به عنوان بند)"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "نشانگر دیجیتال درصد شارژ"
+        }
+      ],
+      "images": [
+        "./images/ank-nano-10k-black.jpg",
+        "./images/ank-nano-10k-white.jpg",
+        "./images/ank-nano-10k-green.jpg",
+        "./images/ank-nano-10k-pink.jpg"
+      ]
+    },
+    {
+      "id": "ank-25k-165w",
+      "name": "پاوربانک لپ‌تاپی انکر ۲۵۰۰۰ میلی‌آمپر ۱۶۵ وات با کابل جمع‌شو",
+      "name_en": "Anker Power Bank 25000mAh 165W Built-in Retractable Cables",
+      "aliases": [
+        "پاوربانک 25000 انکر",
+        "پاوربانک لپتاپ",
+        "anker 165w",
+        "a1695"
+      ],
+      "type": "accessory",
+      "brand": "Anker",
+      "category": "پاوربانک",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "black",
+          "name": "مشکی تیتانیوم",
+          "hex": "#2B2E33",
+          "image": "./images/ank-25k-165w-black.jpg"
+        },
+        {
+          "id": "silver",
+          "name": "نقره‌ای متالیک",
+          "hex": "#B8BDC4",
+          "image": "./images/ank-25k-165w-silver.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "ظرفیت",
+          "value": "۲۵٬۰۰۰ میلی‌آمپر ساعت (مجاز برای پرواز)"
+        },
+        {
+          "label": "حداکثر توان",
+          "value": "۱۶۵ وات مجموع (مناسب مک‌بوک، لپ‌تاپ و گوشی)"
+        },
+        {
+          "label": "کابل‌های سرخود",
+          "value": "دارای ۲ کابل USB-C (یکی قرقره‌ای جمع‌شو ۷۰ سانتی‌متری)"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "صفحه رنگی هوشمند نمایش توان و دما"
+        }
+      ],
+      "images": [
+        "./images/ank-25k-165w-black.jpg",
+        "./images/ank-25k-165w-silver.jpg"
+      ]
+    },
+    {
+      "id": "bas-picogo-10k",
+      "name": "پاوربانک مگ‌سیف باسئوس PicoGo Qi2 ظرفیت ۱۰۰۰۰ میلی‌آمپر ۲۷ وات",
+      "name_en": "Baseus PicoGo AM41 Ultra-Slim Qi2 Magnetic Power Bank 10000mAh",
+      "aliases": [
+        "پاوربانک باسئوس",
+        "پاوربانک بیسوس",
+        "baseus picogo",
+        "پاوربانک مگسیف باسئوس"
+      ],
+      "type": "accessory",
+      "brand": "Baseus",
+      "category": "پاوربانک",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "grey",
+          "name": "خاکستری فضایی",
+          "hex": "#5E6470",
+          "image": "./images/bas-picogo-10k-grey.jpg"
+        },
+        {
+          "id": "black",
+          "name": "مشکی",
+          "hex": "#232529",
+          "image": "./images/bas-picogo-10k-black.jpg"
+        },
+        {
+          "id": "titanium",
+          "name": "تیتانیوم صحرایی",
+          "hex": "#C2BAAC",
+          "image": "./images/bas-picogo-10k-titanium.jpg"
+        },
+        {
+          "id": "pink",
+          "name": "صورتی",
+          "hex": "#E5C6C9",
+          "image": "./images/bas-picogo-10k-pink.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "ظرفیت",
+          "value": "۱۰٬۰۰۰ میلی‌آمپر ساعت"
+        },
+        {
+          "label": "شارژ وایرلس",
+          "value": "۱۵ وات استاندارد رسمی Qi2"
+        },
+        {
+          "label": "شارژ با سیم",
+          "value": "۲۷ وات PD از پورت تایپ‌سی"
+        },
+        {
+          "label": "جنس بدنه",
+          "value": "آلیاژ آلومینیوم و سطح سیلیکونی ضدخش"
+        }
+      ],
+      "images": [
+        "./images/bas-picogo-10k-grey.jpg",
+        "./images/bas-picogo-10k-black.jpg",
+        "./images/bas-picogo-10k-titanium.jpg",
+        "./images/bas-picogo-10k-pink.jpg"
+      ]
+    },
+    {
+      "id": "gl-powermate-20k",
+      "name": "پاوربانک گرین لاین مدل Power Mate 20 ظرفیت ۲۰۰۰۰ میلی‌آمپر",
+      "name_en": "Green Lion Power Mate 20 PD Power Bank 20000mAh 20W",
+      "aliases": [
+        "پاوربانک گرین لاین",
+        "green lion 20000",
+        "پاوربانک ۲۰۰۰۰"
+      ],
+      "type": "accessory",
+      "brand": "Green Lion",
+      "category": "پاوربانک",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "black",
+          "name": "مشکی",
+          "hex": "#26282B",
+          "image": "./images/gl-powermate-20k-black.jpg"
+        },
+        {
+          "id": "white",
+          "name": "سفید",
+          "hex": "#F3F4F6",
+          "image": "./images/gl-powermate-20k-white.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "ظرفیت",
+          "value": "۲۰٬۰۰۰ میلی‌آمپر ساعت"
+        },
+        {
+          "label": "توان خروجی",
+          "value": "۲۰ وات PD تایپ‌سی + ۲۲.۵ وات QC USB-A"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "صفحه LED نمایش دقیق درصد شارژ"
+        },
+        {
+          "label": "کاربرد",
+          "value": "شارژ همزمان ۲ دستگاه با مدار محافظت هوشمند"
+        }
+      ],
+      "images": [
+        "./images/gl-powermate-20k-black.jpg",
+        "./images/gl-powermate-20k-white.jpg"
+      ]
+    },
+    {
+      "id": "xm-pb-20k",
+      "name": "پاوربانک شیائومی ۲۰۰۰۰ میلی‌آمپر ۳۳ وات کابل سرخود",
+      "name_en": "Xiaomi 33W Power Bank 20000mAh Integrated Cable",
+      "aliases": [
+        "پاوربانک شیائومی",
+        "پاوربانک 20000 شیائومی",
+        "xiaomi powerbank 33w"
+      ],
+      "type": "accessory",
+      "brand": "Xiaomi",
+      "category": "پاوربانک",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "tan",
+          "name": "بژ شنی",
+          "hex": "#D7CEC1",
+          "image": "./images/xm-pb-20k-tan.jpg"
+        },
+        {
+          "id": "blue",
+          "name": "آبی آسمانی",
+          "hex": "#94B2C7",
+          "image": null
+        }
+      ],
+      "specs": [
+        {
+          "label": "ظرفیت",
+          "value": "۲۰٬۰۰۰ میلی‌آمپر ساعت"
+        },
+        {
+          "label": "توان خروجی",
+          "value": "۳۳ وات فست شارژ شیائومی و PD"
+        },
+        {
+          "label": "کابل متصل",
+          "value": "کابل تایپ‌سی سرخود یکپارچه در بدنه"
+        },
+        {
+          "label": "پورت‌ها",
+          "value": "کابل USB-C + پورت USB-C + پورت USB-A"
+        }
+      ],
+      "images": [
+        "./images/xm-pb-20k-tan.jpg"
+      ]
+    },
+    {
+      "id": "ank-prime-100w",
+      "name": "شارژر دیواری انکر مدل Prime GaN توان ۱۰۰ وات ۳ پورت",
+      "name_en": "Anker Prime 100W GaN Wall Charger 3-Port",
+      "aliases": [
+        "شارژر انکر 100 وات",
+        "شارژر لپتاپ و گوشی",
+        "anker prime 100w"
+      ],
+      "type": "accessory",
+      "brand": "Anker",
+      "category": "شارژر",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "silver",
+          "name": "نقره‌ای تیتانیوم",
+          "hex": "#6C727F",
+          "image": "./images/ank-prime-100w-silver.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "توان خروجی",
+          "value": "۱۰۰ وات واقعی با فناوری GaNPrime"
+        },
+        {
+          "label": "تعداد درگاه",
+          "value": "۲ پورت USB-C + ۱ پورت USB-A"
+        },
+        {
+          "label": "سازگاری",
+          "value": "مناسب مک‌بوک پرو، آیفون ۱۷/۱۶ و سامسونگ ۴۵ وات"
+        },
+        {
+          "label": "ایمنی",
+          "value": "سنسور پایش دما ActiveShield 2.0"
+        }
+      ],
+      "images": [
+        "./images/ank-prime-100w-silver.jpg"
+      ]
+    },
+    {
+      "id": "bas-picogo-100w",
+      "name": "شارژر نمایشگردار باسئوس PicoGo Pro توان ۱۰۰ وات ۳ پورت",
+      "name_en": "Baseus PicoGo Pro AH22 Digital Display Fast Charger 100W",
+      "aliases": [
+        "شارژر باسئوس",
+        "شارژر 100 وات بیسوس",
+        "baseus 100w"
+      ],
+      "type": "accessory",
+      "brand": "Baseus",
+      "category": "شارژر",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "black",
+          "name": "مشکی کهکشانی",
+          "hex": "#22252A",
+          "image": "./images/bas-picogo-100w-black.jpg"
+        },
+        {
+          "id": "dark-cherry",
+          "name": "زرشکی تیره",
+          "hex": "#582C4D",
+          "image": "./images/bas-picogo-100w-dark-cherry.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "توان خروجی",
+          "value": "۱۰۰ وات GaN6"
+        },
+        {
+          "label": "نمایشگر هوشمند",
+          "value": "صفحه دیجیتال نمایش لحظه‌ای وات مصرفی و دما"
+        },
+        {
+          "label": "درگاه‌ها",
+          "value": "۳ پورت USB-C فست شارژ"
+        },
+        {
+          "label": "اقلام همراه",
+          "value": "کابل تایپ‌سی ۱۰۰ وات داخل جعبه"
+        }
+      ],
+      "images": [
+        "./images/bas-picogo-100w-black.jpg",
+        "./images/bas-picogo-100w-dark-cherry.jpg"
+      ]
+    },
+    {
+      "id": "gl-gan-42w",
+      "name": "شارژر و پاوربانک ۲ در ۱ گرین لاین GaN توان ۴۲ وات",
+      "name_en": "Green Lion GaN Premium Charger 42W with 5000mAh Power Bank",
+      "aliases": [
+        "شارژر گرین لاین",
+        "پاوربانک و شارژر گرین لاین",
+        "green lion 42w"
+      ],
+      "type": "accessory",
+      "brand": "Green Lion",
+      "category": "شارژر",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "black",
+          "name": "مشکی",
+          "hex": "#242629",
+          "image": "./images/gl-gan-42w-black.jpg"
+        },
+        {
+          "id": "white",
+          "name": "سفید",
+          "hex": "#F1F3F5",
+          "image": "./images/gl-gan-42w-white.jpg"
+        },
+        {
+          "id": "gray",
+          "name": "سرمه‌ای متالیک",
+          "hex": "#2A4359",
+          "image": "./images/gl-gan-42w-gray.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "کاربری دوگانه",
+          "value": "کلگی شارژر دیواری ۴۲ وات + پاوربانک ۵۰۰۰ میلی‌آمپر"
+        },
+        {
+          "label": "درگاه‌ها",
+          "value": "USB-C PD + USB-A QC 3.0"
+        },
+        {
+          "label": "نمایشگر",
+          "value": "صفحه دیجیتال درصد باتری روی بدنه"
+        },
+        {
+          "label": "فناوری",
+          "value": "ترانزیستورهای GaN ضد داغ شدن"
+        }
+      ],
+      "images": [
+        "./images/gl-gan-42w-black.jpg",
+        "./images/gl-gan-42w-white.jpg",
+        "./images/gl-gan-42w-gray.jpg"
+      ]
+    },
+    {
+      "id": "apl-20w-adapter",
+      "name": "کلگی شارژر دیواری اپل ۲۰ وات USB-C اورجینال",
+      "name_en": "Apple 20W USB-C Power Adapter Original",
+      "aliases": [
+        "شارژر20وات",
+        "کلگی آیفون",
+        "شارژر اصلی اپل",
+        "اداپتور ۲۰ وات"
+      ],
+      "type": "accessory",
+      "brand": "Apple",
+      "category": "شارژر",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "white",
+          "name": "سفید",
+          "hex": "#F8FAFC",
+          "image": "./images/apl-20w-adapter-white.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "توان خروجی",
+          "value": "۲۰ وات واقعی استاندارد Power Delivery"
+        },
+        {
+          "label": "درگاه خروجی",
+          "value": "تک پورت USB Type-C"
+        },
+        {
+          "label": "سازگاری",
+          "value": "تمامی مدل‌های آیفون و آیپد"
+        },
+        {
+          "label": "اصالت",
+          "value": "اورجینال اپل با ضمانت اصالت عصر ارتباطات ۲"
+        }
+      ],
+      "images": [
+        "./images/apl-20w-adapter-white.jpg"
+      ]
+    },
+    {
+      "id": "airpods-pro-2",
+      "name": "هندزفری بی‌سیم اپل ایرپاد پرو ۲ (درگاه Type-C)",
+      "name_en": "Apple AirPods Pro 2nd Gen with MagSafe Case USB-C",
+      "aliases": [
+        "ایرپادپرو2",
+        "ایرپاد پرو ۲",
+        "airpods pro 2",
+        "هندزفری اپل"
+      ],
+      "type": "accessory",
+      "brand": "Apple",
+      "category": "هدفون",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "white",
+          "name": "سفید",
+          "hex": "#F8FAFC",
+          "image": "./images/airpods-pro-2-white.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "تراشه صوتی",
+          "value": "Apple H2 با حذف نویز فعال ۲ برابری (ANC)"
+        },
+        {
+          "label": "کیس شارژ",
+          "value": "مگ‌سیف با درگاه USB-C و اسپیکر داخلی Find My"
+        },
+        {
+          "label": "مقاومت",
+          "value": "استاندارد IP54 مقاوم در برابر تعریق و گردوغبار"
+        },
+        {
+          "label": "شارژدهی",
+          "value": "تا ۳۰ ساعت همراه با کیس شارژ"
+        }
+      ],
+      "images": [
+        "./images/airpods-pro-2-white.jpg"
+      ]
+    },
+    {
+      "id": "buds3-pro",
+      "name": "هندزفری بی‌سیم سامسونگ گلکسی بادز ۳ پرو",
+      "name_en": "Samsung Galaxy Buds3 Pro True Wireless Earbuds",
+      "aliases": [
+        "بادز3پرو",
+        "گلکسی بادز ۳ پرو",
+        "buds3pro",
+        "هندزفری سامسونگ"
+      ],
+      "type": "accessory",
+      "brand": "Samsung",
+      "category": "هدفون",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "silver",
+          "name": "نقره‌ای متالیک",
+          "hex": "#8B9098",
+          "image": "./images/buds3-pro-silver.jpg"
+        },
+        {
+          "id": "white",
+          "name": "سفید",
+          "hex": "#F4F5F7",
+          "image": "./images/buds3-pro-white.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "طراحی",
+          "value": "مجهز به نوار نوری Blade Lights روی ساقه"
+        },
+        {
+          "label": "کیفیت صدا",
+          "value": "درایور دوگانه با صدای Hi-Fi 24bit و Galaxy AI"
+        },
+        {
+          "label": "حذف نویز",
+          "value": "نویزگیر هوشمند تطبیقی (Adaptive ANC)"
+        },
+        {
+          "label": "مقاومت",
+          "value": "گواهی ضدآب IP57"
+        }
+      ],
+      "images": [
+        "./images/buds3-pro-silver.jpg",
+        "./images/buds3-pro-white.jpg"
+      ]
+    },
+    {
+      "id": "redmi-buds-6p",
+      "name": "هندزفری بی‌سیم شیائومی ردمی بادز ۶ پرو",
+      "name_en": "Xiaomi Redmi Buds 6 Pro Wireless Earbuds",
+      "aliases": [
+        "ردمی بادز 6 پرو",
+        "هندزفری شیائومی",
+        "redmi buds 6 pro",
+        "بادز۶پرو"
+      ],
+      "type": "accessory",
+      "brand": "Xiaomi",
+      "category": "هدفون",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "black",
+          "name": "مشکی فضایی",
+          "hex": "#2A2E35",
+          "image": "./images/redmi-buds-6p-black.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "حذف نویز",
+          "value": "نویز کنسلینگ فعال تا ۵۵ دسی‌بل"
+        },
+        {
+          "label": "درایور",
+          "value": "سه‌گانه کواکسیال با پشتیبانی از LDAC"
+        },
+        {
+          "label": "شارژدهی",
+          "value": "تا ۳۶ ساعت با کیس شارژ"
+        },
+        {
+          "label": "اتصال",
+          "value": "بلوتوث ۵.۳ با اتصال همزمان به ۲ دستگاه"
+        }
+      ],
+      "images": [
+        "./images/redmi-buds-6p-black.jpg"
+      ]
+    },
+    {
+      "id": "apl-silicone-16pm",
+      "name": "قاب سیلیکونی مگ‌سیف اپل مناسب آیفون ۱۶ پرو مکس",
+      "name_en": "Apple Silicone Case with MagSafe for iPhone 16 Pro Max",
+      "aliases": [
+        "قاب سیلیکونی آیفون",
+        "کاور مگ سیف اپل",
+        "silicone case 16 pro max"
+      ],
+      "type": "accessory",
+      "brand": "Apple",
+      "category": "قاب و کاور",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "black",
+          "name": "مشکی",
+          "hex": "#2D2E32",
+          "image": "./images/apl-silicone-16pm-black.jpg"
+        },
+        {
+          "id": "stone-gray",
+          "name": "خاکستری سنگی",
+          "hex": "#6E6D69",
+          "image": "./images/apl-silicone-16pm-stone-gray.jpg"
+        },
+        {
+          "id": "lake-green",
+          "name": "سبز دریاچه‌ای",
+          "hex": "#435957",
+          "image": "./images/apl-silicone-16pm-lake-green.jpg"
+        },
+        {
+          "id": "plum",
+          "name": "آلویی",
+          "hex": "#4C3244",
+          "image": "./images/apl-silicone-16pm-plum.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "جنس بدنه",
+          "value": "سیلیکون ابریشمی ضدلک با آستر میکروفایبر داخل قاب"
+        },
+        {
+          "label": "مگ‌سیف",
+          "value": "مگنت داخلی قوی جهت شارژ بی‌سیم و جاکارتی"
+        },
+        {
+          "label": "پوشش دکمه",
+          "value": "پوشش حساس دکمه Camera Control با کریستال یاقوت"
+        }
+      ],
+      "images": [
+        "./images/apl-silicone-16pm-black.jpg",
+        "./images/apl-silicone-16pm-stone-gray.jpg",
+        "./images/apl-silicone-16pm-lake-green.jpg",
+        "./images/apl-silicone-16pm-plum.jpg"
+      ]
+    },
+    {
+      "id": "spg-uh-magfit",
+      "name": "قاب ضدضربه مگ‌سیف اسپیگن مدل Ultra Hybrid MagFit آیفون",
+      "name_en": "Spigen Ultra Hybrid MagFit Case for iPhone Series",
+      "aliases": [
+        "قاب اسپیگن",
+        "کاور شفاف مگ سیف",
+        "spigen ultra hybrid"
+      ],
+      "type": "accessory",
+      "brand": "Spigen",
+      "category": "قاب و کاور",
+      "in_stock": true,
+      "colors": [
+        {
+          "id": "clear-white",
+          "name": "سفید شفاف",
+          "hex": "#F1F5F9",
+          "image": "./images/spg-uh-magfit-clear-white.jpg"
+        },
+        {
+          "id": "frost-black",
+          "name": "مشکی نیمه‌شفاف مات",
+          "hex": "#33363B",
+          "image": "./images/spg-uh-magfit-frost-black.jpg"
+        },
+        {
+          "id": "carbon-fiber",
+          "name": "طرح فیبر کربن",
+          "hex": "#1E2024",
+          "image": "./images/spg-uh-magfit-carbon-fiber.jpg"
+        }
+      ],
+      "specs": [
+        {
+          "label": "فناوری محافظت",
+          "value": "ضربه گیر گوشه‌ها با استاندارد نظامی Air Cushion"
+        },
+        {
+          "label": "مگ‌سیف",
+          "value": "حلقه مغناطیسی تقویت‌شده MagFit"
+        },
+        {
+          "label": "جنس",
+          "value": "پشت پلی‌کربنات شفاف مقاوم در برابر زرد شدن + فریم TPU"
+        }
+      ],
+      "images": [
+        "./images/spg-uh-magfit-clear-white.jpg",
+        "./images/spg-uh-magfit-frost-black.jpg",
+        "./images/spg-uh-magfit-carbon-fiber.jpg"
+      ]
+    }
+  ]
+}

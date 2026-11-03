@@ -112,8 +112,8 @@ def auto_match(repo, list_id: int, actor: str = "system:auto") -> int:
 
 
 # ---- v2.8.0: mapping by product-name similarity ------------------------------------------------
-#: A row is mapped by name only when the best product is this close ...
-NAME_AUTO_MIN = 0.86
+#: A row is mapped by name only when the best product is this close (v2.18.0: 95%) ...
+NAME_AUTO_MIN = 0.95
 #: ... and clearly ahead of the next one (otherwise it is ambiguous: suggestions only).
 NAME_AUTO_GAP = 0.08
 SUGGESTIONS = 3
@@ -148,6 +148,32 @@ def _digits(text: str) -> set[str]:
 
     toks = tokens(text)
     return {t for n, t in enumerate(toks) if t.isdigit() and not (n and toks[n - 1] == "ram")}
+
+
+_STORAGES = frozenset({"8", "16", "32", "64", "128", "256", "512", "1024", "2048"})
+_RAM_NUMBER = re.compile(r"(?<![^\W\d_])(?:ram|r|رم)\s*([\d۰-۹]{1,2})(?![\d۰-۹])", re.IGNORECASE)
+
+
+def specs_differ(row: dict, name: str) -> bool:
+    """v2.18.0: never map automatically, however similar the words, when the model number,
+    storage, RAM or color differ. A spec only one side states is no difference, except a
+    model number: «A17» is not «A17 5G 128» but is not «A18» either."""
+    from .price_message import extract_color
+
+    raw_row = " ".join(str(row.get(k) or "") for k in ("description", "kind"))
+    row_digits, name_digits = _digits(row_text(row)), _digits(expand(name))
+    if (row_digits - _STORAGES) != (name_digits - _STORAGES):
+        return True
+    row_size, name_size = row_digits & _STORAGES, name_digits & _STORAGES
+    if row_size and name_size and row_size != name_size:
+        return True
+    row_ram = {m.translate(_DIGITS) for m in _RAM_NUMBER.findall(raw_row)}
+    name_ram = {m.translate(_DIGITS) for m in _RAM_NUMBER.findall(str(name))}
+    if row_ram and name_ram and row_ram != name_ram:
+        return True
+    row_color = extract_color(str(row.get("color") or ""))
+    name_color = extract_color(str(name))
+    return bool(row_color and name_color and row_color != name_color)
 
 
 def name_candidates(row: dict, names: dict[int, str], *, limit: int = 10) -> list[dict]:
@@ -191,7 +217,7 @@ def name_match(repo, list_id: int, names: dict[int, str], actor: str = "system:a
         if row["action"] is not None or row["row_key"] in rejected:
             continue
         best = confident(name_candidates(row, names))
-        if best is None:
+        if best is None or specs_differ(row, best["name"]):
             continue
         repo.upsert_mapping(
             row_key=row["row_key"], action="map", kala_code=best["code"], color_label="",

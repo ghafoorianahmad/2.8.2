@@ -1,6 +1,6 @@
 # HANDOVER — «عصر ارتباطات ۲» shop system (for the next AI agent)
 
-Written 2026-11-01 at version 2.16.0, brought up to **2.17.0** on 2026-11-03 (unattended, no admin
+Written 2026-11-01 at version 2.16.0, brought up to **2.18.0** on 2026-11-03 (no admin
 rights, nothing pushed, nothing published, nothing installed). Persian, simple version for the owner: `HANDOVER_FA.md`.
 
 Read in this order before touching anything:
@@ -156,6 +156,17 @@ ShopAdmin real-app screenshots: `scripts/live_shot.py`, `scripts/live_farsi.py`.
   the SQL Server pipe, also without the sandbox; the owner tests it after installing.
 * A test that opens a modal dialog hangs forever offscreen: run the suite with `-o faulthandler_timeout=200`
   and a `timeout`, and read its output from a file (a whole night was lost to one such hang).
+
+## 5c. 2.18.0
+
+* Every text in ShopAdmin: `PreferNoHinting` (Windows' hinting ate Persian dots at 125%). Offscreen screenshots do NOT show this: use `scripts/render_2180.py` (real Windows text engine).
+* Tables: `widgets._RoundedFrame` (`DataTable`, `RoundTable`, `RoundTree`) cuts the view in its own `resizeEvent`: a Python event filter on every view crashed the garbage collector; `DataTable._auto_size` runs after every load, a value is never cut, and the bar scrolls instead. A row is 48 and `::item` has no vertical padding (it was clipping buttons in cells).
+* `shopapi/app/validators.py` = `validators.js` of the form, copied to `shopadmin/app/validators.py` (a test keeps them identical). `customer_details.write_problem` stops writes without the four details, and also when they cannot be read.
+* `name_match.py`, `pricelist/price_message.py`, `product_aliases.py`, `faq.py` are ports of the bundles in `E:\DSH-Workspace\ai-data`; each runs the bundle's own data as tests. Data files: `shopapi/app/data/` (the build adds them: `--add-data` in `shopsystem/build_exe.bat`).
+* New ticks (`staff.ALL_SECTIONS` + `permissions.py`): `archive_manual`, `auto_quote`, `product_alias`, `faq`, `staff_chat`. New tables: `price_note_changes`, `product_alias_learned`, `auto_quotes`, `staff_chat_messages`, `staff_chat_reads`, `faq_log`. No new SQL Server grant.
+* Web app data: Bale `message.web_app_data`; Telethon has no event for it, so `events.Raw(UpdateNewMessage)` + `MessageActionWebViewDataSentMe`. Telethon 1.45's button is `KeyboardButton(text, ButtonTypeSimpleWebView(url))`.
+* The mini app: `shopadmin/scripts/build_miniapp.py` builds `app/assets/miniapp/`; `publish.miniapp_files()` sends it. Its catalog stays at `assets/catalog/catalog.json`: writing one at the root would make it look for images at `../images/`.
+* Tests on this PC: run `shopapi` with `--basetemp .pytest_tmp/x`; `shoptg`'s old `.pytest_tmp` is locked: use another folder. The Store Python behind `shopapi` and `shopadmin` venvs cannot record from the microphone; `shopbots`' Python can.
 
 ## 6. Pending (owner or next agent)
 

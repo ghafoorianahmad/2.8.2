@@ -205,6 +205,57 @@ CREATE TABLE IF NOT EXISTS price_note_changes (
 );
 CREATE INDEX IF NOT EXISTS idx_price_note_changes ON price_note_changes(note_id);
 
+-- v2.18.0: names of a product staff taught (Persian spellings the alias file does not have)
+CREATE TABLE IF NOT EXISTS product_alias_learned (
+    alias TEXT PRIMARY KEY,
+    model TEXT NOT NULL,
+    brand TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+-- v2.18.0: «گفت‌وگوی همکاران» (room = public or dm:<low id>:<high id>); voice files on disk
+CREATE TABLE IF NOT EXISTS staff_chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    room TEXT NOT NULL,
+    sender_id INTEGER NOT NULL,
+    sender_name TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL DEFAULT '',
+    voice_file TEXT NOT NULL DEFAULT '',
+    voice_seconds INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_staff_chat_room ON staff_chat_messages(room, id);
+CREATE TABLE IF NOT EXISTS staff_chat_reads (
+    room TEXT NOT NULL,
+    staff_id INTEGER NOT NULL,
+    last_id INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (room, staff_id)
+);
+
+-- v2.18.0: what the bot answered by itself
+CREATE TABLE IF NOT EXISTS faq_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    faq_id TEXT NOT NULL,
+    query TEXT NOT NULL DEFAULT '',
+    score INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+-- v2.18.0: every price the bot gave by itself for an item we do not stock
+CREATE TABLE IF NOT EXISTS auto_quotes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform TEXT NOT NULL DEFAULT '',
+    chat_id TEXT NOT NULL DEFAULT '',
+    query TEXT NOT NULL DEFAULT '',
+    row_key TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    color TEXT NOT NULL DEFAULT '',
+    price_rial INTEGER,
+    list_id INTEGER,
+    created_at TEXT NOT NULL
+);
+
 -- v2.6.2: rows whose automatic mapping staff undid: never matched automatically again.
 CREATE TABLE IF NOT EXISTS price_auto_rejects (
     row_key TEXT PRIMARY KEY,

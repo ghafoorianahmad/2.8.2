@@ -19,12 +19,16 @@ from PySide6.QtWidgets import (
 
 from ...permissions import (
     AUTO_INVOICE_VIEW,
+    AUTO_QUOTE_EDIT,
+    AUTO_QUOTE_VIEW,
+    FAQ_EDIT,
+    FAQ_VIEW,
     STATUS_CODES_EDIT,
     STATUS_CODES_VIEW,
     WORK_HOURS_EDIT,
     WORK_HOURS_VIEW,
 )
-from ...persian import to_english_digits, to_persian_digits
+from ...persian import format_money, format_shamsi, to_english_digits, to_persian_digits
 from ...server_settings import label, local_problem, translate_field_errors
 from .. import theme, widgets
 from ..base_page import BasePage
@@ -38,6 +42,9 @@ HANDOVER_KEY = "ACCOUNTING_HANDOVER_STATUS_CODE"
 AUTO_INVOICE_NOTE = "در نسخه‌های بعد"
 #: v2.18.0: how many shifts a day the form offers
 SHIFT_ROWS = 3
+QUOTE_HEADERS = ("زمان", "متن مشتری", "ردیف لیست", "قیمت")
+FAQ_FIELDS = (("hours", "ساعت کار"), ("address", "نشانی"), ("phone", "تلفن"),
+              ("instagram", "اینستاگرام"), ("telegram", "تلگرام و بله"), ("website", "وب‌سایت"))
 
 
 class ShopRulesPage(BasePage):
@@ -61,6 +68,8 @@ class ShopRulesPage(BasePage):
         self.body.addWidget(self._scroll, 1)
         self.status_panel = self._status_panel() if self.context.can(STATUS_CODES_VIEW) else None
         self.hours_panel = self._hours_panel() if self.context.can(WORK_HOURS_VIEW) else None
+        self.quote_panel = self._quote_panel() if self.context.can(AUTO_QUOTE_VIEW) else None
+        self.faq_panel = self._faq_panel() if self.context.can(FAQ_VIEW) else None
         self.invoice_panel = self._invoice_panel() if self.context.can(AUTO_INVOICE_VIEW) else None
         self.column.addStretch(1)
         self._pending_focus = False
@@ -237,6 +246,101 @@ class ShopRulesPage(BasePage):
         for value, check in self.day_checks.items():
             check.setChecked(value in chosen)
 
+    # ------------------------------------------------------------------ automatic answers
+    def _faq_panel(self) -> widgets.Panel:
+        panel = widgets.Panel("پاسخ‌گوی خودکار")
+        panel.body.addWidget(widgets.label(
+            "ربات به پرسش‌های پرتکرار (ساعت کار، نشانی، گارانتی، اقساط، …) خودش پاسخ می‌دهد. اگر "
+            "پرسش را مطمئن نشناسد چیزی نمی‌گوید و منو را نشان می‌دهد. پرسش‌هایی که به همکار نیاز "
+            "دارد (قیمت روز، موجودی، پیگیری) پس از پاسخ در «درخواست کالا» هم می‌آید.",
+            name="Muted", wrap=True))
+        editable = self.context.can(FAQ_EDIT)
+        self.faq_check = QCheckBox("ربات به پرسش‌های پرتکرار خودش پاسخ بدهد")
+        self.faq_check.setEnabled(editable)
+        panel.body.addWidget(self.faq_check)
+        form = QFormLayout()
+        form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
+        self.faq_inputs: dict[str, QLineEdit] = {}
+        for key, caption in FAQ_FIELDS:
+            box = QLineEdit()
+            box.setEnabled(editable)
+            self.faq_inputs[key] = box
+            form.addRow(widgets.label(caption), box)
+        panel.body.addLayout(form)
+        panel.body.addWidget(widgets.label(
+            "جواب‌هایی که یکی از این‌ها در آن است فقط وقتی فرستاده می‌شود که پر باشد.",
+            name="Muted", wrap=True))
+        self.faq_message = widgets.label("", wrap=True)
+        self.faq_message.setVisible(False)
+        panel.body.addWidget(self.faq_message)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        save = widgets.button("ذخیرهٔ پاسخ‌گو", icon_name="save", variant="primary",
+                              on_click=self._save_faq)
+        save.setVisible(editable)
+        buttons.addWidget(save)
+        panel.body.addLayout(buttons)
+        self.column.addWidget(panel)
+        return panel
+
+    def _save_faq(self) -> None:
+        values = {key: box.text().strip() for key, box in self.faq_inputs.items()}
+        enabled = self.faq_check.isChecked()
+        self.run(lambda: self.context.api.set_faq(enabled, values), on_success=self._faq_saved,
+                 on_error=self.default_error)
+
+    def _faq_saved(self, data: object) -> None:
+        self._show_faq(data)
+        self.faq_message.setText("ذخیره شد.")
+        self.faq_message.setStyleSheet(f"color: {theme.SUCCESS_DARK};")
+        self.faq_message.setVisible(True)
+
+    def _show_faq(self, data: object) -> None:
+        data = data if isinstance(data, dict) else {}
+        self.faq_check.setChecked(bool(data.get("enabled")))
+        values = data.get("values") or {}
+        for key, box in self.faq_inputs.items():
+            box.setText(str(values.get(key) or ""))
+
+    # ------------------------------------------------------------------ automatic quotes
+    def _quote_panel(self) -> widgets.Panel:
+        panel = widgets.Panel("پاسخ خودکار قیمت کالای غیرموجود")
+        panel.body.addWidget(widgets.label(
+            "اگر مشتری گوشی‌ای بخواهد که در کالاهای ما نیست، ربات آن را در لیست قیمت امروز کانال "
+            "(با اصلاحیه‌ها) پیدا می‌کند. اگر مدل، حافظه، رم و رنگ مطمئن باشد قیمت را خودش می‌گوید؛ "
+            "اگر نه، رنگ و حافظه را می‌پرسد یا به همکار می‌سپارد. سفارش این کالاها به همکار می‌رسد. "
+            "قیمت فقط در ربات گفته می‌شود، هرگز در سایت و مینی‌اپ.", name="Muted", wrap=True))
+        self.quote_check = QCheckBox("ربات قیمت این کالاها را خودش بگوید")
+        self.quote_check.setEnabled(self.context.can(AUTO_QUOTE_EDIT))
+        self.quote_check.clicked.connect(self._quote_clicked)
+        panel.body.addWidget(self.quote_check)
+        panel.body.addWidget(widgets.label("قیمت‌هایی که ربات گفته است:", bold=True))
+        self.quote_table = widgets.DataTable(QUOTE_HEADERS, key="auto_quotes")
+        self.quote_table.set_empty_state("هنوز قیمتی نگفته است", "", "receipt")
+        self.quote_table.setMinimumHeight(220)
+        panel.body.addWidget(self.quote_table)
+        self.column.addWidget(panel)
+        return panel
+
+    def _quote_clicked(self, on: bool) -> None:
+        self.run(lambda: self.context.api.set_auto_quote(bool(on)),
+                 on_success=self._show_quote, on_error=self.default_error)
+
+    def _show_quote(self, data: object) -> None:
+        data = data if isinstance(data, dict) else {}
+        self.quote_check.setChecked(bool(data.get("enabled")))
+        table = self.quote_table
+        table.setRowCount(0)
+        for quote in data.get("report") or ():
+            row = table.rowCount()
+            table.insertRow(row)
+            table.set_cell(row, 0, format_shamsi(quote.get("created_at")))
+            table.set_cell(row, 1, str(quote.get("query") or "—"))
+            table.set_cell(row, 2, " ".join(p for p in (quote.get("description"),
+                                                        quote.get("color")) if p))
+            table.set_cell(row, 3, format_money(quote.get("price_rial") or 0))
+        table._refresh_states()
+
     # ------------------------------------------------------------------ automatic invoices
     def _invoice_panel(self) -> widgets.Panel:
         panel = widgets.Panel("صدور خودکار فاکتور")
@@ -263,6 +367,10 @@ class ShopRulesPage(BasePage):
                                   "در «سازه حساب» ثبت نمی‌شود.", ok=False)
         if self.hours_panel is not None and isinstance(rules.get("work_hours"), dict):
             self._show_hours(rules["work_hours"])
+        if self.quote_panel is not None and isinstance(rules.get("auto_quote"), dict):
+            self._show_quote(rules["auto_quote"])
+        if self.faq_panel is not None and isinstance(rules.get("faq"), dict):
+            self._show_faq(rules["faq"])
 
 
 def hours_text(hours: dict) -> str:

@@ -162,3 +162,133 @@ def test_telegram_passes_on_what_the_page_sent():
     other = SimpleNamespace(message=SimpleNamespace(id=9, action=None))
     asyncio.run(TelethonBotAdapter._on_raw(adapter, other))
     assert pushed == []
+
+
+# ---- the shop page -----------------------------------------------------------------------------
+def _cart(items) -> str:
+    return json.dumps({"v": 1, "type": "cart", "items": items}, ensure_ascii=False)
+
+
+def _serve(shopapi, answers: dict, seen: list | None = None):
+    """{path part: (status, json)} before the fake shopapi's own answers."""
+    original = shopapi.handler
+
+    def handler(request):
+        import httpx
+
+        for part, (status, payload) in answers.items():
+            if part in request.url.path:
+                if seen is not None and request.content:
+                    seen.append(json.loads(request.content))
+                return httpx.Response(status, json=payload, request=request)
+        return original(request)
+
+    shopapi.handler = handler
+
+
+RESOLVE = "/resolve"
+
+
+async def _registered(engine, bot_apis):
+    await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
+    await _contact(engine, 2, CUSTOMER_CHAT)
+
+
+def test_a_cart_from_the_page_goes_into_the_bots_cart(env, bot_apis, shopapi, details):  # noqa: F811
+    details["missing"] = []
+    _serve(shopapi, {RESOLVE: (200, {"status": "found", "model": {"name": "کالای الف"},
+                                     "items": [{"kala_code": 101, "label": "الف"}]})})
+
+    async def scenario(engine, adapters, api):
+        await _registered(engine, bot_apis)
+        await _send_data(engine, 3, CUSTOMER_CHAT, _cart([{"id": "x", "color": "", "qty": 2,
+                                                           "price": 1}]))
+        items = engine.cart.items("bale", str(CUSTOMER_CHAT))
+        assert [(i["kala_code"], i["qty"]) for i in items] == [(101, 2)]
+        # the price is the shop's, whatever a page may send
+        assert items[0]["unit_price"] == 1000.0
+
+    env(scenario)
+
+
+def test_an_unknown_item_reaches_staff_not_the_cart(env, bot_apis, shopapi, details):  # noqa: F811
+    details["missing"] = []
+    asked: list = []
+    _serve(shopapi, {RESOLVE: (200, {"status": "unknown"}),
+                     "/item-requests": (201, {"id": 1})}, asked)
+
+    async def scenario(engine, adapters, api):
+        await _registered(engine, bot_apis)
+        await _send_data(engine, 3, CUSTOMER_CHAT, _cart([{"id": "galaxy-a57", "color": "آبی",
+                                                           "qty": 1}]))
+        assert engine.cart.items("bale", str(CUSTOMER_CHAT)) == []
+        assert "galaxy a57 آبی" in _texts(bot_apis)[-1]
+        assert [a["text"] for a in asked if "text" in a] == ["galaxy a57 آبی"]
+
+    env(scenario)
+
+
+def test_a_price_question_gets_its_answer_and_a_way_back(env, bot_apis, shopapi, details):  # noqa: F811
+    details["missing"] = []
+    _serve(shopapi, {RESOLVE: (200, {"status": "unknown"}), "/item-requests": (201, {"id": 1}),
+                     "/phones/search": (200, {"items": []})})
+
+    async def scenario(engine, adapters, api):
+        await _registered(engine, bot_apis)
+        engine.settings = _with_url(engine.settings)
+        await _send_data(engine, 3, CUSTOMER_CHAT, json.dumps(
+            {"v": 1, "type": "price", "id": "galaxy-a57", "color": "آبی"}, ensure_ascii=False))
+        said = _texts(bot_apis)
+        assert any("galaxy a57 آبی" in t for t in said)
+        assert said[-1] == texts.WEB_APP_BACK
+        markup = bot_apis["bale"].sent[-1]["reply_markup"]
+        markup = json.loads(markup) if isinstance(markup, str) else markup
+        assert markup["keyboard"][0][0] == {"text": texts.BTN_SHOP, "web_app": {"url": URL}}
+
+    env(scenario)
+
+
+def test_start_offers_the_shop_only_once_published(env, bot_apis, shopapi, details):  # noqa: F811
+    details["missing"] = []
+
+    async def scenario(engine, adapters, api):
+        await _registered(engine, bot_apis)
+        await push_message(engine, "bale", 3, CUSTOMER_CHAT, text="/start")
+        assert texts.SHOP_BUTTON_NOTE not in _texts(bot_apis)
+        engine.settings = _with_url(engine.settings)
+        await push_message(engine, "bale", 4, CUSTOMER_CHAT, text="/start")
+        assert _texts(bot_apis)[-1] == texts.SHOP_BUTTON_NOTE
+
+    env(scenario)
+
+
+# ---- automatic answers ---------------------------------------------------------------------------
+def test_a_known_question_is_answered_and_staff_told(env, bot_apis, shopapi, details):  # noqa: F811
+    details["missing"] = []
+    asked: list = []
+    _serve(shopapi, {"/faq/answer": (200, {"answer": "ساعت کاری ما: ۹ تا ۲۱", "id": "hours",
+                                           "needs_staff": True, "score": 100}),
+                     "/phones/search": (200, {"items": []}),
+                     RESOLVE: (200, {"status": "unknown"}),
+                     "/item-requests": (201, {"id": 1})}, asked)
+
+    async def scenario(engine, adapters, api):
+        await _registered(engine, bot_apis)
+        await push_message(engine, "bale", 3, CUSTOMER_CHAT, text="ساعت کاری چنده")
+        assert _texts(bot_apis)[-1] == "ساعت کاری ما: ۹ تا ۲۱"
+        assert [a["text"] for a in asked if "text" in a] == ["ساعت کاری چنده"]
+
+    env(scenario)
+
+
+def test_an_unknown_question_gets_the_menu(env, bot_apis, shopapi, details):  # noqa: F811
+    details["missing"] = []
+    _serve(shopapi, {"/faq/answer": (200, {}), "/phones/search": (200, {"items": []}),
+                     RESOLVE: (200, {"status": "unknown"})})
+
+    async def scenario(engine, adapters, api):
+        await _registered(engine, bot_apis)
+        await push_message(engine, "bale", 3, CUSTOMER_CHAT, text="یک متن بی‌ربط")
+        assert texts.MAIN_MENU in _texts(bot_apis)[-1]
+
+    env(scenario)

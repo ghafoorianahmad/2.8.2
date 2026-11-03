@@ -29,18 +29,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...persian import format_int, format_money, format_shamsi, to_persian_digits
+from ...persian import format_int, format_money, format_shamsi, to_english_digits, \
+    to_persian_digits
 from ...permissions import PRICELIST_MANAGE, PROXIES_MANAGE
 from .. import theme, widgets
 from ..base_page import BasePage
 from ..rtl import mark_ltr
 
-NOTE_HEADERS = ("زمان", "نوع", "نتیجه", "متن پیام")
+NOTE_HEADERS = ("زمان", "نتیجه", "تغییرها", "متن پیام")
+#: v2.18.0: the «نتیجه» column: applied / uncertain / not recognized
+NOTE_RESULT_FA = {"correction": "اعمال شد", "uncertain": "نامطمئن", "ignored": "شناخته نشد",
+                  "sales_closed": "فروش بسته"}
 ROW_HEADERS = ("بخش", "مدل", "نوع", "رنگ", "نقد", "روال", "قیمت مشتری (ریال)", "وضعیت", "کالا")
 LIST_HEADERS = ("شماره", "تاریخ لیست", "منبع", "وضعیت", "ردیف‌ها", "زمان دریافت", "فایل",
                 "توضیح", "کار")
-PROXY_HEADERS = ("میزبان", "پورت", "نوع", "وضعیت", "پایداری", "روز خوب / بررسی", "آخرین اتصال موفق",
-                 "الان")
+PROXY_HEADERS = ("میزبان", "پورت", "نوع", "منبع", "وضعیت", "پایداری", "روز خوب / بررسی",
+                 "آخرین اتصال موفق", "الان")
 
 FILTERS = (
     ("unmapped", "نگاشت‌نشده"),
@@ -129,7 +133,6 @@ def row_state_fa(row: dict) -> str:
 
 
 # ---- v2.9.1: corrections and the price guard ------------------------------------------
-NOTE_KIND_FA = {"correction": "اصلاحیه", "sales_closed": "فروش بسته", "ignored": "نادیده"}
 
 
 def price_text(row: dict) -> tuple[str, str | None, str]:
@@ -171,10 +174,27 @@ def note_summary(note: dict) -> str:
             parts.append(f"{to_persian_digits(result['held'])} منتظر تأیید")
         if result.get("unmatched"):
             parts.append(f"جور نشد: {'، '.join(result['unmatched'])}")
+        if result.get("manual_by"):
+            parts.append("اعمال دستی")
         return "؛ ".join(parts)
     if kind == "sales_closed":
         return "فروش گوشی تا لیست بعدی بسته شد"
+    if kind == "uncertain":
+        return "چیزی عوض نشد؛ با «اعمال دستی» تأیید کنید"
+    if result.get("brand_header"):
+        return f"سربرگ برند: {result['brand_header']}"
     return "—"
+
+
+def change_lines(note: dict) -> str:
+    """«A17 256GB Black: ۹۵٬۰۰۰ ← ۹۵٬۵۰۰»: every row a post changed, old to new."""
+    lines = []
+    for change in note.get("changes") or ():
+        name = " ".join(p for p in (change.get("description"), change.get("color")) if p)
+        held = " (منتظر تأیید)" if change.get("held") else ""
+        lines.append(f"{name}: {format_int(change.get('old_naghd') or 0)} ← "
+                     f"{format_int(change.get('new_naghd') or 0)}{held}")
+    return "\n".join(lines)
 
 
 def dropped_pdf(urls) -> Optional[str]:
@@ -361,16 +381,34 @@ class PriceListPage(BasePage):
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 12, 0, 0)
         layout.addWidget(widgets.label(
-            "«اصلاحیه» (مدل، حافظه-رم، توضیح، قیمت نقد) روی همهٔ رنگ‌های همان مدل تا لیست بعدی "
-            "اعمال می‌شود؛ «روال» با فاصلهٔ همیشگی روال و نقد همان مدل حساب می‌شود (بدون سابقه: "
-            "«روال تخمینی»). پیام «فروش بسته» فروش گوشی را تا لیست بعدی می‌بندد.",
+            "پیام قیمت کانال اگر مطمئن باشد خودکار تا لیست بعدی اعمال می‌شود (قیمت یک رنگ فقط روی "
+            "همان رنگ)؛ اگر مطمئن نباشد چیزی عوض نمی‌شود تا شما تأیید کنید. «روال» با فاصلهٔ همیشگی "
+            "روال و نقد همان مدل حساب می‌شود (بدون سابقه: «روال تخمینی»). پیام «فروش بسته» فروش گوشی "
+            "را تا لیست بعدی می‌بندد. هر ۱۰ دقیقه خوانده می‌شود.",
             name="Muted", wrap=True))
         panel = widgets.Panel()
-        self.notes_table = widgets.DataTable(NOTE_HEADERS, key="price_notes", fit_width=True,
-                                             stretch_column=3)
+        self.notes_table = widgets.DataTable(NOTE_HEADERS, selectable_rows=True,
+                                             key="price_notes", fit_width=True, stretch_column=3)
+        self.notes_table.row_activated.connect(lambda _row: self._note_details())
         self.notes_table.set_empty_state("پیامی از کانال نیامده",
                                          "اصلاحیه‌ها و «فروش بسته» اینجا دیده می‌شوند.", "file")
         self.notes_table.setMinimumHeight(300)
+        actions = QHBoxLayout()
+        self.fetch_notes_button = widgets.button(
+            "دریافت پیام‌های جدید کانال", icon_name="refresh", variant="primary",
+            on_click=self._fetch_notes)
+        self.fetch_notes_button.setEnabled(self.can_manage)
+        actions.addWidget(self.fetch_notes_button)
+        self.apply_note_button = widgets.button("اعمال دستی…", icon_name="edit",
+                                                on_click=self._apply_note)
+        self.apply_note_button.setEnabled(self.can_manage)
+        actions.addWidget(self.apply_note_button)
+        actions.addWidget(widgets.button("تغییرها", icon_name="eye", on_click=self._note_details))
+        actions.addStretch(1)
+        panel.body.addLayout(actions)
+        self.notes_status = widgets.label("", name="Muted", wrap=True)
+        self.notes_status.setVisible(False)
+        panel.body.addWidget(self.notes_status)
         panel.body.addWidget(self.notes_table, 1)
         layout.addWidget(panel, 1)
         return tab
@@ -380,23 +418,28 @@ class PriceListPage(BasePage):
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 12, 0, 0)
         layout.addWidget(widgets.label(
-            "پراکسی‌ها بر اساس پایداری چندروزه رتبه می‌گیرند. پراکسی تازه چند روز آزمایشی "
-            "است؛ پراکسی اصلی فقط بعد از چند روز خرابی پشت‌سرهم کنار گذاشته می‌شود.",
+            "اگر تلگرام بی‌پراکسی وصل شود پراکسی به کار نمی‌رود. پراکسی‌های «خودکار» را خوانندهٔ "
+            "تلگرام از کانال‌های پراکسی جمع می‌کند؛ هر کدام حدود ۲۴ ساعت قطع بماند خودکار پاک می‌شود. "
+            "«دستی» را خودتان اضافه کرده‌اید و خودکار پاک نمی‌شود.",
             name="Muted", wrap=True))
         panel = widgets.Panel()
         self.proxy_table = widgets.DataTable(PROXY_HEADERS, selectable_rows=True, key="proxies")
+        self.proxy_table.enable_checks(keep_text=True)
         self.proxy_table.set_empty_state("پراکسی‌ای ثبت نشده",
                                          "یک لینک tg://proxy یا t.me/proxy اضافه کنید.", "wifi")
         self.proxy_table.setMinimumHeight(300)
-        panel.body.addWidget(self.proxy_table, 1)
         actions = QHBoxLayout()
         actions.addWidget(widgets.button("افزودن پراکسی…", icon_name="plus", variant="primary",
                                          on_click=self._add_proxy))
         actions.addWidget(widgets.button("فعال / غیرفعال", icon_name="lock",
                                          on_click=self._toggle_proxy))
-        actions.addWidget(widgets.button("حذف", icon_name="trash", on_click=self._delete_proxy))
+        actions.addWidget(widgets.button("حذف انتخاب‌شده‌ها", icon_name="trash",
+                                         on_click=self._delete_proxy))
+        actions.addWidget(widgets.button("حذف همهٔ قطع‌ها", icon_name="trash",
+                                         on_click=self._delete_down_proxies))
         actions.addStretch(1)
         panel.body.addLayout(actions)
+        panel.body.addWidget(self.proxy_table, 1)
         layout.addWidget(panel, 1)
         return tab
 
@@ -435,6 +478,7 @@ class PriceListPage(BasePage):
                  on_success=self._on_notes, on_error=self._table_error(self.notes_table))
 
     def _on_notes(self, items: list) -> None:
+        self._notes = list(items or [])
         table = self.notes_table
         table.set_busy(False)
         table.setRowCount(0)
@@ -444,10 +488,10 @@ class PriceListPage(BasePage):
             table.set_cell(i, 0, format_shamsi(note.get("posted_at") or note.get("created_at")))
             kind = str(note.get("kind") or "")
             unmatched = bool((note.get("result") or {}).get("unmatched"))
-            table.set_cell(i, 1, NOTE_KIND_FA.get(kind, kind), bold=True,
-                           color=theme.WARNING_TEXT if unmatched or kind == "sales_closed"
-                           else None)
-            table.set_cell(i, 2, note_summary(note))
+            table.set_cell(i, 1, NOTE_RESULT_FA.get(kind, kind), bold=True,
+                           color=theme.WARNING_TEXT
+                           if unmatched or kind in ("sales_closed", "uncertain") else None)
+            table.set_cell(i, 2, note_summary(note), tooltip=change_lines(note))
             text = " / ".join(str(note.get("text") or "").split("\n"))
             table.set_cell(i, 3, text[:160], tooltip=str(note.get("text") or ""))
         table._refresh_states()
@@ -677,15 +721,19 @@ class PriceListPage(BasePage):
             i = table.rowCount()
             table.insertRow(i)
             table.set_cell(i, 0, str(p.get("host") or ""), bold=True)
+            table.set_check(i, False, keep_text=True)
+            table.set_row_key(i, p.get("id"))
             table.set_cell(i, 1, to_persian_digits(p.get("port")))
             table.set_cell(i, 2, str(p.get("kind") or ""))
-            table.set_cell(i, 3, PROXY_STATE_FA.get(p.get("state"), p.get("state") or ""))
-            table.set_cell(i, 4, to_persian_digits(f"{round(float(p.get('stability') or 0) * 100)}٪"))
-            table.set_cell(i, 5, to_persian_digits(
+            table.set_cell(i, 3, proxy_source_fa(p.get("source")),
+                           tooltip=str(p.get("source") or ""))
+            table.set_cell(i, 4, PROXY_STATE_FA.get(p.get("state"), p.get("state") or ""))
+            table.set_cell(i, 5, to_persian_digits(f"{round(float(p.get('stability') or 0) * 100)}٪"))
+            table.set_cell(i, 6, to_persian_digits(
                 f"{p.get('good_days') or 0} / {p.get('checked_days') or 0}"))
-            table.set_cell(i, 6, format_shamsi(p.get("last_ok_at")) if p.get("last_ok_at") else "—")
-            failing = bool(p.get("failing_now"))
-            table.set_cell(i, 7, "قطع" if failing else "سالم",
+            table.set_cell(i, 7, format_shamsi(p.get("last_ok_at")) if p.get("last_ok_at") else "—")
+            failing = bool(p.get("failing_now")) or p.get("state") == "retired"
+            table.set_cell(i, 8, "قطع" if failing else "سالم",
                            color=theme.DANGER if failing else theme.SUCCESS_DARK, bold=True)
         table._refresh_states()
 
@@ -918,14 +966,150 @@ class PriceListPage(BasePage):
                  on_success=lambda _r: self._load_proxies())
 
     def _delete_proxy(self) -> None:
-        proxy = self._one_proxy()
-        if proxy is None:
-            return
-        if not widgets.confirm(self, "حذف پراکسی", f"پراکسی {proxy.get('host')} حذف شود؟",
+        """«حذف انتخاب‌شده‌ها»: the ticked rows (or the selected one)."""
+        ids = [int(key) for key in self.proxy_table.checked_keys()]
+        if not ids:
+            proxy = self._one_proxy()
+            if proxy is None:
+                return
+            ids = [int(proxy["id"])]
+        if not widgets.confirm(self, "حذف پراکسی",
+                               f"{to_persian_digits(len(ids))} پراکسی حذف شود؟",
                                confirm_text="حذف", kind="warning"):
             return
-        self.run(lambda: self.context.api.delete_proxy(proxy["id"]),
+        self.run(lambda: self.context.api.delete_proxies(ids),
                  on_success=lambda _r: self._load_proxies())
+
+    def _delete_down_proxies(self) -> None:
+        down = [p for p in getattr(self, "_proxies", [])
+                if p.get("failing_now") or p.get("state") == "retired"]
+        if not down:
+            self.notify_warning("پراکسی قطعی در فهرست نیست.")
+            return
+        if not widgets.confirm(
+                self, "حذف همهٔ قطع‌ها",
+                f"{to_persian_digits(len(down))} پراکسی قطع (خودکار و دستی) حذف شود؟",
+                confirm_text="حذف همه", kind="danger"):
+            return
+        self.run(lambda: self.context.api.delete_down_proxies(),
+                 on_success=lambda _r: self._load_proxies())
+
+    # ---- v2.18.0: posts of the channel ----------------------------------------------
+    def _selected_note(self) -> Optional[dict]:
+        chosen = self._selected(self.notes_table, getattr(self, "_notes", []))
+        if len(chosen) != 1:
+            self.notify_warning("یک پیام را انتخاب کنید.")
+            return None
+        return chosen[0]
+
+    def _fetch_notes(self) -> None:
+        def asked(_result: dict) -> None:
+            self.notes_status.setText("درخواست فرستاده شد؛ خوانندهٔ تلگرام تا چند ثانیهٔ دیگر کانال "
+                                      "را می‌خواند و پیام‌های تازه اینجا می‌آیند.")
+            self.notes_status.setVisible(True)
+            QTimer.singleShot(FETCH_CHECK_MS * 3, self._load_notes)
+
+        self.run(lambda: self.context.api.fetch_pricelist_now(), on_success=asked)
+
+    def _note_details(self) -> None:
+        note = self._selected_note()
+        if note is None:
+            return
+        lines = change_lines(note) or "این پیام هیچ ردیفی را عوض نکرده است."
+        widgets.info(self, "تغییرهای این پیام", lines, detail=str(note.get("text") or ""))
+
+    def _apply_note(self) -> None:
+        note = self._selected_note()
+        if note is None:
+            return
+        self.run(lambda: self.context.api.pricelist_rows(filter_key="all"),
+                 on_success=lambda data: self._ask_note_rows(note, data))
+
+    def _ask_note_rows(self, note: dict, data: object) -> None:
+        rows = (data if isinstance(data, dict) else {}).get("rows") or []
+        dialog = ApplyNoteDialog(note, rows, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.picks:
+            return
+        picks = dialog.picks
+        self.run(lambda: self.context.api.apply_note(int(note["id"]), picks),
+                 on_success=lambda _r: (self.notify_success("قیمت‌ها اعمال شد."),
+                                        self._load_notes()))
+
+
+def proxy_source_fa(source: object) -> str:
+    """v2.18.0: «دستی» = someone added it; everything else came from a channel."""
+    return "دستی" if str(source or "") == "manual" else "خودکار"
+
+
+class ApplyNoteDialog(widgets.ResponsiveDialog):
+    """«اعمال دستی»: which row of the list and what cash price a post means. The parser's
+    reading is filled in; nothing changes until a member of staff presses the button."""
+
+    ROWS = 6
+
+    def __init__(self, note: dict, rows: list, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.picks: list[tuple[str, int]] = []
+        self.setWindowTitle("اعمال دستی پیام کانال")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumWidth(680)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(12)
+        root.addWidget(widgets.label("اعمال دستی پیام کانال", size=14, bold=True))
+        root.addWidget(widgets.label(str(note.get("text") or ""), wrap=True))
+        root.addWidget(widgets.label(
+            "ردیف لیست و قیمت نقد را انتخاب کنید (همان واحد کانال: ۹۵٬۵۰۰). قیمت مشتری مثل لیست "
+            "حساب می‌شود و تغییر بیش از ۱۰٪ منتظر تأیید می‌ماند.", name="Muted", wrap=True))
+        self.lines: list[tuple[QComboBox, QLineEdit]] = []
+        self._rows = [r for r in rows if isinstance(r, dict)]
+        items = list((note.get("result") or {}).get("items") or ())
+        for index in range(self.ROWS):
+            line = QHBoxLayout()
+            combo = QComboBox()
+            combo.setEditable(True)
+            combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+            combo.addItem("—", None)
+            for row in self._rows:
+                combo.addItem(" ".join(p for p in (row.get("description"), row.get("color")) if p),
+                              row.get("row_key"))
+            combo.setMinimumWidth(420)
+            price = mark_ltr(QLineEdit())
+            price.setMaximumWidth(120)
+            if index < len(items) and items[index].get("price"):
+                price.setText(to_persian_digits(items[index]["price"]))
+            line.addWidget(combo, 1)
+            line.addWidget(price)
+            root.addLayout(line)
+            self.lines.append((combo, price))
+        self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
+        self.error_label.setVisible(False)
+        root.addWidget(self.error_label)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(widgets.button("اعمال", icon_name="check", variant="primary",
+                                         on_click=self._submit))
+        buttons.addWidget(widgets.button("انصراف", on_click=self.reject))
+        root.addLayout(buttons)
+
+    def _submit(self) -> None:
+        picks = []
+        for combo, price in self.lines:
+            key = combo.currentData()
+            text = to_english_digits(price.text()).replace("٬", "").replace(",", "").replace(".", "")
+            if key is None:
+                continue
+            if not text.isdigit() or int(text) <= 0:
+                self.error_label.setText("قیمت هر ردیف انتخاب‌شده را به عدد بنویسید.")
+                self.error_label.setVisible(True)
+                return
+            picks.append((str(key), int(text)))
+        if not picks:
+            self.error_label.setText("دست‌کم یک ردیف انتخاب کنید.")
+            self.error_label.setVisible(True)
+            return
+        self.picks = picks
+        self.accept()
 
 
 class MapRowDialog(widgets.ResponsiveDialog):

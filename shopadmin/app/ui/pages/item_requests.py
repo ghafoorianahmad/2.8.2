@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...activity import timeline_lines
-from ...permissions import ORDERS_ASSIGN, ORDERS_CLAIM
+from ...permissions import ORDERS_ASSIGN, ORDERS_CLAIM, PRODUCT_ALIAS
 from ...persian import coerce_datetime, format_datetime_shamsi, format_money, \
     gregorian_to_jalali, to_english_digits, to_persian_digits
 from .. import theme, widgets
@@ -330,6 +330,47 @@ def has_sent_message(messages: list[dict]) -> bool:
     return any(str(m.get("status") or "") != "failed" for m in messages)
 
 
+class TeachNameDialog(widgets.ResponsiveDialog):
+    """v2.18.0: what a customer's words mean: the bot understands them from then on."""
+
+    def __init__(self, text: str, models: list[str], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.text = text
+        self.model = ""
+        self.setWindowTitle("یاد دادن نام کالا به ربات")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumWidth(520)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(12)
+        root.addWidget(widgets.label("یاد دادن نام کالا به ربات", size=14, bold=True))
+        root.addWidget(widgets.label(
+            "از این پس هر کس این نوشته را بفرستد، ربات آن را همین مدل می‌فهمد.", name="Muted", wrap=True))
+        root.addWidget(widgets.label(f"نوشتهٔ مشتری: {text}", wrap=True))
+        self.combo = QComboBox()
+        self.combo.setEditable(True)
+        self.combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.combo.addItem("—", "")
+        for model in models:
+            self.combo.addItem(model, model)
+        root.addWidget(self.combo)
+        self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
+        self.error_label.setVisible(False)
+        root.addWidget(self.error_label)
+        root.addLayout(widgets.footer(
+            widgets.button("یاد بگیر", icon_name="check", variant="primary", on_click=self._submit),
+            close=widgets.button("انصراف", on_click=self.reject)))
+
+    def _submit(self) -> None:
+        model = str(self.combo.currentData() or "")
+        if not model:
+            self.error_label.setText("مدل را انتخاب کنید.")
+            self.error_label.setVisible(True)
+            return
+        self.model = model
+        self.accept()
+
+
 class ItemRequestDialog(widgets.ResponsiveDialog):
     """جزئیات یک درخواست: متن کامل، مشتری، وضعیت، یادداشت و پیام به مشتری."""
 
@@ -431,8 +472,7 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         root.addWidget(note_panel)
 
         msg_panel = widgets.Panel("پیام به مشتری (با همان رباتی که درخواست داده)")
-        self.history = QTableWidget(0, 4)
-        widgets.round_view_corners(self.history)
+        self.history = widgets.RoundTable(0, 4)
         self.history.setHorizontalHeaderLabels(("زمان", "فرستنده", "وضعیت", "متن"))
         self.history.verticalHeader().setVisible(False)
         self.history.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -484,10 +524,16 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         self.claim_button = widgets.button("برداشت", icon_name="check", on_click=self.claim,
                                            tooltip="این درخواست مال شما می‌شود و تکرار اعلان "
                                                    "برای همکاران تمام می‌شود")
+        # v2.18.0: staff say which model the customer's words mean: the bot learns it
+        self.teach_button = widgets.button("یاد دادن نام کالا…", icon_name="edit",
+                                           on_click=self.teach_name)
+        self.teach_button.setVisible(self.context.can(PRODUCT_ALIAS)
+                                     and bool(str(self.item.get("text") or "").strip()))
         root.addLayout(widgets.footer(self.claim_button, self.stock_button,
                                       self.unavailable_button, self.done_button,
                                       self.seen_button, self.reopen_button,
-                                      self.assign_button, close=self.close_button))
+                                      self.assign_button, self.teach_button,
+                                      close=self.close_button))
 
         self._render_item()
         self.load_messages()
@@ -536,6 +582,23 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
                                    f"{self.item.get('note_by') or '—'}")
 
     # ---- v2.8.0: purchase requests, handover, timeline ----------------------
+    def teach_name(self) -> None:
+        text = str(self.item.get("text") or "").strip()
+        run_async(self.context.api.alias_models,
+                  on_success=lambda models: self._ask_teach(text, models),
+                  on_error=lambda message, _kind: widgets.error(self, "یاد دادن نام کالا", message))
+
+    def _ask_teach(self, text: str, models: object) -> None:
+        dialog = TeachNameDialog(text, list(models or []), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        model = dialog.model
+        run_async(lambda: self.context.api.teach_alias(text, model),
+                  on_success=lambda _r: widgets.info(
+                      self, "یاد گرفته شد", f"از این پس ربات «{text}» را «{model}» می‌فهمد.",
+                      kind="success"),
+                  on_error=lambda message, _kind: widgets.error(self, "یاد دادن نام کالا", message))
+
     def load_timeline(self) -> None:
         request_id = int(self.item["id"])
         api = self.context.api

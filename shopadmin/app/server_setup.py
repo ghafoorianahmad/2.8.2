@@ -575,6 +575,7 @@ class CurrentConfig:
     allowed_ips: str = ""
     bank_text: str = ""
     admin_chats: str = ""
+    miniapp_url: str = ""
     shoptg_dir: str = ""
     allowed_databases: list[str] | None = None
     write_databases: list[str] | None = None
@@ -634,6 +635,7 @@ def read_current_config() -> Optional[CurrentConfig]:
         allowed_ips=get("FIREWALL_ALLOWED_IPS"),
         bank_text=get("BANK_ACCOUNT_TEXT"),
         admin_chats=get("ADMIN_CHAT_IDS"),
+        miniapp_url=get("MINIAPP_URL"),
         shoptg_dir=get("SHOPTG_DIR"),
         allowed_databases=_split_names(get("ACCOUNTING_ALLOWED_DATABASES")),
         write_databases=_split_names(get("ACCOUNTING_WRITE_DATABASES")),

@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPlainTextEdit,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -170,8 +169,7 @@ class PdfImportDialog(widgets.ResponsiveDialog):
             "سایت نمی‌آید.", name="Muted", wrap=True))
         self.summary = widgets.label("", bold=True, wrap=True)
         root.addWidget(self.summary)
-        self.table = QTableWidget(0, len(HEADERS))
-        widgets.round_view_corners(self.table)
+        self.table = widgets.RoundTable(0, len(HEADERS))
         self.table.setHorizontalHeaderLabels(list(HEADERS))
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(THUMB + 14)

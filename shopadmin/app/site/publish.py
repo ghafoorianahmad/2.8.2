@@ -5,6 +5,9 @@ v2.12.0: the look and layout (``assets/catalog/site.json`` + its pictures) go
 with the same commit, so one «برگرداندن» undoes both."""
 from __future__ import annotations
 
+from pathlib import Path
+
+from ..paths import assets_dir, fonts_dir
 from . import catalog as cat
 from . import look as lk
 from .github import GitHubError, GitHubPublisher
@@ -21,6 +24,24 @@ OLD_SITE_NOTE = ("توجه: کد سایت در GitHub هنوز «ظاهر و چ�
                  "ولی رنگ، بنر، چیدمان و اطلاعات فروشگاه همان قبلی می‌ماند.")
 
 
+def miniapp_files() -> dict[str, bytes]:
+    """v2.18.0: the mini app and the customer form, at /app/ on the site host, with the bundled
+    Vazirmatn. It reads ``assets/catalog/catalog.json`` of the same commit (its images are
+    relative to that folder). Nothing of the site's own pages is touched."""
+    source = assets_dir() / "miniapp" / "app"
+    files: dict[str, bytes] = {}
+    if not source.is_dir():
+        return files
+    for path in sorted(source.rglob("*")):
+        if path.is_file():
+            files["app/" + path.relative_to(source).as_posix()] = path.read_bytes()
+    for name in ("Regular", "Medium", "SemiBold", "Bold"):
+        font: Path = fonts_dir() / f"Vazirmatn-{name}.ttf"
+        if font.is_file():
+            files[f"app/fonts/Vazirmatn-{name}.ttf"] = font.read_bytes()
+    return files
+
+
 def publish(store: SiteStore, publisher: GitHubPublisher, *, generator: str) -> dict:
     """Commit catalog.json + site.json + the pictures they name. Returns
     {"commit", "written", "deploy_started", "note"}; raises SiteDataError /
@@ -34,6 +55,7 @@ def publish(store: SiteStore, publisher: GitHubPublisher, *, generator: str) -> 
     payload = {path: source.read_bytes() for path, source in {**files, **look_files}.items()}
     payload[CATALOG_PATH] = cat.catalog_bytes(catalog)
     payload[LOOK_PATH] = lk.site_json_bytes(site)
+    payload.update(miniapp_files())
     result = publisher.publish(payload, COMMIT_MESSAGE)
     if not result["commit"]:
         return {"commit": None, "written": 0, "deploy_started": False,
@@ -90,5 +112,5 @@ def seed_from_github(store: SiteStore, publisher: GitHubPublisher) -> dict:
                       source="github")
 
 
-__all__ = ["publish", "rollback", "seed_from_github", "site_reads_look", "GitHubError",
+__all__ = ["miniapp_files", "publish", "rollback", "seed_from_github", "site_reads_look", "GitHubError",
            "SiteDataError"]

@@ -64,6 +64,9 @@ SERVER_WARNINGS = {
                   "دارد. در «لیست قیمت» ردیف‌های «منتظر تأیید» را تأیید یا رد کنید.",
     "price_correction_unmatched": "چند سطر «اصلاحیه» کانال لیست قیمت با هیچ مدلی جور نشد؛ در "
                                   "«لیست قیمت › پیام‌های کانال» ببینید.",
+    # v2.18.0: nothing changed: a member of staff decides
+    "price_note_uncertain": "یک پیام قیمت در کانال مطمئن نبود و اعمال نشد؛ در «لیست قیمت › پیام‌های "
+                            "کانال» ببینید و با «اعمال دستی» تأیید کنید.",
     "sales_closed_channel": "پخش‌کننده در کانال «فروش بسته» اعلام کرد؛ فروش گوشی تا لیست قیمت "
                             "بعدی بسته شد.",
     "model_review": "بررسی شبانه: کالای یک مدل سایت در حسابداری پیدا نشد یا نامش عوض شده؛ "
@@ -105,7 +108,8 @@ KIND_SITE_MODELS_NEW = "site_models_new"
 #: v2.9.1: events after which the price list and the dashboard show something new
 PRICE_EVENT_KINDS = frozenset({"pricelist_imported", "pricelist_held", "pricelist_failed",
                                KIND_PRICELIST_CORRECTED, "price_held",
-                               "price_correction_unmatched", "sales_opened", "sales_closed",
+                               "price_correction_unmatched", "price_note_uncertain",
+                               "sales_opened", "sales_closed",
                                "sales_opened_manual", "sales_closed_manual", "sales_holiday",
                                "sales_closed_channel"})
 #: v2.9.0: the Telegram reader imported a new list of the channel (actor "worker").
@@ -131,6 +135,7 @@ TARGETS = {
     KIND_PRICELIST_CORRECTED: ("pricelist", ""),
     "price_held": ("pricelist", "held"),
     "price_correction_unmatched": ("pricelist", ""),
+    "price_note_uncertain": ("pricelist", ""),
     "sales_closed_channel": ("dashboard", ""),
     KIND_CHANNEL_NEW: ("server", ""),
     "telegram_pricelist_error": ("pricelist", ""),

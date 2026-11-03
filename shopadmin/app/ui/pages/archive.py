@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QLineEdit, QWidget
 
+from ...permissions import ARCHIVE_MANUAL
 from ...persian import format_money, format_shamsi, to_persian_digits
 from ...statuses import order_status_fa
 from .. import widgets
@@ -24,8 +25,9 @@ REQUEST_HEADERS = ("شماره", "نوع", "مشتری", "نتیجه", "مسئو
 class ArchivePage(BasePage):
     title = "بایگانی"
     subtitle = "سفارش‌ها و درخواست‌های تمام‌شده (فقط دیدن)"
-    help_text = ("کارهای تمام‌شده هر پنج‌شنبه شب به اینجا می‌آیند. چیزی پاک یا ویرایش "
-                 "نمی‌شود؛ تغییر سفارش تمام‌شده فقط در «سازه حساب» ممکن است.")
+    help_text = ("کارهای تمام‌شده هر پنج‌شنبه شب خودکار به اینجا می‌آیند و می‌شود زودتر هم از "
+                 "«سفارش‌ها» فرستاد. چیزی پاک یا ویرایش نمی‌شود؛ تغییر سفارش تمام‌شده فقط در «سازه "
+                 "حساب» ممکن است.")
 
     def build_body(self) -> None:
         principal = self.context.principal
@@ -72,6 +74,14 @@ class ArchivePage(BasePage):
         self.open_request_button.setVisible(False)
         bar.addWidget(self.open_order_button)
         bar.addWidget(self.open_request_button)
+        # v2.18.0: back out of the archive, one or many
+        self.can_restore = self.context.can(ARCHIVE_MANUAL)
+        self.restore_button = widgets.button("برگرداندن تیک‌خورده‌ها", icon_name="refresh",
+                                             on_click=self._restore_checked)
+        self.restore_button.setVisible(self.can_restore)
+        bar.addWidget(self.restore_button)
+        if self.can_restore:
+            self.orders_table.enable_checks(keep_text=True)
         for table in (self.orders_table, self.requests_table):
             table.setMinimumHeight(360)
             panel.body.addWidget(table, 1)
@@ -90,6 +100,7 @@ class ArchivePage(BasePage):
         self.requests_table.setVisible(self._tab == "requests")
         self.open_order_button.setVisible(self._tab == "orders")
         self.open_request_button.setVisible(self._tab == "requests")
+        self.restore_button.setVisible(self.can_restore and self._tab == "orders")
         self.table = self.orders_table if self._tab == "orders" else self.requests_table
         self.load()
 
@@ -114,6 +125,9 @@ class ArchivePage(BasePage):
                 row = table.rowCount()
                 table.insertRow(row)
                 table.set_cell(row, 0, to_persian_digits(order.get("id", "")), bold=True)
+                if self.can_restore:
+                    table.set_check(row, False, keep_text=True)
+                table.set_row_key(row, order.get("id"))
                 table.set_cell(row, 1, customer_label(order))
                 table.set_cell(row, 2, format_money(order.get("total", 0)))
                 table.set_cell(row, 3, order_status_fa(order.get("status")))
@@ -125,6 +139,19 @@ class ArchivePage(BasePage):
             table.setUpdatesEnabled(True)
         table._refresh_states()
         self.summary.setText(f"{to_persian_digits(len(self.orders))} سفارش در بایگانی")
+
+    def _restore_checked(self) -> None:
+        ids = [int(key) for key in self.orders_table.checked_keys()]
+        if not ids:
+            self.notify_warning("سفارش‌ها را تیک بزنید.")
+            return
+        self.run(lambda: self.context.api.restore_orders(ids), on_success=self._restored)
+
+    def _restored(self, result: object) -> None:
+        done = (result if isinstance(result, dict) else {}).get("restored") or []
+        self.notify_success(f"{to_persian_digits(len(done))} سفارش از بایگانی برگشت.")
+        self.context.data_changed.emit()
+        self.load()
 
     def _requests_loaded(self, rows) -> None:
         self.requests = [r for r in (rows or []) if isinstance(r, dict)]

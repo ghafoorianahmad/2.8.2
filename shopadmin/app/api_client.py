@@ -112,6 +112,8 @@ def pinned_context(pem: str) -> ssl.SSLContext:
 _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"insufficient stock for product (\d+)", re.I),
      "موجودی کافی نیست (کد کالا: {0})."),
+    (re.compile(r"no active price list", re.I), "هنوز لیست قیمت فعالی نیست."),
+    (re.compile(r"note not found", re.I), "این پیام کانال پیدا نشد."),
     (re.compile(r"customer details are incomplete", re.I),
      "اطلاعات مشتری کامل نیست: نام، نام خانوادگی، کد ملی و نشانی همه لازم است. در صفحهٔ «مشتریان» "
      "با دکمهٔ «اطلاعات» کامل کنید."),
@@ -702,7 +704,16 @@ class ShopApiClient:
             "POST", f"/admin/users/{int(user_id)}/reject", json_body={"reason": reason or None}
         )
 
-    def list_orders(self, status: str | None = None, *, mine: bool = False) -> list[dict]:
+    def archive_orders(self, ids: list[int]) -> dict:
+        """v2.18.0: one or many finished orders, at once."""
+        return self._request("POST", "/admin/archive/orders", json_body={"ids": list(ids)}) or {}
+
+    def restore_orders(self, ids: list[int]) -> dict:
+        return self._request("POST", "/admin/archive/orders/restore",
+                             json_body={"ids": list(ids)}) or {}
+
+    def list_orders(self, status: str | None = None, *, mine: bool = False,
+                    include_archived: bool = False) -> list[dict]:
         """``GET /admin/orders``.
 
         shopapi defaults ``status`` to ``receipt_uploaded``, so an explicit
@@ -712,6 +723,8 @@ class ShopApiClient:
         params = {"status": status}
         if mine:
             params["mine"] = "true"
+        if include_archived:
+            params["include_archived"] = "true"
         payload = self._request("GET", "/admin/orders", params=params)
         return list(payload or [])
 
@@ -946,6 +959,47 @@ class ShopApiClient:
     def fetch_pricelist_now(self) -> dict:
         """«دریافت لیست اکنون»: the Telegram reader reads the channel within seconds."""
         return self._request("POST", "/admin/pricelists/fetch") or {}
+
+    def apply_note(self, note_id: int, picks: list[tuple[str, int]]) -> dict:
+        """v2.18.0 «اعمال دستی»: the rows and cash prices staff chose for a post."""
+        return self._request("POST", f"/admin/pricelists/notes/{int(note_id)}/apply", json_body={
+            "picks": [{"row_key": key, "naghd": int(price)} for key, price in picks]}) or {}
+
+    # ---- v2.18.0 «گفت‌وگوی همکاران» ----
+    def chat_rooms(self) -> dict:
+        return self._request("GET", "/admin/chat/rooms") or {}
+
+    def chat_messages(self, room: str, after: int = 0) -> list[dict]:
+        return list(self._request("GET", "/admin/chat/messages",
+                                  params={"room": room, "after": after}) or [])
+
+    def chat_send(self, room: str, text: str) -> dict:
+        return self._request("POST", "/admin/chat/messages",
+                             json_body={"room": room, "text": text}) or {}
+
+    def chat_send_voice(self, room: str, data: bytes, seconds: int) -> dict:
+        return self._request("POST", "/admin/chat/voice", timeout=120.0, json_body={
+            "room": room, "seconds": int(seconds), "content_type": "audio/wav",
+            "data_b64": base64.b64encode(data).decode("ascii")}) or {}
+
+    def chat_voice(self, message_id: int) -> bytes:
+        out = self._request("GET", f"/admin/chat/voice/{int(message_id)}", timeout=120.0)
+        return base64.b64decode((out or {}).get("data_b64") or "")
+
+    def set_faq(self, enabled: bool, values: dict | None = None) -> dict:
+        return self._request("PUT", "/admin/shop-rules/faq",
+                             json_body={"enabled": bool(enabled), "values": values or {}}) or {}
+
+    def set_auto_quote(self, enabled: bool) -> dict:
+        return self._request("PUT", "/admin/shop-rules/auto-quote",
+                             json_body={"enabled": bool(enabled)}) or {}
+
+    def alias_models(self) -> list[str]:
+        return list(self._request("GET", "/admin/product-aliases/models") or [])
+
+    def teach_alias(self, text: str, model: str) -> dict:
+        return self._request("POST", "/admin/product-aliases",
+                             json_body={"text": text, "model": model}) or {}
 
     def fetch_pricelist_state(self) -> dict:
         return self._request("GET", "/admin/pricelists/fetch") or {}
@@ -1197,6 +1251,12 @@ class ShopApiClient:
 
     def delete_proxy(self, proxy_id: int) -> None:
         self._request("DELETE", f"/admin/proxies/{int(proxy_id)}")
+
+    def delete_proxies(self, ids: list[int]) -> dict:
+        return self._request("POST", "/admin/proxies/delete", json_body={"ids": list(ids)}) or {}
+
+    def delete_down_proxies(self) -> dict:
+        return self._request("POST", "/admin/proxies/delete-down") or {}
 
     def collect_proxies_now(self) -> dict:
         """v2.9.2 «جمع‌آوری اکنون»: the Telegram reader collects within seconds."""

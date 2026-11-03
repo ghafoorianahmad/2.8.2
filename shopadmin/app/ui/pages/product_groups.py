@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QHeaderView,
-    QTreeWidget,
     QTreeWidgetItem,
     QWidget,
 )
@@ -75,8 +74,7 @@ class ProductGroupsPage(BasePage):
         self.warning.setVisible(False)
         panel.body.addWidget(self.warning)
 
-        self.tree = QTreeWidget()
-        widgets.round_view_corners(self.tree)
+        self.tree = widgets.RoundTree()
         self.tree.setColumnCount(len(HEADERS))
         self.tree.setHeaderLabels(list(HEADERS))
         self.tree.setLayoutDirection(Qt.LayoutDirection.RightToLeft)

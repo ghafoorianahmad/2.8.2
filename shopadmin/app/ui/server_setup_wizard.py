@@ -729,6 +729,9 @@ class ServerSetupWizard(QWidget):
         self.admin_chats = _line("bale:654321")
         form.addRow(widgets.label("توکن ربات بله:"), self.bale_token)
         form.addRow(widgets.label("گفت‌وگوی مدیران در ربات:"), self.admin_chats)
+        # v2.18.0: empty until the mini app is published: the bot then has no shop button
+        self.miniapp_url = mark_ltr(_line("https://asrertebatat2.ir/app/"))
+        form.addRow(widgets.label("نشانی مینی‌اپ (پس از انتشار):"), self.miniapp_url)
         # v2.8.1: the Telegram bot (token from BotFather); its api_id / api_hash
         # (my.telegram.org) are on the «تلگرام» page, shared with the reader
         self.telegram_token = _line("از BotFather در تلگرام", password=True)
@@ -1065,6 +1068,7 @@ class ServerSetupWizard(QWidget):
         self.port.setValue(current.port)
         self.allowed_ips.setText(current.allowed_ips)
         self.admin_chats.setText(current.admin_chats)
+        self.miniapp_url.setText(current.miniapp_url)
         self.shoptg_dir.setText(current.shoptg_dir)
         self.tg_enabled.setChecked(current.tg_reader_enabled)
         (self.tg_key_own if current.tg_api_preset == "custom" else self.tg_key_desktop).setChecked(True)
@@ -1529,6 +1533,7 @@ class ServerSetupWizard(QWidget):
             "firewall_allowed_ips": " ".join(setup.parse_allowed_ips(self.allowed_ips.text())),
             "shoptg_dir": self.shoptg_dir.text().strip(),
             "admin_chat_ids": self.admin_chats.text().strip(),
+            "miniapp_url": self.miniapp_url.text().strip(),
             "allowed_databases": ",".join(self.db_access.allowed()),
             "write_databases": ",".join(self.db_access.writing()),
         }

@@ -35,6 +35,7 @@ from .core import (
     parse_product_ref,
 )
 from .core.cart import clamp_qty
+from .core.catalog import normalize_search
 from .platforms import (
     BotApiError,
     PlatformAdapter,
@@ -94,6 +95,7 @@ MIN_ADDRESS_LEN = 5
 MAX_ADDRESS_LEN = 300
 #: v2.18.0: what a mini app may send in one message, and of one field of it
 WEB_APP_DATA_MAX = 4096
+WEB_APP_CART_MAX = 20
 DETAIL_FIELD_MAX = 400
 
 # --- callback payloads ------------------------------------------------------
@@ -839,6 +841,11 @@ class BotEngine:
                 adapter, platform, chat_id, text):
             return
 
+        # v2.18.0: a question the bank of answers knows
+        if text and not text.startswith("/") and await self._faq_answer(
+                adapter, platform, chat_id, text):
+            return
+
         # any other text: back to the main menu
         await self._show_main_menu(adapter, platform, chat_id, status=status)
 
@@ -867,6 +874,8 @@ class BotEngine:
         if model_ref and await self._show_model(adapter, platform, chat_id, model_ref):
             return
         await self._show_main_menu(adapter, platform, chat_id, intro=intro, status=status)
+        if welcome:
+            await self._send_shop_button(adapter, chat_id, texts.SHOP_BUTTON_NOTE)
 
     async def _show_not_approved(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, status: str,
@@ -989,8 +998,124 @@ class BotEngine:
             return
         if kind == "customer":
             await self._web_app_customer(adapter, platform, chat_id, payload)
+        elif kind == "cart" and isinstance(payload.get("items"), list):
+            await self._web_app_cart(adapter, platform, chat_id, payload["items"])
+        elif kind == "price" and payload.get("id"):
+            await self._web_app_price(adapter, platform, chat_id, str(payload["id"])[:80],
+                                      str(payload.get("color") or "")[:60])
         else:
             await self._send_text(adapter, chat_id, texts.WEB_APP_UNREADABLE)
+
+    async def _model_of(self, slug: str) -> tuple[str, list[int]]:
+        """The name of a catalog code and the products it is mapped to (none = not mapped).
+        A code the shop's models do not know yet still reads as words («galaxy a57»)."""
+        words = " ".join(slug.replace("_", "-").split("-"))
+        try:
+            found = await self.api.resolve_model(f"m_{slug}")
+        except ShopApiError:
+            return words, []
+        if not isinstance(found, dict):
+            return words, []
+        name = str((found.get("model") or {}).get("name") or words)
+        if found.get("status") != "found":
+            return name, []
+        codes = [int(i["kala_code"]) for i in found.get("items") or ()
+                 if isinstance(i, dict) and str(i.get("kala_code", "")).isdigit()]
+        return name, codes
+
+    async def _add_from_page(self, platform: str, chat_id: str, codes: list[int], color: str,
+                             qty) -> bool:
+        """Into the bot's own cart at the shop's own price, with the usual checks. The page's
+        word is only which item and color: never a price."""
+        wanted = normalize_search(color)
+        for code in codes:
+            product = await self.catalog.product(code)
+            if product is None:
+                continue
+            if product.has_colors:
+                chosen = next((c for c in product.colors if c.available and c.price and not c.held
+                               and normalize_search(c.name) == wanted), None)
+                if chosen is None:
+                    continue
+                if await self._phone_refusal(platform, chat_id, code, chosen.id, clamp_qty(qty)):
+                    continue
+                self.cart.add(platform, chat_id, code, f"{product.name} — {chosen.name}", qty,
+                              chosen.price, chosen.id)
+                return True
+            if product.in_stock and not product.on_inquiry:
+                self.cart.add(platform, chat_id, code, product.name, qty, product.price)
+                return True
+        return False
+
+    async def _web_app_cart(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                            items: list) -> None:
+        """«ادامهٔ خرید در ربات»: what can be sold goes into the cart and the normal order flow
+        follows; the rest reaches staff as a request."""
+        missed: list[str] = []
+        added = 0
+        for item in items[:WEB_APP_CART_MAX]:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            slug = str(item["id"])[:80]
+            color = str(item.get("color") or "")[:60]
+            name, codes = await self._model_of(slug)
+            if await self._add_from_page(platform, chat_id, codes, color, item.get("qty") or 1):
+                added += 1
+            else:
+                missed.append(" ".join(p for p in (name, color) if p))
+        if missed:
+            await self._send_text(adapter, chat_id, texts.WEB_APP_CART_MISSED.format(
+                items="\n".join(f"• {shorten(m, 60)}" for m in missed)))
+            for text in missed:
+                try:
+                    await self.api.create_item_request(platform, chat_id, text=text)
+                except ShopApiError:
+                    self.logger.info("a mini app item did not reach staff")
+        if added:
+            await self._show_cart(adapter, platform, chat_id)
+        elif not missed:
+            await self._send_text(adapter, chat_id, texts.CART_EMPTY)
+
+    async def _web_app_price(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                             slug: str, color: str) -> None:
+        """«استعلام قیمت» on the page: the price comes from here (never on the page itself),
+        then a way back to the shop."""
+        name, _codes = await self._model_of(slug)
+        if not await self._phone_search(adapter, platform, chat_id, f"{name} {color}".strip()):
+            await self._send_text(adapter, chat_id, texts.WEB_APP_NO_PRICE.format(
+                name=" ".join(p for p in (name, color) if p)))
+            try:
+                await self.api.create_item_request(platform, chat_id,
+                                                   text=" ".join(p for p in (name, color) if p))
+            except ShopApiError:
+                self.logger.info("a price question did not reach staff")
+        await self._send_shop_button(adapter, chat_id, texts.WEB_APP_BACK)
+
+    async def _send_shop_button(self, adapter: PlatformAdapter, chat_id: str, text: str) -> None:
+        """«🛍 ورود به فروشگاه» (nothing until the mini app has been published)."""
+        if self.settings.miniapp_url:
+            await self._send_text(adapter, chat_id, text, web_app_keyboard(
+                [[(texts.BTN_SHOP, self.settings.miniapp_url)]]))
+
+    async def _faq_answer(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                          text: str) -> bool:
+        """A question the bank knows. ``needs_staff``: said, and staff get the question too."""
+        try:
+            found = await self.api.faq_answer(text)
+        except ShopApiError:
+            return False
+        answer = str(found.get("answer") or "")
+        if not answer:
+            return False
+        await self._send_options(adapter, platform, chat_id, answer,
+                                 [[(texts.BTN_SUPPORT, "support"), (texts.BTN_MENU, "menu")]],
+                                 state=STATE_NONE, data={})
+        if found.get("needs_staff"):
+            try:
+                await self.api.create_item_request(platform, chat_id, text=text)
+            except ShopApiError:
+                self.logger.info("a question for staff was not recorded")
+        return True
 
     async def _web_app_customer(self, adapter: PlatformAdapter, platform: str, chat_id: str,
                                 payload: dict) -> None:
@@ -1099,6 +1224,7 @@ class BotEngine:
         except ShopApiError:
             pass              # asked once more next time; nothing is lost
         await self._after_details(adapter, platform, chat_id, after)
+        await self._send_shop_button(adapter, chat_id, texts.SHOP_BUTTON_NOTE)
 
     # ================= staff link (v2.17.0) ================================
     async def _staff_contact(self, adapter: PlatformAdapter, platform: str, chat_id: str,
@@ -1981,6 +2107,7 @@ class BotEngine:
         if not self._address_ok(text):
             await self._ask_checkout_address(adapter, platform, chat_id, texts.INVALID_ADDRESS)
             return
+        self.store.clear_conversation(platform, chat_id)   # a refused address asks again itself
         await self._place_order(adapter, platform, chat_id, text)
 
     async def _checkout_same_address(self, adapter: PlatformAdapter, platform: str,
@@ -2001,8 +2128,16 @@ class BotEngine:
             await self._send_options(adapter, platform, chat_id, texts.INVALID_ADDRESS,
                                      [[(texts.BTN_MENU, "menu")]])
             return
+        try:
+            order = await self.api.set_order_address(order_id, platform, chat_id, text)
+        except ShopApiRejected as exc:
+            if exc.status != 422:
+                raise
+            # v2.18.0: the rule that was broken, and the question stays open
+            await self._send_options(adapter, platform, chat_id, exc.message_fa,
+                                     [[(texts.BTN_MENU, "menu")]])
+            return
         self.store.clear_conversation(platform, chat_id)
-        order = await self.api.set_order_address(order_id, platform, chat_id, text)
         address = str((order or {}).get("ship_address") or text)
         await self._send_options(adapter, platform, chat_id,
                                  texts.ORDER_ADDRESS_SAVED.format(address=address),
@@ -2516,6 +2651,7 @@ class BotEngine:
                 model=row["n"], color=row["c"] or "—", price=fmt_num(row["pr"]),
                 part=texts.PHONE_SEARCH_PART_LINE.format(part=row["p"]) if row["p"] else "")
             body += "\n\n" + texts.PURCHASE_REQUEST_NOTE
+            await self._log_auto_quote(platform, chat_id, row, data)
         if not (data.get("ps") or {}).get("open", True):
             body = f"{texts.SALES_CLOSED_SEARCH}\n\n{body}"
         buttons = [[(texts.BTN_BUY_INQUIRY, f"pbr:{int(index)}")]]
@@ -2525,6 +2661,14 @@ class BotEngine:
         await self._send_options(adapter, platform, chat_id, body, buttons, state=STATE_NONE,
                                  data=data, edit_message_id=edit_message_id,
                                  screen=("ps:row", f"psr:{int(index)}"))
+
+    async def _log_auto_quote(self, platform: str, chat_id: str, row: dict, data: dict) -> None:
+        """v2.18.0: the report in «قواعد فروشگاه». Never in the way of the answer."""
+        try:
+            await self.api.record_auto_quote(platform, chat_id, row["k"],
+                                             str((data.get("ps") or {}).get("text") or ""))
+        except ShopApiError:
+            self.logger.info("auto quote not recorded")
 
     async def _purchase_request(
         self, adapter: PlatformAdapter, platform: str, chat_id: str, callback_id=None, *,

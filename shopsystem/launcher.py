@@ -1214,6 +1214,7 @@ SETUP_FIELDS = {
     "bank_account_text": "BANK_ACCOUNT_TEXT",
     "bale_token": "BALE_TOKEN",
     "admin_chat_ids": "ADMIN_CHAT_IDS",
+    "miniapp_url": "MINIAPP_URL",
     "shoptg_dir": "SHOPTG_DIR",
     # v2.8.1: the «تنظیمات سرور» wizard (reopened with the current values)
     "telegram_bot_token": "TELEGRAM_BOT_TOKEN",

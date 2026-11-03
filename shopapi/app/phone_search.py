@@ -18,8 +18,10 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher
 
-from . import fuzzy
+from . import fuzzy, product_aliases
 from .pricelist.matching import model_key, part_code, part_label
+from .pricelist.notes import _compact_model, row_model
+from .pricelist.price_message import extract_color
 
 #: Price-list spellings -> tokens.
 _COMPOUNDS = {
@@ -105,18 +107,60 @@ def model_name(row: dict) -> str:
     return " ".join(words)
 
 
-def search(rows: list[dict], text: str) -> list[dict]:
+def _same_color(row: dict, color: str) -> bool:
+    theirs = str(row.get("color") or "")
+    named = extract_color(color)
+    return (extract_color(theirs) == named) if named else theirs.strip().lower() == color.lower()
+
+
+def _section_is(row: dict, brand: str) -> bool:
+    section = str(row.get("section") or "").lower()
+    family = {"Redmi": ("redmi", "xiaomi"), "Poco": ("poco", "xiaomi"),
+              "Apple": ("iphone", "apple"), "Samsung": ("samsung", "galaxy")}
+    return any(word in section for word in family.get(brand, (brand.lower(),)))
+
+
+def _named_rows(rows: list[dict], parsed: product_aliases.Parsed, text: str) -> list[dict]:
+    """v2.18.0: the rows of exactly the model the customer named (never «17 Pro» for
+    «17 Pro Max»), narrowed by what they also said. A storage, RAM or color the list does not
+    have leaves all the rows of the model: the bot then asks, it never guesses."""
+    if not parsed.model or parsed.accessory:
+        return []
+    # the alias file knows Persian color names; the channel's list knows the English ones too
+    color = parsed.color or extract_color(str(text or ""))
+    wanted = _compact_model(parsed.model.split())
+    compact = [(row, row_model(row.get("description") or "").model) for row in rows]
+    found = [row for row, model in compact if model == wanted]
+    if not found:
+        found = [row for row, model in compact
+                 if model and (model.endswith(wanted) or wanted.endswith(model))
+                 and _section_is(row, parsed.brand or "")]
+    for keep in (
+            (lambda r: row_model(r.get("description") or "").storage == parsed.storage_gb)
+            if parsed.storage_gb else None,
+            (lambda r: row_model(r.get("description") or "").ram == parsed.ram_gb)
+            if parsed.ram_gb else None,
+            (lambda r: _same_color(r, color)) if color else None):
+        if keep is not None:
+            found = [row for row in found if keep(row)] or found
+    return found
+
+
+def search(rows: list[dict], text: str, learned: tuple = ()) -> list[dict]:
     """Best rows of ``rows`` (active-list rows with their mapping) for ``text``,
     grouped by model, best first. Rows without a price or ignored are skipped
     (v2.9.2: a row whose price waits for a manager stays, without a price)."""
+    usable = [row for row in rows
+              if (row.get("price_rial") or row.get("price_held"))
+              and row.get("action") != "ignore"]
+    named = _named_rows(usable, product_aliases.parse(text, learned), text)
     query = list(dict.fromkeys(search_tokens(text)))
-    scored = []
-    for row in rows:
-        if (not row.get("price_rial") and not row.get("price_held"))                 or row.get("action") == "ignore":
-            continue
-        value = score(query, row)
-        if value > 0:
-            scored.append((value, row))
+    scored = [(1.0, row) for row in named]
+    if not scored:
+        for row in usable:
+            value = score(query, row)
+            if value > 0:
+                scored.append((value, row))
     groups: dict[str, dict] = {}
     for value, row in scored:
         key = model_key(row.get("section") or "", row.get("description") or "")

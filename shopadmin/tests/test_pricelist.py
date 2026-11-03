@@ -308,8 +308,9 @@ def test_proxies_tab_add_toggle_delete(ui_context, fake_api, admin_qapp, monkeyp
     _pump(admin_qapp, page)
     table = page.proxy_table
     assert table.rowCount() == 1
-    assert table.item(0, 3).text() == "اصلی" and table.item(0, 4).text() == "۹۳٪"
-    assert table.item(0, 7).text() == "سالم"
+    # v2.18.0: + «منبع» at column 3
+    assert table.item(0, 4).text() == "اصلی" and table.item(0, 5).text() == "۹۳٪"
+    assert table.item(0, 8).text() == "سالم"
 
     def add_exec(dialog):
         dialog.input.setText("tg://proxy?server=new.example&port=443&secret=dd" + "ab" * 16)
@@ -332,6 +333,23 @@ def test_proxies_tab_add_toggle_delete(ui_context, fake_api, admin_qapp, monkeyp
 
     _select(table, 1)
     page._delete_proxy()
+    _pump(admin_qapp, page)
+    assert [p["id"] for p in fake_api.proxies] == [1]
+
+    # v2.18.0: ticks, then every proxy that is down
+    fake_api.proxies += [{"id": 5, "host": "b.example", "port": 443, "kind": "ee", "state": "main",
+                          "stability": 0.9, "good_days": 1, "checked_days": 1, "last_ok_at": None,
+                          "failing_now": False},
+                         {"id": 6, "host": "c.example", "port": 443, "kind": "ee", "state": "retired",
+                          "stability": 0.0, "good_days": 0, "checked_days": 1, "last_ok_at": None,
+                          "failing_now": True}]
+    page._load_proxies()
+    _pump(admin_qapp, page)
+    table.set_check(table.rowCount() - 2, True, keep_text=True)
+    page._delete_proxy()
+    _pump(admin_qapp, page)
+    assert [p["id"] for p in fake_api.proxies] == [1, 6]
+    page._delete_down_proxies()
     _pump(admin_qapp, page)
     assert [p["id"] for p in fake_api.proxies] == [1]
     page.close()

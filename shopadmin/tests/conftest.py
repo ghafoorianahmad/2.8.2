@@ -759,6 +759,13 @@ class FakeShopApi:
                        "last_ok_at": None, "failing_now": False, "secret_masked": "dd…abcd"}
                 self.proxies.append(row)
                 return reply(201, row)
+            if path == "/admin/proxies/delete" and method == "POST":    # v2.18.0
+                self.proxies[:] = [p for p in self.proxies if p["id"] not in body["ids"]]
+                return reply(200, {"deleted": len(body["ids"])})
+            if path == "/admin/proxies/delete-down" and method == "POST":
+                down = [p for p in self.proxies if p.get("failing_now") or p.get("state") == "retired"]
+                self.proxies[:] = [p for p in self.proxies if p not in down]
+                return reply(200, {"deleted": len(down)})
             proxy = next((p for p in self.proxies if p["id"] == int(parts[2])), None)
             if proxy is None:
                 return detail(404, "Proxy not found")

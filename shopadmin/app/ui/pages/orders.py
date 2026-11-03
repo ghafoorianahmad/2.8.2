@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from ...activity import timeline_lines
 from ...permissions import (
+    ARCHIVE_MANUAL,
     ORDERS_APPROVE_PAYMENT,
     ORDERS_ASSIGN,
     ORDERS_CANCEL,
@@ -202,6 +203,14 @@ class OrdersPage(BasePage):
         self.table.row_activated.connect(self._open_row)
         self.open_button = widgets.open_button(self.table)
         bar.addWidget(self.open_button)
+        # v2.18.0: finished orders go to the archive at once, one or many, any user's
+        self.can_archive = self.context.can(ARCHIVE_MANUAL)
+        self.archive_button = widgets.button("بایگانی تیک‌خورده‌ها", icon_name="archive",
+                                             on_click=self._archive_checked)
+        self.archive_button.setVisible(self.can_archive)
+        bar.addWidget(self.archive_button)
+        if self.can_archive:
+            self.table.enable_checks(keep_text=True)
         panel.body.addWidget(self.table, 1)
 
         self.summary = widgets.label("", name="Muted")
@@ -228,7 +237,13 @@ class OrdersPage(BasePage):
             btn.setChecked((key == "mine") == self._mine)
         self.load()
 
-    def _on_search(self, _text: str) -> None:
+    def _on_search(self, text: str) -> None:
+        # v2.18.0: from nothing to something: read again: the archive comes with a search
+        searching = bool(text.strip())
+        if searching != getattr(self, "_searching", False):
+            self._searching = searching
+            self.load()
+            return
         self._render()
 
     def _status_for_tab(self) -> Optional[str]:
@@ -242,8 +257,10 @@ class OrdersPage(BasePage):
         self.table.set_busy(True)
         status = self._status_for_tab()
         mine = self._mine
+        # v2.18.0: a search also finds what is in the archive
+        archived = bool(self.search.text().strip())
         self.run(
-            lambda: self.context.api.list_orders(status, mine=mine),
+            lambda: self.context.api.list_orders(status, mine=mine, include_archived=archived),
             on_success=self._on_loaded,
             on_error=self._on_error,
         )
@@ -254,6 +271,28 @@ class OrdersPage(BasePage):
         self.table.fill([])
         self.show_table_error(message)
         self.default_error(message, kind)
+
+    def _archive_checked(self) -> None:
+        ids = [int(key) for key in self.table.checked_keys()]
+        if not ids:
+            self.notify_warning("سفارش‌های تمام‌شده را تیک بزنید.")
+            return
+        if not widgets.confirm(self, "بایگانی سفارش",
+                               f"{to_persian_digits(len(ids))} سفارش به بایگانی برود؟ در جستجو و "
+                               "گزارش‌ها می‌ماند و از «بایگانی» برمی‌گردد.",
+                               confirm_text="بایگانی", kind="question"):
+            return
+        self.run(lambda: self.context.api.archive_orders(ids), on_success=self._archived)
+
+    def _archived(self, result: object) -> None:
+        result = result if isinstance(result, dict) else {}
+        done, refused = result.get("archived") or [], result.get("refused") or []
+        text = f"{to_persian_digits(len(done))} سفارش بایگانی شد."
+        if refused:
+            text += f" {to_persian_digits(len(refused))} سفارش هنوز تمام نشده بود و ماند."
+        self.notify_success(text)
+        self.context.data_changed.emit()
+        self.load()
 
     def _on_loaded(self, orders: list) -> None:
         self._orders = list(orders or [])
@@ -282,6 +321,9 @@ class OrdersPage(BasePage):
                 row = self.table.rowCount()
                 self.table.insertRow(row)
                 self.table.set_cell(row, 0, to_persian_digits(order.get("id", "")), bold=True)
+                if self.can_archive:
+                    self.table.set_check(row, False, keep_text=True)
+                self.table.set_row_key(row, order.get("id"))
                 self.table.set_cell(row, 1, self._customer_label(order))
                 self.table.set_cell(row, 2, to_persian_digits(len(order.get("items") or [])))
                 self.table.set_cell(row, 3, format_money(order.get("total", 0)))
@@ -462,8 +504,7 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
 
         # ---- items -------------------------------------------------------
         items_panel = widgets.Panel("اقلام سفارش")
-        self.items_table = QTableWidget(0, 4)
-        widgets.round_view_corners(self.items_table)
+        self.items_table = widgets.RoundTable(0, 4)
         self.items_table.setHorizontalHeaderLabels(("کد کالا", "نام کالا", "تعداد", "قیمت واحد"))
         self.items_table.verticalHeader().setVisible(False)
         self.items_table.setShowGrid(False)

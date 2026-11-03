@@ -9,14 +9,19 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from .. import control, deps, ownership, staff_alerts
+from .. import auto_quote, control, deps, faq, ownership, product_aliases, staff_alerts
 from ..config import Settings
 from ..db_own import OwnDB
 from ..security import Identity, get_api_identity, get_identity, require_any, require_permission
 from ..staff import (
     P_AUTO_INVOICE_VIEW,
+    P_AUTO_QUOTE_EDIT,
+    P_AUTO_QUOTE_VIEW,
     P_CLAIM,
     P_DASHBOARD,
+    P_FAQ_EDIT,
+    P_FAQ_VIEW,
+    P_PRODUCT_ALIAS,
     P_STAFF_ALERTS_EDIT,
     P_STAFF_ALERTS_VIEW,
     P_STATUS_CODES_EDIT,
@@ -27,7 +32,8 @@ from ..staff import (
 
 router = APIRouter()
 
-CAN_SEE_RULES = Depends(require_any(P_STATUS_CODES_VIEW, P_WORK_HOURS_VIEW, P_AUTO_INVOICE_VIEW))
+CAN_SEE_RULES = Depends(require_any(P_STATUS_CODES_VIEW, P_WORK_HOURS_VIEW, P_AUTO_INVOICE_VIEW,
+                                    P_AUTO_QUOTE_VIEW, P_FAQ_VIEW))
 CAN_SEE_ALERTS = Depends(require_any(P_STAFF_ALERTS_VIEW, P_DASHBOARD))
 
 
@@ -47,6 +53,20 @@ class WorkHoursIn(BaseModel):
     days: list[int] = Field(default_factory=list, max_length=7)
     #: v2.18.0: several shifts a day (closed at midday); empty = start..end as one shift
     shifts: list[ShiftIn] = Field(default_factory=list, max_length=6)
+
+
+class AutoQuoteSwitchIn(BaseModel):
+    enabled: bool
+
+
+class FaqIn(BaseModel):
+    enabled: bool
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+class AliasIn(BaseModel):
+    text: str = Field(min_length=2, max_length=200)
+    model: str = Field(min_length=1, max_length=100)
 
 
 class AlertActionIn(BaseModel):
@@ -82,6 +102,11 @@ def get_rules(settings: Settings = Depends(deps.get_settings),
         out["status_codes"] = _status_codes(settings)
     if who.can(P_WORK_HOURS_VIEW):
         out["work_hours"] = staff_alerts.load_hours(db).as_dict()
+    if who.can(P_FAQ_VIEW):
+        out["faq"] = {"enabled": faq.enabled(db), "values": faq.values(db),
+                      "report": faq.report(db)}
+    if who.can(P_AUTO_QUOTE_VIEW):
+        out["auto_quote"] = {"enabled": auto_quote.enabled(db), "report": auto_quote.report(db)}
     if who.can(P_AUTO_INVOICE_VIEW):
         # v2.17.0: a place for it only: staff turn orders into invoices themselves
         out["auto_invoice"] = {"enabled": False, "available": False}
@@ -116,6 +141,44 @@ def put_status_codes(payload: StatusCodesIn, settings: Settings = Depends(deps.g
     settings.accounting_handover_code = handover_code
     db.audit(who.actor, "status_codes", f"order={order_code} handover={handover_code}")
     return _status_codes(settings)
+
+
+@router.put("/admin/shop-rules/auto-quote")
+def put_auto_quote(payload: AutoQuoteSwitchIn, db: OwnDB = Depends(deps.get_db),
+                   who: Identity = Depends(require_permission(P_AUTO_QUOTE_EDIT))) -> dict:
+    """v2.18.0 «پاسخ خودکار قیمت»: for items we do not stock (list prices, in the bot only)."""
+    auto_quote.set_enabled(db, payload.enabled, who.actor)
+    db.audit(who.actor, "auto_quote", f"enabled={payload.enabled}")
+    return {"enabled": auto_quote.enabled(db), "report": auto_quote.report(db)}
+
+
+@router.put("/admin/shop-rules/faq")
+def put_faq(payload: FaqIn, db: OwnDB = Depends(deps.get_db),
+            who: Identity = Depends(require_permission(P_FAQ_EDIT))) -> dict:
+    """v2.18.0 «پاسخ‌گوی خودکار»: the switch and the shop's details its answers use."""
+    faq.set_enabled(db, payload.enabled, who.actor)
+    if payload.values:
+        faq.save_values(db, payload.values, who.actor)
+    db.audit(who.actor, "faq", f"enabled={payload.enabled}")
+    return {"enabled": faq.enabled(db), "values": faq.values(db), "report": faq.report(db)}
+
+
+@router.get("/admin/product-aliases/models")
+def alias_models(_: Identity = Depends(require_permission(P_PRODUCT_ALIAS))) -> list[str]:
+    return product_aliases.model_names()
+
+
+@router.post("/admin/product-aliases")
+def teach_alias(payload: AliasIn, db: OwnDB = Depends(deps.get_db),
+                who: Identity = Depends(require_permission(P_PRODUCT_ALIAS))) -> dict:
+    """v2.18.0: staff say what a customer's words mean; the bot understands them from then on."""
+    try:
+        learned = product_aliases.learn(db, payload.text, payload.model, who.actor)
+    except ValueError:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "مدل یا متن درست نیست.") from None
+    db.audit(who.actor, "product_alias", f"model={payload.model}")
+    return learned
 
 
 @router.put("/admin/shop-rules/work-hours")

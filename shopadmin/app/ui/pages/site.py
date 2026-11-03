@@ -32,7 +32,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QTabWidget,
-    QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -195,8 +194,7 @@ class SitePage(BasePage):
         box.addWidget(self.branch_hint)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
-        self.tree = QTreeWidget()
-        widgets.round_view_corners(self.tree)
+        self.tree = widgets.RoundTree()
         self.tree.setHeaderHidden(True)
         self.tree.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.tree.setMinimumWidth(230)

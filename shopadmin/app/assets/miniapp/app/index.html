@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>عصر ارتباطات ۲ | مینی‌اپ بله و تلگرام</title>
+    <meta name="description" content="مینی‌اپ کاتالوگ موبایل و لوازم جانبی، استعلام قیمت آنی و ثبت لیست خرید ویژه ربات بله و تلگرام فروشگاه عصر ارتباطات ۲ مشهد" />
+    <meta property="og:title" content="عصر ارتباطات ۲ | مینی‌اپ بله و تلگرام" />
+    <meta property="og:description" content="مینی‌اپ کاتالوگ موبایل و لوازم جانبی، استعلام قیمت آنی و ثبت لیست خرید ویژه ربات بله و تلگرام فروشگاه عصر ارتباطات ۲ مشهد" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <!-- Official Bale & Telegram Mini App SDKs -->
+    <script>
+      (function () {
+        var origError = console.error;
+        console.error = function () {
+          if (
+            arguments.length > 0 &&
+            typeof arguments[0] === 'string' &&
+            arguments[0].indexOf('[Bale Sdk]: invoice id is not provided') !== -1
+          ) {
+            return;
+          }
+          return origError.apply(console, arguments);
+        };
+      })();
+    </script>
+    <script src="https://tapi.bale.ai/miniapp.js" async></script>
+    <script src="https://telegram.org/js/telegram-web-app.js" async></script>
+    <script type="module" crossorigin src="./assets/index-De8yYiUf.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BZfpxwCK.css">
+      <style>@font-face{font-family:'Vazirmatn';font-weight:400;font-display:swap;src:url('./fonts/Vazirmatn-Regular.ttf') format('truetype')}@font-face{font-family:'Vazirmatn';font-weight:500;font-display:swap;src:url('./fonts/Vazirmatn-Medium.ttf') format('truetype')}@font-face{font-family:'Vazirmatn';font-weight:600;font-display:swap;src:url('./fonts/Vazirmatn-SemiBold.ttf') format('truetype')}@font-face{font-family:'Vazirmatn';font-weight:700;font-display:swap;src:url('./fonts/Vazirmatn-Bold.ttf') format('truetype')}@font-face{font-family:'Vazirmatn';font-weight:800;font-display:swap;src:url('./fonts/Vazirmatn-Bold.ttf') format('truetype')}[aria-label="نوار پیش‌نمایش سریع صفحات"]{display:none!important}</style>
+  </head>
+  <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased selection:bg-sky-500 selection:text-white">
+    <div id="root"></div>
+  </body>
+</html>
+

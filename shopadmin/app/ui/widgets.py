@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
+    QTreeWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -820,38 +821,13 @@ class BidiDelegate(QStyledItemDelegate):
             option.direction = Qt.LayoutDirection.LeftToRight
 
 
-class _FrameCorners(QWidget):
-    """v2.18.0: a table's header and rows are square child widgets that paint over the rounded
-    frame. This cuts the view to the card's radius (the page shows through the corners, whatever
-    is behind it) and draws the frame's line again on top, smooth, over the cut edge."""
+class _FrameLine(QWidget):
+    """The frame's line again, smooth, over the cut edge of a rounded view."""
 
     def __init__(self, view: QWidget) -> None:
         super().__init__(view)
-        self._view = view
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        self._size = QSize()
-        view.installEventFilter(self)
-
-    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt naming
-        # only a real change of size: this filter runs for every event of the view, and
-        # changing geometry here starts more events through the app-wide filters
-        try:
-            if watched is self._view and event.type() == QEvent.Type.Resize \
-                    and self._view.size() != self._size:
-                self._fit()
-        except (RuntimeError, AttributeError):   # the view is going away
-            pass
-        return False
-
-    def _fit(self) -> None:
-        self._size = self._view.size()
-        rect = self._view.rect()
-        self.setGeometry(rect)
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(rect), theme.RADIUS_LG, theme.RADIUS_LG)
-        self._view.setMask(QRegion(path.toFillPolygon().toPolygon()))
-        self.raise_()
 
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt naming
         painter = QPainter(self)
@@ -862,13 +838,39 @@ class _FrameCorners(QWidget):
                                 theme.RADIUS_LG, theme.RADIUS_LG)
 
 
-def round_view_corners(view: QWidget) -> QWidget:
-    """Every table and tree: rounded top corners with the header inside the frame."""
-    _FrameCorners(view)
-    return view
+class _RoundedFrame:
+    """v2.18.0: a table's header and rows are square child widgets that paint over the rounded
+    frame. A resize cuts the view to the card's radius (the page shows through the corners,
+    whatever is behind it). In the view's own ``resizeEvent``: a Python event filter runs for
+    every event of every table and crashed the garbage collector while views were closing."""
+
+    _frame_line: QWidget | None = None
+
+    def _fit_frame(self) -> None:
+        rect = self.rect()
+        if self._frame_line is None:
+            self._frame_line = _FrameLine(self)
+            self._frame_line.show()
+        self._frame_line.setGeometry(rect)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(rect), theme.RADIUS_LG, theme.RADIUS_LG)
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+        self._frame_line.raise_()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().resizeEvent(event)
+        self._fit_frame()
 
 
-class DataTable(QTableWidget):
+class RoundTable(_RoundedFrame, QTableWidget):
+    """A plain table with the card's rounded frame."""
+
+
+class RoundTree(_RoundedFrame, QTreeWidget):
+    """A tree with the card's rounded frame."""
+
+
+class DataTable(_RoundedFrame, QTableWidget):
     """A read-only table that knows how to show loading and empty states."""
 
     row_activated = Signal(int)
@@ -945,7 +947,6 @@ class DataTable(QTableWidget):
         self._header_floor = [self.header_width(text) for text in self._headers]
         self._apply_widths(self._header_floor)
         self._restore_widths()
-        round_view_corners(self)
 
         self._empty_title = "موردی برای نمایش وجود ندارد"
         self._empty_hint = ""
@@ -1170,23 +1171,26 @@ class DataTable(QTableWidget):
     _checks = False
     CHECK_COLUMN_WIDTH = 46
 
-    def enable_checks(self) -> None:
+    def enable_checks(self, *, keep_text: bool = False) -> None:
         """Column 0 becomes a check box per row (its header text is left empty by
-        the caller): ``set_check`` fills it, ``checked_keys`` reads it. Only for
-        lists where a bulk action is safe (never accounting data, orders or customers)."""
+        the caller, or it keeps its text with ``set_check(..., keep_text=True)``):
+        ``set_check`` fills it, ``checked_keys`` reads it. Only for lists where a bulk
+        action is safe (v2.18.0: finished orders, proxies)."""
         if self._checks:
             return
         self._checks = True
         self._keep = self._keep | {0}
         self.itemChanged.connect(self._check_item_changed)
-        self.horizontalHeader().resizeSection(0, self.CHECK_COLUMN_WIDTH)
+        if not keep_text:           # a column with its own title stays as wide as the title
+            self.horizontalHeader().resizeSection(0, self.CHECK_COLUMN_WIDTH)
 
-    def set_check(self, row: int, checked: bool = False) -> None:
+    def set_check(self, row: int, checked: bool = False, *, keep_text: bool = False) -> None:
         item = self.item(row, 0)
         if item is None:
             item = QTableWidgetItem("")
             self.setItem(row, 0, item)
-        item.setText("")
+        if not keep_text:
+            item.setText("")
         item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
                       | Qt.ItemFlag.ItemIsUserCheckable)
         item.setToolTip("انتخاب برای کار گروهی")

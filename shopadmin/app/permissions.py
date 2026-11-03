@@ -56,6 +56,13 @@ STAFF_ALERTS_VIEW = "staff_alerts.view"
 STAFF_ALERTS_EDIT = "staff_alerts.edit"
 AUTO_INVOICE_VIEW = "auto_invoice.view"
 AUTO_INVOICE_EDIT = "auto_invoice.edit"
+AUTO_QUOTE_VIEW = "auto_quote.view"
+AUTO_QUOTE_EDIT = "auto_quote.edit"
+PRODUCT_ALIAS = "product_alias.edit"
+FAQ_VIEW = "faq.view"
+FAQ_EDIT = "faq.edit"
+STAFF_CHAT_VIEW = "staff_chat.view"
+STAFF_CHAT_SEND = "staff_chat.edit"
 OWN_PREFS = "own_prefs.edit"             # own notification sound / look
 PRODUCTS_VIEW = "products.view"
 REPORTS_VIEW = "reports.view"
@@ -114,6 +121,10 @@ ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("staff_alerts", "اعلان کارکنان (دیدن = دریافت در بله/تلگرام، تغییر = روشن و خاموش)",
      True, True),
     ("auto_invoice", "صدور خودکار فاکتور", True, True),
+    ("auto_quote", "پاسخ خودکار قیمت کالای غیرموجود (و گزارش آن)", True, True),
+    ("product_alias", "یاد دادن نام کالا به ربات", False, True),
+    ("faq", "پاسخ‌گوی خودکار ربات", True, True),
+    ("staff_chat", "گفت‌وگوی همکاران (دیدن = خواندن، تغییر = فرستادن)", True, True),
     ("app_settings", "تنظیمات برنامه (همین رایانه)", True, True),
     ("own_prefs", "اعلان‌ها و ظاهرِ خودم", False, True),
 )
@@ -187,6 +198,13 @@ SERVER_TO_CLIENT: dict[str, frozenset[str]] = {
     "staff_alerts.edit": frozenset({STAFF_ALERTS_EDIT}),
     "auto_invoice.view": frozenset({AUTO_INVOICE_VIEW, SHOP_RULES_VIEW}),
     "auto_invoice.edit": frozenset({AUTO_INVOICE_EDIT}),
+    "auto_quote.view": frozenset({AUTO_QUOTE_VIEW, SHOP_RULES_VIEW}),
+    "auto_quote.edit": frozenset({AUTO_QUOTE_EDIT}),
+    "product_alias.edit": frozenset({PRODUCT_ALIAS}),
+    "faq.view": frozenset({FAQ_VIEW, SHOP_RULES_VIEW}),
+    "faq.edit": frozenset({FAQ_EDIT}),
+    "staff_chat.view": frozenset({STAFF_CHAT_VIEW}),
+    "staff_chat.edit": frozenset({STAFF_CHAT_SEND}),
     "app_settings.view": frozenset({SETTINGS_VIEW}),
     "app_settings.edit": frozenset({SETTINGS_EDIT_GENERAL, SETTINGS_VIEW_LOG}),
     "own_prefs.edit": frozenset({OWN_PREFS}),

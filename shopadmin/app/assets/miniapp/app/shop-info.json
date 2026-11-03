@@ -1,0 +1,38 @@
+{
+  "shop_name": "عصر ارتباطات ۲",
+  "badge_text": "مینی‌اپ ربات",
+  "header_subtitle": "ویترین هوشمند استعلام قیمت · مشهد",
+  "search_placeholder": "نام گوشی یا کد مدل (مثلاً: ایفون17 یا s26)...",
+  "hero_bento": {
+    "tag": "استودیو رنگ زنده",
+    "title": "رنگ دلخواهت رو لمس کن و قیمتش رو از ربات بپرس!",
+    "footer_text": "۳۵ مدل آماده استعلام",
+    "image": "./images/xm15u-silver-chrome.jpg",
+    "side_card_1_title": "پاسخ فوری در ربات",
+    "side_card_1_subtitle": "ارسال خودکار کد و رنگ",
+    "side_card_2_title": "تحویل در مشهد",
+    "side_card_2_subtitle": "عصر ارتباطات ۲"
+  },
+  "installment_banner": "فروش اقساطی · ضمانت اصالت کالا · تحویل سریع در مشهد",
+  "about_us": "فروشگاه موبایل و لوازم جانبی عصر ارتباطات ۲ — مدیریت: مهدی خانی",
+  "address": "مشهد، ۱۷ شهریور، ابتدای کوچه آیتا... صدوقی (چهنو)، سومین فروشگاه سمت راست",
+  "phone": "09155000432",
+  "phone_display": "۰۹۱۵۵۰۰۰۴۳۲",
+  "links": {
+    "website": {
+      "label": "وب‌سایت فروشگاه",
+      "short_label": "asrertebatat2.ir",
+      "url": "https://asrertebatat2.ir"
+    },
+    "instagram": {
+      "label": "اینستاگرام",
+      "short_label": "@asrertebatat2",
+      "url": "https://instagram.com/asrertebatat2"
+    },
+    "telegram": {
+      "label": "کانال تلگرام",
+      "short_label": "@Asrertebatat_2",
+      "url": "https://t.me/Asrertebatat_2"
+    }
+  }
+}

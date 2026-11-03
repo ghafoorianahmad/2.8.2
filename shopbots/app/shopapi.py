@@ -237,6 +237,19 @@ class ShopApiClient:
             extra_headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
         )
 
+    async def faq_answer(self, text: str) -> dict:
+        """v2.18.0: the automatic answer to a question, {} when none is confident enough."""
+        answer = await self._request("GET", "/faq/answer", key=self._settings.bot_api_key,
+                                     params={"q": text[:300]})
+        return answer if isinstance(answer, dict) else {}
+
+    async def record_auto_quote(self, platform: str, chat_id: str | int, row_key: str,
+                                query: str) -> dict | None:
+        """v2.18.0: for the report of prices the bot gave by itself."""
+        return await self._request("POST", "/auto-quotes", key=self._settings.bot_api_key,
+                                   json_body={"platform": platform, "chat_id": str(chat_id),
+                                              "row_key": row_key, "query": query})
+
     async def customer_details(self, platform: str, chat_id: str | int) -> dict | None:
         """v2.17.0: what to ask this customer, and their saved address."""
         return await self._request("GET", f"/users/{platform}/{chat_id}/details",

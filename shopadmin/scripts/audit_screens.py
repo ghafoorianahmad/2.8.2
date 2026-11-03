@@ -234,11 +234,27 @@ def _dialogs(context, fake, window) -> Iterator[tuple[str, object]]:
         yield (f"request {request['id']} {request.get('kind')}",
                lambda r=request: item_requests.ItemRequestDialog(context, r, window))
     yield "stock confirm", lambda: item_requests.StockConfirmDialog(window, fake.item_requests[0])
+    yield "teach name", lambda: item_requests.TeachNameDialog(
+        "ایفون هفده پرو مکس", ["iPhone 17 Pro Max", "iPhone 17 Pro", "Galaxy S25 Ultra"], window)
     yield "close request", lambda: item_requests.CloseRequestDialog(
         window, {"product_name": LONG_NAME})
     yield "approve customer", lambda: customers.ApproveCustomerDialog(context, fake.customers[0],
                                                                       window)
     yield "reject customer", lambda: customers.RejectCustomerDialog(window, "زهرا محمدی")
+    yield "customer details", lambda: customers.CustomerDetailsDialog(fake.customers[0], window)
+
+    def _approve_same_person():
+        dialog = customers.ApproveCustomerDialog(context, fake.customers[0], window)
+        dialog._got_candidates({"national_code": None, "candidates": [
+            {"code": 501, "name": "علی رضایی", "score": 100, "verdict": "same", "phone_tail": "47"},
+            {"code": 502, "name": "علی رضائی پور", "score": 84, "verdict": "similar"}]})
+        return dialog
+
+    yield "approve customer same person", _approve_same_person
+    yield "apply channel post", lambda: pricelist.ApplyNoteDialog(
+        {"id": 1, "text": "S25 Fe / Jet 235.000 / Navy 233.000 / Ice Blue 233.000",
+         "result": {"items": [{"price": 235000}, {"price": 233000}]}},
+        [{"row_key": "a", "description": "S25 FE 256GB", "color": "Jetblack"}], window)
     product = next(iter(fake.products.values()))
     yield "product detail", lambda: products.ProductDetailDialog(context, product, "لوازم خانگی",
                                                                  window)
