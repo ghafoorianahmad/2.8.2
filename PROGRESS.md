@@ -26,6 +26,9 @@ Phases are defined in `REQUIREMENTS.md` §14. One phase per session.
 - ربات واقعی روی shopapi واقعی از راه HTTP (حسابداری و بله جعلی): ۱۶ از ۱۶.
 - **آزموده نشده:** SQL واقعی (`add_person_phone`، `persons_for_matching`)، بله/تلگرام واقعی (`web_app_data` فقط با fake؛ دکمهٔ تلگرام با کلاس واقعی Telethon)، انتشار واقعی، نصب.
 
+### بیلد
+- از commit `f8f55bd`: `E:\Outputs\ShopSystem\` با SHA-256 برابر و ProductVersion ۲٫۱۸٫۰؛ ماژول‌های تازه و `shopapi_app/data` و ۱۰۱ فایل مینی‌اپ داخل برنامه‌ها دیده شدند. **نصب نشده.**
+
 ### تصمیم‌ها
 - نام‌های مستعار و FAQ در `shopapi/app/data/` (نه `data/` ریشه) چون در بیلد همراه کد می‌روند.
 - `?fn=&ln=&nc=&addr=` طبق خواستهٔ مالک؛ یعنی کد ملی در نشانی صفحه است و لاگ میزبان می‌تواند ببیند (در گزارش گفته شد).
