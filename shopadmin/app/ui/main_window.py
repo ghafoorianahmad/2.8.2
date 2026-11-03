@@ -27,19 +27,23 @@ from ..persian import to_persian_digits
 from ..permissions import (
     ACTIVITY_VIEW,
     ARCHIVE_VIEW,
-    CATALOG_MANAGE,
     CATALOG_VIEW,
     CUSTOMERS_VIEW,
     DASHBOARD_VIEW,
     GROUPS_VIEW,
+    HEALTH_VIEW,
     ITEM_REQUESTS_VIEW,
     ORDERS_VIEW,
+    OWN_PREFS,
     PASSWORDS_VIEW,
     PRICELIST_VIEW,
     PRODUCTS_VIEW,
     REPORTS_VIEW,
     SERVER_VIEW,
     SETTINGS_VIEW,
+    SHOP_RULES_VIEW,
+    SITE_VIEW,
+    STATUS_CODES_VIEW,
     USERS_VIEW,
 )
 from ..statuses import ROLE_SUPER_ADMIN, role_fa
@@ -60,6 +64,7 @@ from .pages.products import ProductsPage
 from .pages.reports import ReportsPage
 from .pages.server import ServerPage
 from .pages.settings import SettingsPage
+from .pages.shop_rules import ShopRulesPage
 from .pages.site import SitePage
 from .pages.users import UsersPage
 
@@ -75,16 +80,17 @@ NAV_ITEMS = (
     ("pricelist", "لیست قیمت", "receipt", PRICELIST_VIEW),
     ("catalog", "مدل‌های سایت", "link", CATALOG_VIEW),
     # v2.11.0: the site's phones / accessories, kept on this computer, published to GitHub
-    ("site", "سایت", "globe", CATALOG_MANAGE),
+    ("site", "سایت", "globe", SITE_VIEW),
     ("reports", "گزارش‌ها", "reports", REPORTS_VIEW),
     ("activity", "گزارش فعالیت", "activity", ACTIVITY_VIEW),
     # v2.8.2: this computer's settings (everyone) apart from the shop server's
     ("settings", "تنظیمات برنامه", "settings", SETTINGS_VIEW),
+    ("shop_rules", "قواعد فروشگاه", "clock", SHOP_RULES_VIEW),
     ("password_requests", "درخواست‌های گذرواژه", "key", PASSWORDS_VIEW),
     ("users", "کاربران سیستم", "users", USERS_VIEW),
     ("server", "تنظیمات سرور فروشگاه", "server", SERVER_VIEW),
     # v2.14.0: what the server found / fixed by itself / needs you
-    ("health", "سلامت سیستم", "shield", SERVER_VIEW),
+    ("health", "سلامت سیستم", "shield", HEALTH_VIEW),
 )
 
 SIDEBAR_WIDE = 232
@@ -386,6 +392,7 @@ class MainWindow(QMainWindow):
             "اعلان‌ها و ظاهر", icon_name="bell", on_click=self.edit_own_notifications,
             tooltip="صدا و اعلان ویندوز برای سفارش، رسید و درخواست تازه؛ رنگ‌بندی روشن یا تیره",
         )
+        self.notify_button.setVisible(self.context.can(OWN_PREFS))
         layout.addWidget(self.notify_button)
 
         self.logout_button = widgets.button(
@@ -449,6 +456,7 @@ class MainWindow(QMainWindow):
             "users": UsersPage,
             "server": ServerPage,
             "health": HealthPage,
+            "shop_rules": ShopRulesPage,
         }
         for key, text, _icon, permission in NAV_ITEMS:
             if not self.context.can(permission):
@@ -658,17 +666,21 @@ class MainWindow(QMainWindow):
         lead = "حالت آزمایشی — سفارش‌ها واقعاً در حسابداری ثبت نمی‌شوند" if dry_run else             "سفارش‌ها هنوز در حسابداری ثبت نمی‌شوند"
         self.banner_label.setText(lead + ": " + "؛ ".join(text for text, _a in problems) + ".")
         actions = {action for _t, action in problems}
-        can_fix = self.context.can(SERVER_VIEW)
+        allowed = {"server_settings": self.context.can(SERVER_VIEW),
+                   "status_code": self.context.can(STATUS_CODES_VIEW)}
         for action, button in self.banner_buttons.items():
-            button.setVisible(can_fix and action in actions)
+            button.setVisible(allowed.get(action, False) and action in actions)
 
     def _banner_action(self, action: str) -> None:
+        if action == "status_code":
+            self.navigate("shop_rules")
+            page = self._pages.get("shop_rules")
+            if page is not None:
+                page.focus_status_code()
+            return
         self.navigate("server")
         page = self._pages.get("server")
         if page is None:
-            return
-        if action == "status_code":
-            page.focus_setting("ACCOUNTING_STATUS_CODE")
             return
         if not page.open_server_settings():
             page.show_write_row()

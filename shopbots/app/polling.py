@@ -122,6 +122,23 @@ async def events_loop(
         await sleep(settings.events_poll_seconds)
 
 
+async def staff_alerts_loop(
+    *,
+    engine: BotEngine,
+    settings: Settings,
+    stop_event: asyncio.Event,
+    sleep: SleepFn = asyncio.sleep,
+) -> None:
+    """v2.17.0: shopapi decides what is due (working hours, repeats, summary); this
+    only delivers it to the linked staff."""
+    while not stop_event.is_set():
+        try:
+            await engine.deliver_staff_alerts()
+        except Exception as exc:
+            logger.warning("staff_alerts_error=%s", _safe_error(exc))
+        await sleep(settings.staff_alerts_seconds)
+
+
 async def admin_sweep_loop(
     *,
     engine: BotEngine,

@@ -26,9 +26,11 @@ from ...permissions import (
     ORDERS_APPROVE_PAYMENT,
     ORDERS_ASSIGN,
     ORDERS_CANCEL,
+    ORDERS_CLAIM,
     ORDERS_PAYMENT_INFO,
     ORDERS_REJECT_PAYMENT,
     ORDERS_SHIP,
+    ORDERS_WRITE_ACCOUNTING,
     SERVER_VIEW,
 )
 from ...persian import (
@@ -49,6 +51,7 @@ from ...statuses import (
     ORDER_REJECTED,
     ORDER_WRITTEN,
     order_status_fa,
+    sazeh_stage_fa,
 )
 from .. import theme, widgets
 from ..async_utils import run_async
@@ -57,8 +60,14 @@ from ..context import AppContext
 from ..rtl import RIGHT, mark_ltr
 
 HEADERS = ("شماره سفارش", "نام مشتری", "تعداد اقلام", "مبلغ کل", "وضعیت", "مسئول",
-           "مهلت ارسال رسید", "تاریخ ثبت")
+           "مهلت ارسال رسید", "تاریخ ثبت", "مرحله در «سازه حساب»")
 
+#: v2.17.0: «تأیید رسید» while no valid order status code is set.
+NO_STATUS_CODE_WARNING = ("«کد وضعیت سفارش» تنظیم نشده است، پس این سفارش در «سازه حساب» ثبت "
+                          "نمی‌شود. رسید تأیید می‌شود و بعداً با دکمهٔ «ثبت در حسابداری» ثبتش کنید.")
+NOT_WRITTEN_WARNING = ("رسید تأیید شد و به مشتری خبر داده می‌شود، ولی سفارش در «سازه حساب» ثبت نشد "
+                       "چون «کد وضعیت سفارش» تنظیم نشده است. پس از تنظیم آن در «قواعد فروشگاه»، "
+                       "در همین سفارش «ثبت در حسابداری» را بزنید.")
 #: v2.8.0: a receipt waiting longer than this is highlighted (and counted).
 WAITING_MINUTES = 10
 WAITING_STATUSES = ("receipt_uploaded",)
@@ -283,6 +292,10 @@ class OrdersPage(BasePage):
                                     bold=bool(order.get("owned_by_me")))
                 self.table.set_cell(row, 6, format_shamsi(order.get("reserve_until")) if order.get("reserve_until") else "—")
                 self.table.set_cell(row, 7, format_shamsi(order.get("created_at")))
+                self.table.set_cell(row, 8, sazeh_stage_fa(order),
+                                    bold=bool(order.get("accounting_pending")),
+                                    color=theme.WARNING_TEXT if order.get("accounting_pending")
+                                    else None)
                 if needs_payment_info(order) and (order.get("owned_by_me")
                                                   or not order.get("owned")):
                     # v2.8.3: the whole row stands out until the details are sent
@@ -310,6 +323,9 @@ class OrdersPage(BasePage):
         if info_count:
             notes.append(f"💳 {to_persian_digits(info_count)} سفارش منتظر «ارسال اطلاعات "
                          "پرداخت» است")
+        waiting_write = sum(1 for order in rows if order.get("accounting_pending"))
+        if waiting_write:
+            notes.append(f"⚠ {to_persian_digits(waiting_write)} سفارش منتظر «ثبت در حسابداری» است")
         self.waiting_label.setText(" — ".join(notes))
         self.waiting_label.setVisible(bool(notes))
 
@@ -412,6 +428,8 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
             phone_row.addStretch(1)
             left.add_widget("موبایل مشتری", phone_holder)
         left.add("مسئول", owner_label(order))
+        # v2.17.0: for staff and the courier
+        left.add("آدرس ارسال", str(order.get("ship_address") or "—"))
         code = order.get("user_person_code")
         left.add("کد شخص در حسابداری",
                  to_persian_digits(code) if code is not None else "هنوز وصل نشده")
@@ -432,6 +450,9 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         right.add("شمارهٔ حسابداری", to_persian_digits(order.get("accounting_order_no"))
                   if order.get("accounting_order_no") else "—")
         right.add("پیگیری", tracking_fa(order))
+        right.add("مرحله در «سازه حساب»", sazeh_stage_fa(order))
+        if order.get("payer_name"):
+            right.add("نام واریزکننده", str(order["payer_name"]))
         if order.get("courier_name") or order.get("courier_phone"):
             right.add("پیک", courier_text(order))
         grid.addWidget(right, 2, Qt.AlignmentFlag.AlignTop)
@@ -562,10 +583,21 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         elif not cancellable:
             self.cancel_button.setToolTip("سفارشِ تأییدشده یا ثبت‌شده لغو نمی‌شود")
 
-        # v2.8.2: no «برمی‌دارم»: the first action (payment details, receipt decision,
-        # ship, cancel) takes the order. «ارجاع» (manager, «ارجاع کار به همکار» or the
-        # owner); a finished order is read-only for everyone
+        # The first action (payment details, receipt decision, ship, cancel) takes the
+        # order; v2.17.0: «برداشت» takes it without doing anything else, and stops the
+        # repeats to staff. «ارجاع» (manager, «ارجاع کار به همکار» or the owner); a
+        # finished order is read-only for everyone
         finished = bool(order.get("finished") or order.get("archived"))
+        self.claim_button = widgets.button("برداشت", icon_name="check", on_click=self._claim,
+                                           tooltip="این سفارش مال شما می‌شود و تکرار اعلان "
+                                                   "برای همکاران تمام می‌شود")
+        self.claim_button.setVisible(not finished and not order.get("owned")
+                                     and context.can(ORDERS_CLAIM))
+        # v2.17.0: the receipt was accepted while no valid status code was set
+        self.write_button = widgets.button("ثبت در حسابداری", variant="primary", icon_name="save",
+                                           on_click=self._write_accounting)
+        self.write_button.setVisible(bool(order.get("accounting_pending"))
+                                     and context.can(ORDERS_WRITE_ACCOUNTING))
         self.payment_button = widgets.button(
             "ارسال اطلاعات پرداخت", variant="success", icon_name="check",
             on_click=self._send_payment_info,
@@ -587,7 +619,8 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
                 "این سفارش تمام شده و فقط‌خواندنی است. هر تغییری فقط در «سازه حساب» انجام می‌شود.",
                 name="Muted", wrap=True))
         for widget in (self.payment_button, self.approve_button, self.reject_button,
-                       self.ship_button, self.cancel_button, self.assign_button, close):
+                       self.ship_button, self.cancel_button, self.assign_button,
+                       self.claim_button, self.write_button, close):
             widget.setProperty("big", True)
         # v2.9.3: a tidy footer: what moves the order on (prominent) on the right, the
         # other actions after it, «بستن» last; hidden, not disabled, when this account
@@ -604,9 +637,9 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         self._detail_label.setVisible(False)
         root.addWidget(self._detail_label)
         # the footer is the last row: it stays visible and wraps on a narrow window
-        root.addLayout(widgets.footer(self.payment_button, self.approve_button,
-                                      self.reject_button, self.ship_button, self.cancel_button,
-                                      self.assign_button, close=close))
+        root.addLayout(widgets.footer(self.write_button, self.claim_button, self.payment_button,
+                                      self.approve_button, self.reject_button, self.ship_button,
+                                      self.cancel_button, self.assign_button, close=close))
 
     # ---- helpers ---------------------------------------------------------
     @staticmethod
@@ -647,6 +680,22 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         if send_payment_info(self, self.context, self.order):
             self._changed_and_close()
 
+    def _claim(self) -> None:
+        order_id = int(self.order["id"])
+        self.claim_button.setEnabled(False)
+        run_async(lambda: self.context.api.claim_order(order_id),
+                  on_success=lambda _r: self._changed_and_close(),
+                  on_error=lambda message, kind: (self.claim_button.setEnabled(True),
+                                                  self._failed(message, kind)))
+
+    def _write_accounting(self) -> None:
+        order_id = int(self.order["id"])
+        self.write_button.setEnabled(False)
+        run_async(lambda: self.context.api.write_accounting(order_id),
+                  on_success=lambda _r: self._changed_and_close(),
+                  on_error=lambda message, kind: (self.write_button.setEnabled(True),
+                                                  self._failed(message, kind)))
+
     def _assign(self) -> None:
         dialog = AssignDialog(self.context, self, f"سفارش {to_persian_digits(self.order['id'])}")
         if dialog.exec() != QDialog.DialogCode.Accepted or dialog.staff_id is None:
@@ -666,11 +715,25 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
     # ---- actions ---------------------------------------------------------
     def _approve(self) -> None:
         order_id = int(self.order["id"])
+        payer: dict = {}
+        if self.order.get("first_receipt"):
+            # v2.17.0: the customer's first receipt: compare the names once. It never
+            # blocks: «یکی نیست» only asks whether to record the other name.
+            dialog = FirstReceiptDialog(self, registered_name(self.order))
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            payer = {"payer_checked": True, "record_payer": dialog.record_payer,
+                     "payer_name": dialog.payer_name}
+        # v2.17.0: without a valid status code nothing is written; say so first
+        no_code = self.context.system_info.write_mode_known \
+            and not self.context.system_info.status_code_configured
         if not widgets.confirm(
             self, "تأیید رسید",
             f"رسید سفارش {to_persian_digits(order_id)} درست است و مبلغ واریز شده؟\n"
             "با تأیید، سفارش برای فروش ثبت می‌شود و به مشتری خبر داده می‌شود.",
             confirm_text="بله، تأیید کن",
+            kind="warning" if no_code else "question",
+            detail=NO_STATUS_CODE_WARNING if no_code else "",
         ):
             return
         self.approve_button.setEnabled(False)
@@ -681,7 +744,7 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
             self.approve_button.setEnabled(True)
 
         run_async(
-            lambda: self.context.api.approve_payment(order_id),
+            lambda: self.context.api.approve_payment(order_id, **payer),
             on_success=self._approved,
             on_error=lambda message, kind: (restore(), self._failed(message, kind)),
         )
@@ -691,7 +754,10 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
         self.changed = True
         self.context.audit("approve_payment", f"order id={self.order.get('id')}")
         self.context.data_changed.emit()
-        if written:
+        if isinstance(result, dict) and result.get("accounting_pending"):
+            widgets.info(self, "در «سازه حساب» ثبت نشد", NOT_WRITTEN_WARNING, kind="warning")
+            self.accept()
+        elif written:
             self.accept()
         else:
             # shopapi answered 200 but did not commit (dry-run): never claim success.
@@ -803,6 +869,79 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
 
 
 #: Paid orders that may be marked as shipped (server: SHIPPABLE_STATUSES).
+def registered_name(order: dict) -> str:
+    """The name in «سازه حساب» when known, else the customer's name with us."""
+    return str(order.get("person_name") or order.get("user_name") or "—")
+
+
+class FirstReceiptDialog(widgets.ResponsiveDialog):
+    """v2.17.0 first «تأیید رسید»: the registered name next to «نام واریزکننده». Nothing
+    is blocked; only «یکی نیست» asks «نام واریزکننده ثبت شود یا همان نام بماند؟»."""
+
+    def __init__(self, parent: QWidget | None, registered: str) -> None:
+        super().__init__(parent)
+        self.registered = registered
+        self.record_payer = False
+        self.payer_name = ""
+        self.setWindowTitle("اولین رسید این مشتری")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumWidth(460)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(12)
+        root.addWidget(widgets.label("اولین رسید این مشتری", size=14, bold=True))
+        root.addWidget(widgets.label("نام روی رسید را با نام ثبت‌شده مقایسه کنید.",
+                                     name="Muted", wrap=True))
+        form = QFormLayout()
+        form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
+        form.addRow(widgets.label("نام ثبت‌شده:"), widgets.label(registered, bold=True, wrap=True))
+        self.payer_input = QLineEdit()
+        self.payer_input.setMaxLength(100)
+        self.payer_input.setPlaceholderText("نام روی رسید")
+        form.addRow(widgets.label("نام واریزکننده:"), self.payer_input)
+        root.addLayout(form)
+        # the second question, only after «یکی نیست»
+        self.question = widgets.label("نام واریزکننده ثبت شود یا همان نام بماند؟", bold=True,
+                                      wrap=True)
+        self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
+        self.error_label.setVisible(False)
+        root.addWidget(self.question)
+        root.addWidget(self.error_label)
+        self.same_button = widgets.button("یکی است", variant="success", icon_name="check",
+                                          on_click=self._same)
+        self.different_button = widgets.button("یکی نیست", on_click=self._different)
+        self.record_button = widgets.button("نام واریزکننده ثبت شود", variant="primary",
+                                            on_click=self._record)
+        self.keep_button = widgets.button("همان نام بماند", on_click=self._same)
+        root.addLayout(widgets.footer(self.same_button, self.different_button, self.record_button,
+                                      self.keep_button,
+                                      close=widgets.button("انصراف", on_click=self.reject)))
+        self._second_step(False)
+
+    def _second_step(self, on: bool) -> None:
+        self.question.setVisible(on)
+        self.same_button.setVisible(not on)
+        self.different_button.setVisible(not on)
+        self.record_button.setVisible(on)
+        self.keep_button.setVisible(on)
+
+    def _same(self) -> None:
+        self.accept()
+
+    def _different(self) -> None:
+        self._second_step(True)
+
+    def _record(self) -> None:
+        name = " ".join(self.payer_input.text().split())
+        if not name:
+            self.error_label.setText("نام واریزکننده را بنویسید.")
+            self.error_label.setVisible(True)
+            return
+        self.record_payer = True
+        self.payer_name = name
+        self.accept()
+
+
 SHIPPABLE = (ORDER_APPROVED, ORDER_WRITTEN)
 #: v2.7.0: orders staff may cancel (server: STAFF_CANCELLABLE).
 CANCELLABLE = (ORDER_AWAITING_PAYMENT, ORDER_RECEIPT_UPLOADED)

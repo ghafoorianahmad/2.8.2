@@ -67,6 +67,29 @@ class UserOut(BaseModel):
     status: str
     person_code: Optional[int] = None
     created_at: str
+    #: v2.17.0: what the customer told the bot (staff use them to create the person)
+    first_name: str = ""
+    last_name: str = ""
+    national_code: str = ""
+    address: str = ""
+    #: Not in «سازه حساب» yet (writes off, accounting down, the grants not run)
+    details_sync: bool = False
+    payer_name: str = ""
+
+
+class CustomerDetailsIn(BaseModel):
+    first_name: Optional[str] = Field(None, max_length=100)
+    last_name: Optional[str] = Field(None, max_length=100)
+    national_code: Optional[str] = Field(None, max_length=30)
+    address: Optional[str] = Field(None, max_length=1000)
+    #: The bot finished asking (answered or «فعلاً نه»): it does not ask again.
+    finished: bool = False
+
+
+class OrderAddressIn(BaseModel):
+    platform: Platform
+    chat_id: str = Field(min_length=1)
+    address: str = Field(max_length=1000)
 
 
 class PersonMatch(BaseModel):
@@ -87,6 +110,8 @@ class OrderCreate(BaseModel):
     platform: Platform
     chat_id: str = Field(min_length=1)
     items: list[OrderItemIn] = Field(min_length=1, max_length=100)
+    #: v2.17.0: where it goes (text only)
+    ship_address: Optional[str] = Field(None, max_length=1000)
 
 
 class OrderItemOut(BaseModel):
@@ -138,6 +163,10 @@ class OrderOut(BaseModel):
     has_receipt: bool = False
     #: v2.17.0: payment accepted but not written to «سازه حساب» (no valid status code)
     accounting_pending: bool = False
+    #: v2.17.0: where it goes; this customer's first «تأیید رسید»; the name on the receipt
+    ship_address: str = ""
+    first_receipt: bool = False
+    payer_name: str = ""
     #: v2.17.0 (staff): the stage read from KalaOrder / facto (tracking.STAGE_*) and its Status
     sazeh_stage: Optional[str] = None
     sazeh_status: Optional[int] = None
@@ -175,6 +204,15 @@ class ApproveUserIn(BaseModel):
     #: Name for the new person - staff correct the Bale profile name here.
     first_name: Optional[str] = Field(None, max_length=50)
     last_name: Optional[str] = Field(None, max_length=50)
+
+
+class ApprovePaymentIn(BaseModel):
+    """v2.17.0: the customer's first «تأیید رسید» in ShopAdmin: the name on the receipt
+    is compared with the registered one. Nothing here ever blocks the approval."""
+    payer_checked: bool = False
+    #: «یکی نیست» + «نام واریزکننده ثبت شود»
+    record_payer: bool = False
+    payer_name: str = Field("", max_length=100)
 
 
 class ShopStateIn(BaseModel):

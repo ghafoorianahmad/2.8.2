@@ -73,7 +73,8 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 - Sales windows (Asia/Tehran): a list posted before 13:30 opens sales until 13:30; before 20:30 until 20:30; otherwise closed; Fridays closed. While closed the bot shows the last prices + «لیست به‌روز نشده، فروش بسته است» and refuses orders.
 - **Scope (user, 2026-10-14): the closed state (windows, Friday, «تعطیلی امروز», «بستن فروش») blocks ONLY phones** (items priced from the Telegram list). Accessories and other accounting-priced items stay orderable at all times; a cart with a phone is refused as a whole until the phone is removed.
 - ShopAdmin buttons (stored on the server, audited, one event each): «تعطیلی امروز» (closed until next morning), «بستن فروش» (now, until the next list or «باز کردن»), «باز کردن فروش» (until the next transition: a new list or the next closing time; can be closed any time).
-- `KalaOrder.Status` = `ACCOUNTING_STATUS_CODE`, no default (6808 is invalid; value from GUI test G2). Unset = nothing committed. Production writes stay disabled by default.
+- v2.17.0: working days default Saturday-Thursday; a payer name stays in the shop's own data; a staff chat creates no customer account; the address goes to `name_mo.Addres2`; a person's fields are only ever filled when empty.
+- `KalaOrder.Status` = `ACCOUNTING_STATUS_CODE`, no default, above zero (v2.17.0: production «تایید» = 6808). Unset = nothing committed. Production writes stay disabled by default.
 - Every order stores the accounting DB name; invoices are only looked up in that DB.
 - After the insert (in the transaction and again after COMMIT) the Codlp is checked for duplicates; a duplicate alerts the admin (nothing deleted).
 - SQL errors (18456, 4060, 53, IM002, …) are explained in Persian (`shopapi/app/sql_errors.py`).
@@ -88,7 +89,7 @@ Work on the TEST DB (`.\SQLEXPRESS`, `hesab5`) and a separate Bale TEST bot toke
 - **«درخواست کالای ناموجود»** (menu button): the customer types an item, picks a match or submits the text. No order, no payment, nothing written to Sazeh. Event `item_request` → ShopAdmin toast + «درخواست کالا» page + admin chats. Max 10 per customer per day.
 - **Statement = one A4 PDF** (RTL, Vazirmatn, Jalali dates): header (logo, shop name, customer name + code, date range, print date), table (date, description, debit, credit, running balance + side), totals and final balance in bold. Rendered by the headless Edge/Chromium the cards use; without a browser the paged text statement is the fallback.
 - The customer's **Sazeh name** (`name_mo.fname` + `Name`) is read for linked customers only: ShopAdmin order dialog («نام (کد شخص N)») and the customer's own PDF. Needs the column grant in `grant_shop_app.sql`; without it the registration name is shown.
-- `ACCOUNTING_STATUS_CODE` is editable from ShopAdmin's server settings (super admin), same rule (required, whole number, not 6808).
+- `ACCOUNTING_STATUS_CODE` is editable from ShopAdmin (v2.17.0: «قواعد فروشگاه», its own tick), same rule (required, a whole number above zero).
 - Rate limits: button taps have their own limit (`RATE_LIMIT_CALLBACKS`, 120/min), messages 20/min, one warning per window, `/start` is never limited.
 
 ## 7c. v2.9.0 (decision 2026-10-21; supersedes the login script and the weekly proxy collection of §5–6)

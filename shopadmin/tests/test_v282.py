@@ -134,14 +134,14 @@ def test_payment_button_sends_after_confirmation(ui_context, fake_api, admin_qap
 
 
 # ---- 3: two settings pages ----------------------------------------------------------------------
-def test_program_settings_for_everyone_server_settings_by_permission(ui_context, admin_qapp):
+def test_program_settings_and_server_settings_by_permission(ui_context, admin_qapp):
     from app.ui.main_window import NAV_ITEMS, MainWindow
 
     labels = {key: text for key, text, _i, _p in NAV_ITEMS}
     assert labels["settings"] == "تنظیمات برنامه"
     assert labels["server"] == "تنظیمات سرور فروشگاه"
     window = MainWindow(make_context_with_role(ui_context, ROLE_OPERATOR))
-    assert "settings" in window._nav_buttons and "server" not in window._nav_buttons
+    assert "settings" not in window._nav_buttons and "server" not in window._nav_buttons
     window.close()
     context = make_context_with_role(ui_context, ROLE_OPERATOR)
     context.principal = replace(context.principal, permissions=perms.client_permissions(
@@ -221,11 +221,11 @@ def test_text_fit_audit_script_exists():
 
 
 # ---- 8: no «برمی‌دارم» -----------------------------------------------------------------------------
-def test_no_take_button_anywhere():
+def test_the_old_take_button_text_is_gone():
+    """v2.17.0: the button is called «برداشت» now."""
     for path in (ROOT / "app").rglob("*.py"):
         text = path.read_text(encoding="utf-8")
-        assert "برمی‌دارم" not in text.replace("# v2.8.2: no «برمی‌دارم»", ""), path.name
-        assert "claim_order(" not in text and "claim_item_request(" not in text
+        assert "برمی‌دارم" not in text, path.name
 
 
 def test_taken_by_a_colleague_is_explained():
@@ -239,14 +239,15 @@ def test_taken_by_a_colleague_is_explained():
 def test_sections_match_the_server():
     server = (ROOT.parent / "shopapi" / "app" / "staff.py").read_text(encoding="utf-8")
     for key, label, view, edit in perms.SECTIONS:
-        assert re.search(rf'\("{key}", "{re.escape(label)}", {view}, {edit}\)', server), key
+        assert re.search(rf'\("{key}", "{re.escape(label)}",\s*{view}, {edit}\)', server), key
 
 
 def test_section_names_unlock_the_screens():
     granted = perms.client_permissions(["requests.view"])
     assert perms.ITEM_REQUESTS_VIEW in granted and perms.ITEM_REQUESTS not in granted
-    granted = perms.client_permissions(["orders.view", "orders.edit"])
+    granted = perms.client_permissions(["orders.view", "payinfo.edit", "ship.edit", "cancel.edit"])
     assert {perms.ORDERS_PAYMENT_INFO, perms.ORDERS_SHIP, perms.ORDERS_CANCEL} <= granted
+    assert perms.ORDERS_APPROVE_PAYMENT not in granted          # v2.17.0: its own tick
     assert perms.with_implied({"groups.edit"}) == {"groups.edit", "groups.view"}
     # a not-yet-updated server's names still work
     assert perms.SHOP_STATE in perms.client_permissions(["shop.state"])

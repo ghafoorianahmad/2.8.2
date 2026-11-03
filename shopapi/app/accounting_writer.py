@@ -145,6 +145,21 @@ class PersonResult:
     rolled_back: bool = False
 
 
+@dataclass
+class PersonFill:
+    """v2.17.0: what ``fill_person_empty`` did; ``filled`` = the columns really written."""
+    person_code: int
+    filled: list = field(default_factory=list)
+    committed: bool = False
+
+
+#: v2.17.0: our field -> the column of name_mo that holds it (recipe §5.1). The address
+#: is written to Addres2 (the software's own column) and counts as present when either
+#: Addres or Addres2 holds something.
+PERSON_FILL_COLUMNS = {"first_name": "fname", "last_name": "Name",
+                       "national_code": "Codemelli", "address": "Addres2"}
+
+
 class AccountingWriter:
     def __init__(self, settings: Settings, connection_factory=None):
         self.settings = settings
@@ -229,6 +244,7 @@ class AccountingWriter:
         mobile: str,
         address: str = "",
         dry_run: bool | None = None,
+        national_code: str = "",
     ) -> PersonResult:
         """Create a customer per recipe §5.1 - unless the mobile already exists.
 
@@ -253,7 +269,8 @@ class AccountingWriter:
             conn.execute("SET LOCK_TIMEOUT 5000")
             try:
                 return self._create_person(
-                    conn, first_name, last_name, phone, key, address or "", dry_run
+                    conn, first_name, last_name, phone, key, address or "", dry_run,
+                    national_code or "",
                 )
             except Exception:
                 conn.rollback()
@@ -263,7 +280,7 @@ class AccountingWriter:
 
     def _create_person(
         self, conn, first_name: str, last_name: str, phone: str, key: str,
-        address: str, dry_run: bool,
+        address: str, dry_run: bool, national_code: str = "",
     ) -> PersonResult:
         db = self._db()
         take_applock(conn, PERSON_LOCK)
@@ -297,7 +314,8 @@ class AccountingWriter:
             "    /  /   ", 0, 0, 0, 0,
             0, 0, 0,
             0, 0, 0, phone,
-        ) + ("",) * len(PERSON_EMPTY_TEXT_COLUMNS)
+        ) + tuple(national_code if column == "Codemelli" else ""
+                  for column in PERSON_EMPTY_TEXT_COLUMNS)
         sql, params = insert_statement(f"{db}.dbo.name_mo", columns, values)
         conn.execute(sql, *params)
 
@@ -322,6 +340,57 @@ class AccountingWriter:
 
         conn.commit()
         return PersonResult(person_code=code, taf_code=taf, committed=True)
+
+    def fill_person_empty(self, person_code: int, values: dict,
+                          dry_run: bool | None = None) -> PersonFill:
+        """v2.17.0: write ``values`` ({our field: text}) into the person's EMPTY fields;
+        never overwrites: the condition is in each UPDATE, so a value someone typed in
+        the software a moment ago stays. A dry run sends no UPDATE. Text is cut to the
+        column's size; a column whose size is unknown is left alone."""
+        dry_run = self._resolve_dry_run(dry_run)
+        result = PersonFill(person_code=int(person_code))
+        wanted = {PERSON_FILL_COLUMNS[f]: str(v).strip() for f, v in values.items()
+                  if f in PERSON_FILL_COLUMNS and str(v or "").strip()}
+        if dry_run or not wanted:
+            return result
+        db = self._db()
+        conn = self.connection()
+        try:
+            conn.autocommit = False
+            conn.execute("SET LOCK_TIMEOUT 5000")
+            try:
+                take_applock(conn, PERSON_LOCK)
+                sizes = self._person_column_sizes(conn, list(wanted))
+                for column, text in wanted.items():
+                    size = sizes.get(column)
+                    if size is None:
+                        continue
+                    empty = f"LTRIM(RTRIM(ISNULL({column}, ''))) = ''"
+                    if column == "Addres2":
+                        empty += " AND LTRIM(RTRIM(ISNULL(Addres, ''))) = ''"
+                    cursor = conn.execute(
+                        f"UPDATE {db}.dbo.name_mo SET {column} = ? WHERE Code = ? AND {empty}",
+                        text[:size] if size > 0 else text, int(person_code))
+                    if getattr(cursor, "rowcount", 0) > 0:
+                        result.filled.append(column)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        finally:
+            conn.close()
+        result.committed = True
+        return result
+
+    def _person_column_sizes(self, conn, columns: list[str]) -> dict[str, int]:
+        """{column: characters} of name_mo; 0 = no limit (varchar(max))."""
+        marks = ",".join("?" for _ in columns)
+        rows = conn.execute(
+            "SELECT COLUMN_NAME, CHARACTER_MAXIMUM_LENGTH FROM "
+            f"{self._db()}.INFORMATION_SCHEMA.COLUMNS "
+            f"WHERE TABLE_NAME = 'name_mo' AND COLUMN_NAME IN ({marks})", *columns,
+        ).fetchall()
+        return {str(r[0]): (0 if r[1] in (-1, None) else int(r[1])) for r in rows}
 
     def _run(
         self,

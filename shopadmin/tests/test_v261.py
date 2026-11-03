@@ -164,6 +164,7 @@ def test_dialog_shows_everything(ui_context, admin_qapp, fake_api):
     _pump(admin_qapp)
     assert fake_api.item_requests[1]["status"] == "seen" and dialog.changed
     assert not dialog.seen_button.isVisibleTo(dialog)
+    dialog.messages = [{"status": "sent"}]       # v2.17.0: never closed silently
     dialog.set_status("done")
     _pump(admin_qapp)
     assert fake_api.item_requests[1]["status"] == "done"

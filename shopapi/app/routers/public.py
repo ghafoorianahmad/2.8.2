@@ -7,9 +7,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 
-from .. import deps, groups as group_config, order_timeout, phone_search, purchase, receipts
+from .. import customer_details, deps, groups as group_config, order_timeout, phone_search
+from .. import purchase, receipts
 from .. import sales, security_watch
 from ..accounting_reader import AccountingReader
+from ..accounting_writer import AccountingWriter
 from ..config import Settings
 from ..db_own import OwnDB
 from ..pricelist import catalog as phone_catalog
@@ -18,8 +20,10 @@ from ..schemas import (
     GroupOut,
     InquiryIn,
     InquiryOut,
+    CustomerDetailsIn,
     ItemRequestIn,
     ItemRequestOut,
+    OrderAddressIn,
     OrderCreate,
     OrderItemOut,
     OrderOut,
@@ -323,6 +327,49 @@ def register(
     return UserOut(**row)
 
 
+@router.get("/users/{platform}/{chat_id}/details")
+def get_customer_details(
+    platform: str,
+    chat_id: str,
+    db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    _: str = Depends(get_api_identity),
+) -> dict:
+    """v2.17.0: what to ask this customer, and their saved address."""
+    user = db.get_user_by_platform(platform, chat_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    return customer_details.view(db, reader, user)
+
+
+@router.post("/users/{platform}/{chat_id}/details")
+def save_customer_details(
+    platform: str,
+    chat_id: str,
+    payload: CustomerDetailsIn,
+    db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    writer: AccountingWriter = Depends(deps.get_writer),
+    role: str = Depends(get_api_identity),
+) -> dict:
+    """One or more answers. A bad one is refused (422) and nothing is stored; a person
+    in «سازه حساب» only gets its empty fields filled."""
+    user = db.get_user_by_platform(platform, chat_id)
+    if user is None or user["status"] == "rejected":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    values, problem = customer_details.clean_values(payload.model_dump())
+    if problem:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, problem)
+    if values:
+        user = customer_details.save(db, writer, user, values)
+        # never the values: personal data stays out of the log
+        db.audit(role, "customer_details", f"user id={user['id']} fields={sorted(values)}")
+    if payload.finished and not user.get("details_asked_at"):
+        user = db.update_user_details(int(user["id"]), details_asked_at=now_utc().isoformat(
+            timespec="seconds"))
+    return customer_details.view(db, reader, user)
+
+
 @router.get("/users/{platform}/{chat_id}", response_model=UserOut)
 def get_user(
     platform: str,
@@ -353,6 +400,7 @@ def create_order(
     check_only: bool = Query(False, alias="check"),
     role: str = Depends(get_api_identity),
     reader: AccountingReader = Depends(deps.get_reader),
+    writer: AccountingWriter = Depends(deps.get_writer),
     db: OwnDB = Depends(deps.get_db),
     settings: Settings = Depends(deps.get_settings),
 ) -> OrderOut:
@@ -375,6 +423,13 @@ def create_order(
     def _out(o: dict) -> OrderOut:
         # v2.8.2: no fixed payment details: staff send them for each order
         return OrderOut(**o)
+
+    ship_address = ""
+    if payload.ship_address:
+        cleaned, problem = customer_details.clean_values({"address": payload.ship_address})
+        if problem:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, problem)
+        ship_address = cleaned.get("address", "")
 
     merged = _merge_items(payload.items)
     level = settings.price_level_for(role)
@@ -517,6 +572,7 @@ def create_order(
             [(it.kala_code, it.name, it.qty, it.unit_price, it.variant_id, it.variant,
               it.color, it.part) for it in items_out],
             accounting_db=settings.database_name(),
+            ship_address=ship_address,
         )
         if idem is not None:
             db.save_idempotent(
@@ -525,7 +581,39 @@ def create_order(
             )
     db.audit(role, "order_create", f"order id={order['id']}")
     db.add_event("order_created", order["id"], role)
+    if ship_address:
+        # v2.17.0: after the order exists: its fate never hangs on «سازه حساب»
+        try:
+            customer_details.first_address(db, reader, writer, user, ship_address)
+        except Exception as exc:  # noqa: BLE001 - tried again from our own copy
+            logger.warning("first address not saved: %s", type(exc).__name__)
     return _out(order)
+
+
+@router.put("/orders/{order_id}/address", response_model=OrderOut)
+def set_order_address(
+    order_id: int,
+    payload: OrderAddressIn,
+    role: str = Depends(get_api_identity),
+    db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    writer: AccountingWriter = Depends(deps.get_writer),
+) -> OrderOut:
+    """v2.17.0: an order made from a price offer takes its address after it exists."""
+    user = db.get_user_by_platform(payload.platform, payload.chat_id)
+    order = db.get_order(order_id)
+    if user is None or order is None or order["user_id"] != user["id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+    if order["status"] in ("rejected", "cancelled", "expired") or order.get("shipped_at"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Order is finished and read-only")
+    values, problem = customer_details.clean_values({"address": payload.address})
+    if problem or not values:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            problem or customer_details.INVALID_ADDRESS)
+    order = db.set_order_address(order_id, values["address"])
+    customer_details.first_address(db, reader, writer, user, values["address"])
+    db.audit(role, "order_address", f"order id={order_id}")
+    return OrderOut(**order)
 
 
 @router.post("/orders/{order_id}/receipt", response_model=OrderOut)

@@ -167,6 +167,17 @@ def test_status_codes_have_their_own_ticks(client, db, settings, env_file):
     assert client.get("/admin/server/settings", headers=mina).status_code == 403
 
 
+def test_server_settings_alone_do_not_open_the_status_codes(client, db, env_file):
+    mina = staff(db, "operator", "mina")
+    db.update_staff(db.get_staff_by_username("mina")["id"], perm_grant="server.edit")
+    seen = client.get("/admin/server/settings", headers=mina).json()["settings"]
+    assert "ACCOUNTING_STATUS_CODE" not in seen and "RECEIPT_DEADLINE_MINUTES" in seen
+    assert client.put("/admin/server/settings", headers=mina,
+                      json={"values": {"ACCOUNTING_STATUS_CODE": "1"}}).status_code == 403
+    assert client.put("/admin/server/settings", headers=mina,
+                      json={"values": {"RECEIPT_DEADLINE_MINUTES": "30"}}).status_code == 200
+
+
 @pytest.mark.parametrize("info,stage", [
     (None, "missing"),
     ({"status": 6808, "ordered": 2, "invoiced": 0}, "approved"),

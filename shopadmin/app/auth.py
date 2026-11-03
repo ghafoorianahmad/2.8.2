@@ -335,7 +335,8 @@ class AuthService:
     def create_user(self, username: str, full_name: str, password: str, role: str,
                     *, must_change_password: bool = True,
                     extra_permissions: list[str] | None = None,
-                    removed_permissions: list[str] | None = None) -> Principal:
+                    removed_permissions: list[str] | None = None,
+                    mobile: str = "") -> Principal:
         username = to_english_digits(str(username or "")).strip()
         self._check_new_account(username, full_name, password)
         if role not in ALL_ROLES:
@@ -344,7 +345,8 @@ class AuthService:
             row = self.api.create_staff(username, str(full_name).strip(), role, password,
                                         must_change_password=must_change_password,
                                         extra_permissions=extra_permissions,
-                                        removed_permissions=removed_permissions)
+                                        removed_permissions=removed_permissions,
+                                        mobile=to_english_digits(str(mobile or "")).strip())
         except ApiError as exc:
             raise _auth_error(exc) from exc
         return principal_from_staff(row)
@@ -353,7 +355,8 @@ class AuthService:
                     role: str | None = None, is_active: bool | None = None,
                     actor_id: int | None = None,
                     extra_permissions: list[str] | None = None,
-                    removed_permissions: list[str] | None = None) -> Principal:
+                    removed_permissions: list[str] | None = None,
+                    mobile: str | None = None) -> Principal:
         if role is not None and role not in ALL_ROLES:
             raise AuthError(MSG_ROLE_INVALID, "role_invalid")
         if full_name is not None and not str(full_name).strip():
@@ -363,7 +366,9 @@ class AuthService:
         try:
             row = self.api.update_staff(int(user_id), full_name=full_name, role=role,
                                         active=is_active, extra_permissions=extra_permissions,
-                                        removed_permissions=removed_permissions)
+                                        removed_permissions=removed_permissions,
+                                        mobile=None if mobile is None else
+                                        to_english_digits(str(mobile)).strip())
         except ApiError as exc:
             raise _auth_error(exc) from exc
         return principal_from_staff(row)

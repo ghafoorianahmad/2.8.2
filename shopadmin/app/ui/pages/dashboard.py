@@ -7,7 +7,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from ...api_client import ApiError
-from ...permissions import PRODUCTS_VIEW, SHOP_STATE
+from ...permissions import (
+    CUSTOMERS_VIEW,
+    ORDERS_VIEW,
+    PRODUCTS_VIEW,
+    SHOP_STATE,
+    STAFF_ALERTS_EDIT,
+    STAFF_ALERTS_VIEW,
+)
 from ...persian import (
     format_datetime_shamsi,
     format_int,
@@ -24,6 +31,7 @@ from ...statuses import (
 )
 from .. import theme, widgets
 from ..base_page import BasePage
+from .shop_rules import hours_text
 from ..context import AppContext
 
 DASHBOARD_HEADERS = ("شماره سفارش", "مشتری", "تعداد اقلام", "مبلغ کل", "وضعیت", "تاریخ ثبت")
@@ -108,6 +116,26 @@ class DashboardPage(BasePage):
         # Old name kept for callers/tests that look for "the" toggle.
         self.shop_toggle = self.sales_buttons["close"]
 
+        # v2.17.0: the schedule («قواعد فروشگاه») + a manual choice, as with phone sales.
+        # The choice holds until the next working period begins.
+        self.alert_panel = widgets.Panel("اعلان کارکنان در بله و تلگرام")
+        self.alert_state_label = widgets.label("…", bold=True, wrap=True)
+        self.alert_panel.body.addWidget(self.alert_state_label)
+        self.alert_detail = widgets.label("", name="Faint", wrap=True)
+        self.alert_panel.body.addWidget(self.alert_detail)
+        alert_row = QHBoxLayout()
+        self.alert_buttons: dict[str, object] = {}
+        for action, text in (("on", "روشن کردن اعلان‌ها"), ("off", "خاموش کردن اعلان‌ها"),
+                             ("holiday", "تعطیلی امروز")):
+            btn = widgets.button(text, on_click=lambda _=False, a=action: self._alert_action(a))
+            btn.setVisible(self.context.can(STAFF_ALERTS_EDIT))
+            alert_row.addWidget(btn)
+            self.alert_buttons[action] = btn
+        alert_row.addStretch(1)
+        self.alert_panel.body.addLayout(alert_row)
+        self.alert_panel.setVisible(self.context.can(STAFF_ALERTS_VIEW))
+        self.body.addWidget(self.alert_panel)
+
         chart_panel = widgets.Panel("سفارش‌های ۷ روز اخیر")
         self.chart = widgets.BarChart()
         chart_panel.body.addWidget(self.chart)
@@ -136,18 +164,23 @@ class DashboardPage(BasePage):
         self.table.set_busy(True)
 
         show_products = self.context.can(PRODUCTS_VIEW)
+        # v2.17.0: a section this user has no tick for is simply not read
+        show_customers = self.context.can(CUSTOMERS_VIEW)
+        show_orders = self.context.can(ORDERS_VIEW)
+        show_alerts = self.context.can(STAFF_ALERTS_VIEW)
 
         def work() -> dict:
             api = self.context.api
             return {
-                "pending_customers": api.list_customers("pending"),
-                "receipts": api.list_orders(ORDER_RECEIPT_UPLOADED),
-                "approved": api.list_orders(ORDER_APPROVED),
-                "written": api.list_orders(ORDER_WRITTEN),
+                "pending_customers": api.list_customers("pending") if show_customers else [],
+                "receipts": api.list_orders(ORDER_RECEIPT_UPLOADED) if show_orders else [],
+                "approved": api.list_orders(ORDER_APPROVED) if show_orders else [],
+                "written": api.list_orders(ORDER_WRITTEN) if show_orders else [],
                 "products": (api.list_products(page=1, page_size=1) if show_products
                              else {"total": 0}),
                 "info": api.system_info(),
                 "shop": _shop_state(api),
+                "alerts": _alert_state(api) if show_alerts else None,
             }
 
         self.run(work, on_success=self._render, on_error=self._fail)
@@ -182,6 +215,7 @@ class DashboardPage(BasePage):
         )
         self.card_products.set_value(format_int(products.get("total", 0)))
         self._render_shop_state(data.get("shop"))
+        self._show_alert_state(data.get("alerts"))
 
         all_orders = list(receipts) + list(approved) + list(written)
         # v2.8.3: the chart of a user who is not a manager counts only their own work
@@ -249,6 +283,24 @@ class DashboardPage(BasePage):
             # «باز کردن» only while closed; «بستن» and «تعطیلی» are always offered.
             btn.setVisible(allowed and (closed if action == "open" else True))
 
+    def _show_alert_state(self, state: object) -> None:
+        if not isinstance(state, dict):
+            return
+        self.alert_state_label.setText(alert_state_text(state))
+        self.alert_detail.setText("ساعت کار: " + hours_text(state.get("work_hours") or {}))
+
+    def _alert_action(self, action: str) -> None:
+        questions = {
+            "on": "اعلان کارکنان همین حالا روشن شود؟ تا شروع ساعت کار بعدی روشن می‌ماند.",
+            "off": "اعلان کارکنان خاموش شود؟ تا شروع ساعت کار بعدی پیامی به همکاران نمی‌رود.",
+            "holiday": "امروز تعطیل اعلام شود؟ تا شروع ساعت کار بعد از امروز پیامی به همکاران "
+                       "نمی‌رود.",
+        }
+        if not widgets.confirm(self, "اعلان کارکنان", questions[action]):
+            return
+        self.run(lambda: self.context.api.staff_alert_action(action),
+                 on_success=self._show_alert_state, on_error=self.default_error)
+
     def _sales_action(self, action: str) -> None:
         if self._shop_closed is None:
             return
@@ -305,6 +357,29 @@ _REASONS_FA = {
     "list_not_updated": "لیست قیمت به‌روز نشده",
     "windows_disabled": "زمان‌بندی فروش خاموش است",
 }
+
+
+def _alert_state(api) -> dict | None:
+    """The notifications panel must never stop the dashboard from loading."""
+    try:
+        return api.staff_alert_state()
+    except ApiError:
+        return None
+
+
+def alert_state_text(state: dict) -> str:
+    """v2.17.0: what the staff notifications are doing now, and why."""
+    until = f" تا {format_datetime_shamsi(state['until'])}" if state.get("until") else ""
+    override = str(state.get("override") or "")
+    if override == "on":
+        return f"🔔 دستی روشن شد{until}."
+    if override == "holiday":
+        return f"🔕 تعطیلی امروز؛ پیامی به همکاران نمی‌رود{until}."
+    if override == "off":
+        return f"🔕 دستی خاموش شد{until}."
+    if state.get("active"):
+        return "🔔 روشن طبق ساعت کار: کار تازهٔ بی‌صاحب هر ۵ دقیقه به همکاران یادآوری می‌شود."
+    return "🌙 بیرون از ساعت کار: پیامی نمی‌رود و هنگام شروع کار یک خلاصه فرستاده می‌شود."
 
 
 def sales_detail_text(state: dict) -> str:

@@ -71,6 +71,25 @@ STATE_AWAIT_RECEIPT = "await_receipt"
 #: v2.6.0: «درخواست کالای ناموجود» - waiting for the item's name
 STATE_AWAIT_ITEM_REQUEST = "await_item_request"
 STATE_ADMIN_PERSON_CODE = "admin_person_code"
+#: v2.17.0: first name, last name, national code, address, one question at a time
+STATE_AWAIT_DETAILS = "await_details"
+#: v2.17.0: the address of the order being placed / of a placed order
+STATE_AWAIT_CHECKOUT_ADDRESS = "await_checkout_address"
+STATE_AWAIT_ORDER_ADDRESS = "await_order_address"
+#: v2.17.0: a staff member links this chat with their phone
+STATE_AWAIT_STAFF_CONTACT = "await_staff_contact"
+#: v2.17.0: a typed text is the answer here; any other button leaves the question, so
+#: a later text (a search, a product name) never becomes a name or an order's address.
+TEXT_ANSWER_STATES = frozenset({STATE_AWAIT_DETAILS, STATE_AWAIT_CHECKOUT_ADDRESS,
+                                STATE_AWAIT_ORDER_ADDRESS})
+TEXT_ANSWER_ACTIONS = frozenset({"dno", "cok", "cnew", "oadr"})
+#: v2.17.0: what the bot asks and how a refused answer is put (shopapi's 422 detail)
+DETAIL_QUESTIONS = {"first_name": "ASK_FIRST_NAME", "last_name": "ASK_LAST_NAME",
+                    "national_code": "ASK_NATIONAL_CODE", "address": "ASK_ADDRESS"}
+DETAIL_INVALID = {"first_name": "INVALID_NAME", "last_name": "INVALID_NAME",
+                  "national_code": "INVALID_NATIONAL_CODE", "address": "INVALID_ADDRESS"}
+MIN_ADDRESS_LEN = 5
+MAX_ADDRESS_LEN = 500
 
 # --- callback payloads ------------------------------------------------------
 # "action" or "action:int[:int]"; every action has a fixed argument count.
@@ -137,8 +156,18 @@ CALLBACK_ARG_COUNTS: dict[str, int] = {
     "psl": 0,
     # v2.8.3: «مرحلهٔ قبل» (one screen back, the earlier choices kept)
     "back": 0,
+    # v2.17.0: details «فعلاً نه»; the order's address (same / new; of a placed order);
+    # «برداشت» of an order / a request by a linked staff member
+    "dno": 0,
+    "cok": 0,
+    "cnew": 0,
+    "oadr": 1,
+    "sao": 1,
+    "sar": 1,
 }
 ADMIN_ACTIONS = frozenset({"addu", "adru", "adap", "adrp", "adsug", "adst"})
+#: v2.17.0: from a linked staff member's chat (never a customer account).
+STAFF_ACTIONS = frozenset({"sao", "sar"})
 #: Screens anyone may open, even before registration is approved.
 PUBLIC_ACTIONS = frozenset({"support", "info", "contact"})
 #: shopapi event kinds that mean "tell the customer" (decisions made in ShopAdmin too).
@@ -700,6 +729,16 @@ class BotEngine:
             )
             return
 
+        # v2.17.0: a staff member links this chat (also one already known as a customer)
+        if command == "/staff":
+            self.store.set_conversation(platform, chat_id, STATE_AWAIT_STAFF_CONTACT, {})
+            await self._send_text(adapter, chat_id, texts.STAFF_ASK_CONTACT,
+                                  contact_keyboard(texts.BTN_SHARE_CONTACT))
+            return
+        if state == STATE_AWAIT_STAFF_CONTACT:
+            await self._staff_contact(adapter, platform, chat_id, event)
+            return
+
         # registration (the user may not exist in shopapi yet): contact only
         if state == STATE_AWAIT_CONTACT or state in LEGACY_REGISTRATION_STATES:
             if not event.get("contact") and looks_like_model_ref(text):
@@ -745,6 +784,15 @@ class BotEngine:
             await self._show_not_approved(adapter, platform, chat_id, status)
             return
 
+        if state == STATE_AWAIT_DETAILS:
+            await self._details_answer(adapter, platform, chat_id, text, data)
+            return
+        if state == STATE_AWAIT_CHECKOUT_ADDRESS:
+            await self._checkout_address_text(adapter, platform, chat_id, text)
+            return
+        if state == STATE_AWAIT_ORDER_ADDRESS:
+            await self._order_address_text(adapter, platform, chat_id, text, data)
+            return
         if state == STATE_AWAIT_ITEM_REQUEST and text and not photo and not document:
             await self._item_request_text(adapter, platform, chat_id, text)
             return
@@ -798,6 +846,10 @@ class BotEngine:
             return
         if status == STATUS_REJECTED:
             await self._show_not_approved(adapter, platform, chat_id, status, intro=intro)
+            return
+        # v2.17.0: what is still missing comes first; the deep link waits for it
+        after = {k: v for k, v in (("product", product_code), ("model", model_ref)) if v}
+        if await self._start_details(adapter, platform, chat_id, after):
             return
         if product_code is not None:
             await self._show_product_by_code(adapter, platform, chat_id, product_code)
@@ -868,6 +920,14 @@ class BotEngine:
                 adapter, chat_id, message, contact_keyboard(texts.BTN_SHARE_CONTACT)
             )
             return
+        # v2.17.0: a staff member's number links their chat; they are no customer
+        linked = await self.api.staff_link(platform, chat_id, verified.phone)
+        if isinstance(linked, dict) and linked.get("linked"):
+            self.store.clear_conversation(platform, chat_id)
+            await self._send_text(adapter, chat_id,
+                                  texts.STAFF_LINKED.format(name=linked.get("name") or ""),
+                                  remove_keyboard())
+            return
         user = await self.customers.register(platform, chat_id, verified)
         status = self.customers.status_of(user if isinstance(user, dict) else None)
         self.store.clear_conversation(platform, chat_id)
@@ -876,15 +936,163 @@ class BotEngine:
             return
         done = texts.REGISTERED_APPROVED if status == STATUS_APPROVED else texts.REGISTERED_PENDING
         await self._send_text(adapter, chat_id, done, remove_keyboard())
-        product_code = (data or {}).get("product")
+        if await self._start_details(adapter, platform, chat_id, data or {}):
+            return
+        await self._after_details(adapter, platform, chat_id, data or {}, status)
+
+    async def _after_details(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                             after: dict, status: str | None = None) -> None:
+        """Where the customer was going before the questions (a deep link, or the menu)."""
+        product_code = after.get("product")
         if isinstance(product_code, int) and product_code > 0:
             await self._show_product_by_code(adapter, platform, chat_id, product_code)
             return
-        model_ref = (data or {}).get("model")
+        model_ref = after.get("model")
         if isinstance(model_ref, str) and model_ref:
             if await self._show_model(adapter, platform, chat_id, model_ref):
                 return
         await self._show_main_menu(adapter, platform, chat_id, status=status)
+
+    # ================= the customer's details (v2.17.0) ===================
+    async def _details(self, platform: str, chat_id: str) -> dict | None:
+        """shopapi's answer, or None: unknown means nothing is asked."""
+        try:
+            answer = await self.api.customer_details(platform, chat_id)
+        except ShopApiError:
+            return None
+        return answer if isinstance(answer, dict) and "missing" in answer else None
+
+    async def _start_details(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                             after: dict) -> bool:
+        """The first conversation: ask once for what neither we nor «سازه حساب» know.
+        True = a question was asked and the conversation waits for its answer."""
+        details = await self._details(platform, chat_id)
+        if details is None or details.get("asked") or not details.get("known"):
+            return False
+        queue = [f for f in details.get("missing") or () if f in DETAIL_QUESTIONS]
+        if not queue:
+            return False
+        await self._send_text(adapter, chat_id, texts.DETAILS_INTRO, remove_keyboard())
+        await self._ask_detail(adapter, platform, chat_id, queue, after)
+        return True
+
+    async def _ask_detail(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                          queue: list[str], after: dict, *, invalid: bool = False) -> None:
+        field = queue[0]
+        text = getattr(texts, DETAIL_INVALID[field] if invalid else DETAIL_QUESTIONS[field])
+        await self._send_options(
+            adapter, platform, chat_id, text, [[(texts.BTN_DETAILS_LATER, "dno")]],
+            state=STATE_AWAIT_DETAILS, data={"queue": queue, "after": after},
+        )
+
+    async def _details_answer(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                              text: str, data: dict) -> None:
+        queue = [f for f in (data or {}).get("queue") or () if f in DETAIL_QUESTIONS]
+        after = (data or {}).get("after") or {}
+        if not queue:
+            await self._finish_details(adapter, platform, chat_id, after)
+            return
+        field = queue[0]
+        answer = str(text or "").strip()
+        if not answer or answer.startswith("/"):
+            await self._ask_detail(adapter, platform, chat_id, queue, after, invalid=True)
+            return
+        try:
+            await self.api.save_customer_details(platform, chat_id, **{field: answer})
+        except ShopApiRejected as exc:
+            if exc.status == 422:
+                await self._ask_detail(adapter, platform, chat_id, queue, after, invalid=True)
+                return
+            raise
+        rest = queue[1:]
+        if rest:
+            await self._ask_detail(adapter, platform, chat_id, rest, after)
+            return
+        await self._send_text(adapter, chat_id, texts.DETAILS_DONE)
+        await self._finish_details(adapter, platform, chat_id, after)
+
+    async def _finish_details(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                              after: dict) -> None:
+        self.store.clear_conversation(platform, chat_id)
+        try:
+            await self.api.save_customer_details(platform, chat_id, finished=True)
+        except ShopApiError:
+            pass              # asked once more next time; nothing is lost
+        await self._after_details(adapter, platform, chat_id, after)
+
+    # ================= staff link (v2.17.0) ================================
+    async def _staff_contact(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                             event: dict) -> None:
+        verified = self.customers.verify_contact(
+            event.get("contact"), event.get("from_id"), event.get("sender"))
+        if verified.problem is not ContactProblem.NONE:
+            if verified.problem is ContactProblem.NOT_OWN:
+                await self._report_security("contact_not_own", platform, chat_id)
+            message = {
+                ContactProblem.NOT_OWN: texts.CONTACT_NOT_OWN,
+                ContactProblem.NOT_MOBILE: texts.CONTACT_NOT_MOBILE,
+            }.get(verified.problem, texts.CONTACT_BUTTON_ONLY)
+            await self._send_text(adapter, chat_id, message,
+                                  contact_keyboard(texts.BTN_SHARE_CONTACT))
+            return
+        linked = await self.api.staff_link(platform, chat_id, verified.phone)
+        self.store.clear_conversation(platform, chat_id)
+        body = (texts.STAFF_LINKED.format(name=linked.get("name") or "")
+                if isinstance(linked, dict) and linked.get("linked") else texts.STAFF_NOT_FOUND)
+        await self._send_text(adapter, chat_id, body, remove_keyboard())
+
+    async def deliver_staff_alerts(self) -> int:
+        """What shopapi says is due now, to each linked chat. A failed send is only
+        logged: the next repeat brings it again."""
+        sent = 0
+        for platform, adapter in self.adapters.items():
+            for item in await self.api.staff_alerts_due(platform):
+                body, rows = self._staff_alert(item)
+                markup = self._markup(adapter, rows)
+                for chat_id in item.get("chats") or ():
+                    if rows:
+                        state, data = self.store.get_conversation(platform, str(chat_id))
+                        self.store.set_conversation(platform, str(chat_id), state,
+                                                    self._with_labels(data, rows))
+                    if await self._send_text(adapter, chat_id, self._flatten(body, markup, rows),
+                                             markup) is not None:
+                        sent += 1
+        return sent
+
+    @staticmethod
+    def _staff_alert(item: dict) -> tuple[str, list]:
+        kind = str(item.get("kind") or "")
+        if kind == "summary":
+            counts = item.get("counts") or {}
+            return texts.STAFF_ALERT_SUMMARY.format(
+                orders=fmt_num(counts.get("order") or 0),
+                receipts=fmt_num(counts.get("receipt") or 0),
+                requests=fmt_num(counts.get("request") or 0)), []
+        target = int(item.get("target_id") or 0)
+        label = shorten(str(item.get("label") or ""), 120)
+        if kind == "request":
+            body = texts.STAFF_ALERT_REQUEST.format(request_id=target, label=label)
+            action = f"sar:{target}"
+        else:
+            template = texts.STAFF_ALERT_RECEIPT if kind == "receipt" else texts.STAFF_ALERT_ORDER
+            body = template.format(order_id=target, label=label,
+                                   total=fmt_num(item.get("total") or 0))
+            action = f"sao:{target}"
+        if item.get("repeat"):
+            body = f"{texts.STAFF_ALERT_REPEAT}\n{body}"
+        return body, [[(texts.BTN_CLAIM, action)]]
+
+    async def _staff_claim(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                           message_id, callback_id, action: str, target: int) -> None:
+        target_type = "order" if action == "sao" else "request"
+        answer = await self.api.staff_claim(platform, chat_id, target_type, target)
+        reason = str((answer or {}).get("reason") or "")
+        text = (texts.STAFF_CLAIMED if (answer or {}).get("claimed")
+                else texts.STAFF_CLAIM_TAKEN if reason == "taken"
+                else texts.STAFF_CLAIM_GONE if reason == "gone" else texts.STAFF_CLAIM_DENIED)
+        await self._answer_callback(adapter, callback_id, text, True)
+        if message_id is not None and reason != "not_linked":
+            await self._edit_text(adapter, chat_id, message_id, text, None)
 
     # ================= customer screens ===================================
     def _main_menu_rows(self, approved: bool = True):
@@ -1630,7 +1838,9 @@ class BotEngine:
         await self._answer_callback(adapter, callback_id, texts.CART_REMOVED)
         await self._show_cart(adapter, platform, chat_id)
 
-    async def _checkout(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
+    async def _checkout_blocked(self, adapter: PlatformAdapter, platform: str,
+                                chat_id: str) -> dict | None:
+        """The sales state when the order may go on, else None (the customer was told)."""
         # The final step reads the state fresh (never the 30 s cache): sales may
         # have closed since the cart was shown. shopapi checks again anyway.
         self._shop_state = None
@@ -1639,15 +1849,89 @@ class BotEngine:
             await self._send_options(
                 adapter, platform, chat_id, texts.PAYMENT_NOT_READY, [[(texts.BTN_MENU, "menu")]],
             )
-            return
+            return None
         if state.get("closed") and self._has_phones(self.cart.items(platform, chat_id)):
             await self._send_options(
                 adapter, platform, chat_id, self._sales_closed_text(state),
                 [[(texts.BTN_NOTIFY_SALES, "snot")], [(texts.BTN_MENU, "menu")]],
             )
+            return None
+        return state
+
+    async def _checkout(self, adapter: PlatformAdapter, platform: str, chat_id: str) -> None:
+        """v2.17.0: first where it goes (text only): the saved address with «آدرس جدید»,
+        or the first address, which becomes the saved one."""
+        if not self.cart.items(platform, chat_id):
+            await self._send_text(adapter, chat_id, texts.CART_EMPTY)
+            return
+        if await self._checkout_blocked(adapter, platform, chat_id) is None:
+            return
+        details = await self._details(platform, chat_id)
+        if details is None:
+            await self._place_order(adapter, platform, chat_id, None)
+            return
+        saved = str(details.get("address") or "").strip()
+        if saved:
+            await self._send_options(
+                adapter, platform, chat_id,
+                texts.CHECKOUT_CONFIRM_ADDRESS.format(address=saved),
+                [[(texts.BTN_ADDRESS_SAME, "cok"), (texts.BTN_ADDRESS_NEW, "cnew")],
+                 [(texts.BTN_CART, "cart")]],
+                state=STATE_NONE, data={},
+            )
+            return
+        await self._ask_checkout_address(adapter, platform, chat_id, texts.CHECKOUT_ASK_ADDRESS)
+
+    async def _ask_checkout_address(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                                    text: str) -> None:
+        await self._send_options(adapter, platform, chat_id, text, [[(texts.BTN_CART, "cart")]],
+                                 state=STATE_AWAIT_CHECKOUT_ADDRESS, data={})
+
+    @staticmethod
+    def _address_ok(text: str) -> bool:
+        return MIN_ADDRESS_LEN <= len(" ".join(str(text or "").split())) <= MAX_ADDRESS_LEN \
+            and not str(text or "").startswith("/")
+
+    async def _checkout_address_text(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                                     text: str) -> None:
+        if not self._address_ok(text):
+            await self._ask_checkout_address(adapter, platform, chat_id, texts.INVALID_ADDRESS)
+            return
+        self.store.clear_conversation(platform, chat_id)
+        await self._place_order(adapter, platform, chat_id, text)
+
+    async def _checkout_same_address(self, adapter: PlatformAdapter, platform: str,
+                                     chat_id: str) -> None:
+        details = await self._details(platform, chat_id)
+        saved = str((details or {}).get("address") or "").strip()
+        if not saved:
+            await self._ask_checkout_address(adapter, platform, chat_id,
+                                             texts.CHECKOUT_ASK_ADDRESS)
+            return
+        await self._place_order(adapter, platform, chat_id, saved)
+
+    async def _order_address_text(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                                  text: str, data: dict) -> None:
+        """v2.17.0: the address of an order that already exists (from a price offer)."""
+        order_id = int((data or {}).get("order_id") or 0)
+        if not self._address_ok(text):
+            await self._send_options(adapter, platform, chat_id, texts.INVALID_ADDRESS,
+                                     [[(texts.BTN_MENU, "menu")]])
+            return
+        self.store.clear_conversation(platform, chat_id)
+        order = await self.api.set_order_address(order_id, platform, chat_id, text)
+        address = str((order or {}).get("ship_address") or text)
+        await self._send_options(adapter, platform, chat_id,
+                                 texts.ORDER_ADDRESS_SAVED.format(address=address),
+                                 [[(texts.BTN_MENU, "menu")]])
+
+    async def _place_order(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                           ship_address: str | None) -> None:
+        state = await self._checkout_blocked(adapter, platform, chat_id)
+        if state is None:
             return
         try:
-            result = await self.orders.checkout(platform, chat_id)
+            result = await self.orders.checkout(platform, chat_id, ship_address)
         except ShopApiRejected as exc:
             if exc.status == 409 and "payment details" in (exc.detail or "").lower():
                 self._shop_state = None
@@ -2243,11 +2527,18 @@ class BotEngine:
         else:
             # v2.8.2: staff send the payment details next (their own message)
             parts.append(texts.WAIT_PAYMENT_INFO)
+        # v2.17.0: where it goes: the saved address (with «آدرس جدید») or a question
+        address = str(order.get("ship_address") or "").strip()
+        rows = [[(texts.BTN_CANCEL_ORDER, f"ocx:{order_id}")], [(texts.BTN_MENU, "menu")]]
+        waiting = {}
+        if address:
+            parts.append(texts.ORDER_SHIP_TO.format(address=address))
+            rows.insert(0, [(texts.BTN_ADDRESS_NEW, f"oadr:{order_id}")])
+        elif not order.get("payment_info"):
+            parts.append(texts.CHECKOUT_ASK_ADDRESS)
+            waiting = {"state": STATE_AWAIT_ORDER_ADDRESS, "data": {"order_id": int(order_id)}}
         body = "\n\n".join(parts)
-        sent = await self._send_options(
-            adapter, platform, chat_id, body,
-            [[(texts.BTN_CANCEL_ORDER, f"ocx:{order_id}")], [(texts.BTN_MENU, "menu")]],
-        )
+        sent = await self._send_options(adapter, platform, chat_id, body, rows, **waiting)
         self._remember_order_message(order_id, platform, chat_id, sent, body)
         return True
 
@@ -2488,6 +2779,16 @@ class BotEngine:
             return
         action, args = parsed
 
+        if action not in TEXT_ANSWER_ACTIONS:
+            current_state, _current = self.store.get_conversation(platform, chat_id)
+            if current_state in TEXT_ANSWER_STATES:
+                self.store.set_conversation(platform, chat_id, STATE_NONE, {})
+
+        if action in STAFF_ACTIONS:
+            await self._staff_claim(adapter, platform, chat_id, message_id, callback_id, action,
+                                    args[0])
+            return
+
         if action in ADMIN_ACTIONS:
             if not self.settings.is_admin_chat(platform, chat_id):
                 await self._answer_callback(adapter, callback_id, texts.ADMIN_ONLY, True)
@@ -2609,6 +2910,24 @@ class BotEngine:
         elif action == "checkout":
             await self._answer_callback(adapter, callback_id)
             await self._checkout(adapter, platform, chat_id)
+        elif action == "cok":
+            await self._answer_callback(adapter, callback_id)
+            await self._checkout_same_address(adapter, platform, chat_id)
+        elif action == "cnew":
+            await self._answer_callback(adapter, callback_id)
+            await self._ask_checkout_address(adapter, platform, chat_id,
+                                             texts.CHECKOUT_NEW_ADDRESS)
+        elif action == "oadr":
+            await self._answer_callback(adapter, callback_id)
+            await self._send_options(adapter, platform, chat_id, texts.CHECKOUT_NEW_ADDRESS,
+                                     [[(texts.BTN_MENU, "menu")]],
+                                     state=STATE_AWAIT_ORDER_ADDRESS, data={"order_id": args[0]})
+        elif action == "dno":
+            await self._answer_callback(adapter, callback_id)
+            current_state, current = self.store.get_conversation(platform, chat_id)
+            await self._finish_details(adapter, platform, chat_id,
+                                       (current or {}).get("after") or {}
+                                       if current_state == STATE_AWAIT_DETAILS else {})
         elif action == "orders":
             await self._answer_callback(adapter, callback_id)
             await self._show_orders(adapter, platform, chat_id)
@@ -2994,7 +3313,20 @@ class BotEngine:
                 self.store.set_conversation(platform, chat_id, STATE_NONE, {})
             await self._retire_order_buttons(int(ref_id))
         await self._notify_customer(target, text)
+        if kind == "customer_approved":
+            await self._details_after_approval(target)
         return True
+
+    async def _details_after_approval(self, target: dict) -> None:
+        """v2.17.0: approved by staff: what is still missing is asked now, unless the
+        customer is in the middle of something else."""
+        platform, chat_id = str(target.get("platform") or ""), str(target.get("chat_id") or "")
+        adapter = self.adapters.get(platform)
+        if adapter is None or not chat_id:
+            return
+        state, _data = self.store.get_conversation(platform, chat_id)
+        if state in (STATE_NONE, ""):
+            await self._start_details(adapter, platform, chat_id, {})
 
     async def _staff_cancel_text(self, order_id: int) -> str:
         """v2.9.3: «سفارش … از طرف فروشگاه لغو شد» + the short reason staff gave."""
@@ -3275,6 +3607,8 @@ class BotEngine:
         # (dry-run + ROLLBACK): the order is not "written" and the admin is told so.
         written = isinstance(order, dict) and order.get("status") == "written"
         message = texts.ADMIN_PAYMENT_APPROVED if written else texts.ADMIN_PAYMENT_APPROVED_DRY_RUN
+        if isinstance(order, dict) and order.get("accounting_pending"):
+            message = texts.ADMIN_PAYMENT_NOT_WRITTEN
         await self._answer_callback(adapter, callback_id, message)
         await self._send_text(adapter, chat_id, message)
         await self._notify_once(

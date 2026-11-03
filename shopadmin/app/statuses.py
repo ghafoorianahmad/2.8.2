@@ -61,10 +61,30 @@ ROLE_FA = {
 # v2.7.0: the two roles a manager can give, most privileged first.
 ALL_ROLES = (ROLE_SUPER_ADMIN, ROLE_OPERATOR)
 
+#: v2.17.0: where a written order is in «سازه حساب» (shopapi ``tracking.STAGE_*``).
+SAZEH_STAGE_FA = {
+    "approved": "تأیید",
+    "handover": "تحویل به فروش",
+    "partial": "بخشی فاکتور شد",
+    "invoiced": "فاکتور شد",
+    "other": "وضعیت دیگر",
+    "missing": "در «سازه حساب» نیست",
+}
+WAITING_ACCOUNTING_FA = "منتظر «ثبت در حسابداری»"
+
+
+def sazeh_stage_fa(order: dict) -> str:
+    """The stage of an order in «سازه حساب», «—» until it is written there."""
+    if order.get("accounting_pending"):
+        return WAITING_ACCOUNTING_FA
+    return SAZEH_STAGE_FA.get(str(order.get("sazeh_stage") or ""), "—")
+
+
 ROLE_DESCRIPTION_FA = {
-    ROLE_SUPER_ADMIN: "همهٔ بخش‌ها: سفارش‌ها، مشتریان، کالاها، لیست قیمت، فروش، تنظیمات و کاربران.",
-    ROLE_OPERATOR: "کار روزانه (داشبورد، سفارش‌ها و رسیدها، درخواست کالا، مشتریان، ارجاع، "
-                   "بایگانی، گزارش‌ها)، فقط کار خودش و کار تازهٔ بی‌صاحب.",
+    ROLE_SUPER_ADMIN: "همیشه همهٔ بخش‌ها: سفارش‌ها، مشتریان، کالاها، لیست قیمت، فروش، تنظیمات و کاربران.",
+    ROLE_OPERATOR: "با کار روزانه شروع می‌کند (داشبورد، سفارش‌ها و رسیدها، درخواست کالا، مشتریان، "
+                   "ارجاع، بایگانی، گزارش‌ها)، فقط کار خودش و کار تازهٔ بی‌صاحب؛ هر تیک را می‌توانید "
+                   "بگیرید یا اضافه کنید.",
     ROLE_ADMIN: "همهٔ بخش‌ها.",
     ROLE_VIEWER: "سفارش‌ها، درخواست‌های کالا و دیدن مشتریان.",
 }

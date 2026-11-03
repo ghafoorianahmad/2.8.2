@@ -45,10 +45,12 @@ GRANT_SQL = """/* ==============================================================
 
    Same permissions as sql/create_api_user.sql / SAZEH_DB_REFERENCE §8, but
    granted to a role, so the login can be replaced without re-granting:
-     * column-level SELECT only (no cost prices Geyk/Geya/Geym, no names,
-       phones, addresses or balances of persons; KOL only the statement columns);
+     * column-level SELECT only (no cost prices Geyk/Geya/Geym, no phones or
+       balances of persons; KOL only the statement columns);
      * INSERT only into KalaOrder/KalaOrderDetail (orders) and
        name_mo/taf/DetailTBL (+ UPDATE name_mo.codetaf/telephons) for new customers;
+     * v2.17.0: name_mo.fname/Name/Codemelli/Addres2 may be filled when EMPTY
+       (the customer's own answers in the bot; never overwritten by the program);
      * EXECUTE only dbo.MiladiToShamsi;
      * explicit DENY of every UPDATE/DELETE on orders, of DELETE on persons,
        of any write on KOL, and of every access to setting / Telegram_Setting /
@@ -80,8 +82,9 @@ GRANT SELECT ON dbo.KalaOrder TO shop_app;
 GRANT SELECT ON dbo.KalaOrderDetail TO shop_app;
 GRANT SELECT ON dbo.facto (Numfact, Codekala, Meg, ordercode, orderdetailcode) TO shop_app;
 -- v2.6.0: fname/Name = the linked customer's name in ShopAdmin's order dialog and on the
--- customer's own statement PDF. Still NO mobile/address/balance columns.
-GRANT SELECT ON dbo.name_mo (Code, Gcod, l_gey, codetaf, fname, Name) TO shop_app;
+-- customer's own statement PDF. v2.17.0: Codemelli/Addres/Addres2 = what the bot need not
+-- ask (and what an UPDATE that fills only empty fields has to read). Still NO mobile/balance.
+GRANT SELECT ON dbo.name_mo (Code, Gcod, l_gey, codetaf, fname, Name, Codemelli, Addres, Addres2) TO shop_app;
 GRANT SELECT ON dbo.DetailTBL (IDMaster, TabaghehBandiID, Va, Comment) TO shop_app;
 GRANT SELECT ON dbo.taf (Code, Cota, codgtaf) TO shop_app;
 GRANT SELECT ON dbo.KOL (Noa, Codkol, Bed, Bes, Va, Cod_n, Num_kol, Date1, N_sanad, Sharh) TO shop_app;
@@ -90,7 +93,7 @@ GRANT INSERT ON dbo.KalaOrder TO shop_app;
 GRANT INSERT ON dbo.KalaOrderDetail TO shop_app;
 -- ---- WRITE: new customers approved in ShopAdmin (recipe §5.1) ----
 GRANT INSERT ON dbo.name_mo TO shop_app;
-GRANT UPDATE ON dbo.name_mo (codetaf, telephons) TO shop_app;
+GRANT UPDATE ON dbo.name_mo (codetaf, telephons, fname, Name, Codemelli, Addres2) TO shop_app;
 GRANT INSERT ON dbo.taf TO shop_app;
 GRANT INSERT ON dbo.DetailTBL TO shop_app;
 GRANT EXECUTE ON dbo.MiladiToShamsi TO shop_app;

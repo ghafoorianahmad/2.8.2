@@ -54,13 +54,9 @@ def test_missing_status_code_is_named_with_a_button(window, ui_context, admin_qa
     assert window.banner_buttons["status_code"].isVisible()
     assert not window.banner_buttons["server_settings"].isVisible()
     window.banner_buttons["status_code"].click()
-    for _ in range(40):
-        admin_qapp.processEvents()
-        page = window._pages["server"]
-        if getattr(page, "focused_setting", "") == "ACCOUNTING_STATUS_CODE":
-            break
-    assert window.current_key() == "server"
-    assert page.focused_setting == "ACCOUNTING_STATUS_CODE" and not page._pending_focus
+    admin_qapp.processEvents()
+    # v2.17.0: the codes live in «قواعد فروشگاه» (their own tick)
+    assert window.current_key() == "shop_rules"
 
 
 @pytest.mark.parametrize("reason, words", [

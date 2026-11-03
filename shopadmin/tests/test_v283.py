@@ -156,11 +156,7 @@ def test_card_and_sheba_masks(ui_context, admin_qapp):
 
 
 # ---- 9: the permission table -----------------------------------------------------------------------
-def test_daily_work_is_not_in_the_table():
-    keys = {key for key, *_ in perms.SECTIONS}
-    assert not keys & perms.ALWAYS_SECTIONS
-    assert {"products", "groups", "pricelist", "models", "sales", "activity", "passwords",
-            "staff", "server"} == keys
+def test_daily_work_is_ticked_for_a_new_sales_user():
     sales = perms.role_permissions(ROLE_OPERATOR)
     for name in (perms.DASHBOARD_VIEW, perms.ORDERS_VIEW, perms.ITEM_REQUESTS,
                  perms.ARCHIVE_VIEW, perms.REPORTS_VIEW, perms.CUSTOMERS_APPROVE,

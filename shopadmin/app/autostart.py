@@ -56,6 +56,17 @@ def tray_command() -> str:
     return subprocess.list2cmdline([pythonw, str(app_dir() / "run_shopadmin.py"), TRAY_FLAG])
 
 
+def apply_default(store, registry: Registry | None = None, *, frozen: bool | None = None) -> None:
+    """v2.17.0: on by default for this Windows user, once: afterwards it stays what the
+    user chose in «تنظیمات برنامه». Only the installed program registers itself."""
+    if store.get_setting("autostart_initialized", False):
+        return
+    if not (is_frozen() if frozen is None else frozen):
+        return
+    set_enabled(True, registry)
+    store.set_setting("autostart_initialized", True)
+
+
 def is_enabled(registry: Registry | None = None) -> bool:
     value = (registry or WindowsRunKey()).get(VALUE_NAME)
     return bool(value and TRAY_FLAG in value)

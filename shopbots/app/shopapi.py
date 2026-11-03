@@ -221,15 +221,52 @@ class ShopApiClient:
 
     async def create_order(
         self, platform: str, chat_id: str | int, items: list[dict],
-        idempotency_key: str | None = None,
+        idempotency_key: str | None = None, ship_address: str | None = None,
     ) -> dict | None:
+        body = {"platform": platform, "chat_id": str(chat_id), "items": items}
+        if ship_address:
+            body["ship_address"] = ship_address
         return await self._request(
             "POST",
             "/orders",
             key=self._settings.bot_api_key,
-            json_body={"platform": platform, "chat_id": str(chat_id), "items": items},
+            json_body=body,
             extra_headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
         )
+
+    async def customer_details(self, platform: str, chat_id: str | int) -> dict | None:
+        """v2.17.0: what to ask this customer, and their saved address."""
+        return await self._request("GET", f"/users/{platform}/{chat_id}/details",
+                                   key=self._settings.bot_api_key)
+
+    async def save_customer_details(self, platform: str, chat_id: str | int, **fields) -> dict | None:
+        return await self._request("POST", f"/users/{platform}/{chat_id}/details",
+                                   key=self._settings.bot_api_key, json_body=fields)
+
+    async def set_order_address(self, order_id: int, platform: str, chat_id: str | int,
+                                address: str) -> dict | None:
+        return await self._request(
+            "PUT", f"/orders/{int(order_id)}/address", key=self._settings.bot_api_key,
+            json_body={"platform": platform, "chat_id": str(chat_id), "address": address})
+
+    async def staff_link(self, platform: str, chat_id: str | int, phone: str) -> dict | None:
+        """v2.17.0: this verified phone belongs to a staff member: link their chat."""
+        return await self._request(
+            "POST", "/staff-links", key=self._settings.bot_api_key,
+            json_body={"platform": platform, "chat_id": str(chat_id), "phone": phone})
+
+    async def staff_alerts_due(self, platform: str) -> list[dict]:
+        answer = await self._request("GET", "/admin/staff-alerts/due",
+                                     key=self._settings.admin_api_key,
+                                     params={"platform": platform})
+        return list((answer or {}).get("items") or [])
+
+    async def staff_claim(self, platform: str, chat_id: str | int, target_type: str,
+                          target_id: int) -> dict | None:
+        return await self._request(
+            "POST", "/admin/staff-alerts/claim", key=self._settings.admin_api_key,
+            json_body={"platform": platform, "chat_id": str(chat_id),
+                       "target_type": target_type, "target_id": int(target_id)})
 
     async def check_order(self, platform: str, chat_id: str | int,
                           items: list[dict]) -> dict | None:

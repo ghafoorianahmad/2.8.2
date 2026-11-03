@@ -16,6 +16,7 @@ from .persian import to_persian_digits
 #: order («ارسال اطلاعات پرداخت»).
 SETTINGS_FA: dict[str, tuple[str, str, str]] = {
     "ACCOUNTING_STATUS_CODE": ("کد وضعیت سفارش در حسابداری (Status)", "کد وضعیت «تایید» در «سازه حساب» (KalaOrder.Status)، مثلاً ۶۸۰۸ در سرور اصلی؛ عدد بزرگ‌تر از صفر. تا این کد درست نوشته نشود هیچ سفارشی در «سازه حساب» ثبت نمی‌شود.", "int"),
+    "ACCOUNTING_HANDOVER_STATUS_CODE": ("کد «تحویل به فروش» (اختیاری)", "مثلاً ۶۹۱۴ در سرور اصلی؛ فقط برای نشان دادن مرحلهٔ هر سفارش خوانده می‌شود.", "int"),
     "RECEIPT_DEADLINE_MINUTES": ("مهلت ارسال رسید (دقیقه)", "پس از این مدت سفارش بدون رسید خودکار لغو می‌شود (فقط در سرور فروشگاه، نه در حسابداری).", "int"),
     "SALES_WINDOWS_ENABLED": ("فروش گوشی طبق لیست قیمت", "بله = فروش گوشی فقط پس از لیست صبح (تا ۱۳:۳۰) یا عصر (تا ۲۰:۳۰)؛ جمعه بسته. لوازم جانبی همیشه قابل سفارش است.", "bool"),
     "SALES_MORNING_CLOSE": ("پایان فروش گوشی (لیست صبح)", "مثلاً 13:30 (ساعت ایران).", "text"),
@@ -62,6 +63,9 @@ _PROBLEMS = (
     (re.compile(r"(\d+) is not a valid status code"), "کد وضعیت {0} معتبر نیست"),
 )
 
+#: v2.17.0: edited in «قواعد فروشگاه» (their own tick), not in the server form.
+STATUS_CODE_KEYS = frozenset({"ACCOUNTING_STATUS_CODE", "ACCOUNTING_HANDOVER_STATUS_CODE"})
+
 #: Same rule as the server (shopapi ``control._status_code`` /
 #: ``Settings.status_code_problem``): required, a whole number above zero.
 
@@ -77,6 +81,8 @@ def local_problem(key: str, value: str) -> str | None:
             return "must be a whole number between 0 and 999999999"
         if int(value) <= 0:
             return f"{int(value)} is not a valid status code"
+    if key == "ACCOUNTING_HANDOVER_STATUS_CODE" and value.strip():
+        return local_problem("ACCOUNTING_STATUS_CODE", value)
     return None
 
 

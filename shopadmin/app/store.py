@@ -65,7 +65,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "notify_sound": True,
     # v2.8.2: 3 s (was 15): a customer's order / receipt shows up within seconds
     "event_poll_seconds": 3,
-    "close_to_tray": True,
+    "autostart_initialized": False,
     "sazeh_watch": True,
     "sazeh_process_names": "Sazeh Hesab, SazehHesab",
 }

@@ -40,8 +40,8 @@ def page(admin_qapp, ui_context, site_folder, monkeypatch):
 
 def test_nav_has_the_site_section_for_managers_only(ui_context):
     assert ("site", "سایت", "globe") == next(i[:3] for i in NAV_ITEMS if i[0] == "site")
-    assert ui_context.can(site_page.CATALOG_MANAGE)
-    assert not make_context_with_role(ui_context, ROLE_OPERATOR).can(site_page.CATALOG_MANAGE)
+    assert ui_context.can(site_page.SITE_MANAGE)
+    assert not make_context_with_role(ui_context, ROLE_OPERATOR).can(site_page.SITE_MANAGE)
 
 
 def test_data_lives_in_the_local_data_folder(page, ui_context):

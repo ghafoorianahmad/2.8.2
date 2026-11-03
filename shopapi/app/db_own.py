@@ -463,6 +463,19 @@ MIGRATIONS = (
     ("orders", "accounting_pending", "INTEGER NOT NULL DEFAULT 0"),
     # v2.17.0: the mobile a manager entered; staff link their bot chat with it
     ("staff_users", "mobile", "TEXT NOT NULL DEFAULT ''"),
+    # v2.17.0: what the customer told the bot; details_sync = not in «سازه حساب» yet
+    ("users", "first_name", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "last_name", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "national_code", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "address", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "details_asked_at", "TEXT"),
+    ("users", "details_sync", "INTEGER NOT NULL DEFAULT 0"),
+    # v2.17.0: the name on the customer's first receipt, when staff record it
+    ("users", "payer_name", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "payer_asked", "INTEGER NOT NULL DEFAULT 0"),
+    ("orders", "payer_name", "TEXT NOT NULL DEFAULT ''"),
+    # v2.17.0: where this order goes (text only)
+    ("orders", "ship_address", "TEXT NOT NULL DEFAULT ''"),
 )
 
 #: Item request kinds (v2.6.1).
@@ -614,6 +627,37 @@ class OwnDB:
             self._commit()
             return self.get_user_by_id(user_id)
 
+    def update_user_details(self, user_id: int, **fields) -> dict:
+        allowed = {"first_name", "last_name", "national_code", "address", "details_asked_at",
+                   "details_sync", "payer_name", "payer_asked"}
+        sets = {k: v for k, v in fields.items() if k in allowed}
+        with self._lock:
+            if sets:
+                cols = ", ".join(f"{k}=?" for k in sets)
+                self._conn.execute(f"UPDATE users SET {cols} WHERE id=?",
+                                   (*sets.values(), user_id))
+                self._commit()
+            return self.get_user_by_id(user_id)
+
+    def users_waiting_sync(self, limit: int = 50) -> list[dict]:
+        with self._lock:
+            return self._fetchall(
+                "SELECT * FROM users WHERE details_sync=1 AND person_code IS NOT NULL "
+                "ORDER BY id LIMIT ?", (limit,))
+
+    def set_order_address(self, order_id: int, address: str) -> dict:
+        with self._lock:
+            self._conn.execute("UPDATE orders SET ship_address=?, updated_at=? WHERE id=?",
+                               (address, now_iso(), order_id))
+            self._commit()
+            return self.get_order(order_id)
+
+    def set_order_payer(self, order_id: int, payer_name: str) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE orders SET payer_name=? WHERE id=?",
+                               (payer_name, order_id))
+            self._commit()
+
     def open_order_totals(self, user_id: int) -> tuple[float, float]:
         """(sum of totals, sum of quantities) of the user's open orders."""
         with self._lock:
@@ -646,6 +690,7 @@ class OwnDB:
         *,
         request_id: int | None = None,
         owner_id: int | None = None,
+        ship_address: str = "",
     ) -> dict:
         """items: (kala_code, name, qty, unit_price[, variant_id, variant]).
         ``reserve_until`` = the receipt deadline (the stock is held until then).
@@ -654,10 +699,10 @@ class OwnDB:
             ts = now_iso()
             self._conn.execute(
                 "INSERT INTO orders (user_id, status, price_level, total, reserve_until, "
-                "accounting_db, created_at, updated_at, request_id, owner_id, owner_at) "
-                "VALUES (?,'awaiting_payment',?,?,?,?,?,?,?,?,?)",
+                "accounting_db, created_at, updated_at, request_id, owner_id, owner_at, "
+                "ship_address) VALUES (?,'awaiting_payment',?,?,?,?,?,?,?,?,?,?)",
                 (user_id, price_level, total, reserve_until, accounting_db, ts, ts,
-                 request_id, owner_id, ts if owner_id is not None else None),
+                 request_id, owner_id, ts if owner_id is not None else None, ship_address or ""),
             )
             row = self._conn.execute("SELECT last_insert_rowid() AS id").fetchone()
             order_id = row["id"]
@@ -697,7 +742,8 @@ class OwnDB:
         with self._lock:
             order = self._fetchone(
                 "SELECT o.*, u.person_code AS user_person_code, u.status AS user_status, "
-                "u.name AS user_name, u.phone AS user_phone, "
+                "u.name AS user_name, u.phone AS user_phone, u.payer_asked AS user_payer_asked, "
+                "u.payer_name AS user_payer_name, "
                 "EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id "
                 "AND p.file_name IS NOT NULL) AS has_receipt "
                 "FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id=?",
@@ -713,6 +759,9 @@ class OwnDB:
                 except ValueError:
                     order["payment_info"] = None
             order["customer_pending"] = order.get("user_status") != "approved"
+            # v2.17.0: this customer's first «تأیید رسید»: staff compare the names once
+            order["first_receipt"] = (order.get("status") == "receipt_uploaded"
+                                      and not order.get("user_payer_asked"))
             order["items"] = self._fetchall(
                 "SELECT kala_code, name, qty, unit_price, variant_id, variant, color, part "
                 "FROM order_items WHERE order_id=? ORDER BY id",

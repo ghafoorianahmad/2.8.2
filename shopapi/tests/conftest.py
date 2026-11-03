@@ -129,10 +129,18 @@ class FakeWriter:
     person_result = None
     _next_person = 8000
 
-    def create_person(self, first_name, last_name, mobile, address="", dry_run=None):
+    def fill_person_empty(self, person_code, values, dry_run=None):
+        from app.accounting_writer import PersonFill
+
+        self.calls.append(("fill_person_empty", person_code, dict(values)))
+        return PersonFill(person_code=person_code, filled=sorted(values), committed=self.committed)
+
+    def create_person(self, first_name, last_name, mobile, address="", dry_run=None,
+                      national_code=""):
         from app.accounting_writer import PersonResult
 
         self.calls.append(("create_person", first_name, last_name, mobile))
+        self.created_with = {"address": address, "national_code": national_code}
         if self.person_result is not None:
             return self.person_result
         self._next_person += 1

@@ -63,9 +63,8 @@ def test_sales_menu_and_landing(ui_context, admin_qapp):
     from app.ui.main_window import MainWindow
 
     window = MainWindow(make_context_with_role(ui_context, ROLE_OPERATOR))
-    # v2.8.0: + «بایگانی» (own finished work); v2.8.3: + «داشبورد», «گزارش‌ها»
-    menu = {"dashboard", "orders", "item_requests", "customers", "archive", "reports",
-            "settings"}
+    # v2.17.0: the daily work; settings only with their own tick
+    menu = {"dashboard", "orders", "item_requests", "customers", "archive", "reports"}
     assert set(window._nav_buttons) == menu
     assert set(window._pages) == menu
     assert window._current_key == "orders" and window.home_key() == "orders"
@@ -268,9 +267,9 @@ def test_users_form_ticks_follow_the_role(ui_context, admin_qapp, fake_api):
     context = make_context_with_role(ui_context, ROLE_SUPER_ADMIN)
     form = UserFormDialog(context, None)
     assert form.role_combo.currentData() == ROLE_OPERATOR                # default role
-    # v2.8.3: the daily work is not in the table (always on)
-    assert "orders.view" not in form.permission_checks
-    assert "dashboard.view" not in form.permission_checks
+    # v2.17.0: the daily work is in the table too, ticked for a new sales user
+    assert form.permission_checks["orders.view"].isChecked()
+    assert form.permission_checks["dashboard.view"].isChecked()
     assert not form.permission_checks["pricelist.edit"].isChecked()
     # v2.8.2: «تغییر» ticks «دیدن» of the same section
     form.permission_checks["sales.edit"].setChecked(True)

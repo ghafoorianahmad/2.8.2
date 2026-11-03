@@ -242,7 +242,7 @@ def answer_offer(db: OwnDB, settings: Settings, who: Identity, request: dict,
             [(code, name, qty, float(price), request.get("mapping_id"), variant or None,
               request.get("color") or None, request.get("part") or None)],
             accounting_db=settings.database_name(), request_id=int(request["id"]),
-            owner_id=request.get("owner_id"))
+            owner_id=request.get("owner_id"), ship_address=str(user.get("address") or ""))
     row = db.update_item_request(int(request["id"]), status="done", handled_at=now_iso(),
                                  handled_by=who.actor, outcome=OUTCOME_CONFIRMED,
                                  order_id=order["id"])

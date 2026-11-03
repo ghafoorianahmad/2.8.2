@@ -12,7 +12,8 @@ from .api_client import MSG_SESSION_EXPIRED, ShopApiClient
 from .auth import AuthService
 from .edition import is_server_edition
 from .logging_setup import get_logger, setup_logging
-from .permissions import PASSWORDS_VIEW
+from . import autostart
+from .permissions import ORDERS_VIEW, PASSWORDS_VIEW
 from .paths import APP_NAME, data_dir, is_frozen
 from .store import Store
 from .ui import theme, widgets
@@ -112,6 +113,12 @@ class ShopAdminApp(QObject):
               server_settings: bool = False) -> None:
         apply_env_overrides(self.store)
         self.tray_mode = tray and not server_setup and not server_settings
+        # v2.17.0: starts with Windows for this user unless they turned it off
+        try:
+            autostart.apply_default(self.store)
+        except OSError as exc:
+            log.warning("autostart not set: %s", type(exc).__name__)
+        self.app.commitDataRequest.connect(self._windows_is_ending)
         if server_settings:
             self.show_server_setup(settings=True)
             return
@@ -143,7 +150,7 @@ class ShopAdminApp(QObject):
 
         self.notifier = TrayNotifier(self.store, self)
         self.notifier.open_requested.connect(self._open_from_tray)
-        self.notifier.quit_requested.connect(self.quit_application)
+        self.notifier.quit_requested.connect(self._confirm_quit)
         if self.notifier.tray is None:
             self.show_login()
             return
@@ -340,7 +347,7 @@ class ShopAdminApp(QObject):
         if self.notifier is None:
             self.notifier = TrayNotifier(self.store, self)
             self.notifier.open_requested.connect(self._open_from_tray)
-            self.notifier.quit_requested.connect(self.quit_application)
+            self.notifier.quit_requested.connect(self._confirm_quit)
         # Keep running in the tray when the window is closed, if a tray exists.
         self.app.setQuitOnLastWindowClosed(self.notifier.tray is None)
 
@@ -363,6 +370,9 @@ class ShopAdminApp(QObject):
         if self.payment_reminder is not None:
             self.payment_reminder.stop()
             self.payment_reminder.client.close()
+            self.payment_reminder = None
+        if self.context is not None and not self.context.can(ORDERS_VIEW):
+            return      # v2.17.0: no tick for «سفارش‌ها»: nothing to remind of
         self.payment_reminder = PaymentInfoReminder(
             self.store.base_url, self.api.token, parent=self,
             server_cert_pem=self.store.server_cert_pem)
@@ -457,9 +467,9 @@ class ShopAdminApp(QObject):
             self.main_window.navigate(page, filter_key)
 
     def _on_main_close(self) -> None:
-        """Window closed with the ✕: stay in the tray, or quit when there is none."""
-        if self.notifier is not None and self.notifier.tray is not None \
-                and self.store.get_setting("close_to_tray", True):
+        """Window closed with the ✕: v2.17.0 always to the tray; the full exit is only
+        in the tray's menu (a desktop without a tray: the same question here)."""
+        if self.notifier is not None and self.notifier.tray is not None:
             self.main_window.hide()
             self.notifier.tray.showMessage(
                 "مدیریت فروشگاه",
@@ -467,7 +477,24 @@ class ShopAdminApp(QObject):
                 "برای خروج کامل از منوی همان آیکون استفاده کنید.",
             )
             return
-        self.quit_application()
+        self._confirm_quit()
+
+    def _windows_is_ending(self, _manager) -> None:
+        """A sign-out / shutdown of Windows must not be held up by the ✕ going to the tray."""
+        if self.main_window is not None:
+            self.main_window.allow_close = True
+
+    def _confirm_quit(self) -> None:
+        """«خروج کامل از برنامه» of the tray's menu: asks first."""
+        from .ui import widgets
+
+        if widgets.confirm(
+            None, "خروج کامل از برنامه",
+            "برنامه کاملاً بسته شود؟ تا اجرای دوباره، اعلان سفارش و رسید تازه روی این رایانه "
+            "نمی‌آید.",
+            confirm_text="بله، خارج شو", cancel_text="انصراف", kind="warning",
+        ):
+            self.quit_application()
 
     # ------------------------------------------------------------------ lock
     def _lock(self) -> None:

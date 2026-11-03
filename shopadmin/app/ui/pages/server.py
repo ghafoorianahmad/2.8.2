@@ -27,7 +27,12 @@ from ...edition import is_server_edition
 from ...logging_setup import get_logger
 from ...permissions import PROXIES_MANAGE, SERVER_MANAGE, SERVER_VIEW
 from ...persian import format_shamsi, to_english_digits, to_persian_digits
-from ...server_settings import SETTINGS_FA, local_problem, translate_field_errors
+from ...server_settings import (
+    SETTINGS_FA,
+    STATUS_CODE_KEYS,
+    local_problem,
+    translate_field_errors,
+)
 from .. import theme, widgets
 from ..base_page import BasePage
 from ..rtl import RIGHT, mark_ltr
@@ -59,7 +64,7 @@ def write_text(status: dict) -> tuple[str, str]:
     if status.get("accounting_write_enabled"):
         if status.get("status_code_configured") is False:
             return (f"روشن برای «{name}»، ولی «کد وضعیت سفارش» تنظیم نشده؛ تا تنظیم نشود "
-                    "هیچ سفارشی ثبت نمی‌شود (پایین همین صفحه).", theme.WARNING_TEXT)
+                    "هیچ سفارشی ثبت نمی‌شود («قواعد فروشگاه»).", theme.WARNING_TEXT)
         if status.get("test_mode"):
             return f"فعال کامل — پایگاه آزمایشی «{name}» (خواندن و نوشتن آزاد)", theme.SUCCESS_DARK
         return f"فعال — ثبت واقعی در «{name}»", theme.SUCCESS_DARK
@@ -515,12 +520,6 @@ class ServerPage(BasePage):
         panel.body.addWidget(self.settings_message)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        # v2.9.4: read-only helper for «کد وضعیت سفارش» before real writing is switched on
-        self.status_codes_button = widgets.button(
-            "راهنمای کد وضعیت سفارش…", icon_name="search", on_click=self._open_status_codes,
-            tooltip="کدهای وضعیت سفارش‌های حسابداری و تعداد هر کدام (فقط خواندن)")
-        self.status_codes_button.setVisible(self.context.can(SERVER_MANAGE))
-        buttons.addWidget(self.status_codes_button)
         self.save_settings_button = widgets.button(
             "ذخیرهٔ تنظیمات سرور", icon_name="save", variant="primary", on_click=self._save_settings)
         buttons.addWidget(self.save_settings_button)
@@ -529,11 +528,6 @@ class ServerPage(BasePage):
         self.save_settings_button.setVisible(self.context.can(SERVER_MANAGE))
         panel.body.addLayout(buttons)
         return panel
-
-    def _open_status_codes(self) -> None:
-        from ..status_codes import StatusCodesDialog
-
-        StatusCodesDialog(self, self.context.api.order_status_codes).exec()
 
     def _settings_unavailable(self, message: str, _kind: str) -> None:
         self.save_settings_button.setEnabled(False)
@@ -545,6 +539,8 @@ class ServerPage(BasePage):
             self.settings_form.removeRow(0)
         self._inputs = {}
         for key, info in settings.items():
+            if key in STATUS_CODE_KEYS:
+                continue        # v2.17.0: «قواعد فروشگاه»
             caption, hint, kind = SETTINGS_FA.get(key, (key, "", "text"))
             if info.get("secret"):
                 field = QLineEdit()

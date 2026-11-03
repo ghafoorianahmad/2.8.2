@@ -155,7 +155,25 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
      "مهلت ارسال رسید این سفارش گذشته و سفارش لغو شده است."),
     (re.compile(r"order status code is not configured", re.I),
      "کد وضعیت سفارش حسابداری (ACCOUNTING_STATUS_CODE) روی سرور تنظیم نشده است؛ "
-     "سفارش در حسابداری ثبت نشد. کد درست را در «سرور فروشگاه › کد وضعیت سفارش» بنویسید."),
+     "سفارش در حسابداری ثبت نشد. کد درست را در «قواعد فروشگاه» بنویسید."),
+    # ---- v2.17.0: write later, closing a request, staff notifications ----
+    (re.compile(r"order does not wait for accounting", re.I),
+     "این سفارش منتظر ثبت در حسابداری نیست."),
+    (re.compile(r"accounting writes are disabled", re.I),
+     "«ثبت واقعی» برای این پایگاه‌داده روشن نیست؛ چیزی در حسابداری ثبت نشد."),
+    (re.compile(r"send the customer a message first", re.I),
+     "درخواست بی‌پیام بسته نمی‌شود؛ اول به مشتری پیام بفرستید."),
+    (re.compile(r"invalid national code", re.I), "کد ملی درست نیست."),
+    (re.compile(r"invalid name", re.I), "نام درست نیست."),
+    (re.compile(r"invalid address", re.I), "آدرس درست نیست."),
+    (re.compile(r"not a mobile number", re.I), "شمارهٔ موبایل درست نیست (مثل ۰۹۱۲۳۴۵۶۷۸۹)."),
+    (re.compile(r"mobile belongs to another staff member", re.I),
+     "این شمارهٔ موبایل برای همکار دیگری ثبت شده است."),
+    (re.compile(r"time must look like", re.I), "ساعت را به شکل ۰۹:۰۰ بنویسید."),
+    (re.compile(r"the end must be after the start", re.I), "پایان کار باید بعد از شروع کار باشد."),
+    (re.compile(r"unknown day", re.I), "روز انتخاب‌شده درست نیست."),
+    (re.compile(r"unknown action", re.I), "این کار شناخته نشد."),
+    (re.compile(r"unknown target", re.I), "این مورد شناخته نشد."),
     # ---- v2.7.0: shipping and cancel ----
     (re.compile(r"invalid courier phone", re.I),
      "شمارهٔ تلفن پیک درست نیست. فقط رقم بنویسید، مثلاً ۰۹۱۲۳۴۵۶۷۸۹؛ یا آن را خالی بگذارید."),
@@ -734,8 +752,45 @@ class ShopApiClient:
     def run_archive(self) -> dict:
         return self._request("POST", "/admin/archive/run") or {}
 
-    def approve_payment(self, order_id: int) -> dict:
-        return self._request("POST", f"/admin/orders/{int(order_id)}/approve-payment")
+    def approve_payment(self, order_id: int, *, payer_checked: bool = False,
+                        record_payer: bool = False, payer_name: str = "") -> dict:
+        """v2.17.0: ``payer_*``: the name check of the customer's first receipt."""
+        body = {"payer_checked": True, "record_payer": record_payer,
+                "payer_name": payer_name} if payer_checked else None
+        return self._request("POST", f"/admin/orders/{int(order_id)}/approve-payment",
+                             json_body=body)
+
+    def write_accounting(self, order_id: int) -> dict:
+        """v2.17.0 «ثبت در حسابداری»: an order that waits for a valid status code."""
+        return self._request("POST", f"/admin/orders/{int(order_id)}/write-accounting")
+
+    def claim_order(self, order_id: int) -> dict:
+        return self._request("POST", f"/admin/orders/{int(order_id)}/claim")
+
+    def claim_item_request(self, request_id: int) -> dict:
+        return self._request("POST", f"/admin/item-requests/{int(request_id)}/claim")
+
+    def shop_rules(self) -> dict:
+        """v2.17.0 «قواعد فروشگاه»: only the parts this account has a tick for."""
+        return self._request("GET", "/admin/shop-rules") or {}
+
+    def put_status_codes(self, order_status: str, handover_status: str = "") -> dict:
+        return self._request("PUT", "/admin/shop-rules/status-codes", json_body={
+            "order_status": order_status, "handover_status": handover_status})
+
+    def put_work_hours(self, start: str, end: str, days: list[int]) -> dict:
+        return self._request("PUT", "/admin/shop-rules/work-hours", json_body={
+            "start": start, "end": end, "days": list(days)})
+
+    def staff_alert_state(self) -> dict:
+        return self._request("GET", "/admin/staff-alerts/state") or {}
+
+    def staff_alert_action(self, action: str) -> dict:
+        return self._request("POST", "/admin/staff-alerts/action", json_body={"action": action})
+
+    def unlink_staff(self, staff_id: int, platform: str | None = None) -> dict:
+        return self._request("POST", f"/admin/staff/{int(staff_id)}/unlink",
+                             params={"platform": platform} if platform else None)
 
     def reject_payment(self, order_id: int, reason: str = "") -> dict:
         return self._request(
@@ -1228,20 +1283,25 @@ class ShopApiClient:
     def create_staff(self, username: str, full_name: str, role: str, password: str,
                      *, must_change_password: bool = True,
                      extra_permissions: list[str] | None = None,
-                     removed_permissions: list[str] | None = None) -> dict:
+                     removed_permissions: list[str] | None = None,
+                     mobile: str = "") -> dict:
         body = {"username": username, "full_name": full_name, "role": role,
                 "password": password, "must_change_password": must_change_password}
         if extra_permissions is not None:
             body["extra_permissions"] = sorted(extra_permissions)
         if removed_permissions is not None:
             body["removed_permissions"] = sorted(removed_permissions)
+        if mobile:
+            body["mobile"] = mobile
         return self._request("POST", "/admin/staff", json_body=body)
 
     def update_staff(self, staff_id: int, *, full_name: str | None = None,
                      role: str | None = None, active: bool | None = None,
                      extra_permissions: list[str] | None = None,
-                     removed_permissions: list[str] | None = None) -> dict:
-        body = {k: v for k, v in {"full_name": full_name, "role": role, "active": active}.items()
+                     removed_permissions: list[str] | None = None,
+                     mobile: str | None = None) -> dict:
+        body = {k: v for k, v in {"full_name": full_name, "role": role, "active": active,
+                                  "mobile": mobile}.items()
                 if v is not None}
         if extra_permissions is not None:
             body["extra_permissions"] = sorted(extra_permissions)

@@ -136,21 +136,6 @@ def test_status_code_setting_and_validation():
     assert local_problem("BANK_ACCOUNT_TEXT", "") is None
 
 
-def test_server_page_refuses_zero_before_sending(ui_context, admin_qapp, fake_api):
-    from app.ui.pages.server import ServerPage
-
-    fake_api.server_settings["ACCOUNTING_STATUS_CODE"] = "7"
-    context = make_context_with_role(ui_context, ROLE_SUPER_ADMIN)
-    page = ServerPage(context)
-    page.load()
-    _pump(admin_qapp)
-    field = page._inputs["ACCOUNTING_STATUS_CODE"]
-    field.setText("0")
-    page._save_settings()
-    _pump(admin_qapp)
-    assert fake_api.settings_puts == []
-
-
 # ---- 10: «گروه‌های کالا» ------------------------------------------------------------------------
 def test_product_groups_page(ui_context, admin_qapp, fake_api):
     from app.ui.pages.product_groups import ProductGroupsPage
@@ -204,7 +189,13 @@ def test_item_requests_page(ui_context, admin_qapp, fake_api):
     page.set_filter("all")
     assert page.table.rowCount() == 2
     assert ItemRequestsPage.product_text(fake_api.item_requests[1]) == "قاب (کد ۱۰۲)"
+    # v2.17.0: nothing sent yet: the request opens (it asks for a message first)
+    opened = []
+    page.open_request = opened.append
     page._set_status(fake_api.item_requests[0], "done")
+    _pump(admin_qapp)
+    assert opened and fake_api.item_requests[0]["status"] == "new"
+    page._set_status({**fake_api.item_requests[0], "messages_count": 1}, "done")
     _pump(admin_qapp)
     assert fake_api.item_requests[0]["status"] == "done"
 

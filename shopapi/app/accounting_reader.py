@@ -312,6 +312,29 @@ class AccountingReader:
                 out[int(r["Code"])] = name
         return out
 
+    def person_details(self, code: int) -> dict:
+        """v2.17.0: what «سازه حساب» already knows about a person ({} when no such
+        person). Only these columns: sql/upgrade_2_17_0.sql grants exactly them. Raises
+        when they cannot be read; the caller then simply asks nothing."""
+        db = self._db()
+        conn = self.connection()
+        try:
+            rows = self._rows(conn.execute(
+                f"SELECT fname, Name, Codemelli, Addres, Addres2 FROM {db}.dbo.name_mo "
+                f"WHERE Code = ?", int(code)))
+        finally:
+            conn.close()
+        if not rows:
+            return {}
+        row = rows[0]
+
+        def text(value) -> str:
+            return str(value or "").strip()
+
+        return {"first_name": text(row["fname"]), "last_name": text(row["Name"]),
+                "national_code": text(row["Codemelli"]),
+                "address": text(row["Addres2"]) or text(row["Addres"])}
+
     def find_person_by_mobile(self, mobile: str) -> Optional[dict]:
         """The single person whose mobile matches (recipe R4), as ``{"code": …}``.
 

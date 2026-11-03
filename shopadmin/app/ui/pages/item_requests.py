@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QPlainTextEdit,
+    QRadioButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -22,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...activity import timeline_lines
-from ...permissions import ORDERS_ASSIGN
+from ...permissions import ORDERS_ASSIGN, ORDERS_CLAIM
 from ...persian import coerce_datetime, format_datetime_shamsi, format_money, \
     gregorian_to_jalali, to_english_digits, to_persian_digits
 from .. import theme, widgets
@@ -251,9 +252,81 @@ class ItemRequestsPage(BasePage):
 
     def _set_status(self, item: dict, status: str) -> None:
         request_id = int(item["id"])
+        if status == "done" and not int(item.get("messages_count") or 0):
+            self.open_request(item)     # v2.17.0: it asks for a message first
+            return
         self.run(lambda: self.context.api.set_item_request_status(request_id, status),
                  on_success=lambda _r: self.load(),
                  on_error=lambda m, _k: widgets.error(self, "انجام نشد", m))
+
+
+#: v2.17.0: «رسیدگی شد» with nothing sent yet asks for one of these.
+READY_MESSAGES = (
+    ("موجود شد", "«{name}» موجود شد. برای سفارش از منوی ربات اقدام کنید."),
+    ("فعلاً تأمین نمی‌شود", "«{name}» فعلاً تأمین نمی‌شود. از پیگیری شما سپاسگزاریم."),
+    ("مدل مشابه داریم", "برای «{name}» مدل مشابه داریم. از منوی ربات جستجو کنید یا با پشتیبانی "
+                        "تماس بگیرید."),
+    ("متن دلخواه", ""),
+)
+REQUEST_FALLBACK_NAME = "کالای درخواستی"
+
+
+class CloseRequestDialog(widgets.ResponsiveDialog):
+    """v2.17.0 «پیامی برای مشتری بفرستم؟»: no request is closed silently, so there is
+    no «بدون پیام»: send one of the ready texts or your own, or go back."""
+
+    def __init__(self, parent: QWidget | None, item: dict) -> None:
+        super().__init__(parent)
+        self.text = ""
+        self.product = str(item.get("product_name") or "").strip() or REQUEST_FALLBACK_NAME
+        self.setWindowTitle("رسیدگی شد")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setMinimumWidth(480)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(12)
+        root.addWidget(widgets.label("پیامی برای مشتری بفرستم؟", size=14, bold=True))
+        root.addWidget(widgets.label(
+            "هنوز پیامی برای این مشتری فرستاده نشده است و درخواست بی‌پیام بسته نمی‌شود.",
+            name="Muted", wrap=True))
+        self.choices: list[QRadioButton] = []
+        for index, (label_text, _template) in enumerate(READY_MESSAGES):
+            radio = QRadioButton(label_text)
+            radio.toggled.connect(lambda on, i=index: self._picked(i) if on else None)
+            self.choices.append(radio)
+            root.addWidget(radio)
+        self.editor = QPlainTextEdit()
+        self.editor.setMaximumHeight(90)
+        self.editor.setPlaceholderText("متن پیام به مشتری…")
+        root.addWidget(self.editor)
+        self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
+        self.error_label.setVisible(False)
+        root.addWidget(self.error_label)
+        self.send_button = widgets.button("بفرست و ببند", variant="primary", icon_name="check",
+                                          on_click=self._send)
+        root.addLayout(widgets.footer(self.send_button,
+                                      close=widgets.button("انصراف", on_click=self.reject)))
+        self.choices[0].setChecked(True)
+
+    def _picked(self, index: int) -> None:
+        template = READY_MESSAGES[index][1]
+        self.editor.setPlainText(template.format(name=self.product) if template else "")
+        if not template:
+            self.editor.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _send(self) -> None:
+        text = self.editor.toPlainText().strip()
+        if not text:
+            self.error_label.setText("متن پیام خالی است.")
+            self.error_label.setVisible(True)
+            return
+        self.text = text
+        self.accept()
+
+
+def has_sent_message(messages: list[dict]) -> bool:
+    """A message that did not fail (sent, or waiting for the bot)."""
+    return any(str(m.get("status") or "") != "failed" for m in messages)
 
 
 class ItemRequestDialog(widgets.ResponsiveDialog):
@@ -406,8 +479,12 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
                                             on_click=lambda: self.set_status("new"))
         # v2.9.3: a tidy footer (prominent actions first, «بستن» last, a real button)
         self.close_button = widgets.button("بستن", on_click=self.accept)
-        root.addLayout(widgets.footer(self.stock_button, self.unavailable_button,
-                                      self.done_button, self.seen_button, self.reopen_button,
+        self.claim_button = widgets.button("برداشت", icon_name="check", on_click=self.claim,
+                                           tooltip="این درخواست مال شما می‌شود و تکرار اعلان "
+                                                   "برای همکاران تمام می‌شود")
+        root.addLayout(widgets.footer(self.claim_button, self.stock_button,
+                                      self.unavailable_button, self.done_button,
+                                      self.seen_button, self.reopen_button,
                                       self.assign_button, close=self.close_button))
 
         self._render_item()
@@ -432,6 +509,8 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         self.outcome_label.setText(f"نتیجه: {text}" if outcome else "")
         self.outcome_label.setVisible(bool(outcome))
         self.seen_button.setVisible(status == "new" and not finished)
+        self.claim_button.setVisible(not finished and not self.item.get("owned")
+                                     and self.context.can(ORDERS_CLAIM))
         # a purchase request ends with «تأیید موجودی» / «ناموجود» (the customer is told)
         self.done_button.setVisible(not finished and not purchase)
         # v2.8.0: a finished request is read-only
@@ -521,9 +600,42 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
 
     def set_status(self, status: str) -> None:
         request_id = int(self.item["id"])
+        if status == "done" and not has_sent_message(self.messages):
+            self._close_with_message(request_id)
+            return
         run_async(lambda: self.context.api.set_item_request_status(request_id, status),
                   on_success=self._item_updated,
                   on_error=lambda m, _k: widgets.error(self, "انجام نشد", m))
+
+    def _close_with_message(self, request_id: int) -> None:
+        """v2.17.0: nothing was sent yet: ask first, then send and close."""
+        dialog = CloseRequestDialog(self, self.item)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        text, api = dialog.text, self.context.api
+
+        def work():
+            api.send_item_request_message(request_id, text)
+            return api.set_item_request_status(request_id, "done")
+
+        run_async(work, on_success=self._closed_with_message,
+                  on_error=lambda m, _k: widgets.error(self, "انجام نشد", m))
+
+    def _closed_with_message(self, row: object) -> None:
+        self._item_updated(row)
+        self._set_send_info("⏳ پیام ثبت شد و در صف ارسال ربات است…")
+        self._poll_left = POLL_TRIES
+        self._poll.start()
+        self.load_messages()
+
+    def claim(self) -> None:
+        request_id = int(self.item["id"])
+        run_async(lambda: self.context.api.claim_item_request(request_id),
+                  on_success=lambda _r: self._claimed(),
+                  on_error=lambda m, _k: widgets.error(self, "انجام نشد", m))
+
+    def _claimed(self) -> None:
+        self._item_updated({"owned": True, "owned_by_me": True})
 
     def save_note(self) -> None:
         request_id = int(self.item["id"])

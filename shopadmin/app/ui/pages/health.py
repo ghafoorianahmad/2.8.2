@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 
-from ...permissions import SERVER_VIEW
+from ...permissions import HEALTH_VIEW
 from ...persian import format_int, format_shamsi
 from .. import widgets
 from ..base_page import BasePage
@@ -56,7 +56,7 @@ class HealthPage(BasePage):
         self.body.addWidget(journal, 1)
 
     def load(self) -> None:
-        if not self.context.can(SERVER_VIEW):
+        if not self.context.can(HEALTH_VIEW):
             return
         self.run(self.context.api.server_health, on_success=self._loaded,
                  on_error=lambda m, _k: self.show_table_error(m))

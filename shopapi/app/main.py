@@ -14,7 +14,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from . import (archive, catalog_models, control, deps, monitor, order_timeout, site_catalog,
+from . import (archive, catalog_models, control, customer_details, deps, monitor, order_timeout,
+               site_catalog,
                sql_errors, tracking)
 from .db_own import OwnDB
 from .pricelist import importer, pdf_archive
@@ -84,6 +85,9 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(archive.archive_loop(db_factory)),
         # v2.13.0: «empty the price-list archive» at the new year and every 3 months
         asyncio.create_task(pdf_archive.reminder_loop(settings, db_factory)),
+        # v2.17.0: customer details that could not reach «سازه حساب» yet
+        asyncio.create_task(customer_details.sync_loop(settings, db_factory,
+                                                       lambda: deps.get_writer(settings))),
         # v2.13.0: once per version, lists rejected in the last days are read again
         asyncio.create_task(_retry_failed_lists(settings, db_factory)),
     ]

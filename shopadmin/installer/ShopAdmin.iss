@@ -203,6 +203,12 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchAfterInstall}"; \
 Filename: "{app}\installer_readme.txt"; Description: "{cm:ReadMeFirst}"; \
     Flags: postinstall shellexec skipifsilent; Tasks: readme
 
+[Registry]
+; v2.17.0: the program registers itself to start with Windows for this user; only the
+; uninstaller takes that value away again.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "ShopAdmin"; \
+    Flags: dontcreatekey uninsdeletevalue
+
 #ifdef SERVER
 [UninstallRun]
 ; Stop and remove what the setup wizard registered: the Windows service

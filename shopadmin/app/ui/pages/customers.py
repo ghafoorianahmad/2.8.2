@@ -272,6 +272,16 @@ class CustomersPage(BasePage):
             self.context.mark_offline()
 
 
+def details_lines(customer: dict) -> str:
+    """v2.17.0: what the customer told the bot; these go into the new person."""
+    parts = []
+    if customer.get("national_code"):
+        parts.append(f"کد ملی: {to_persian_digits(customer['national_code'])}")
+    if customer.get("address"):
+        parts.append(f"آدرس: {customer['address']}")
+    return "\n".join(parts)
+
+
 #: Letters (any script), spaces, ZWNJ, hyphen, dot and apostrophe: Bale profile
 #: names may hold emoji or symbols that must not reach the accounting software.
 _NAME_RE = re.compile(r"^[^\W\d_]+(?:[ \u200c\-.'][^\W\d_]+)*$")
@@ -353,6 +363,9 @@ class ApproveCustomerDialog(widgets.ResponsiveDialog):
         form.addRow(widgets.label("تاریخ ثبت"), widgets.label(format_shamsi(customer.get("created_at"))))
         form.addRow(widgets.label("وضعیت"), widgets.label(customer_status_fa(customer.get("status"))))
         info.body.addLayout(form)
+        details = details_lines(customer)
+        if details:
+            info.body.addWidget(widgets.label(details, name="Muted", wrap=True))
         root.addWidget(info)
 
         mode_row = QHBoxLayout()
@@ -400,6 +413,9 @@ class ApproveCustomerDialog(widgets.ResponsiveDialog):
         # (it may be a nickname or emoji) before it is written to accounting.
         self.create_panel = widgets.Panel("نام شخص جدید در حسابداری")
         first, last = split_name(str(customer.get("name") or ""))
+        # v2.17.0: what the customer typed in the bot beats the guess from the profile
+        first = str(customer.get("first_name") or first)
+        last = str(customer.get("last_name") or last)
         name_form = QFormLayout()
         name_form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
         self.first_name_input = QLineEdit(first)

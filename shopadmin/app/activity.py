@@ -16,6 +16,7 @@ ACTION_FA = {
     "customer_approve": "مشتری را تأیید کرد",
     "customer_reject": "مشتری را رد کرد",
     "receipt_approve": "رسید را تأیید کرد",
+    "write_later": "سفارش را در حسابداری ثبت کرد",
     "receipt_reject": "رسید را رد کرد",
     "ship": "ارسال کرد",
     "cancel": "سفارش را لغو کرد",

@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from ... import paths
-from ...permissions import CATALOG_MANAGE
+from ...permissions import SITE_MANAGE
 from ...persian import format_int, format_shamsi
 from ...site import catalog as cat
 from ...site import github as gh_mod
@@ -126,7 +126,7 @@ class SitePage(BasePage):
     open_url = staticmethod(lambda url: QDesktopServices.openUrl(QUrl(url)))
 
     def build_body(self) -> None:
-        self.can_manage = self.context.can(CATALOG_MANAGE)
+        self.can_manage = self.context.can(SITE_MANAGE)
         self.store = SiteStore(self._root())
         self.banner = widgets.label("", wrap=True, bold=True)
         self.body.addWidget(self.banner)

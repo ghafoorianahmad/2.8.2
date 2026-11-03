@@ -25,6 +25,7 @@ from ...permissions import (
     DEFAULT_ROLE,
     ROLE_SERVER_PERMISSIONS,
     SECTIONS,
+    required_view,
     with_implied,
     USERS_MANAGE,
     USERS_VIEW,
@@ -36,15 +37,26 @@ from ..async_utils import run_async
 from ..base_page import BasePage
 from ..rtl import RIGHT, mark_ltr
 
-HEADERS = ("نام کاربری", "نام و نام خانوادگی", "نقش", "وضعیت", "آخرین ورود", "تاریخ ایجاد", "عملیات")
+HEADERS = ("نام کاربری", "نام و نام خانوادگی", "نقش", "وضعیت", "موبایل و اتصال ربات", "آخرین ورود",
+           "تاریخ ایجاد", "عملیات")
+PLATFORM_FA = {"bale": "بله", "telegram": "تلگرام"}
+
+
+def link_text(user: dict) -> str:
+    """«۰۹۱۲… — بله، تلگرام», or how the link is still to be made."""
+    mobile = str(user.get("mobile") or "")
+    if not mobile:
+        return "موبایل ندارد"
+    linked = [PLATFORM_FA.get(p, p) for p in user.get("linked_platforms") or ()]
+    return to_persian_digits(mobile) + " — " + ("، ".join(linked) if linked else "هنوز وصل نشده")
 
 
 class UsersPage(BasePage):
     title = "کاربران سیستم"
     subtitle = "حساب کارکنان فروشگاه و دسترسی هر بخش (دیدن / تغییر)"
-    help_text = ("کاربران برنامه: «مدیر» همهٔ بخش‌ها را دارد و «کاربر فروش» کار روزانه (فقط کار "
-                 "خودش). بقیهٔ بخش‌ها را برای هر نفر جداگانه بدهید یا بگیرید؛ «انتقال کارهای "
-                 "باز» همهٔ کارهای باز یک نفر را به دیگری می‌دهد.")
+    help_text = ("کاربران برنامه: «مدیر» همیشه همهٔ بخش‌ها را دارد و «کاربر فروش» با کار روزانه "
+                 "شروع می‌کند. هر صفحه و هر کار یک تیک جدا دارد و برای هر نفر جداگانه داده یا "
+                 "گرفته می‌شود؛ «انتقال کارهای باز» همهٔ کارهای باز یک نفر را به دیگری می‌دهد.")
 
     def build_body(self) -> None:
         if not self.context.can(USERS_VIEW):
@@ -112,12 +124,13 @@ class UsersPage(BasePage):
                     _role_pill(str(user.get("role")))
                 ))
                 self.table.set_widget(row, 3, widgets.pill_cell(_state_pill(user)))
+                self.table.set_cell(row, 4, link_text(user))
                 self.table.set_cell(
-                    row, 4,
+                    row, 5,
                     format_shamsi(user.get("last_login_at")) if user.get("last_login_at") else "—",
                 )
-                self.table.set_cell(row, 5, format_shamsi(user.get("created_at")))
-                self.table.set_widget(row, 6, self._actions_for(user))
+                self.table.set_cell(row, 6, format_shamsi(user.get("created_at")))
+                self.table.set_widget(row, 7, self._actions_for(user))
         finally:
             self.table.setUpdatesEnabled(True)
         self.table._refresh_states()
@@ -160,6 +173,9 @@ class UsersPage(BasePage):
         ]
         if user.get("locked"):
             actions.append(("رفع قفل", lambda u=user: self._unlock(u), can_manage, ""))
+        if user.get("linked_platforms"):
+            actions.append(("قطع اتصال بله و تلگرام", lambda u=user: self._unlink(u), can_manage,
+                            "دیگر اعلان نمی‌گیرد تا دوباره شماره‌اش را در ربات بفرستد"))
         # v2.8.3: the manager hands every open order / request of this user to another
         manager = bool(self.context.principal and self.context.principal.is_manager)
         actions.append(("انتقال همهٔ کارهای باز به همکار دیگر",
@@ -179,6 +195,12 @@ class UsersPage(BasePage):
 
         layout.addStretch(1)
         return holder
+
+    def _unlink(self, user: dict) -> None:
+        user_id = int(user["id"])
+        self.run(lambda: self.context.api.unlink_staff(user_id),
+                 on_success=lambda _r: (self.notify_success("اتصال ربات قطع شد"), self.load()),
+                 on_error=lambda m, _k: widgets.error(self, "قطع اتصال انجام نشد", m))
 
     def _transfer_open(self, user: dict) -> None:
         """v2.8.3: «انتقال همهٔ کارهای باز» of ``user`` to a colleague (logged on each
@@ -451,6 +473,15 @@ class UserFormDialog(widgets.ResponsiveDialog):
 
         form.addRow(widgets.label("نام کاربری:"), self.username_input)
         form.addRow(widgets.label("نام و نام خانوادگی:"), self.full_name_input)
+        # v2.17.0: the staff member links Bale / Telegram once by sharing this number
+        self.mobile_input = mark_ltr(QLineEdit())
+        self.mobile_input.setPlaceholderText("09123456789")
+        self.mobile_input.setToolTip("همکار یک بار همین شماره را در ربات بله یا تلگرام می‌فرستد "
+                                     "(اگر قبلاً مشتری ربات است، اول /staff را بزند) تا اعلان "
+                                     "کارهای تازه را آن‌جا بگیرد.")
+        if self.editing:
+            self.mobile_input.setText(str(user.get("mobile") or ""))
+        form.addRow(widgets.label("موبایل (برای اعلان در ربات):"), self.mobile_input)
         form.addRow(widgets.label("نقش:"), self.role_combo)
         form.addRow(widgets.label(""), self.role_hint)
 
@@ -480,11 +511,10 @@ class UserFormDialog(widgets.ResponsiveDialog):
         # ---- v2.8.2: one row per section, «دیدن» and «تغییر» ----------------
         perms_panel = widgets.Panel("دسترسی‌های این کاربر")
         perms_panel.body.addWidget(widgets.label(
-            "داشبورد، سفارش‌ها و رسیدها، درخواست کالا، مشتریان (تأیید و رد)، ارجاع، بایگانی و "
-            "گزارش‌ها برای همه همیشه روشن است و هر کس فقط کار خودش و کار تازهٔ بی‌صاحب را "
-            "می‌بیند. بقیهٔ بخش‌ها را اینجا برای همین یک نفر کم یا زیاد کنید؛ «تغییر» بدون "
-            "«دیدن» نمی‌شود و بخشی که «دیدن» ندارد در منوی او نشان داده نمی‌شود.",
-            name="Muted", wrap=True))
+            "هر صفحه و هر کار یک تیک جدا دارد. «مدیر» همیشه همه را دارد؛ کاربر تازه فقط کار "
+            "روزانه را دارد و هیچ بخش مدیریتی یا تنظیماتی ندارد. «تغییر» بدون «دیدن» نمی‌شود و "
+            "بخشی که «دیدن» ندارد در منوی او نشان داده نمی‌شود. ورود، خروج و تغییر گذرواژهٔ "
+            "خودش تیک ندارد.", name="Muted", wrap=True))
         perms_holder = QWidget()
         perms_grid = QGridLayout(perms_holder)
         perms_grid.setContentsMargins(0, 0, 0, 0)
@@ -503,6 +533,7 @@ class UserFormDialog(widgets.ResponsiveDialog):
                     continue
                 check = QCheckBox()
                 check.setToolTip(f"{label_text} — {'دیدن' if kind == 'view' else 'تغییر'}")
+                check.setAccessibleName(check.toolTip())
                 name = f"{key}.{kind}"
                 self.permission_checks[name] = check
                 check.toggled.connect(lambda on, n=name: self._tick_changed(n, on))
@@ -519,6 +550,8 @@ class UserFormDialog(widgets.ResponsiveDialog):
         else:
             self.reset_permissions()
         self.role_combo.currentIndexChanged.connect(lambda _i: self.reset_permissions())
+        self.role_combo.currentIndexChanged.connect(lambda _i: self._lock_for_manager())
+        self._lock_for_manager()
 
         self.error_label = widgets.label("", color=theme.DANGER, wrap=True)
         self.error_label.setVisible(False)
@@ -548,16 +581,26 @@ class UserFormDialog(widgets.ResponsiveDialog):
             check.blockSignals(False)
 
     def _tick_changed(self, name: str, on: bool) -> None:
-        """«تغییر» needs «دیدن»: ticking «تغییر» ticks «دیدن»; clearing «دیدن» clears
-        «تغییر» of the same section."""
-        section, kind = name.rsplit(".", 1)
-        other = self.permission_checks.get(f"{section}.{'view' if kind == 'edit' else 'edit'}")
-        if other is None:
+        """An action needs its page: ticking «تغییر» ticks the «دیدن» it needs; clearing
+        a «دیدن» clears every «تغییر» that needs it."""
+        if on:
+            needed = self.permission_checks.get(required_view(name) or "")
+            if needed is not None and not needed.isChecked():
+                needed.setChecked(True)
             return
-        if kind == "edit" and on and not other.isChecked():
-            other.setChecked(True)
-        elif kind == "view" and not on and other.isChecked():
-            other.setChecked(False)
+        for other, check in self.permission_checks.items():
+            if required_view(other) == name and check.isChecked():
+                check.setChecked(False)
+
+    def _lock_for_manager(self) -> None:
+        """«مدیر» always has everything: nothing to choose."""
+        manager = str(self.role_combo.currentData()) == ROLE_SUPER_ADMIN
+        for check in self.permission_checks.values():
+            check.setEnabled(not manager)
+            if manager:
+                check.blockSignals(True)
+                check.setChecked(True)
+                check.blockSignals(False)
 
     def reset_permissions(self) -> None:
         self._set_ticks(set(self.role_permissions()))
@@ -565,7 +608,6 @@ class UserFormDialog(widgets.ResponsiveDialog):
     def permission_changes(self) -> tuple[list[str], list[str]]:
         """(extra, removed) compared with the chosen role."""
         ticked = {n for n, c in self.permission_checks.items() if c.isChecked()}
-        # v2.8.3: only the ticks of the table (the daily work is always on)
         base = with_implied(self.role_permissions()) & set(self.permission_checks)
         return sorted(ticked - base), sorted(base - ticked)
 
@@ -586,6 +628,7 @@ class UserFormDialog(widgets.ResponsiveDialog):
         active = self.active_check.isChecked()
         actor_id = self.context.principal.user_id
         extra, removed = self.permission_changes()
+        mobile = self.mobile_input.text().strip()
 
         if self.editing:
             user_id = int(self.user["id"])
@@ -594,7 +637,8 @@ class UserFormDialog(widgets.ResponsiveDialog):
             def work():
                 return auth.update_user(user_id, full_name=full_name, role=role,
                                         is_active=active, actor_id=actor_id,
-                                        extra_permissions=extra, removed_permissions=removed)
+                                        extra_permissions=extra, removed_permissions=removed,
+                                        mobile=mobile)
         else:
             username = self.username_input.text().strip()
             password = self.password_input.text()
@@ -610,7 +654,8 @@ class UserFormDialog(widgets.ResponsiveDialog):
             def work():
                 created = auth.create_user(username, full_name, password, role,
                                            must_change_password=must_change,
-                                           extra_permissions=extra, removed_permissions=removed)
+                                           extra_permissions=extra, removed_permissions=removed,
+                                           mobile=mobile)
                 if not active:
                     auth.update_user(created.user_id, is_active=False)
                 return created

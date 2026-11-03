@@ -15,7 +15,13 @@ from ..config import Settings
 from ..db_own import OwnDB
 from ..pricelist import pdf_archive
 from ..security import Identity, get_identity, require_permission
-from ..staff import P_HEALTH, P_SERVER_MANAGE, P_SERVER_VIEW, P_STATUS_CODES_VIEW
+from ..staff import (
+    P_HEALTH,
+    P_SERVER_MANAGE,
+    P_SERVER_VIEW,
+    P_STATUS_CODES_EDIT,
+    P_STATUS_CODES_VIEW,
+)
 from ..util import now_utc
 
 router = APIRouter(prefix="/admin/server")
@@ -164,10 +170,14 @@ def _pool_status(db: OwnDB) -> dict:
 
 
 @router.get("/settings")
-def get_settings(_: Identity = CAN_SEE) -> dict:
+def get_settings(who: Identity = CAN_SEE) -> dict:
     if control.STATE.env_file is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Settings file not available")
-    return {"settings": control.current_settings()}
+    values = control.current_settings()
+    if not who.can(P_STATUS_CODES_VIEW):
+        # v2.17.0: «کدهای وضعیت» has its own tick
+        values = {k: v for k, v in values.items() if k not in control.STATUS_CODE_KEYS}
+    return {"settings": values}
 
 
 @router.put("/settings")
@@ -177,6 +187,9 @@ def put_settings(payload: SettingsUpdate, db: OwnDB = Depends(deps.get_db),
         raise HTTPException(status.HTTP_409_CONFLICT, "Settings file not available")
     if not payload.values:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Nothing to change")
+    if control.STATUS_CODE_KEYS & set(payload.values) and not who.can(P_STATUS_CODES_EDIT):
+        # v2.17.0: «تنظیمات سرور — تغییر» alone does not open the status codes
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not permitted for this account")
     problems = control.validate_settings(payload.values)
     if problems:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,

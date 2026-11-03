@@ -36,13 +36,13 @@
   returns a 10-char Shamsi date. Must be fully qualified (`hesab5.dbo...`).
 
 ## DIFFERENCES from the provided "VERIFIED FACTS" (important)
-1. **TabaghehBandi code 6808 does not exist** in this copy. TabaghehBandi here
-   contains free-text notes with personal/financial data (names, phone numbers,
-   cheque amounts), not a clean order-status table. The single existing
-   KalaOrder row uses `Status=6808`. Since 2026-10-11 the default is
-   `ACCOUNTING_STATUS_CODE=0` ("no status"; counted in the software's reserve
-   column, SAZEH_DB_REFERENCE §4.5) until GUI test G2 shows what the software
-   itself writes. The writer does NOT read TabaghehBandi.
+1. **Status codes differ per database.** In the test copy TabaghehBandi has no
+   6808; on the production server (hesab5) «تایید» = 6808 (prerequisite for sale)
+   and «تحویل به فروش» = 6914. TabaghehBandi holds free-text notes with
+   personal/financial data, so the shop never reads it: the admin enters the codes
+   in ShopAdmin «قواعد فروشگاه». v2.17.0: without a code above zero nothing is ever
+   written (0 shows as «بدون وضعیت» in the software); the order waits for
+   «ثبت در حسابداری».
 2. `name_mo.mobile`/`Tel1` are EMPTY in every row. Mobile matching uses recipe R4
    (`DetailTBL`, TabaghehBandiID 1 and 3, last 10 digits; `text.mobile_key`).
    A number shared by 2+ persons is "no match" (manual approval). Creating a

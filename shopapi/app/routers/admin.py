@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 
-from .. import archive, deps, ownership, receipts, sales, tracking
+from .. import archive, customer_details, deps, ownership, receipts, sales, tracking
 from ..accounting_reader import AccountingReader
 from ..accounting_writer import (
     AccountingConfigError,
@@ -26,6 +26,7 @@ from ..db_own import OwnDB
 from ..util import now_utc
 from ..schemas import ShipIn
 from ..schemas import (
+    ApprovePaymentIn,
     ApproveUserIn,
     AssignIn,
     OrderCancelIn,
@@ -153,15 +154,18 @@ def get_user(
 
 def _create_person(writer: AccountingWriter, user: dict, payload: ApproveUserIn) -> int:
     """Recipe §5.1 for a customer without a person code. Returns the code."""
-    first = (payload.first_name or "").strip()
-    last = (payload.last_name or "").strip()
+    first = (payload.first_name or "").strip() or str(user.get("first_name") or "")
+    last = (payload.last_name or "").strip() or str(user.get("last_name") or "")
     if not last:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "last_name is required to create a person (or give person_code)",
         )
     try:
-        result = writer.create_person(first, last, user["phone"])
+        # v2.17.0: all a new customer told the bot goes into the new person at once
+        result = writer.create_person(first, last, user["phone"],
+                                      address=str(user.get("address") or ""),
+                                      national_code=str(user.get("national_code") or ""))
     except AccountingLockTimeout:
         raise HTTPException(status.HTTP_409_CONFLICT, "Accounting is busy; try again") from None
     except AccountingWriteRefused:
@@ -202,8 +206,15 @@ def approve_user(
     if payload.person_code is None:
         person_code = _create_person(writer, user, payload)
         created = True
-        name = f"{(payload.first_name or '').strip()} {(payload.last_name or '').strip()}".strip()
-        db.update_user_contact(user_id, name=name)
+        names = {"first_name": (payload.first_name or "").strip(),
+                 "last_name": (payload.last_name or "").strip()}
+        names = {key: value for key, value in names.items() if value}
+        if names:
+            db.update_user_details(user_id, **names)
+        row = db.get_user_by_id(user_id)
+        name = f"{row.get('first_name') or ''} {row.get('last_name') or ''}".strip()
+        if name:
+            db.update_user_contact(user_id, name=name)
     else:
         person_code = payload.person_code
     with db.reservation_guard():
@@ -221,6 +232,9 @@ def approve_user(
                     f"person_code {person_code} is already linked to another user",
                 )
         user = db.set_user_approved(user_id, person_code)
+    if not created:
+        # v2.17.0: an existing person only gets its empty fields filled
+        customer_details.sync(db, writer, user)
     db.audit(
         who.actor, "user_approve",
         f"user id={user_id} person_code={person_code} created={created}",
@@ -489,6 +503,7 @@ def run_archive(
 @router.post("/orders/{order_id}/approve-payment", response_model=OrderOut)
 def approve_payment(
     order_id: int,
+    payload: Optional[ApprovePaymentIn] = None,
     reader: AccountingReader = Depends(deps.get_reader),
     writer: AccountingWriter = Depends(deps.get_writer),
     db: OwnDB = Depends(deps.get_db),
@@ -531,11 +546,13 @@ def approve_payment(
             # v2.17.0: without a valid status code nothing is ever written («بدون
             # وضعیت» in «سازه حساب»). The payment decision stands; staff are warned and
             # write the order later with «ثبت در حسابداری».
+            _record_payer(db, order, payload)
             return order_out(db, who, _accept_without_writing(db, who, order_id))
         try:
             written = _write_to_accounting(db, writer, settings, who, order, order_id)
         except AccountingConfigError as exc:
             db.audit(who.actor, "approve_payment_refused", f"order id={order_id} config: {exc}")
+            _record_payer(db, order, payload)
             return order_out(db, who, _accept_without_writing(db, who, order_id))
         if written is None:
             db.audit(who.actor, "approve_payment_dry_run",
@@ -544,7 +561,21 @@ def approve_payment(
         db.set_payment_decided(order_id, "approved")
         db.add_event("payment_approved", order_id, who.actor)
         ownership.log(db, who, ownership.A_RECEIPT_APPROVE, "order", written)
-        return order_out(db, who, written)
+        _record_payer(db, order, payload)
+        return order_out(db, who, db.get_order(order_id))
+
+
+def _record_payer(db: OwnDB, order: dict, payload: Optional[ApprovePaymentIn]) -> None:
+    """v2.17.0: the first receipt's name check: asked once per customer. A different
+    payer stays in our own data; the customer's name and «سازه حساب» are never touched."""
+    if payload is None or not payload.payer_checked:
+        return
+    fields: dict = {"payer_asked": 1}
+    name = " ".join(payload.payer_name.split())
+    if payload.record_payer and name:
+        fields["payer_name"] = name
+        db.set_order_payer(int(order["id"]), name)
+    db.update_user_details(int(order["user_id"]), **fields)
 
 
 def _accept_without_writing(db: OwnDB, who: Identity, order_id: int) -> dict:

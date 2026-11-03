@@ -213,6 +213,18 @@ def _dialogs(context, fake, window) -> Iterator[tuple[str, object]]:
     yield "ship", lambda: orders.ShipDialog(window, "۱۲")
     yield "assign", lambda: orders.AssignDialog(context, window, "سفارش ۱۲")
     yield "reject payment", lambda: orders.RejectPaymentDialog(window, "۱۲")
+    yield "first receipt", lambda: orders.FirstReceiptDialog(window, LONG_NAME)
+
+    def first_receipt_second_step():
+        dialog = orders.FirstReceiptDialog(window, "زهرا محمدی")
+        dialog._different()
+        return dialog
+
+    yield "first receipt, not the same", first_receipt_second_step
+    yield "order waits for accounting", lambda: orders.OrderDetailDialog(
+        context, {**long_order, "status": "approved", "accounting_pending": True,
+                  "ship_address": "تهران، خیابان ولیعصر، بالاتر از میدان ونک، کوچهٔ بهار، پلاک ۱۲",
+                  "payer_name": "حسین احمدی", "sazeh_stage": "handover"}, window)
     if hasattr(orders, "CancelOrderDialog"):
         yield "cancel order", lambda: orders.CancelOrderDialog(window, "۱۲")
     pixmap = QPixmap(240, 320)
@@ -222,6 +234,8 @@ def _dialogs(context, fake, window) -> Iterator[tuple[str, object]]:
         yield (f"request {request['id']} {request.get('kind')}",
                lambda r=request: item_requests.ItemRequestDialog(context, r, window))
     yield "stock confirm", lambda: item_requests.StockConfirmDialog(window, fake.item_requests[0])
+    yield "close request", lambda: item_requests.CloseRequestDialog(
+        window, {"product_name": LONG_NAME})
     yield "approve customer", lambda: customers.ApproveCustomerDialog(context, fake.customers[0],
                                                                       window)
     yield "reject customer", lambda: customers.RejectCustomerDialog(window, "زهرا محمدی")

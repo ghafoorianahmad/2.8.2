@@ -84,6 +84,14 @@ class FakeShopApi:
         self.events: list[dict] = []
         self.login_bodies: list[dict] = []
         self.tls_fingerprint = ":".join(["AB"] * 32)
+        # v2.17.0
+        self.status_codes = {"order_status": 6808, "handover_status": 6914, "configured": True,
+                             "editable": True}
+        self.work_hours = {"start": "09:00", "end": "21:00", "days": [5, 6, 0, 1, 2, 3]}
+        self.alert_state = {"active": True, "in_hours": True, "override": "", "override_by": "",
+                            "until": None}
+        self.alert_actions: list[str] = []
+        self.claims: list[tuple] = []
         self.server_settings: dict[str, str] = {
             "BANK_ACCOUNT_TEXT": "حساب قدیم", "RECEIPT_DEADLINE_MINUTES": "30",
             "ALLOW_SHARED_PERSON_CODE": "false", "BALE_TOKEN": "123:secret",
@@ -205,7 +213,8 @@ class FakeShopApi:
                                    "must_change_password", "locked", "created_at",
                                    "last_login_at")}
         # v2.7.0: a row may carry the server's effective permissions and ticks
-        for key in ("permissions", "extra_permissions", "removed_permissions"):
+        for key in ("permissions", "extra_permissions", "removed_permissions", "mobile",
+                    "linked_platforms"):
             if key in row:
                 out[key] = row[key]
         return out
@@ -361,7 +370,7 @@ class FakeShopApi:
             req["status"] = "approved" if path.endswith("/approve") else "rejected"
             return reply(200, {"ok": True})
 
-        if path.startswith("/admin/staff") or path == "/admin/audit":
+        if path == "/admin/staff" or path.startswith("/admin/staff/") or path == "/admin/audit":
             if not is_super:
                 return detail(403, "Not permitted for this account")
             return self._staff_admin(request, path, body, user, reply, detail)
@@ -447,10 +456,44 @@ class FakeShopApi:
                 if order["id"] == order_id:
                     if order["status"] != "receipt_uploaded":
                         return detail(409, f"Order in status {order['status']}; cannot approve")
+                    if not self.status_codes.get("configured"):
+                        order["status"] = "approved"
+                        order["accounting_pending"] = True
+                        return reply(200, order)
                     order["status"] = "written"
                     order["accounting_order_no"] = 5001
                     return reply(200, order)
             return detail(404, "Order not found")
+
+        # ---- v2.17.0 ----
+        if path.startswith("/admin/orders/") and path.endswith("/write-accounting"):
+            order_id = int(path.split("/")[3])
+            order = next((o for o in self.orders if o["id"] == order_id), None)
+            if order is None:
+                return detail(404, "Order not found")
+            if not self.status_codes.get("configured"):
+                return detail(409, "Order status code is not configured")
+            order.update(status="written", accounting_pending=False, accounting_order_no=5002)
+            return reply(200, order)
+        if path == "/admin/shop-rules":
+            return reply(200, {"status_codes": dict(self.status_codes),
+                               "work_hours": dict(self.work_hours),
+                               "auto_invoice": {"enabled": False, "available": False}})
+        if path == "/admin/shop-rules/status-codes":
+            self.status_codes.update(
+                order_status=int(body["order_status"]),
+                handover_status=int(body["handover_status"]) if body.get("handover_status")
+                else None, configured=True)
+            return reply(200, dict(self.status_codes))
+        if path == "/admin/shop-rules/work-hours":
+            self.work_hours.update(start=body["start"], end=body["end"], days=body["days"])
+            return reply(200, dict(self.work_hours))
+        if path == "/admin/staff-alerts/state":
+            return reply(200, {**self.alert_state, "work_hours": dict(self.work_hours)})
+        if path == "/admin/staff-alerts/action":
+            self.alert_actions.append(body["action"])
+            self.alert_state.update(active=body["action"] == "on", override=body["action"])
+            return reply(200, {**self.alert_state, "work_hours": dict(self.work_hours)})
 
         if path == "/admin/product-groups":
             if request.method == "PUT":
@@ -644,6 +687,7 @@ class FakeShopApi:
                                           "unavailable"):
                 return detail(404, "Order not found" if kind == "order" else "Request not found")
             if action == "claim":
+                self.claims.append((kind, int(parts[3])))
                 row.update(owned=True, owned_by_me=True, owner_id=user["id"])
                 return reply(200, row)
             if action == "assign":
