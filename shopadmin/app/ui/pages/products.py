@@ -123,6 +123,8 @@ class ProductsPage(BasePage):
             index = self.group_combo.findData(current)
             self.group_combo.setCurrentIndex(max(0, index))
             self.group_combo.blockSignals(False)
+            if self._items:
+                self._render()     # the products came first: their group names are known now
 
         self.run(lambda: self.context.api.list_groups(), on_success=ok,
                  on_error=lambda _m, _k: None)

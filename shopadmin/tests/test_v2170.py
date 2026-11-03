@@ -149,6 +149,21 @@ def test_buttons_follow_their_own_tick(ui_context, admin_qapp):
     dialog.close()
 
 
+def test_group_names_arriving_after_the_products_are_shown(ui_context, admin_qapp, fake_api):
+    """The two answers race (a build failed on it): the slower one must not leave «گروه ۱»."""
+    from app.ui.pages.products import ProductsPage
+
+    fake_api.groups = [{"code": 1, "name": "لوازم خانگی"}]
+    page = ProductsPage(make_context_with_role(ui_context, ROLE_SUPER_ADMIN))
+    page._on_loaded({"total": 1, "page": 1, "page_size": 20, "items": [
+        {"code": 101, "name": "یخچال", "group": 1, "unit_price": 1.0, "available_qty": 1.0,
+         "image": None}]})
+    assert "لوازم خانگی" not in page.table.item(0, 2).text()
+    page._load_groups()
+    _pump(admin_qapp, until=lambda: "لوازم خانگی" in page.table.item(0, 2).text())
+    assert "لوازم خانگی" in page.table.item(0, 2).text()
+
+
 # ---- #1 and #2 ---------------------------------------------------------------------------------
 def test_6808_is_accepted_and_zero_refused():
     from app.server_settings import local_problem
