@@ -151,7 +151,7 @@ ShopAdmin real-app screenshots: `scripts/live_shot.py`, `scripts/live_farsi.py`.
 * Permissions: `staff.ALL_SECTIONS` (32 rows) mirrored in ShopAdmin `permissions.py`; there is no always-on
   section any more. A new page or action = a new row in both, `SERVER_TO_CLIENT`, and a server check;
   `test_a_user_without_ticks_is_refused_everywhere` walks every `/admin` route. Migration key `permissions_2170`.
-* Tests: shopapi 699, shopbots 313, shoptg 89, shopsystem 84, shopadmin 899 ✓; three audits 0 in 9 looks. Real bot engine against real shopapi over
+* Tests: shopapi 699, shopbots 313, shoptg 89, shopsystem 84, shopadmin 900 ✓; three audits 0 in 9 looks. Real bot engine against real shopapi over
   HTTP (fake accounting and Bale): 16 of 16. **NOT run on real SQL:** this session's token gets «Access denied» on
   the SQL Server pipe, also without the sandbox; the owner tests it after installing.
 * A test that opens a modal dialog hangs forever offscreen: run the suite with `-o faulthandler_timeout=200`
