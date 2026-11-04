@@ -367,12 +367,12 @@ def customer_text(sheet: Sheet, shop: str = "") -> str:
     lines = [f"🧾 پیشنهاد اقساط{f' — {shop}' if shop else ''}"]
     if sheet.phone_name:
         lines.append(f"گوشی: {sheet.phone_name}")
-    lines.append(f"نقد (پیش‌پرداخت): {fa_money(sheet.down)} ریال")
-    for group in check_groups(sheet.checks):
-        lines.append(f"{fa_text(group.count)} چک × {fa_money(group.amount)} ریال")
-    if sheet.dates:
-        lines.append(f"تاریخ اولین چک: {fa_text(sheet.dates[0])}")
     lines.append(f"جمع کل: {fa_money(sheet.grand_total)} ریال")
+    lines.append(f"پیش‌پرداخت: {fa_money(sheet.down)} ریال")
+    for number, amount in enumerate(sheet.checks, 1):
+        day = sheet.dates[number - 1] if number <= len(sheet.dates) else ""
+        lines.append(f"چک {fa_text(number)}: {fa_money(amount)} ریال"
+                     + (f" — {fa_text(day)}" if day else ""))
     if sheet.date:
         lines.append(f"تاریخ: {fa_text(sheet.date)}")
     return "\n".join(lines)
@@ -382,10 +382,6 @@ def staff_text(sheet: Sheet, base: Quote | None = None) -> str:
     """Everything, for staff only: with the rate and the interest."""
     lines = [customer_text(sheet), f"قیمت نقدی گوشی: {fa_money(sheet.price)} ریال",
              f"نرخ ماهانه: {fa_text(sheet.rate)}٪", f"سود: {fa_money(sheet.interest)} ریال"]
-    for number, amount in enumerate(sheet.checks, 1):
-        day = sheet.dates[number - 1] if number <= len(sheet.dates) else ""
-        lines.append(f"چک {fa_text(number)}: {fa_money(amount)} ریال"
-                     + (f" — {fa_text(day)}" if day else ""))
     if base is not None and sheet.grand_total != base.grand_total:
         lines.append("اختلاف با محاسبه: " + difference_text(sheet.grand_total - base.grand_total))
     return "\n".join(lines)

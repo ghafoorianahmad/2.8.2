@@ -84,3 +84,25 @@ def test_every_amount_on_the_installments_page_groups(ui_context, admin_qapp):
     page.down_input.setText("۵۰٪")
     assert page.down == 100_000_000
     page.close()
+
+
+def test_the_change_tick_alone_opens_the_rate_and_the_amounts(ui_context, admin_qapp):
+    from app.permissions import INSTALLMENT_EDIT
+
+    context = make_context_with_role(ui_context, ROLE_OPERATOR)
+    plain = InstallmentsPage(context)
+    assert plain.rate.isReadOnly() and plain.down_edit.isReadOnly() and plain.grand_edit.isReadOnly()
+    plain.close()
+    context.can = lambda key: key == INSTALLMENT_EDIT   # the rules tick is not given
+    editing = InstallmentsPage(context)
+    assert not editing.rate.isReadOnly() and not editing.total_edit.isReadOnly()
+    assert not editing.reset_button.isHidden() and not editing.round_button.isHidden()
+    assert editing.save_rate_button is None
+    editing.close()
+
+
+def test_the_comparison_is_last(ui_context, admin_qapp):
+    page = InstallmentsPage(make_context_with_role(ui_context, ROLE_SUPER_ADMIN))
+    last = page.column.itemAt(page.column.count() - 2).widget()
+    assert page.compare in last.findChildren(type(page.compare))
+    page.close()

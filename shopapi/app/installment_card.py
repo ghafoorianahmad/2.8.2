@@ -66,21 +66,19 @@ def _esc(text: object) -> str:
 
 
 def card_height(view: dict) -> int:
-    return 860 + 96 * len(view["groups"]) + (96 if view["phone_name"] else 0)
+    return 980 + 84 * len(view["checks"]) + (96 if view["phone_name"] else 0)
 
 
 def card_html(view: dict, *, shop: str = "عصر ارتباطات ۲", phone: str = "") -> str:
     """The card's page, from a customer view."""
     money = installments.fa_money
     digits = installments.fa_text
+    dates = view["dates"]
     rows = "".join(
-        f'<div class="row"><span class="count">{digits(g["count"])} چک</span>'
-        f'<span class="times">×</span>'
-        f'<span class="value"><bdi>{money(g["amount"])}</bdi> <small>ریال</small></span></div>'
-        for g in view["groups"])
-    first = view["dates"][0] if view["dates"] else ""
-    first_line = (f'<div class="note">تاریخ اولین چک: <bdi>{digits(first)}</bdi></div>'
-                  if first else "")
+        f'<tr><td>{digits(number)}</td>'
+        f'<td><bdi>{digits(dates[number - 1]) if number <= len(dates) else "—"}</bdi></td>'
+        f'<td class="value"><bdi>{money(amount)}</bdi></td></tr>'
+        for number, amount in enumerate(view["checks"], 1))
     phone_line = (f'<div class="phone-name"><bdi>{_esc(view["phone_name"])}</bdi></div>'
                   if view["phone_name"] else "")
     contact = f'<span>تلفن: <bdi>{_esc(digits(phone))}</bdi></span>' if phone else ""
@@ -101,13 +99,14 @@ margin-bottom:28px;text-align:center;color:#3a2bb8}}
 border-bottom:2px solid #e6ebf5;font-size:36px}}
 .line b{{font-size:46px}}
 .label{{font-size:32px;color:#51617f;margin:28px 8px 12px}}
-.row{{display:flex;align-items:baseline;gap:22px;background:#f4f7fd;border-radius:22px;
-padding:20px 32px;margin-bottom:14px;font-size:38px}}
-.count{{font-weight:700}} .times{{color:#7a88a5}}
-.value{{font-weight:700;margin-inline-start:auto;font-size:44px}}
+table{{width:100%;border-collapse:separate;border-spacing:0 10px;font-size:36px}}
+th{{font-size:30px;font-weight:400;color:#51617f;padding:0 24px;text-align:right}}
+td{{background:#f4f7fd;padding:16px 24px}}
+td:first-child{{border-radius:0 20px 20px 0;font-weight:700}}
+td:last-child{{border-radius:20px 0 0 20px}}
+.value{{font-weight:700;font-size:40px}}
 small{{font-size:28px;font-weight:400;color:#51617f}}
-.note{{font-size:30px;color:#51617f;margin:14px 8px 0}}
-.total{{margin-top:32px;border-radius:30px;padding:34px 40px;color:#fff;display:flex;
+.total{{margin-bottom:12px;border-radius:30px;padding:34px 40px;color:#fff;display:flex;
 justify-content:space-between;align-items:baseline;
 background:linear-gradient(115deg,#6d3bf5,#2f6fed 60%,#14b8c4)}}
 .total span{{font-size:36px}} .total b{{font-size:58px}} .total small{{color:#e6ecff}}
@@ -116,10 +115,10 @@ background:linear-gradient(115deg,#6d3bf5,#2f6fed 60%,#14b8c4)}}
 <div class="top"><img alt="" src="data:image/png;base64,{_asset_b64("logo.png")}">
 <div><div class="shop">{_esc(shop)}</div><div class="kind">پیشنهاد خرید اقساطی</div></div></div>
 {phone_line}
-<div class="line"><span>نقد (پیش‌پرداخت)</span><b><bdi>{money(view["down"])}</bdi> <small>ریال</small></b></div>
-<div class="label">چک‌ها</div>
-{rows}{first_line}
 <div class="total"><span>جمع کل</span><b><bdi>{money(view["grand_total"])}</bdi> <small>ریال</small></b></div>
+<div class="line"><span>پیش‌پرداخت</span><b><bdi>{money(view["down"])}</bdi> <small>ریال</small></b></div>
+<div class="label">چک‌ها</div>
+<table><thead><tr><th>شماره</th><th>تاریخ</th><th>مبلغ (ریال)</th></tr></thead><tbody>{rows}</tbody></table>
 <div class="foot"><span>تاریخ: <bdi>{_esc(digits(view["date"]))}</bdi></span>{contact}</div>
 </div></body></html>"""
 

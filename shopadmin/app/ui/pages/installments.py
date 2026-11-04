@@ -46,12 +46,19 @@ ROUND_CHOICES = (("بدون گرد کردن", inst.ROUND_NONE, 0),
 STATUS_FA = {"saved": "ذخیره‌شده", "pending": "در صف ارسال", "sent": "ارسال شد", "failed": "ارسال نشد"}
 SCHEDULE_HEADERS = ("شماره", "تاریخ چک", "مبلغ (ریال)")
 COMPARE_HEADERS = ("ماه", "هر چک", "سود", "جمع اقساط", "جمع کل")
+COMPACT_ROW = 28
 HISTORY_HEADERS = ("زمان", "کاربر", "مشتری", "گوشی", "نقد", "چک‌ها", "سود", "جمع کل", "وضعیت")
 _PICK_DELAY_MS = 300
 
 
 def money(value: int) -> str:
     return inst.fa_money(int(value))
+
+
+def _compact(panel: widgets.Panel) -> widgets.Panel:
+    panel.body.setContentsMargins(12, 8, 12, 8)
+    panel.body.setSpacing(6)
+    return panel
 
 
 def _next_month() -> date:
@@ -81,7 +88,7 @@ class InstallmentsPage(BasePage):
         holder = QWidget()
         self.column = QVBoxLayout(holder)
         self.column.setContentsMargins(0, 0, 0, 0)
-        self.column.setSpacing(16)
+        self.column.setSpacing(8)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -91,17 +98,30 @@ class InstallmentsPage(BasePage):
         self._inputs_panel()
         self._result_panel()
         self._schedule_panel()
-        self._compare_panel()
         self._output_panel()
+        self._compare_panel()
         self.column.addStretch(1)
         self._recalculate()
+        self._apply_change_tick()
+
+    def _apply_change_tick(self) -> None:
+        """v2.18.2: the «تغییر» tick of this page alone opens the rate and every amount (the rules
+        tick is only for the saved default and the customers' calculator). Without it the page
+        still calculates from a price at the default rate."""
+        for box in (self.rate, self.down_edit, self.total_edit, self.grand_edit):
+            box.setReadOnly(not self.can_edit)
+        for shown in (self.reset_button, self.round_button, self.round_choice, self.round_note,
+                      self.round_title):
+            shown.setVisible(self.can_edit)
+        self.schedule.setEditTriggers(QAbstractItemView.EditTrigger.AllEditTriggers if self.can_edit
+                                      else QAbstractItemView.EditTrigger.NoEditTriggers)
 
     # ---- inputs --------------------------------------------------------------------------
     def _inputs_panel(self) -> None:
-        panel = widgets.Panel("ورودی‌ها")
+        panel = _compact(widgets.Panel("ورودی‌ها"))
         form = QFormLayout()
         form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
-        form.setSpacing(10)
+        form.setSpacing(6)
 
         name_row = QHBoxLayout()
         self.phone_name = QLineEdit()
@@ -203,10 +223,10 @@ class InstallmentsPage(BasePage):
 
     # ---- result ----------------------------------------------------------------------------
     def _result_panel(self) -> None:
-        panel = widgets.Panel("نتیجه")
+        panel = _compact(widgets.Panel("نتیجه"))
         form = QFormLayout()
         form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
-        form.setSpacing(8)
+        form.setSpacing(4)
         self.remaining_value = widgets.label("—")
         form.addRow(widgets.label("مانده پس از پیش‌پرداخت:"), self.remaining_value)
         self.interest_value = widgets.label("—", bold=True)
@@ -234,8 +254,9 @@ class InstallmentsPage(BasePage):
         panel.body.addLayout(row)
 
         panel.body.addWidget(widgets.hline())
-        panel.body.addWidget(widgets.label("پیشنهاد گرد کردن (فقط اگر خودتان بخواهید اعمال می‌شود)",
-                                           name="SectionTitle"))
+        self.round_title = widgets.label("پیشنهاد گرد کردن (فقط اگر خودتان بخواهید اعمال می‌شود)",
+                                         name="SectionTitle")
+        panel.body.addWidget(self.round_title)
         rounding = QHBoxLayout()
         self.round_choice = QComboBox()
         for text, _mode, _step in ROUND_CHOICES:
@@ -342,14 +363,15 @@ class InstallmentsPage(BasePage):
 
     # ---- the check schedule ----------------------------------------------------------------
     def _schedule_panel(self) -> None:
-        panel = widgets.Panel("برنامهٔ چک‌ها (هر تاریخ و مبلغ را می‌توانید تغییر دهید)")
+        panel = _compact(widgets.Panel("برنامهٔ چک‌ها" + (" (هر تاریخ و مبلغ را می‌توانید تغییر دهید)"
+                                                          if self.can_edit else "")))
         self.schedule = widgets.RoundTable(0, len(SCHEDULE_HEADERS))
         self.schedule.setHorizontalHeaderLabels(SCHEDULE_HEADERS)
         self.schedule.verticalHeader().setVisible(False)
         self.schedule.horizontalHeader().setStretchLastSection(True)
         self.schedule.setEditTriggers(QAbstractItemView.EditTrigger.AllEditTriggers)
         self.schedule.setItemDelegateForColumn(2, widgets.AmountDelegate(self.schedule))
-        self.schedule.setMinimumHeight(240)
+        self.schedule.verticalHeader().setDefaultSectionSize(COMPACT_ROW)
         self.schedule.itemChanged.connect(self._cell_changed)
         panel.body.addWidget(self.schedule)
         self.column.addWidget(panel)
@@ -365,8 +387,14 @@ class InstallmentsPage(BasePage):
                 day = self.dates[row] if row < len(self.dates) else ""
                 self.schedule.setItem(row, 1, QTableWidgetItem(to_persian_digits(day)))
                 self.schedule.setItem(row, 2, QTableWidgetItem(money(amount)))
+            self._fit_height(self.schedule, max(len(self.checks), 1))
         finally:
             self._updating = False
+
+    @staticmethod
+    def _fit_height(table, rows: int) -> None:
+        """All rows at once: the page scrolls, not a table inside it."""
+        table.setFixedHeight(table.horizontalHeader().sizeHint().height() + COMPACT_ROW * rows + 6)
 
     def _cell_changed(self, item: QTableWidgetItem) -> None:
         if self._updating:
@@ -392,9 +420,10 @@ class InstallmentsPage(BasePage):
 
     # ---- comparison ---------------------------------------------------------------------------
     def _compare_panel(self) -> None:
-        panel = widgets.Panel("مقایسهٔ ۱ تا ۱۲ ماه با همین پیش‌پرداخت")
+        panel = _compact(widgets.Panel("مقایسهٔ ۱ تا ۱۲ ماه با همین پیش‌پرداخت"))
         self.compare = widgets.DataTable(COMPARE_HEADERS, fit_width=True, stretch_column=4)
-        self.compare.setMinimumHeight(420)
+        self.compare.verticalHeader().setDefaultSectionSize(COMPACT_ROW)
+        self._fit_height(self.compare, inst.MAX_MONTHS)
         self.compare.set_empty_state("قیمت و پیش‌پرداخت را بنویسید.")
         self.compare.row_activated.connect(self._compare_activated)
         panel.body.addWidget(self.compare)
@@ -414,7 +443,7 @@ class InstallmentsPage(BasePage):
 
     # ---- outputs --------------------------------------------------------------------------
     def _output_panel(self) -> None:
-        panel = widgets.Panel("خروجی")
+        panel = _compact(widgets.Panel("خروجی"))
         panel.body.addWidget(widgets.label("برای مشتری (بدون سود و نرخ):", name="SectionTitle"))
         row = QHBoxLayout()
         row.setSpacing(8)

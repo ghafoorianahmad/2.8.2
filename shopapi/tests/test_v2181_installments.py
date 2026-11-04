@@ -231,7 +231,7 @@ def test_the_customer_view_has_no_rate_or_interest_or_cash_price():
 
 def test_the_customer_text_says_nothing_of_the_interest():
     text = inst.customer_text(_sheet(price=190_000_000), "فروشگاه")
-    assert "۲۸٬۰۰۰٬۰۰۰" in text and "۲۴۰٬۰۰۰٬۰۰۰" in text and "۵ چک" in text
+    assert "۲۸٬۰۰۰٬۰۰۰" in text and "۲۴۰٬۰۰۰٬۰۰۰" in text and "چک ۵" in text
     assert "سود" not in text and "نرخ" not in text and "۵۰٬۰۰۰٬۰۰۰" not in text
     assert "۱۹۰٬۰۰۰٬۰۰۰" not in text
 
@@ -438,3 +438,16 @@ def test_a_customers_bad_input_is_a_sentence(client, db, bad):
     client.put("/admin/installments/settings", json={"customer_enabled": True}, headers=boss)
     r = client.post("/installments/quote", json={**QUOTE, **bad}, headers=h("bot"))
     assert r.status_code == 422 and isinstance(r.json()["detail"], str)
+
+
+def test_the_card_goes_total_then_down_then_each_check():      # v2.18.2
+    sheet = _sheet(price=190_000_000, dates=("1405/09/15", "1405/10/15", "1405/11/15",
+                                             "1405/12/15", "1406/01/15"))
+    page = installment_card.card_html(inst.customer_view(sheet))
+    body = page[page.index("<body>"):]
+    assert body.index("جمع کل") < body.index("پیش‌پرداخت") < body.index("<table>")
+    assert body.count("<tr><td>") == 5 and inst.fa_text("1406/01/15") in body
+    text = inst.customer_text(sheet)
+    assert text.index("جمع کل") < text.index("پیش‌پرداخت") < text.index("چک ۵")
+    for shown in (body, text):
+        assert "سود" not in shown and "نرخ" not in shown
