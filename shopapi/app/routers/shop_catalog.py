@@ -6,11 +6,12 @@ of kind ``inquiry``, a staff note, and staff replies to the customer (stored
 here, delivered by the bot the customer used; nothing reaches «سازه حساب»)."""
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from .. import customer_details, deps, ownership, purchase
+from .. import customer_details, deps, faq, ownership, purchase
 from .. import groups as group_config
 from ..accounting_reader import AccountingReader
 from ..config import Settings
@@ -35,6 +36,7 @@ from ..staff import (P_ARCHIVE, P_GROUPS_EDIT, P_GROUPS_VIEW, P_REQUESTS_EDIT,
                      P_REQUESTS_VIEW)
 
 router = APIRouter(prefix="/admin")
+logger = logging.getLogger("shopapi.shop_catalog")
 
 # v2.8.3: «گروه‌های کالا — دیدن» only (the dashboard reads its warnings from /shop/state)
 CAN_VIEW = Depends(require_any(P_GROUPS_VIEW))
@@ -336,6 +338,11 @@ def send_item_request_message(
     db.audit(who.actor, "item_request_message", f"request id={request_id} message id={message['id']}")
     db.add_event("item_request_message", message["id"], who.actor)
     ownership.log(db, who, ownership.A_REPLY, "request", row)
+    # v2.18.1: what a colleague answered may teach the bot, once a manager approves it
+    try:
+        faq.suggest(db, str(row.get("text") or ""), text, request_id, who.actor)
+    except Exception as exc:  # noqa: BLE001 - never stops the reply itself
+        logger.warning("faq suggestion not saved: %s", type(exc).__name__)
     return message
 
 

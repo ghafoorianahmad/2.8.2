@@ -3,6 +3,10 @@
 ``find(text)`` -> the best question of the bank with a score 0..100. Only a confident match is
 answered; the answers hold no price, only placeholders, and an answer whose placeholder has no
 value yet is not sent at all (nothing invented). ``needs_staff`` answers also tell staff.
+
+v2.18.1: managers edit the bank in «پاسخ‌گوی خودکار»: an edit of a built-in item is kept apart from
+the file (``faq_custom``), so a new version never overwrites it; staff replies to a customer's
+question become suggestions (``faq_suggestions``) that are used only once approved.
 """
 from __future__ import annotations
 
@@ -21,6 +25,12 @@ ENABLED_KEY = "faq_enabled"
 VALUES_KEY = "faq_values"
 #: below this the bot does not answer: a wrong answer is worse than the menu
 MIN_SCORE = 80
+#: v2.18.1: what a ``needs_staff`` answer always ends with
+STAFF_NOTE = "یکی از همکاران پاسخ می‌دهد."
+#: v2.18.1: a reply with a long number or a price is about one customer, not a general answer
+_PERSONAL = re.compile(r"[0-9۰-۹٠-٩][0-9۰-۹٠-٩٬,]{5,}|\bتومان\b|\bریال\b")
+#: a run of digits this long in what a customer typed may be a national code or a card
+_LONG_DIGITS = re.compile(r"[0-9۰-۹٠-٩]{8,}")
 PLACEHOLDERS = ("hours", "address", "phone", "instagram", "telegram", "website")
 #: The shop's public details as the owner gave them for the mini app; editable in «قواعد فروشگاه».
 DEFAULT_VALUES = {
@@ -159,12 +169,12 @@ class Match:
     score: int
 
 
-def find(text: str | None) -> Match | None:
-    """The best item for ``text`` (None for an empty text)."""
+def find(text: str | None, items: list[dict] | None = None) -> Match | None:
+    """The best of ``items`` (default: the file's bank) for ``text``; None for an empty text."""
     if not str(text or "").strip():
         return None
     best: Match | None = None
-    for item in load_data()["items"]:
+    for item in load_data()["items"] if items is None else items:
         value = max((score(text, q) for q in item["questions"]), default=0)
         by_category = score(text, item["category"])
         if by_category > value:
@@ -220,18 +230,139 @@ def answer(db: OwnDB, text: str) -> dict:
     """What the bot may say to ``text``: {"answer", "id", "needs_staff", "score"} or {}."""
     if not enabled(db):
         return {}
-    match = find(text)
+    match = find(text, active_items(db))
     if match is None or match.score < MIN_SCORE:
         return {}
+    needs_staff = bool(match.item.get("needs_staff"))
     rendered = render(match.item["answer"], values(db))
-    if rendered is None:
+    if rendered is None and not needs_staff:
         return {}
+    # v2.18.1: a question for a colleague always gets this much, whatever the rest says
+    if needs_staff:
+        rendered = f"{rendered}\n\n{STAFF_NOTE}" if rendered else STAFF_NOTE
     with db._lock:
         db._conn.execute("INSERT INTO faq_log (faq_id, query, score, created_at) VALUES (?,?,?,?)",
-                         (match.item["id"], str(text)[:200], match.score, now_iso()))
+                         (match.item["id"], _LONG_DIGITS.sub("…", str(text))[:200], match.score,
+                          now_iso()))
         db._commit()
-    return {"answer": rendered, "id": match.item["id"],
-            "needs_staff": bool(match.item.get("needs_staff")), "score": match.score}
+    return {"answer": rendered, "id": match.item["id"], "needs_staff": needs_staff,
+            "score": match.score}
+
+
+# ---- v2.18.1: the bank as managers edit it --------------------------------------------------------
+def _custom_rows(db: OwnDB) -> dict[str, dict]:
+    with db._lock:
+        return {row["id"]: row for row in db._fetchall("SELECT * FROM faq_custom")}
+
+
+def _from_row(row: dict, source: str, edited: bool) -> dict:
+    return {"id": row["id"], "category": row["category"], "questions": json.loads(row["questions"]),
+            "answer": row["answer"], "needs_staff": bool(row["needs_staff"]),
+            "enabled": bool(row["enabled"]), "source": source, "edited": edited}
+
+
+def all_items(db: OwnDB) -> list[dict]:
+    """The file's items (each with its edit, if any), then the managers' own, for the page."""
+    custom = _custom_rows(db)
+    out: list[dict] = []
+    for item in load_data()["items"]:
+        row = custom.pop(item["id"], None)
+        out.append(_from_row(row, "builtin", True) if row else
+                   {**item, "enabled": True, "source": "builtin", "edited": False})
+    out.extend(_from_row(row, "custom", True) for row in custom.values())
+    return out
+
+
+def active_items(db: OwnDB) -> list[dict]:
+    return [item for item in all_items(db) if item["enabled"]]
+
+
+def item_problem(questions: list[str], answer_text: str) -> str:
+    if not [q for q in questions if q.strip()]:
+        return "دست‌کم یک پرسش بنویسید."
+    if not answer_text.strip():
+        return "متن پاسخ را بنویسید."
+    unknown = [key for key in _PLACEHOLDER.findall(answer_text) if key not in PLACEHOLDERS]
+    if unknown:
+        return f"این جای‌خالی شناخته نشد: {{{unknown[0]}}}"
+    return ""
+
+
+def save_item(db: OwnDB, item_id: str | None, *, category: str, questions: list[str],
+              answer_text: str, needs_staff: bool, enabled: bool, actor: str) -> dict:
+    """A new item (no id) or an edit, also of a built-in one. ValueError = the Persian reason."""
+    questions = [" ".join(q.split()) for q in questions if q.strip()]
+    problem = item_problem(questions, answer_text)
+    if problem:
+        raise ValueError(problem)
+    builtin = {item["id"] for item in load_data()["items"]}
+    if item_id is None:
+        with db._lock:
+            number = 1 + int(db._fetchone(
+                "SELECT COUNT(*) AS n FROM faq_custom WHERE id LIKE 'custom_%'")["n"])
+        item_id = f"custom_{number}"
+        while item_id in _custom_rows(db):
+            number += 1
+            item_id = f"custom_{number}"
+    elif item_id not in builtin and item_id not in _custom_rows(db):
+        raise KeyError(item_id)
+    with db._lock:
+        db._conn.execute(
+            "INSERT INTO faq_custom (id, category, questions, answer, needs_staff, enabled, "
+            "updated_at, updated_by) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+            "category=excluded.category, questions=excluded.questions, answer=excluded.answer, "
+            "needs_staff=excluded.needs_staff, enabled=excluded.enabled, "
+            "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+            (item_id, " ".join(category.split())[:80], json.dumps(questions, ensure_ascii=False),
+             answer_text.strip(), int(needs_staff), int(enabled), now_iso(), actor))
+        db._commit()
+    return next(item for item in all_items(db) if item["id"] == item_id)
+
+
+def remove_item(db: OwnDB, item_id: str) -> None:
+    """A manager's own item goes; a built-in one goes back to the file's words."""
+    with db._lock:
+        db._conn.execute("DELETE FROM faq_custom WHERE id=?", (item_id,))
+        db._commit()
+
+
+# ---- v2.18.1: learning from what staff answer -----------------------------------------------------
+def suggest(db: OwnDB, question: str, reply: str, request_id: int, actor: str) -> dict | None:
+    """A colleague answered a customer's question: a suggestion, used only after approval. Not
+    for a text that holds a long number, a reply that names a price (about one customer) or a
+    question the bank already answers."""
+    question = " ".join(str(question or "").split())
+    reply = " ".join(str(reply or "").split())
+    if len(question) < 5 or len(reply) < 5 or _LONG_DIGITS.search(question) or _PERSONAL.search(reply):
+        return None
+    known = find(question, active_items(db))
+    if known is not None and known.score >= MIN_SCORE and not known.item.get("needs_staff"):
+        return None
+    wanted = normalize(question)
+    with db._lock:
+        for row in db._fetchall("SELECT question FROM faq_suggestions WHERE status='pending'"):
+            if normalize(row["question"]) == wanted:
+                return None
+        cursor = db._conn.execute(
+            "INSERT INTO faq_suggestions (question, answer, request_id, created_at, created_by) "
+            "VALUES (?,?,?,?,?)", (question[:300], reply[:1000], request_id, now_iso(), actor))
+        db._commit()
+        return db._fetchone("SELECT * FROM faq_suggestions WHERE id=?", (cursor.lastrowid,))
+
+
+def suggestions(db: OwnDB, limit: int = 200) -> list[dict]:
+    with db._lock:
+        return db._fetchall("SELECT * FROM faq_suggestions WHERE status='pending' "
+                            "ORDER BY id DESC LIMIT ?", (int(limit),))
+
+
+def decide_suggestion(db: OwnDB, suggestion_id: int, status: str, actor: str) -> bool:
+    with db._lock:
+        cursor = db._conn.execute(
+            "UPDATE faq_suggestions SET status=?, decided_at=?, decided_by=? "
+            "WHERE id=? AND status='pending'", (status, now_iso(), actor, suggestion_id))
+        db._commit()
+        return cursor.rowcount > 0
 
 
 def report(db: OwnDB, limit: int = 100) -> list[dict]:

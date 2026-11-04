@@ -233,6 +233,29 @@ CREATE TABLE IF NOT EXISTS staff_chat_reads (
     PRIMARY KEY (room, staff_id)
 );
 
+-- v2.18.1: the automatic answers as managers edited them; what staff answers may teach them
+CREATE TABLE IF NOT EXISTS faq_custom (
+    id TEXT PRIMARY KEY,
+    category TEXT NOT NULL DEFAULT '',
+    questions TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    needs_staff INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS faq_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    request_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT '',
+    decided_at TEXT,
+    decided_by TEXT NOT NULL DEFAULT ''
+);
+
 -- v2.18.1: installment quotes staff saved or sent (holds the rate and the interest: staff only)
 CREATE TABLE IF NOT EXISTS installment_quotes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

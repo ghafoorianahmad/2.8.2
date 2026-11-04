@@ -986,6 +986,25 @@ class ShopApiClient:
         out = self._request("GET", f"/admin/chat/voice/{int(message_id)}", timeout=120.0)
         return base64.b64decode((out or {}).get("data_b64") or "")
 
+    # ---- v2.18.1 «پاسخ‌گوی خودکار» ----
+    def faq_page(self) -> dict:
+        return self._request("GET", "/admin/faq") or {}
+
+    def faq_save_item(self, item_id: str | None, item: dict) -> dict:
+        if item_id is None:
+            return self._request("POST", "/admin/faq/items", json_body=item) or {}
+        return self._request("PUT", f"/admin/faq/items/{item_id}", json_body=item) or {}
+
+    def faq_remove_item(self, item_id: str) -> dict:
+        return self._request("DELETE", f"/admin/faq/items/{item_id}") or {}
+
+    def faq_approve(self, suggestion_id: int, item: dict) -> dict:
+        return self._request("POST", f"/admin/faq/suggestions/{int(suggestion_id)}/approve",
+                             json_body=item) or {}
+
+    def faq_reject(self, suggestion_id: int) -> dict:
+        return self._request("POST", f"/admin/faq/suggestions/{int(suggestion_id)}/reject") or {}
+
     # ---- v2.18.1 «محاسبهٔ اقساط» ----
     def installment_settings(self) -> dict:
         return self._request("GET", "/admin/installments/settings") or {}

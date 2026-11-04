@@ -57,6 +57,14 @@ class WorkHoursIn(BaseModel):
     shifts: list[ShiftIn] = Field(default_factory=list, max_length=6)
 
 
+class FaqItemIn(BaseModel):
+    category: str = Field(default="", max_length=80)
+    questions: list[str] = Field(default_factory=list, max_length=100)
+    answer: str = Field(default="", max_length=2000)
+    needs_staff: bool = False
+    enabled: bool = True
+
+
 class AutoQuoteSwitchIn(BaseModel):
     enabled: bool
 
@@ -165,6 +173,71 @@ def put_faq(payload: FaqIn, db: OwnDB = Depends(deps.get_db),
         faq.save_values(db, payload.values, who.actor)
     db.audit(who.actor, "faq", f"enabled={payload.enabled}")
     return {"enabled": faq.enabled(db), "values": faq.values(db), "report": faq.report(db)}
+
+
+# ---- v2.18.1 «پاسخ‌گوی خودکار»: the bank and what staff answers suggest ----------------------------
+CAN_SEE_FAQ = Depends(require_permission(P_FAQ_VIEW))
+CAN_EDIT_FAQ = Depends(require_permission(P_FAQ_EDIT))
+
+
+@router.get("/admin/faq")
+def faq_page(db: OwnDB = Depends(deps.get_db), _: Identity = CAN_SEE_FAQ) -> dict:
+    return {"enabled": faq.enabled(db), "items": faq.all_items(db),
+            "suggestions": faq.suggestions(db), "report": faq.report(db),
+            "placeholders": list(faq.PLACEHOLDERS), "values": faq.values(db)}
+
+
+def _saved_item(db: OwnDB, item_id: str | None, payload: FaqItemIn, who: Identity) -> dict:
+    try:
+        item = faq.save_item(db, item_id, category=payload.category, questions=payload.questions,
+                             answer_text=payload.answer, needs_staff=payload.needs_staff,
+                             enabled=payload.enabled, actor=who.actor)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
+    except KeyError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Item not found") from None
+    db.audit(who.actor, "faq_item", f"id={item['id']}")
+    return item
+
+
+@router.post("/admin/faq/items", status_code=status.HTTP_201_CREATED)
+def add_faq_item(payload: FaqItemIn, db: OwnDB = Depends(deps.get_db),
+                 who: Identity = CAN_EDIT_FAQ) -> dict:
+    return _saved_item(db, None, payload, who)
+
+
+@router.put("/admin/faq/items/{item_id}")
+def put_faq_item(item_id: str, payload: FaqItemIn, db: OwnDB = Depends(deps.get_db),
+                 who: Identity = CAN_EDIT_FAQ) -> dict:
+    return _saved_item(db, item_id, payload, who)
+
+
+@router.delete("/admin/faq/items/{item_id}")
+def delete_faq_item(item_id: str, db: OwnDB = Depends(deps.get_db),
+                    who: Identity = CAN_EDIT_FAQ) -> dict:
+    faq.remove_item(db, item_id)
+    db.audit(who.actor, "faq_item_removed", f"id={item_id}")
+    return {"ok": True}
+
+
+@router.post("/admin/faq/suggestions/{suggestion_id}/approve")
+def approve_faq_suggestion(suggestion_id: int, payload: FaqItemIn,
+                           db: OwnDB = Depends(deps.get_db),
+                           who: Identity = CAN_EDIT_FAQ) -> dict:
+    """The manager's edited words become an item; the suggestion is closed."""
+    item = _saved_item(db, None, payload, who)
+    if not faq.decide_suggestion(db, suggestion_id, "approved", who.actor):
+        faq.remove_item(db, item["id"])
+        raise HTTPException(status.HTTP_409_CONFLICT, "Suggestion already decided")
+    return item
+
+
+@router.post("/admin/faq/suggestions/{suggestion_id}/reject")
+def reject_faq_suggestion(suggestion_id: int, db: OwnDB = Depends(deps.get_db),
+                          who: Identity = CAN_EDIT_FAQ) -> dict:
+    if not faq.decide_suggestion(db, suggestion_id, "rejected", who.actor):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Suggestion already decided")
+    return {"ok": True}
 
 
 @router.get("/admin/product-aliases/models")
