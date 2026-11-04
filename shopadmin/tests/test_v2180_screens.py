@@ -41,7 +41,7 @@ def test_apply_dialog_reads_rows_and_prices(admin_qapp):
     dialog._submit()
     assert dialog.picks == [] and "دست‌کم" in dialog.error_label.text()
     dialog.lines[0][0].setCurrentIndex(1)
-    assert dialog.lines[0][1].text() == "۹۵۵۰۰"
+    assert dialog.lines[0][1].text() == "۹۵٬۵۰۰"
     dialog._submit()
     assert dialog.picks == [("a", 95500)]
 

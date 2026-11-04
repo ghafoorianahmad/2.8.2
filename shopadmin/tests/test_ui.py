@@ -436,7 +436,8 @@ def test_sidebar_shows_users_for_the_super_admin(ui_context, admin_qapp):
     assert "site" in window._nav_buttons
     # v2.14.0: + «سلامت سیستم»; v2.17.0: + «قواعد فروشگاه»; v2.18.0: + «گفت‌وگوی همکاران»
     # v2.18.1: + «محاسبهٔ اقساط», «پاسخ‌گوی خودکار»
-    assert len(window._nav_buttons) == 21
+    # v2.18.2: + «گردش سال‌های قبل»
+    assert len(window._nav_buttons) == 22
     window.close()
 
 
