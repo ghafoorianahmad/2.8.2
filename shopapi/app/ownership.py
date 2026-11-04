@@ -120,6 +120,8 @@ _SECTION_EVENTS = {"password_request": "passwords.view", "pricelist_imported": "
                    "price_inquiry": "pricelist.view", "security_alert": "server.view",
                    "accounting_duplicate_order": "server.view", "archive_done": "archive.view",
                    "product_groups_changed": "groups.view",
+                   # v2.18.1: for the bot to deliver; shows nobody anything
+                   "installment_card": "installment.view",
                    # v2.9.0: Telegram reader problems are for whoever runs the server
                    "telegram_login_required": "server.view",
                    "telegram_unreachable": "server.view",

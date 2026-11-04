@@ -23,6 +23,8 @@ from ...permissions import (
     AUTO_QUOTE_VIEW,
     FAQ_EDIT,
     FAQ_VIEW,
+    INSTALLMENT_RULES_EDIT,
+    INSTALLMENT_RULES_VIEW,
     STATUS_CODES_EDIT,
     STATUS_CODES_VIEW,
     WORK_HOURS_EDIT,
@@ -70,6 +72,8 @@ class ShopRulesPage(BasePage):
         self.hours_panel = self._hours_panel() if self.context.can(WORK_HOURS_VIEW) else None
         self.quote_panel = self._quote_panel() if self.context.can(AUTO_QUOTE_VIEW) else None
         self.faq_panel = self._faq_panel() if self.context.can(FAQ_VIEW) else None
+        self.installment_panel = (self._installment_panel()
+                                  if self.context.can(INSTALLMENT_RULES_VIEW) else None)
         self.invoice_panel = self._invoice_panel() if self.context.can(AUTO_INVOICE_VIEW) else None
         self.column.addStretch(1)
         self._pending_focus = False
@@ -247,6 +251,57 @@ class ShopRulesPage(BasePage):
             check.setChecked(value in chosen)
 
     # ------------------------------------------------------------------ automatic answers
+    def _installment_panel(self) -> widgets.Panel:
+        """v2.18.1: the default rate and the customers' own calculator (off by default)."""
+        panel = widgets.Panel("محاسبهٔ اقساط")
+        editable = self.context.can(INSTALLMENT_RULES_EDIT)
+        panel.body.addWidget(widgets.label(
+            "نرخ پیش‌فرض در صفحهٔ «محاسبهٔ اقساط» برای همکاران است و همان‌جا برای هر محاسبه قابل تغییر "
+            "است. اگر ماشین‌حساب مشتری را روشن کنید، در ربات دکمه و دستور /aghsat و در مینی‌اپ صفحهٔ "
+            "اقساط کار می‌کند؛ مشتری فقط کارت را می‌بیند، نه سود و نرخ را. مینی‌اپ پس از «انتشار» "
+            "در دسترس است.", name="Muted", wrap=True))
+        form = QFormLayout()
+        form.setLabelAlignment(RIGHT | Qt.AlignmentFlag.AlignVCenter)
+        self.installment_rate = QLineEdit()
+        self.installment_rate.setMaximumWidth(120)
+        self.installment_rate.setEnabled(editable)
+        form.addRow(widgets.label("نرخ ماهانهٔ پیش‌فرض (٪):"), self.installment_rate)
+        panel.body.addLayout(form)
+        self.installment_check = QCheckBox("ماشین‌حساب اقساط برای مشتری در ربات و مینی‌اپ")
+        self.installment_check.setEnabled(editable)
+        panel.body.addWidget(self.installment_check)
+        self.installment_message = widgets.label("", wrap=True)
+        self.installment_message.setVisible(False)
+        panel.body.addWidget(self.installment_message)
+        if editable:
+            row = QHBoxLayout()
+            row.addWidget(widgets.button("ذخیره", variant="primary",
+                                         on_click=self._save_installment))
+            row.addStretch(1)
+            panel.body.addLayout(row)
+        self.column.addWidget(panel)
+        return panel
+
+    def _got_installment(self, answer: object) -> None:
+        if isinstance(answer, dict):
+            self.installment_rate.setText(to_persian_digits(answer.get("rate") or ""))
+            self.installment_check.setChecked(bool(answer.get("customer_enabled")))
+
+    def _save_installment(self) -> None:
+        rate, on = self.installment_rate.text(), self.installment_check.isChecked()
+
+        def done(answer: object) -> None:
+            self._got_installment(answer)
+            self.installment_message.setText("ذخیره شد.")
+            self.installment_message.setVisible(True)
+
+        def failed(message: str, _kind: str) -> None:
+            self.installment_message.setText(message)
+            self.installment_message.setVisible(True)
+
+        self.run(lambda: self.context.api.set_installment_settings(rate=rate, customer_enabled=on),
+                 on_success=done, on_error=failed)
+
     def _faq_panel(self) -> widgets.Panel:
         panel = widgets.Panel("پاسخ‌گوی خودکار")
         panel.body.addWidget(widgets.label(
@@ -371,6 +426,8 @@ class ShopRulesPage(BasePage):
             self._show_quote(rules["auto_quote"])
         if self.faq_panel is not None and isinstance(rules.get("faq"), dict):
             self._show_faq(rules["faq"])
+        if self.installment_panel is not None:
+            self._got_installment(rules.get("installment"))
 
 
 def hours_text(hours: dict) -> str:

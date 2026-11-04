@@ -10,6 +10,7 @@ produced only by `utils.log_event` (platform, update id, event type).
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -79,11 +80,14 @@ STATE_AWAIT_DETAILS = "await_details"
 #: v2.17.0: the address of the order being placed / of a placed order
 STATE_AWAIT_CHECKOUT_ADDRESS = "await_checkout_address"
 STATE_AWAIT_ORDER_ADDRESS = "await_order_address"
+#: v2.18.1: the customers' calculator, one question at a time (only while it is switched on)
+STATE_AWAIT_INSTALLMENT = "await_installment"
 #: v2.17.0: a staff member links this chat with their phone
 STATE_AWAIT_STAFF_CONTACT = "await_staff_contact"
 #: v2.17.0: a typed text is the answer here; any other button leaves the question, so
 #: a later text (a search, a product name) never becomes a name or an order's address.
-TEXT_ANSWER_STATES = frozenset({STATE_AWAIT_DETAILS, STATE_AWAIT_CHECKOUT_ADDRESS,
+TEXT_ANSWER_STATES = frozenset({STATE_AWAIT_INSTALLMENT, STATE_AWAIT_DETAILS,
+                                STATE_AWAIT_CHECKOUT_ADDRESS,
                                 STATE_AWAIT_ORDER_ADDRESS})
 TEXT_ANSWER_ACTIONS = frozenset({"dno", "cok", "cnew", "oadr"})
 #: v2.17.0: what the bot asks and how a refused answer is put (shopapi's 422 detail)
@@ -166,6 +170,8 @@ CALLBACK_ARG_COUNTS: dict[str, int] = {
     # v2.17.0: (an old details «فعلاً نه» button asks again); the order's address (same / new; of a placed order);
     # «برداشت» of an order / a request by a linked staff member
     "dno": 0,
+    # v2.18.1: the customers' installment calculator
+    "inst": 0,
     "cok": 0,
     "cnew": 0,
     "oadr": 1,
@@ -297,6 +303,12 @@ def variant_label(color: dict) -> str:
                                   str(color.get("part") or "").strip()) if p)
 
 
+#: v2.18.1: how long the bot trusts what it read about the calculator's switch (seconds)
+INSTALLMENT_STATE_TTL = 60.0
+INSTALLMENT_COMMANDS = ("/aghsat", "/installment")
+INSTALLMENT_EVENT = "installment_card"
+
+
 def parse_callback(data: Any) -> tuple[str, list[int]] | None:
     """Validate a callback payload; return (action, [int args]) or None."""
     if not isinstance(data, str) or not data or len(data) > MAX_CALLBACK_LEN:
@@ -359,6 +371,8 @@ class BotEngine:
         # channel-independent shop logic (app/core)
         self.catalog = CatalogService(api, page_size=settings.product_page_size)
         self.cart = CartService(store)
+        #: v2.18.1: (when it was read, whether the customers' calculator is on)
+        self._installment_state: tuple[float, bool] = (-INSTALLMENT_STATE_TTL, False)
         #: v2.18.1: customers whose details are complete (see _details_gate)
         self._details_complete: set[tuple[str, str]] = set()
         self.orders = OrderService(
@@ -803,6 +817,12 @@ class BotEngine:
             return
         if await self._details_gate(adapter, platform, chat_id):
             return
+        if state == STATE_AWAIT_INSTALLMENT:
+            await self._installment_answer(adapter, platform, chat_id, text, data)
+            return
+        if command in INSTALLMENT_COMMANDS and await self._installment_enabled():
+            await self._installment_start(adapter, platform, chat_id)
+            return
         if state == STATE_AWAIT_CHECKOUT_ADDRESS:
             await self._checkout_address_text(adapter, platform, chat_id, text)
             return
@@ -1011,6 +1031,8 @@ class BotEngine:
         elif kind == "price" and payload.get("id"):
             await self._web_app_price(adapter, platform, chat_id, str(payload["id"])[:80],
                                       str(payload.get("color") or "")[:60])
+        elif kind == "installment":
+            await self._web_app_installment(adapter, platform, chat_id, payload)
         else:
             await self._send_text(adapter, chat_id, texts.WEB_APP_UNREADABLE)
 
@@ -1166,6 +1188,129 @@ class BotEngine:
     async def _form_keyboard_now(self, platform: str, chat_id: str, names: dict | None) -> dict:
         details = await self._details(platform, chat_id)
         return self._form_keyboard(names, (details or {}).get("missing"))
+
+    # ================= the customers' installment calculator (v2.18.1) ==========
+    async def _installment_enabled(self) -> bool:
+        """The switch in «قواعد فروشگاه» (off by default), read at most once a minute. Unknown =
+        off: the server refuses anyway."""
+        when, state = self._installment_state
+        now = time.monotonic()
+        if now - when < INSTALLMENT_STATE_TTL:
+            return state
+        try:
+            state = bool((await self.api.installment_settings()).get("enabled"))
+        except ShopApiError:
+            state = False
+        self._installment_state = (now, state)
+        return state
+
+    async def _installment_start(self, adapter: PlatformAdapter, platform: str,
+                                 chat_id: str) -> None:
+        if self.settings.miniapp_url:
+            await self._send_text(adapter, chat_id, texts.INSTALLMENT_PAGE_NOTE, web_app_keyboard(
+                [[(texts.BTN_INSTALLMENT_PAGE, self.settings.miniapp_url + "installment/")]]))
+        await self._send_options(adapter, platform, chat_id, texts.INSTALLMENT_ASK_PRICE,
+                                 [[(texts.BTN_MENU, "menu")]], state=STATE_AWAIT_INSTALLMENT,
+                                 data={"step": "price"})
+
+    @staticmethod
+    def _installment_amount(text: str) -> int | None:
+        clean = "".join(str(text or "").split()).replace(",", "").replace("٬", "")
+        return int(clean) if clean.isascii() and clean.isdigit() else None
+
+    async def _installment_answer(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                                  text: str, data: dict) -> None:
+        step = str((data or {}).get("step") or "price")
+        menu = [[(texts.BTN_MENU, "menu")]]
+        if step == "down" and str(text).strip().endswith(("%", "٪")):
+            percent = self._installment_amount(str(text).strip()[:-1])
+            value = None if percent is None else (int((data or {}).get("price") or 0) * percent + 50) // 100
+        else:
+            value = self._installment_amount(text)
+        if value is None:
+            await self._send_options(adapter, platform, chat_id, texts.INSTALLMENT_BAD_AMOUNT, menu,
+                                     state=STATE_AWAIT_INSTALLMENT, data=data)
+            return
+        if step == "price":
+            await self._send_options(adapter, platform, chat_id, texts.INSTALLMENT_ASK_DOWN, menu,
+                                     state=STATE_AWAIT_INSTALLMENT,
+                                     data={"step": "down", "price": value})
+            return
+        if step == "down":
+            await self._send_options(adapter, platform, chat_id, texts.INSTALLMENT_ASK_MONTHS, menu,
+                                     state=STATE_AWAIT_INSTALLMENT,
+                                     data={"step": "months", "price": data.get("price"),
+                                           "down": value})
+            return
+        self.store.clear_conversation(platform, chat_id)
+        await self._installment_result(adapter, chat_id, "", int(data.get("price") or 0),
+                                       int(data.get("down") or 0), value)
+
+    async def _web_app_installment(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                                   payload: dict) -> None:
+        """The page's numbers are only numbers: the server checks them and knows the rate."""
+        numbers = [self._installment_amount(str(payload.get(key) or "0"))
+                   for key in ("price", "down", "months")]
+        if any(number is None for number in numbers):
+            await self._send_text(adapter, chat_id, texts.WEB_APP_UNREADABLE)
+            return
+        await self._installment_result(adapter, chat_id, str(payload.get("name") or "")[:120],
+                                       numbers[0], numbers[1], numbers[2])
+
+    async def _installment_result(self, adapter: PlatformAdapter, chat_id: str, name: str,
+                                  price: int, down: int, months: int) -> None:
+        try:
+            answer = await self.api.installment_quote(name, price, down, months)
+        except ShopApiRejected as exc:
+            problem = exc.message_fa if exc.status == 422 else texts.INSTALLMENT_OFF
+            await self._send_text(adapter, chat_id, problem)
+            return
+        data = str(answer.get("png_b64") or "")
+        if data:
+            try:
+                await adapter.send_photo_bytes(chat_id, base64.b64decode(data), "")
+                return
+            except BotApiError as exc:
+                self.logger.warning("platform=%s installment_card_failed=%s", adapter.platform,
+                                    exc.method)
+        await self._send_text(adapter, chat_id, str(answer.get("text") or ""))
+
+    async def _deliver_installment_card(self, quote_id: int) -> bool:
+        """A card staff sent from ShopAdmin: once, on the customer's messenger; the outcome goes
+        back to shopapi and shows in «تاریخچه»."""
+        marker = "instcard"
+        if self.store.is_announced(marker, quote_id):
+            return False
+        try:
+            row = await self.api.admin_installment_delivery(quote_id)
+        except ShopApiError:
+            return False
+        if not isinstance(row, dict) or row.get("status") != "pending":
+            self.store.mark_announced(marker, quote_id, "", "")
+            return False
+        platform, chat_id = str(row.get("platform") or ""), str(row.get("chat_id") or "")
+        self.store.mark_announced(marker, quote_id, platform, chat_id)
+        adapter = self.adapters.get(platform)
+        ok, error = False, ""
+        if adapter is None or not chat_id:
+            error = f"ربات پیام‌رسان «{platform or '-'}» روی سرور فعال نیست."
+        else:
+            data = str(row.get("png_b64") or "")
+            try:
+                if data:
+                    await adapter.send_photo_bytes(chat_id, base64.b64decode(data), "")
+                else:
+                    await adapter.send_text(chat_id, str(row.get("text") or ""))
+                ok = True
+            except BotApiError as exc:
+                error = ("پیام‌رسان در دسترس نبود (اینترنت سرور)." if exc.network else
+                         f"پیام‌رسان پیام را نپذیرفت: {shorten(str(exc.description), 200)}")
+                self.logger.warning("platform=%s installment_card_failed", platform)
+        try:
+            await self.api.admin_installment_result(quote_id, ok, error)
+        except ShopApiError:
+            pass
+        return ok
 
     # ================= the customer's details (v2.17.0) ===================
     async def _details(self, platform: str, chat_id: str) -> dict | None:
@@ -1346,6 +1491,8 @@ class BotEngine:
         if approved:
             # the statement belongs to a verified, linked customer only
             rows.append([(texts.BTN_STATEMENT, "stmt:1")])
+        if self._installment_state[1]:
+            rows.append([(texts.BTN_INSTALLMENT, "inst")])
         rows.append([(texts.BTN_SUPPORT, "support"), (texts.BTN_INFO, "info")])
         return rows
 
@@ -1359,6 +1506,7 @@ class BotEngine:
         if status != STATUS_APPROVED:
             parts.append(texts.STILL_PENDING)
         parts.append(texts.MAIN_MENU)
+        await self._installment_enabled()
         await self._send_options(
             adapter, platform, chat_id, "\n\n".join(parts),
             self._main_menu_rows(status == STATUS_APPROVED), state=STATE_NONE, data={},
@@ -3189,6 +3337,12 @@ class BotEngine:
             await self._send_options(adapter, platform, chat_id, texts.CHECKOUT_NEW_ADDRESS,
                                      [[(texts.BTN_MENU, "menu")]],
                                      state=STATE_AWAIT_ORDER_ADDRESS, data={"order_id": args[0]})
+        elif action == "inst":
+            await self._answer_callback(adapter, callback_id)
+            if await self._installment_enabled():
+                await self._installment_start(adapter, platform, chat_id)
+            else:
+                await self._send_text(adapter, chat_id, texts.INSTALLMENT_OFF)
         elif action == "dno":
             await self._answer_callback(adapter, callback_id)
             # v2.18.0: the button of an older message: there is no «فعلاً نه» any more
@@ -3396,6 +3550,9 @@ class BotEngine:
                     sent += 1
             elif kind == ITEM_REQUEST_MESSAGE_EVENT and ref_id is not None:
                 if await self._deliver_item_request_message(int(ref_id)):
+                    sent += 1
+            elif kind == INSTALLMENT_EVENT and ref_id is not None:
+                if await self._deliver_installment_card(int(ref_id)):
                     sent += 1
             elif kind == PURCHASE_ORDER_EVENT and ref_id is not None:
                 if await self._notify_purchase_order(int(ref_id)):

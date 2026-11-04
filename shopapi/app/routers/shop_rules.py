@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from .. import auto_quote, control, deps, faq, ownership, product_aliases, staff_alerts
+from . import installments as installment_rules
 from ..config import Settings
 from ..db_own import OwnDB
 from ..security import Identity, get_api_identity, get_identity, require_any, require_permission
@@ -21,6 +22,7 @@ from ..staff import (
     P_DASHBOARD,
     P_FAQ_EDIT,
     P_FAQ_VIEW,
+    P_INSTALLMENT_RULES_VIEW,
     P_PRODUCT_ALIAS,
     P_STAFF_ALERTS_EDIT,
     P_STAFF_ALERTS_VIEW,
@@ -33,7 +35,7 @@ from ..staff import (
 router = APIRouter()
 
 CAN_SEE_RULES = Depends(require_any(P_STATUS_CODES_VIEW, P_WORK_HOURS_VIEW, P_AUTO_INVOICE_VIEW,
-                                    P_AUTO_QUOTE_VIEW, P_FAQ_VIEW))
+                                    P_AUTO_QUOTE_VIEW, P_FAQ_VIEW, P_INSTALLMENT_RULES_VIEW))
 CAN_SEE_ALERTS = Depends(require_any(P_STAFF_ALERTS_VIEW, P_DASHBOARD))
 
 
@@ -107,6 +109,8 @@ def get_rules(settings: Settings = Depends(deps.get_settings),
                       "report": faq.report(db)}
     if who.can(P_AUTO_QUOTE_VIEW):
         out["auto_quote"] = {"enabled": auto_quote.enabled(db), "report": auto_quote.report(db)}
+    if who.can(P_INSTALLMENT_RULES_VIEW):
+        out["installment"] = installment_rules._settings_out(db)
     if who.can(P_AUTO_INVOICE_VIEW):
         # v2.17.0: a place for it only: staff turn orders into invoices themselves
         out["auto_invoice"] = {"enabled": False, "available": False}

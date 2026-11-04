@@ -240,6 +240,27 @@ class ShopApiClient:
             extra_headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
         )
 
+    async def installment_settings(self) -> dict:
+        """v2.18.1: only whether the customers' calculator is on."""
+        answer = await self._request("GET", "/installments/settings", key=self._settings.bot_api_key)
+        return answer if isinstance(answer, dict) else {}
+
+    async def installment_quote(self, name: str, price: int, down: int, months: int) -> dict:
+        """The card and its text: the server knows the rate, the bot never does."""
+        answer = await self._request(
+            "POST", "/installments/quote", key=self._settings.bot_api_key,
+            json_body={"phone_name": name, "price": price, "down": down, "months": months})
+        return answer if isinstance(answer, dict) else {}
+
+    async def admin_installment_delivery(self, quote_id: int) -> dict | None:
+        return await self._request("GET", f"/admin/installments/deliveries/{int(quote_id)}",
+                                   key=self._settings.admin_api_key)
+
+    async def admin_installment_result(self, quote_id: int, ok: bool, error: str = "") -> None:
+        await self._request("POST", f"/admin/installments/deliveries/{int(quote_id)}/result",
+                            key=self._settings.admin_api_key,
+                            json_body={"ok": bool(ok), "error": error[:300]})
+
     async def faq_answer(self, text: str) -> dict:
         """v2.18.0: the automatic answer to a question, {} when none is confident enough."""
         answer = await self._request("GET", "/faq/answer", key=self._settings.bot_api_key,

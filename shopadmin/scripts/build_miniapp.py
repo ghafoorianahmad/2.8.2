@@ -177,7 +177,15 @@ def build_form(source: Path) -> None:
     shutil.copyfile(source / "validators.js", target / "validators.js")
 
 
+def build_installment() -> None:
+    """v2.18.1: the customers' calculator page (the bot only offers it while the switch is on)."""
+    target = OUT / "app" / "installment"
+    target.mkdir(parents=True)
+    shutil.copyfile(Path(__file__).with_name("miniapp_installment.html"), target / "index.html")
+
+
 if __name__ == "__main__":
     build_shop(Path(sys.argv[1]))
     build_form(Path(sys.argv[2]))
+    build_installment()
     print("built", OUT)

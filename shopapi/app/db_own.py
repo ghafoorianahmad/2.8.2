@@ -233,6 +233,18 @@ CREATE TABLE IF NOT EXISTS staff_chat_reads (
     PRIMARY KEY (room, staff_id)
 );
 
+-- v2.18.1: installment quotes staff saved or sent (holds the rate and the interest: staff only)
+CREATE TABLE IF NOT EXISTS installment_quotes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    actor TEXT NOT NULL DEFAULT '',
+    staff_id INTEGER,
+    user_id INTEGER,
+    sheet TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'saved',
+    error TEXT NOT NULL DEFAULT ''
+);
+
 -- v2.18.0: what the bot answered by itself
 CREATE TABLE IF NOT EXISTS faq_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

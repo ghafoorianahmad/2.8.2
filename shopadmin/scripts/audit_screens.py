@@ -199,7 +199,15 @@ def _dialogs(context, fake, window) -> Iterator[tuple[str, object]]:
     from app.ui import widgets
     from app.ui.main_window import NotificationDialog
     from app.ui.pages import catalog_models as cm
-    from app.ui.pages import customers, item_requests, orders, pricelist, products, users
+    from app.ui.pages import (
+        customers,
+        installments,
+        item_requests,
+        orders,
+        pricelist,
+        products,
+        users,
+    )
 
     order_rows = [o for o in fake.orders if isinstance(o, dict)]
     by_status = {}
@@ -291,6 +299,30 @@ def _dialogs(context, fake, window) -> Iterator[tuple[str, object]]:
     yield "site pick featured", lambda: sl.PickPhonesDialog(
         [p for p in site.items("phone")] + [{"code": "x-long", "name": LONG_NAME}], 8, window)
     staff = [users_row for users_row in fake.staff.values()]
+    def installment_items():
+        dialog = installments.ItemPickDialog(context, window)
+        dialog._fill([{"name": "Galaxy S25 Ultra 512 مشکی", "price": 900_000_000},
+                      {"name": "iPhone 17 Pro Max 256 آبی", "price": 1_450_000_000}],
+                     lambda r: f"{r['name']} — {installments.money(r['price'])} ریال")
+        return dialog
+
+    def installment_customers():
+        dialog = installments.CustomerPickDialog(context, window)
+        dialog._fill([{"name": LONG_NAME, "platform": "bale", "phone_tail": "47"}],
+                     installments.CustomerPickDialog._row_text)
+        return dialog
+
+    def installment_history():
+        dialog = installments.QuoteHistoryDialog(context, window)
+        dialog._got([{"created_at": "2026-11-04T09:12:00", "actor": "زهرا احمدی",
+                      "customer_name": LONG_NAME, "phone_name": "Galaxy S25 Ultra 512 مشکی",
+                      "down": 100_000_000, "checks": [28_000_000] * 5, "interest": 40_000_000,
+                      "grand_total": 240_000_000, "status": "sent"}])
+        return dialog
+
+    yield "installment pick item", installment_items
+    yield "installment pick customer", installment_customers
+    yield "installment history", installment_history
     yield "user form new", lambda: users.UserFormDialog(context, None, window)
     yield "user form edit", lambda: users.UserFormDialog(context, fake.staff_out(staff[1]), window)
     yield "reset password", lambda: users.ResetPasswordDialog(window, "sara")

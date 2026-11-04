@@ -44,6 +44,7 @@ from ..permissions import (
     SHOP_RULES_VIEW,
     SITE_VIEW,
     STATUS_CODES_VIEW,
+    INSTALLMENT_VIEW,
     STAFF_CHAT_VIEW,
     USERS_VIEW,
 )
@@ -65,6 +66,7 @@ from .pages.products import ProductsPage
 from .pages.reports import ReportsPage
 from .pages.server import ServerPage
 from .pages.settings import SettingsPage
+from .pages.installments import InstallmentsPage
 from .pages.shop_rules import ShopRulesPage
 from .pages.site import SitePage
 from .pages.staff_chat import StaffChatPage
@@ -78,6 +80,8 @@ NAV_ITEMS = (
     ("item_requests", "درخواست کالا", "inbox", ITEM_REQUESTS_VIEW),
     # v2.18.0: between colleagues, on the shop's network only
     ("staff_chat", "گفت‌وگوی همکاران", "users", STAFF_CHAT_VIEW),
+    # v2.18.1
+    ("installments", "محاسبهٔ اقساط", "receipt", INSTALLMENT_VIEW),
     ("archive", "بایگانی", "archive", ARCHIVE_VIEW),
     ("products", "محصولات", "products", PRODUCTS_VIEW),
     ("product_groups", "گروه‌های کالا", "box", GROUPS_VIEW),
@@ -448,6 +452,7 @@ class MainWindow(QMainWindow):
             "orders": OrdersPage,
             "item_requests": ItemRequestsPage,
             "staff_chat": StaffChatPage,
+            "installments": InstallmentsPage,
             "archive": ArchivePage,
             "activity": ActivityPage,
             "products": ProductsPage,

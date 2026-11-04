@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>محاسبهٔ اقساط — عصر ارتباطات ۲</title>
+    <script src="https://tapi.bale.ai/miniapp.js"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+      @font-face { font-family: 'Vazirmatn'; font-weight: 400; src: url('../fonts/Vazirmatn-Regular.ttf') format('truetype'); }
+      @font-face { font-family: 'Vazirmatn'; font-weight: 700; src: url('../fonts/Vazirmatn-Bold.ttf') format('truetype'); }
+      :root { color-scheme: dark; --bg: #0b1220; --card: #141d30; --line: #2a3650; --text: #eef2fb;
+              --muted: #a3b0c9; --ok: #34d399; --bad: #fb7185; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Vazirmatn', sans-serif;
+             padding: 16px; }
+      main { max-width: 560px; margin: 0 auto; }
+      h1 { font-size: 22px; margin: 4px 0 6px; }
+      p { color: var(--muted); margin: 0 0 16px; font-size: 14px; line-height: 1.8; }
+      form { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
+      label { display: block; font-weight: 700; margin: 14px 0 6px; font-size: 15px; }
+      label:first-child { margin-top: 0; }
+      .hint { color: var(--muted); font-weight: 400; font-size: 13px; }
+      input { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+              background: #0e1626; color: var(--text); font: inherit; font-size: 16px; }
+      input:focus { outline: 2px solid #5b7cfa; border-color: transparent; }
+      .error { color: var(--bad); min-height: 1.6em; font-size: 14px; margin-top: 12px; }
+      button { width: 100%; padding: 14px; border: 0; border-radius: 14px; font: inherit; font-weight: 700;
+               font-size: 16px; color: #fff; background: linear-gradient(115deg, #6d3bf5, #2f6fed 60%, #14b8c4); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>محاسبهٔ اقساط</h1>
+      <p>قیمت و پیش‌پرداخت را بنویسید؛ کارت اقساط در همان گفت‌وگوی ربات برایتان می‌آید.</p>
+      <form id="calc" novalidate>
+        <label for="name">نام گوشی <span class="hint">(اختیاری)</span></label>
+        <input id="name" maxlength="120" autocomplete="off" />
+        <label for="price">قیمت گوشی <span class="hint">(ریال)</span></label>
+        <input id="price" inputmode="numeric" autocomplete="off" />
+        <label for="down">پیش‌پرداخت <span class="hint">(ریال، یا درصد مثل ۵۰٪)</span></label>
+        <input id="down" inputmode="numeric" autocomplete="off" />
+        <label for="months">تعداد ماه <span class="hint">(۱ تا ۲۴)</span></label>
+        <input id="months" inputmode="numeric" autocomplete="off" value="۵" />
+        <div id="error" class="error" role="alert"></div>
+        <button type="submit">محاسبه و دریافت کارت</button>
+      </form>
+    </main>
+    <script>
+      // v2.18.1: this page calculates nothing: the server does, through the bot.
+      const FA = '۰۱۲۳۴۵۶۷۸۹';
+      const AR = '٠١٢٣٤٥٦٧٨٩';
+      const latin = (text) => String(text).replace(/[۰-۹]/g, (d) => FA.indexOf(d))
+        .replace(/[٠-٩]/g, (d) => AR.indexOf(d));
+      const amount = (text) => {
+        const clean = latin(text).replace(/[٬,،\s]/g, '');
+        return /^\d+$/.test(clean) ? Number(clean) : null;
+      };
+      const messenger = () => {
+        const bale = window.Bale && window.Bale.WebApp;
+        const telegram = window.Telegram && window.Telegram.WebApp;
+        if (bale && bale.initData) return bale;
+        if (telegram && telegram.initData) return telegram;
+        return bale && typeof bale.sendData === 'function' && !telegram ? bale : telegram || null;
+      };
+      const say = (text) => { document.getElementById('error').textContent = text; };
+      document.getElementById('calc').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const price = amount(document.getElementById('price').value);
+        if (!price) { say('قیمت گوشی را درست بنویسید.'); return; }
+        const typed = latin(document.getElementById('down').value).trim();
+        let down = 0;
+        if (typed.endsWith('%') || typed.endsWith('٪')) {
+          const percent = amount(typed.slice(0, -1));
+          if (percent === null || percent >= 100) { say('درصد پیش‌پرداخت درست نیست.'); return; }
+          down = Math.round(price * percent / 100);
+        } else if (typed) {
+          down = amount(typed);
+          if (down === null) { say('پیش‌پرداخت را درست بنویسید.'); return; }
+        }
+        if (down >= price) { say('پیش‌پرداخت باید کمتر از قیمت گوشی باشد.'); return; }
+        const months = amount(document.getElementById('months').value);
+        if (!months || months < 1 || months > 24) { say('تعداد ماه باید بین ۱ و ۲۴ باشد.'); return; }
+        const target = messenger();
+        if (!target || typeof target.sendData !== 'function') {
+          say('این صفحه فقط از داخل ربات کار می‌کند؛ آن را از دکمهٔ ربات باز کنید.');
+          return;
+        }
+        target.sendData(JSON.stringify({ v: 1, type: 'installment', price, down, months,
+                                         name: document.getElementById('name').value.trim().slice(0, 120) }));
+        if (typeof target.close === 'function') {
+          try { target.close(); } catch (_) { /* the window closes by itself */ }
+        }
+      });
+      const started = messenger();
+      if (started && typeof started.ready === 'function') {
+        try { started.ready(); } catch (_) { /* outside the messenger */ }
+      }
+    </script>
+  </body>
+</html>

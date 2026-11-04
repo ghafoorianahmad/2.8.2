@@ -986,6 +986,37 @@ class ShopApiClient:
         out = self._request("GET", f"/admin/chat/voice/{int(message_id)}", timeout=120.0)
         return base64.b64decode((out or {}).get("data_b64") or "")
 
+    # ---- v2.18.1 «محاسبهٔ اقساط» ----
+    def installment_settings(self) -> dict:
+        return self._request("GET", "/admin/installments/settings") or {}
+
+    def set_installment_settings(self, *, rate: str | None = None,
+                                 customer_enabled: bool | None = None) -> dict:
+        body = {key: value for key, value in (("rate", rate),
+                                              ("customer_enabled", customer_enabled))
+                if value is not None}
+        return self._request("PUT", "/admin/installments/settings", json_body=body) or {}
+
+    def installment_items(self, query: str = "") -> list:
+        return self._request("GET", "/admin/installments/items", params={"q": query}) or []
+
+    def installment_customers(self, query: str) -> list:
+        return self._request("GET", "/admin/installments/customers", params={"q": query}) or []
+
+    def installment_card(self, sheet: dict) -> dict:
+        return self._request("POST", "/admin/installments/card", json_body=sheet,
+                             timeout=90.0) or {}
+
+    def installment_save(self, sheet: dict) -> dict:
+        return self._request("POST", "/admin/installments/quotes", json_body=sheet) or {}
+
+    def installment_quotes(self, limit: int = 200) -> list:
+        return self._request("GET", "/admin/installments/quotes", params={"limit": limit}) or []
+
+    def installment_send(self, user_id: int, sheet: dict) -> dict:
+        return self._request("POST", "/admin/installments/send",
+                             json_body={"user_id": int(user_id), "sheet": sheet}) or {}
+
     def set_faq(self, enabled: bool, values: dict | None = None) -> dict:
         return self._request("PUT", "/admin/shop-rules/faq",
                              json_body={"enabled": bool(enabled), "values": values or {}}) or {}

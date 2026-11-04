@@ -126,6 +126,7 @@ def build(clean: bool, console: bool, variant: str = "full") -> int:
         "--hidden-import", "openpyxl",
         "--hidden-import", "PySide6.QtSvg",
         "--hidden-import", "PySide6.QtNetwork",
+        "--hidden-import", "PySide6.QtPrintSupport",
         # keyring loads its backends dynamically; without this the frozen build
         # cannot reach the Windows Credential Manager and "remember me" would
         # silently fall back to the local file.
