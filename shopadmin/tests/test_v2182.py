@@ -156,3 +156,19 @@ def test_the_ledger_has_its_own_tick_and_only_a_view():
     assert "ledger.view" not in perms.SALES_SERVER_PERMISSIONS
     assert perms.LEDGER_VIEW in perms.client_permissions({"ledger.view"})
     assert any(item[0] == "ledger" for item in NAV_ITEMS)
+
+
+def test_choosing_a_person_reads_their_turnover(ui_context, admin_qapp, monkeypatch):
+    from app.ui.pages import ledger
+
+    context = make_context_with_role(ui_context, ROLE_SUPER_ADMIN)
+    api = _LedgerApi()
+    monkeypatch.setattr(context, "api", api, raising=False)
+    monkeypatch.setattr(ledger, "run_async", lambda call, on_success, on_error=None: on_success(call()))
+    page = ledger.LedgerPage(context)
+    page.load()
+    assert page.person_table.rowCount() == 1
+    page.person_table.select_row(0)
+    assert api.statements == [("hesab4", 7)]
+    assert page.row_table.rowCount() == 1
+    page.close()

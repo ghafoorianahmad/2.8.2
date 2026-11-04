@@ -71,7 +71,7 @@ def main() -> int:
         for _ in range(40):
             time.sleep(0.05)
             screens.settle(app, 5)
-        ledger.person_table.selectRow(0)
+        ledger.person_table.select_row(0)
         for _ in range(40):
             time.sleep(0.05)
             screens.settle(app, 5)
