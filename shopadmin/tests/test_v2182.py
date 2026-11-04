@@ -138,7 +138,7 @@ def test_the_ledger_page_prefers_a_previous_year_and_shows_a_turnover(ui_context
     assert page.database.currentData() == "hesab4"
     assert page.database.itemText(0).endswith("(سال جاری)")
     page._got_persons(api.ledger_persons("hesab4"))
-    assert page.person_table.item(0, 2).text() == "••••••••۷۸"
+    assert page.person_table.item(0, 2).text().endswith("••••••••۷۸")
     page._shown_code = 7
     page._got_statement({"name": "علی"}, 7, api.ledger_statement("hesab4", 7))
     assert page.row_table.rowCount() == 1 and "بدهکار" in page.summary.text()

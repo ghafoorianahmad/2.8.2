@@ -110,7 +110,7 @@ class LedgerPage(BasePage):
                           else f"{format_int(total)} نفر")
         self.person_table.fill(
             [to_persian_digits(p.get("code")), p.get("name") or "—",
-             to_persian_digits(p.get("national_code") or "") or "—",
+             f"‎{to_persian_digits(p['national_code'])}" if p.get("national_code") else "—",
              f"…{to_persian_digits(p['phone_tail'])}" if p.get("phone_tail") else "—"]
             for p in self.persons)
         self._show_nothing()

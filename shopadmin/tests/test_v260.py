@@ -22,7 +22,7 @@ def test_app_version_matches_the_installer_and_the_server():
     server = re.search(r'^VERSION = "([^"]+)"',
                        (ROOT.parent / "shopapi" / "app" / "control.py").read_text(encoding="utf-8"),
                        re.M).group(1)
-    assert APP_VERSION == installer == server == "2.18.1"
+    assert APP_VERSION == installer == server == "2.18.2"
 
 
 def test_sidebar_shows_the_real_version(ui_context, admin_qapp):

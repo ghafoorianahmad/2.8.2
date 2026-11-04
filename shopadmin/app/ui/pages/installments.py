@@ -47,6 +47,7 @@ STATUS_FA = {"saved": "ذخیره‌شده", "pending": "در صف ارسال", 
 SCHEDULE_HEADERS = ("شماره", "تاریخ چک", "مبلغ (ریال)")
 COMPARE_HEADERS = ("ماه", "هر چک", "سود", "جمع اقساط", "جمع کل")
 COMPACT_ROW = 28
+COMPACT_HEADER = 44
 HISTORY_HEADERS = ("زمان", "کاربر", "مشتری", "گوشی", "نقد", "چک‌ها", "سود", "جمع کل", "وضعیت")
 _PICK_DELAY_MS = 300
 
@@ -394,7 +395,7 @@ class InstallmentsPage(BasePage):
     @staticmethod
     def _fit_height(table, rows: int) -> None:
         """All rows at once: the page scrolls, not a table inside it."""
-        table.setFixedHeight(table.horizontalHeader().sizeHint().height() + COMPACT_ROW * rows + 6)
+        table.setFixedHeight(COMPACT_HEADER + COMPACT_ROW * rows + 6)
 
     def _cell_changed(self, item: QTableWidgetItem) -> None:
         if self._updating:
@@ -423,7 +424,7 @@ class InstallmentsPage(BasePage):
         panel = _compact(widgets.Panel("مقایسهٔ ۱ تا ۱۲ ماه با همین پیش‌پرداخت"))
         self.compare = widgets.DataTable(COMPARE_HEADERS, fit_width=True, stretch_column=4)
         self.compare.verticalHeader().setDefaultSectionSize(COMPACT_ROW)
-        self._fit_height(self.compare, inst.MAX_MONTHS)
+        self._fit_height(self.compare, len(inst.COMPARE_MONTHS))
         self.compare.set_empty_state("قیمت و پیش‌پرداخت را بنویسید.")
         self.compare.row_activated.connect(self._compare_activated)
         panel.body.addWidget(self.compare)
