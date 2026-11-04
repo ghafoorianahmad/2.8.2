@@ -5,7 +5,11 @@ from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent
 from PySide6.QtWidgets import QComboBox, QScrollBar, QSlider, QSpinBox, QTabBar, QWidget
 
+from app.statuses import ROLE_OPERATOR, ROLE_SUPER_ADMIN
+from app.ui.pages.installments import InstallmentsPage
 from app.ui.wheel_guard import _WheelGuard, install_wheel_guard
+from app.ui.widgets import AmountEdit
+from tests.test_ui import make_context_with_role, ui_context  # noqa: F401 - fixture
 
 
 def _wheel(widget: QWidget) -> QWheelEvent:
@@ -49,3 +53,34 @@ def test_the_wheel_gives_these_controls_no_focus(admin_qapp):
     for widget in (spin, combo):
         widget.ensurePolished()
         assert widget.focusPolicy() == Qt.FocusPolicy.StrongFocus
+
+
+def test_amounts_are_grouped_while_typing(admin_qapp):
+    box = AmountEdit()
+    box.setFocus()
+    box.setText("1000000000")
+    assert box.text() == "۱٬۰۰۰٬۰۰۰٬۰۰۰"
+    for typed in ("۵۰٪", "چند", ""):
+        box.setText(typed)
+        assert box.text() == typed                # not digits: stays as it is
+    box.clear()
+    box.insert("1234")
+    box._regroup(box.text())
+    assert box.text() == "۱٬۲۳۴" and box.cursorPosition() == len("۱٬۲۳۴")
+    box.setCursorPosition(1)                      # after the first digit
+    box.insert("9")
+    box._regroup(box.text())
+    assert box.text() == "۱۹٬۲۳۴" and box.cursorPosition() == 2
+
+
+def test_every_amount_on_the_installments_page_groups(ui_context, admin_qapp):
+    page = InstallmentsPage(make_context_with_role(ui_context, ROLE_SUPER_ADMIN))
+    page.price.setText("200000000")
+    page.down_input.setText("100000000")
+    assert page.down_input.text() == "۱۰۰٬۰۰۰٬۰۰۰"
+    assert page.quote is not None and page.down == 100_000_000
+    delegate = page.schedule.itemDelegateForColumn(2)
+    assert isinstance(delegate.createEditor(page.schedule, None, None), AmountEdit)
+    page.down_input.setText("۵۰٪")
+    assert page.down == 100_000_000
+    page.close()

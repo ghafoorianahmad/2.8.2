@@ -1079,7 +1079,7 @@ class ApplyNoteDialog(widgets.ResponsiveDialog):
                 combo.addItem(" ".join(p for p in (row.get("description"), row.get("color")) if p),
                               row.get("row_key"))
             combo.setMinimumWidth(420)
-            price = mark_ltr(QLineEdit())
+            price = widgets.AmountEdit()
             price.setMaximumWidth(120)
             if index < len(items) and items[index].get("price"):
                 price.setText(to_persian_digits(items[index]["price"]))

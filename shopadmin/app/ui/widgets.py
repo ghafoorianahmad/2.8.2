@@ -633,6 +633,57 @@ def pill_cell(widget: QWidget) -> QWidget:
 MAX_PRICE_RIAL = 100_000_000_000
 
 
+class AmountEdit(QLineEdit):
+    """v2.18.2: a one-line amount grouped by thousands while typing, wherever it is set from.
+    Anything that is not just digits (a percent, a mistake) stays as typed, so the page can say
+    what is wrong with it."""
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from .rtl import mark_ltr
+
+        mark_ltr(self)
+        self.textEdited.connect(self._regroup)
+        if text:
+            self.setText(text)
+
+    @staticmethod
+    def grouped(text: str) -> str:
+        from ..persian import to_english_digits
+
+        plain = to_english_digits(str(text or "")).replace("٬", "").replace(",", "").strip()
+        if not (plain.isascii() and plain.isdigit()):
+            return str(text or "")
+        return MoneyInput.format(int(plain))
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt naming
+        super().setText(self.grouped(text))
+
+    def _regroup(self, text: str) -> None:
+        """The cursor stays after the same digit."""
+        formatted = self.grouped(text)
+        if formatted == text:
+            return
+        digits_before = len(MoneyInput._digits(text[:self.cursorPosition()]))
+        self.blockSignals(True)
+        super().setText(formatted)
+        self.blockSignals(False)
+        position, seen = 0, 0
+        for position, ch in enumerate(formatted, start=1):
+            if MoneyInput._digits(ch):
+                seen += 1
+            if seen >= digits_before:
+                break
+        self.setCursorPosition(position if digits_before else 0)
+
+
+class AmountDelegate(QStyledItemDelegate):
+    """A table cell that groups its amount while it is being typed."""
+
+    def createEditor(self, parent, _option, _index):  # noqa: N802 - Qt naming
+        return AmountEdit(parent=parent)
+
+
 class MoneyInput(QWidget):
     """v2.9.4: an amount in ریال: digits grouped by thousands while typing
     («۵۲۵٬۰۰۰٬۰۰۰»), the unit «ریال» beside it and the amount in Persian words
