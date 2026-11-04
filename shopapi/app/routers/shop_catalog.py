@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from .. import customer_details, deps, faq, ownership, purchase
+from .. import customer_details, deps, faq, installments, ownership, purchase, reply_templates
 from .. import groups as group_config
 from ..accounting_reader import AccountingReader
 from ..config import Settings
@@ -32,7 +32,7 @@ from ..schemas import (
     ProductGroupsIn,
 )
 from ..security import Identity, require_any, require_permission
-from ..staff import (P_ARCHIVE, P_GROUPS_EDIT, P_GROUPS_VIEW, P_REQUESTS_EDIT,
+from ..staff import (P_ARCHIVE, P_GROUPS_EDIT, P_GROUPS_VIEW, P_REPLY_TEMPLATES, P_REQUESTS_EDIT,
                      P_REQUESTS_VIEW)
 
 router = APIRouter(prefix="/admin")
@@ -303,6 +303,37 @@ def purchase_unavailable(
     return request_out(db, who, purchase.mark_unavailable(db, who, row))
 
 
+@router.get("/item-requests/{request_id}/reply-templates")
+def request_reply_templates(
+    request_id: int,
+    db: OwnDB = Depends(deps.get_db),
+    reader: AccountingReader = Depends(deps.get_reader),
+    who: Identity = Depends(require_permission(P_REPLY_TEMPLATES)),
+) -> dict:
+    """v2.18.1: the ready replies, filled for this customer as far as the server knows. The
+    customer's address and national code stay out: only whether they are on file."""
+    row = _request_or_404(db, request_id, who)
+    user = db.get_user_by_id(int(row["user_id"])) or {}
+    current, known = customer_details.merged(reader, user)
+    shop = faq.values(db)
+    orders = db.list_orders_for_user(int(row["user_id"])) if row.get("user_id") else []
+    order = orders[0] if orders else {}
+    items = order.get("items") or ()
+    name = " ".join(p for p in (current["first_name"], current["last_name"]) if p) \
+        or str(user.get("name") or "")
+    price = int(row.get("offer_price_rial") or order.get("total") or 0)
+    values = {"customer_name": name,
+              "product": str(row.get("product_name") or (items[0].get("name") if items else "")
+                             or ""),
+              "color": str((items[0].get("variant") if items else "") or ""),
+              "price": f"{installments.fa_money(price)} ریال" if price else "",
+              "order_no": installments.fa_text(order.get("id")) if order else "",
+              "hours": shop.get("hours", ""), "shop_address": shop.get("address", ""),
+              "shop_phone": shop.get("phone", ""), "customer_phone": str(user.get("phone") or "")}
+    return reply_templates.build(values, has_national_code=not known or bool(current["national_code"]),
+                                 has_address=not known or bool(current["address"]))
+
+
 @router.get("/item-requests/{request_id}/messages", response_model=list[ItemRequestMessageOut])
 def list_item_request_messages(
     request_id: int,
@@ -334,6 +365,14 @@ def send_item_request_message(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Message is empty")
     if not row.get("platform"):
         raise HTTPException(status.HTTP_409_CONFLICT, "Customer has no messenger")
+    # v2.18.1: a template with a gap, or the customer's private details, never reach the chat
+    if reply_templates.gaps(text):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "جای‌خالی‌های پاسخ آماده را پر کنید.")
+    user = db.get_user_by_id(int(row["user_id"])) or {}
+    if reply_templates.mentions_private(text, user.get("national_code"), user.get("address")):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "کد ملی و نشانی مشتری نباید در پیام نوشته شود.")
     message = db.add_item_request_message(request_id, text, who.actor)
     db.audit(who.actor, "item_request_message", f"request id={request_id} message id={message['id']}")
     db.add_event("item_request_message", message["id"], who.actor)

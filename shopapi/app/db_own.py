@@ -627,8 +627,14 @@ class OwnDB:
             self._conn.execute("UPDATE staff_users SET role=? WHERE role=?", (new, old))
         # v2.17.0, once: every page and action has its own tick. (Until then the daily
         # work was always on, so older databases first lose those ticks, v2.8.3.)
-        from .staff import migrate_ticks, strip_always, upgrade_ticks_2170
+        from .staff import migrate_ticks, strip_always, upgrade_ticks_2170, upgrade_ticks_2181
 
+        if self._conn.execute("SELECT 1 FROM shop_state WHERE key='permissions_2181'").fetchone() is None:
+            for row in self._conn.execute("SELECT id, role, perm_grant FROM staff_users").fetchall():
+                self._conn.execute("UPDATE staff_users SET perm_grant=? WHERE id=?",
+                                   (upgrade_ticks_2181(row["role"], row["perm_grant"]), row["id"]))
+            self._conn.execute("INSERT INTO shop_state (key, value, updated_at, updated_by) VALUES "
+                               "('permissions_2181', '1', ?, 'migration')", (now_iso(),))
         first = self._conn.execute(
             "SELECT 1 FROM shop_state WHERE key='permissions_2170'").fetchone() is None
         if first:

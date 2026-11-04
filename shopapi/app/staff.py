@@ -47,6 +47,7 @@ ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("acctwrite", "دکمهٔ «ثبت در حسابداری»", False, True),
     ("claim", "برداشتن کار تازه («برداشت»)", False, True),
     ("requests", "درخواست کالا (پیام، یادداشت، تأیید موجودی)", True, True),
+    ("reply_templates", "پاسخ‌های آماده در پیام به مشتری", True, False),
     ("customers", "مشتریان (تأیید و رد مشتری)", True, True),
     ("customer_private", "کد ملی و نشانی مشتری", True, True),
     ("assign", "ارجاع کار به همکار", False, True),
@@ -55,6 +56,7 @@ ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("products", "محصولات و موجودی", True, False),
     ("groups", "گروه‌های کالا", True, True),
     ("pricelist", "لیست قیمت و نگاشت", True, True),
+    ("price_notes", "پیام‌های کانال قیمت (دیدن، اعمال دستی)", True, True),
     ("proxies", "پراکسی‌ها", False, True),
     ("models", "مدل‌های سایت", True, True),
     ("site", "سایت (کالاها، ظاهر، انتشار)", True, True),
@@ -110,6 +112,9 @@ P_ORDERS_EXPIRE = P_ORDERS_CANCEL        # cancel overdue orders, sync invoices
 P_ACCOUNTING_WRITE = "acctwrite.edit"    # v2.17.0: write a waiting order later
 P_CLAIM = "claim.edit"                   # v2.17.0: «برداشت»
 P_REQUESTS_VIEW = "requests.view"
+P_REPLY_TEMPLATES = "reply_templates.view"   # v2.18.1
+P_PRICE_NOTES_VIEW = "price_notes.view"      # v2.18.1
+P_PRICE_NOTES_EDIT = "price_notes.edit"
 P_REQUESTS_EDIT = "requests.edit"
 P_REQUESTS = P_REQUESTS_EDIT
 P_CUSTOMERS_VIEW = "customers.view"
@@ -172,7 +177,7 @@ _SALES = frozenset({
     "dashboard.view", "orders.view", "receipts.edit", "payinfo.edit", "ship.edit",
     "cancel.edit", "claim.edit", "requests.view", "requests.edit", "customers.view",
     "customers.edit", "assign.edit", "archive.view", "reports.view", "reports_export.edit",
-    "staff_alerts.view", "own_prefs.edit",
+    "staff_alerts.view", "own_prefs.edit", "reply_templates.view",
 })
 
 PERMISSIONS: dict[str, frozenset[str]] = {
@@ -282,6 +287,18 @@ def strip_always(raw: str) -> str | None:
     items = [p.strip() for p in str(raw or "").split(",") if p.strip()]
     kept = [p for p in items if p not in _FORMERLY_ALWAYS]
     return ",".join(sorted(set(kept))) if len(kept) != len(items) else None
+
+
+def upgrade_ticks_2181(role: str, grants: str) -> str:
+    """v2.18.1, once: «پیام‌های کانال» got its own tick; who had it with the price list keeps it."""
+    if str(role or "") not in (ROLE_SALES, ROLE_VIEWER):
+        return grants
+    have = {p.strip() for p in str(grants or "").split(",") if p.strip()}
+    if "pricelist.view" in have or "pricelist.edit" in have:
+        have.add("price_notes.view")
+    if "pricelist.edit" in have:
+        have.add("price_notes.edit")
+    return ",".join(sorted(have))
 
 
 def upgrade_ticks_2170(role: str, grants: str) -> str:

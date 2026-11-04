@@ -28,7 +28,8 @@ from .. import sales as sales_state
 from .. import tgchannels
 from ..proxypool import ACTIVE_CAP, ProxyLink, ProxyPool, masked_secret, parse_proxy_link
 from ..security import Identity, get_identity, require_any, require_permission, require_worker
-from ..staff import (P_PRICELIST, P_PRICELIST_VIEW, P_PROXIES, P_REQUESTS_VIEW,
+from ..staff import (P_PRICE_NOTES_EDIT, P_PRICE_NOTES_VIEW, P_PRICELIST, P_PRICELIST_VIEW,
+                     P_PROXIES, P_REQUESTS_VIEW,
                      P_SERVER_MANAGE)
 from ..util import now_utc
 
@@ -445,7 +446,7 @@ def reject_row_price(
 def pricelist_notes(
     limit: int = Query(30, ge=1, le=200),
     db: OwnDB = Depends(deps.get_db),
-    _: Identity = CAN_VIEW,
+    _: Identity = Depends(require_permission(P_PRICE_NOTES_VIEW)),
 ) -> list[dict]:
     """The price channel's text posts (corrections, «فروش بسته») and their outcome."""
     return notes.list_notes(db, limit)
@@ -467,7 +468,7 @@ def apply_note_by_hand(
     payload: NoteApplyIn,
     db: OwnDB = Depends(deps.get_db),
     settings: Settings = Depends(deps.get_settings),
-    who: Identity = CAN_PRICELIST,
+    who: Identity = Depends(require_permission(P_PRICE_NOTES_EDIT)),
 ) -> dict:
     """v2.18.0 «اعمال دستی» and the confirmation of an uncertain post: the rows and prices a
     member of staff chose. Nothing is ever applied here without them."""

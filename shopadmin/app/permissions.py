@@ -33,6 +33,9 @@ ORDERS_CANCEL = "orders.cancel"          # v2.7.0
 ORDERS_EXPIRE = "orders.expire"          # cancel overdue orders, sync invoices
 ITEM_REQUESTS = "item_requests.handle"   # v2.7.0: reply, note, status, stock
 ITEM_REQUESTS_VIEW = "item_requests.view"  # v2.8.2: «درخواست کالا — دیدن»
+REPLY_TEMPLATES = "reply_templates.view"   # v2.18.1: ready replies in a message to a customer
+PRICE_NOTES_VIEW = "price_notes.view"      # v2.18.1: «پیام‌های کانال»
+PRICE_NOTES_EDIT = "price_notes.edit"      # its «اعمال دستی»
 ORDERS_PAYMENT_INFO = "orders.payment_info"  # v2.8.2: «ارسال اطلاعات پرداخت»
 GROUPS_VIEW = "groups.view"              # v2.8.2: «گروه‌های کالا» (own section)
 GROUPS_MANAGE = "groups.manage"
@@ -104,6 +107,7 @@ ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("acctwrite", "دکمهٔ «ثبت در حسابداری»", False, True),
     ("claim", "برداشتن کار تازه («برداشت»)", False, True),
     ("requests", "درخواست کالا (پیام، یادداشت، تأیید موجودی)", True, True),
+    ("reply_templates", "پاسخ‌های آماده در پیام به مشتری", True, False),
     ("customers", "مشتریان (تأیید و رد مشتری)", True, True),
     ("customer_private", "کد ملی و نشانی مشتری", True, True),
     ("assign", "ارجاع کار به همکار", False, True),
@@ -112,6 +116,7 @@ ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("products", "محصولات و موجودی", True, False),
     ("groups", "گروه‌های کالا", True, True),
     ("pricelist", "لیست قیمت و نگاشت", True, True),
+    ("price_notes", "پیام‌های کانال قیمت (دیدن، اعمال دستی)", True, True),
     ("proxies", "پراکسی‌ها", False, True),
     ("models", "مدل‌های سایت", True, True),
     ("site", "سایت (کالاها، ظاهر، انتشار)", True, True),
@@ -150,7 +155,7 @@ SALES_SERVER_PERMISSIONS = frozenset({
     "dashboard.view", "orders.view", "receipts.edit", "payinfo.edit", "ship.edit",
     "cancel.edit", "claim.edit", "requests.view", "requests.edit", "customers.view",
     "customers.edit", "assign.edit", "archive.view", "reports.view", "reports_export.edit",
-    "staff_alerts.view", "own_prefs.edit",
+    "staff_alerts.view", "own_prefs.edit", "reply_templates.view",
 })
 #: An action needs its page (shopapi ``staff.REQUIRES``).
 REQUIRES: dict[str, str] = {
@@ -186,6 +191,9 @@ SERVER_TO_CLIENT: dict[str, frozenset[str]] = {
     "pricelist.view": frozenset({PRICELIST_VIEW}),
     "pricelist.edit": frozenset({PRICELIST_MANAGE}),
     "proxies.edit": frozenset({PROXIES_MANAGE}),
+    "reply_templates.view": frozenset({REPLY_TEMPLATES}),
+    "price_notes.view": frozenset({PRICE_NOTES_VIEW}),
+    "price_notes.edit": frozenset({PRICE_NOTES_EDIT}),
     "models.view": frozenset({CATALOG_VIEW}),
     "models.edit": frozenset({CATALOG_MANAGE}),
     "site.view": frozenset({SITE_VIEW}),

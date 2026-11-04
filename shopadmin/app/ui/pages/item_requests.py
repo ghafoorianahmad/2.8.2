@@ -8,12 +8,16 @@
 """
 from __future__ import annotations
 
+import re
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QHBoxLayout,
     QHeaderView,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QRadioButton,
     QTableWidget,
@@ -23,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...activity import timeline_lines
-from ...permissions import ORDERS_ASSIGN, ORDERS_CLAIM, PRODUCT_ALIAS
+from ...permissions import ORDERS_ASSIGN, ORDERS_CLAIM, PRODUCT_ALIAS, REPLY_TEMPLATES
 from ...persian import coerce_datetime, format_datetime_shamsi, format_money, \
     gregorian_to_jalali, to_english_digits, to_persian_digits
 from .. import theme, widgets
@@ -31,6 +35,12 @@ from ..async_utils import run_async
 from ..base_page import BasePage
 from ..rtl import RIGHT
 from .customers import person_text
+
+#: v2.18.1: what a ready reply still needs from the person sending it
+TEMPLATE_GAP = re.compile(r"\{(customer_name|product|color|price|order_no|address|phone|hours)\}")
+TEMPLATE_GAP_FA = {"customer_name": "نام مشتری", "product": "کالا", "color": "رنگ", "price": "قیمت",
+                   "order_no": "شمارهٔ سفارش", "address": "نشانی", "phone": "تلفن",
+                   "hours": "ساعت"}
 
 HEADERS = ("شماره", "زمان ثبت", "نوع", "مشتری", "شخص در «سازه حساب»", "وضعیت", "مسئول",
            "کالای درخواستی")
@@ -493,6 +503,10 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         send_row = QHBoxLayout()
         self.send_info = widgets.label("", wrap=True)
         send_row.addWidget(self.send_info, 1)
+        # v2.18.1: filled by the server for this customer
+        self.template_button = widgets.button("پاسخ آماده…", on_click=self.pick_template)
+        self.template_button.setVisible(self.context.can(REPLY_TEMPLATES))
+        send_row.addWidget(self.template_button)
         self.send_button = widgets.button("ارسال پیام به مشتری", variant="primary",
                                           on_click=self.send_message)
         send_row.addWidget(self.send_button)
@@ -769,10 +783,31 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         self.send_info.setText(text)
         self.send_info.setStyleSheet(f"color: {color};" + (" font-weight: 600;" if error else ""))
 
+    def pick_template(self) -> None:
+        """v2.18.1: the ready replies, filled by the server for this customer."""
+        self.template_button.setEnabled(False)
+        run_async(lambda: self.context.api.reply_templates(int(self.item["id"])),
+                  on_success=self._got_templates, on_error=self._send_failed,
+                  on_done=lambda: self.template_button.setEnabled(True))
+
+    def _got_templates(self, data: object) -> None:
+        dialog = TemplatePickDialog(data if isinstance(data, dict) else {}, self)
+        if dialog.exec() == dialog.DialogCode.Accepted and dialog.chosen:
+            self.message_edit.setPlainText(dialog.chosen)
+            self._warn_gaps(dialog.chosen)
+
+    def _warn_gaps(self, text: str) -> bool:
+        gaps = TEMPLATE_GAP.findall(text)
+        self._set_send_info("جاهای خالی را خودتان بنویسید: " + "، ".join(
+            TEMPLATE_GAP_FA.get(gap, gap) for gap in gaps) if gaps else "", error=bool(gaps))
+        return bool(gaps)
+
     def send_message(self) -> None:
         text = self.message_edit.toPlainText().strip()
         if not text:
             self._set_send_info("متن پیام خالی است.", error=True)
+            return
+        if self._warn_gaps(text):
             return
         request_id = int(self.item["id"])
         self.send_button.setEnabled(False)
@@ -850,6 +885,58 @@ def price_source_text(item: dict) -> str:
             str(item["price_list_source"]), str(item["price_list_source"])))
     return text + (" — " + "، ".join(parts) if parts else "") + \
         ". می‌توانید پیش از «ارسال قیمت» آن را عوض کنید."
+
+
+class TemplatePickDialog(widgets.ResponsiveDialog):
+    """The ready replies: search, or a category; one click on a row puts it in the message."""
+
+    def __init__(self, data: dict, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("پاسخ‌های آماده")
+        self.setMinimumWidth(680)
+        self.chosen = ""
+        self.templates = [t for t in data.get("templates") or () if isinstance(t, dict)]
+        column = QVBoxLayout(self)
+        row = QHBoxLayout()
+        self.search = widgets.SearchBox("جستجو در پاسخ‌ها…")
+        self.search.textChanged.connect(self._show)
+        row.addWidget(self.search, 1)
+        self.category = QComboBox()
+        self.category.addItem("همهٔ دسته‌ها")
+        for name in data.get("categories") or ():
+            self.category.addItem(str(name))
+        self.category.currentIndexChanged.connect(self._show)
+        row.addWidget(self.category)
+        column.addLayout(row)
+        self.rows = QListWidget()
+        self.rows.setWordWrap(True)
+        self.rows.setMinimumHeight(360)
+        self.rows.itemClicked.connect(self._picked)
+        column.addWidget(self.rows, 1)
+        column.addWidget(widgets.label(
+            "با یک کلیک متن در پیام قرار می‌گیرد. جاهایی که مثل {product} مانده را خودتان بنویسید؛ تا "
+            "پر نشود پیام فرستاده نمی‌شود.", name="Muted", wrap=True))
+        column.addLayout(widgets.footer(close=widgets.button("بستن", on_click=self.reject)))
+        self._show()
+
+    def visible_templates(self) -> list[dict]:
+        needle = " ".join(self.search.text().split())
+        category = self.category.currentText() if self.category.currentIndex() > 0 else ""
+        return [t for t in self.templates
+                if (not category or t.get("category") == category)
+                and (not needle or needle in str(t.get("title") or "")
+                     or needle in str(t.get("text") or ""))]
+
+    def _show(self, *_args) -> None:
+        self.rows.clear()
+        for template in self.visible_templates():
+            item = QListWidgetItem(f"{template.get('title')}\n{template.get('text')}")
+            item.setData(Qt.ItemDataRole.UserRole, str(template.get("text") or ""))
+            self.rows.addItem(item)
+
+    def _picked(self, item: QListWidgetItem) -> None:
+        self.chosen = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        self.accept()
 
 
 class StockConfirmDialog(widgets.ResponsiveDialog):

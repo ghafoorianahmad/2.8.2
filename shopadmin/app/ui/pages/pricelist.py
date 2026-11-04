@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 
 from ...persian import format_int, format_money, format_shamsi, to_english_digits, \
     to_persian_digits
-from ...permissions import PRICELIST_MANAGE, PROXIES_MANAGE
+from ...permissions import PRICE_NOTES_EDIT, PRICE_NOTES_VIEW, PRICELIST_MANAGE, PROXIES_MANAGE
 from .. import theme, widgets
 from ..base_page import BasePage
 from ..rtl import mark_ltr
@@ -255,6 +255,9 @@ class PriceListPage(BasePage):
         self.tabs.addTab(self._build_rows_tab(), "ردیف‌ها و نگاشت")
         self.tabs.addTab(self._build_lists_tab(), "لیست‌های دریافتی")
         self.tabs.addTab(self._build_notes_tab(), "پیام‌های کانال")
+        # v2.18.1: its own tick
+        self.can_notes = self.context.can(PRICE_NOTES_VIEW)
+        self.tabs.setTabVisible(self.tabs.count() - 1, self.can_notes)
         if self.can_proxies:
             self.tabs.addTab(self._build_proxies_tab(), "پراکسی‌های تلگرام")
         self.tabs.currentChanged.connect(lambda _i: self.load())
@@ -401,7 +404,7 @@ class PriceListPage(BasePage):
         actions.addWidget(self.fetch_notes_button)
         self.apply_note_button = widgets.button("اعمال دستی…", icon_name="edit",
                                                 on_click=self._apply_note)
-        self.apply_note_button.setEnabled(self.can_manage)
+        self.apply_note_button.setEnabled(self.context.can(PRICE_NOTES_EDIT))
         actions.addWidget(self.apply_note_button)
         actions.addWidget(widgets.button("تغییرها", icon_name="eye", on_click=self._note_details))
         actions.addStretch(1)
@@ -473,6 +476,8 @@ class PriceListPage(BasePage):
             self.filter_combo.setCurrentIndex(index)
 
     def _load_notes(self) -> None:
+        if not self.can_notes:
+            return
         self.notes_table.set_busy(True)
         self.run(lambda: self.context.api.pricelist_notes(),
                  on_success=self._on_notes, on_error=self._table_error(self.notes_table))

@@ -986,6 +986,10 @@ class ShopApiClient:
         out = self._request("GET", f"/admin/chat/voice/{int(message_id)}", timeout=120.0)
         return base64.b64decode((out or {}).get("data_b64") or "")
 
+    # ---- v2.18.1 ready replies ----
+    def reply_templates(self, request_id: int) -> dict:
+        return self._request("GET", f"/admin/item-requests/{int(request_id)}/reply-templates") or {}
+
     # ---- v2.18.1 «پاسخ‌گوی خودکار» ----
     def faq_page(self) -> dict:
         return self._request("GET", "/admin/faq") or {}

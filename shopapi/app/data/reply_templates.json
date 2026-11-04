@@ -1,0 +1,397 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "greet",
+      "category": "خوشامد",
+      "title": "سلام و خوشامد",
+      "text": "سلام {customer_name} عزیز، به عصر ارتباطات ۲ خوش آمدید 🌹",
+      "placeholders": ["customer_name"]
+    },
+    {
+      "id": "greet_help",
+      "category": "خوشامد",
+      "title": "خوشامدگویی و اعلام آمادگی راهنمایی",
+      "text": "سلام و عرض ادب {customer_name} گرامی؛ به پشتیبانی فروشگاه عصر ارتباطات ۲ خوش آمدید. چطور می‌توانم در خرید یا استعلام مدل‌ها راهنمایی‌تان کنم؟",
+      "placeholders": ["customer_name"]
+    },
+    {
+      "id": "greet_hours",
+      "category": "خوشامد",
+      "title": "خوشامدگویی همراه با ساعت کاری",
+      "text": "وقت بخیر {customer_name} عزیز، خوشحالیم که همراه عصر ارتباطات ۲ هستید. همکاران ما همه روزه در ساعات {hours} آماده پاسخگویی به شما هستند.",
+      "placeholders": ["customer_name", "hours"]
+    },
+    {
+      "id": "greet_returning",
+      "category": "خوشامد",
+      "title": "خوشامدگویی به مشتری همراه",
+      "text": "سلام مجدد {customer_name} عزیز، از همراهی دوباره شما با مجموعه عصر ارتباطات ۲ سپاسگزاریم. در خدمت شما هستیم 🌺",
+      "placeholders": ["customer_name"]
+    },
+    {
+      "id": "price_basic",
+      "category": "اعلام قیمت",
+      "title": "اعلام قیمت روز محصول",
+      "text": "{customer_name} عزیز، قیمت روز {product} در حال حاضر {price} است. در صورت تمایل به ثبت سفارش در خدمتیم.",
+      "placeholders": ["customer_name", "product", "price"]
+    },
+    {
+      "id": "price_with_color",
+      "category": "اعلام قیمت",
+      "title": "اعلام قیمت محصول با رنگ مشخص",
+      "text": "قیمت {product} در رنگ {color} با گارانتی شرکتی هم‌اکنون {price} می‌باشد. جهت رزرو بفرمایید.",
+      "placeholders": ["product", "color", "price"]
+    },
+    {
+      "id": "price_market_note",
+      "category": "اعلام قیمت",
+      "title": "اعلام قیمت همراه با توضیح نوسان بازار",
+      "text": "{customer_name} گرامی، بهای فعلی {product} معادل {price} است. با توجه به نوسان لحظه‌ای بازار، این قیمت تا پایان ساعت کاری {hours} معتبر می‌باشد.",
+      "placeholders": ["customer_name", "product", "price", "hours"]
+    },
+    {
+      "id": "price_pack_ready",
+      "category": "اعلام قیمت",
+      "title": "اعلام قیمت پک پلمپ و ریجسترشده",
+      "text": "مدل {product} پلمپ و با کد فعال‌سازی همتا موجود است و با قیمت {price} تقدیم حضورتان می‌گردد.",
+      "placeholders": ["product", "price"]
+    },
+    {
+      "id": "stock_out_general",
+      "category": "عدم موجودی",
+      "title": "عدم موجودی موقت محصول",
+      "text": "{customer_name} عزیز، متأسفانه مدل {product} در حال حاضر به اتمام رسیده است. به محض شارژ مجدد اطلاع‌رسانی خواهد شد.",
+      "placeholders": ["customer_name", "product"]
+    },
+    {
+      "id": "stock_out_color",
+      "category": "عدم موجودی",
+      "title": "عدم موجودی یک رنگ خاص",
+      "text": "عرض پوزش {customer_name} گرامی، در حال حاضر {product} در رنگ {color} موجود نیست. در صورت تمایل رنگ‌های دیگر قابل سفارش است.",
+      "placeholders": ["customer_name", "product", "color"]
+    },
+    {
+      "id": "stock_out_notify",
+      "category": "عدم موجودی",
+      "title": "ثبت شماره برای اطلاع از شارژ موجودی",
+      "text": "مدل {product} فعلاً در انبار موجود نمی‌باشد. در صورت تمایل، به محض ورود بار جدید از طریق شماره {phone} با شما تماس می‌گیریم.",
+      "placeholders": ["product", "phone"]
+    },
+    {
+      "id": "color_available",
+      "category": "تنوع رنگ",
+      "title": "اعلام رنگ‌های موجود محصول",
+      "text": "{customer_name} عزیز، مدل {product} هم‌اکنون در رنگ‌بندی {color} در فروشگاه موجود و آماده تحویل است.",
+      "placeholders": ["customer_name", "product", "color"]
+    },
+    {
+      "id": "color_ask_choice",
+      "category": "تنوع رنگ",
+      "title": "استعلام رنگ مورد نظر مشتری",
+      "text": "برای ثبت سفارش {product}، لطفاً بفرمایید رنگ {color} مد نظرتان است یا رنگ دیگری را ترجیح می‌دهید؟",
+      "placeholders": ["product", "color"]
+    },
+    {
+      "id": "color_price_diff",
+      "category": "تنوع رنگ",
+      "title": "توضیح تفاوت قیمت رنگ‌ها",
+      "text": "{customer_name} گرامی، مدل {product} در رنگ {color} با قیمت {price} موجود است. لطفاً رنگ انتخابی خود را جهت نهایی‌سازی بفرمایید.",
+      "placeholders": ["customer_name", "product", "color", "price"]
+    },
+    {
+      "id": "order_received_initial",
+      "category": "دریافت سفارش",
+      "title": "دریافت اولیه سفارش",
+      "text": "{customer_name} عزیز، درخواست سفارش شما برای {product} با شماره پیگیری {order_no} دریافت شد و در صف بررسی قرار گرفت.",
+      "placeholders": ["customer_name", "product", "order_no"]
+    },
+    {
+      "id": "order_received_detail",
+      "category": "دریافت سفارش",
+      "title": "ثبت سفارش همراه با جزئیات رنگ و مبلغ",
+      "text": "سفارش شما شامل {product} رنگ {color} به مبلغ {price} با کد {order_no} ثبت شد. لطفاً فیش واریزی را ارسال فرمایید.",
+      "placeholders": ["product", "color", "price", "order_no"]
+    },
+    {
+      "id": "order_received_hold",
+      "category": "دریافت سفارش",
+      "title": "رزرو موقت سفارش تا تسویه",
+      "text": "{customer_name} گرامی، دستگاه {product} با شماره سفارش {order_no} به صورت موقت برای شما رزرو شد. لطفاً تصویر واریز را ارسال نمایید.",
+      "placeholders": ["customer_name", "product", "order_no"]
+    },
+    {
+      "id": "receipt_received_check",
+      "category": "بررسی فیش واریزی",
+      "title": "دریافت فیش و ارجاع به واحد مالی",
+      "text": "{customer_name} عزیز، تصویر فیش واریزی مربوط به سفارش {order_no} دریافت شد و جهت تایید به واحد مالی ارسال گردید.",
+      "placeholders": ["customer_name", "order_no"]
+    },
+    {
+      "id": "receipt_checking_wait",
+      "category": "بررسی فیش واریزی",
+      "title": "در حال استعلام بانکی واریزی",
+      "text": "فیش واریزی مبلغ {price} برای سفارش {order_no} در حال بررسی توسط حسابداری است. به محض نشستن مبلغ در حساب اطلاع می‌دهیم.",
+      "placeholders": ["price", "order_no"]
+    },
+    {
+      "id": "receipt_paya_note",
+      "category": "بررسی فیش واریزی",
+      "title": "توضیح زمان تسویه حواله پایا یا ساتنا",
+      "text": "{customer_name} گرامی، رسید انتقال شما برای سفارش {order_no} ثبت شد. پس از واریز نهایی در سیکل بانکی در ساعات {hours}، سفارش تایید خواهد شد.",
+      "placeholders": ["customer_name", "order_no", "hours"]
+    },
+    {
+      "id": "receipt_problem_blurry",
+      "category": "مشکل در فیش واریزی",
+      "title": "ناخوانا بودن تصویر فیش واریزی",
+      "text": "{customer_name} عزیز، تصویر فیش ارسالی برای سفارش {order_no} واضح نیست. لطفاً تصویر خوانا شامل کد پیگیری و تاریخ را مجدداً ارسال فرمایید.",
+      "placeholders": ["customer_name", "order_no"]
+    },
+    {
+      "id": "receipt_problem_mismatch",
+      "category": "مشکل در فیش واریزی",
+      "title": "عدم تطابق مبلغ فیش با فاکتور",
+      "text": "{customer_name} گرامی، مبلغ فیش ارسالی با مبلغ فاکتور سفارش {order_no} ({price}) مطابقت ندارد. لطفاً بررسی و اطلاع دهید.",
+      "placeholders": ["customer_name", "order_no", "price"]
+    },
+    {
+      "id": "receipt_problem_not_settled",
+      "category": "مشکل در فیش واریزی",
+      "title": "عدم واریز وجه به حساب فروشگاه",
+      "text": "با عرض پوزش {customer_name} عزیز، واریزی مربوط به سفارش {order_no} هنوز در حساب فروشگاه منظور نشده است. لطفاً وضعیت تراکنش را از بانک پیگیری فرمایید.",
+      "placeholders": ["customer_name", "order_no"]
+    },
+    {
+      "id": "order_confirmed_final",
+      "category": "تایید نهایی سفارش",
+      "title": "تایید نهایی پرداخت و سفارش",
+      "text": "{customer_name} عزیز، پرداخت شما تایید شد و سفارش {order_no} برای {product} رنگ {color} قطعی گردید. سپاس از اعتماد شما 🌹",
+      "placeholders": ["customer_name", "order_no", "product", "color"]
+    },
+    {
+      "id": "order_confirmed_prep",
+      "category": "تایید نهایی سفارش",
+      "title": "تایید سفارش و ارسال به واحد آماده‌سازی",
+      "text": "سفارش شماره {order_no} مربوط به {product} با موفقیت تایید نهایی شد و هم‌اکنون در واحد بسته‌بندی عصر ارتباطات ۲ در حال آماده‌سازی است.",
+      "placeholders": ["order_no", "product"]
+    },
+    {
+      "id": "order_confirmed_invoice",
+      "category": "تایید نهایی سفارش",
+      "title": "صدور فاکتور رسمی سفارش تاییدشده",
+      "text": "{customer_name} گرامی، فاکتور سفارش {order_no} به مبلغ {price} صادر شد و به همراه دستگاه {product} تحویلتان خواهد گردید.",
+      "placeholders": ["customer_name", "order_no", "price", "product"]
+    },
+    {
+      "id": "pickup_ready_store",
+      "category": "آماده تحویل حضوری",
+      "title": "آماده بودن سفارش جهت تحویل حضوری در مشهد",
+      "text": "{customer_name} عزیز، سفارش {order_no} ({product}) آماده تحویل حضوری است. می‌توانید در ساعات {hours} به آدرس {address} مراجعه فرمایید.",
+      "placeholders": ["customer_name", "order_no", "product", "hours", "address"]
+    },
+    {
+      "id": "pickup_bring_id",
+      "category": "آماده تحویل حضوری",
+      "title": "مدارک لازم هنگام تحویل حضوری",
+      "text": "جهت تحویل حضوری سفارش {order_no} در فروشگاه عصر ارتباطات ۲ به نشانی {address}، لطفاً کارت شناسایی معتبر به همراه داشته باشید.",
+      "placeholders": ["order_no", "address"]
+    },
+    {
+      "id": "pickup_coord_phone",
+      "category": "آماده تحویل حضوری",
+      "title": "هماهنگی تلفنی پیش از مراجعه حضوری",
+      "text": "{customer_name} گرامی، بسته شما برای {product} آماده است. پیش از تشریف‌فرمایی در ساعات {hours} می‌توانید با شماره {phone} هماهنگ فرمایید.",
+      "placeholders": ["customer_name", "product", "hours", "phone"]
+    },
+    {
+      "id": "pickup_reminder",
+      "category": "آماده تحویل حضوری",
+      "title": "یادآوری دریافت سفارش حضوری",
+      "text": "سلام {customer_name} عزیز، سفارش شماره {order_no} در شعبه عصر ارتباطات ۲ منتظر تشریف‌فرمایی شماست. ساعت مراجعه: {hours}.",
+      "placeholders": ["customer_name", "order_no", "hours"]
+    },
+    {
+      "id": "delivery_courier_sent",
+      "category": "ارسال و پیک",
+      "title": "ارسال سفارش با پیک شهری مشهد",
+      "text": "{customer_name} عزیز، سفارش {order_no} ({product}) تحویل پیک شد و به مقصد {address} در حال ارسال است.",
+      "placeholders": ["customer_name", "order_no", "product", "address"]
+    },
+    {
+      "id": "delivery_post_tracking",
+      "category": "ارسال و پیک",
+      "title": "ارسال پستی سفارش و اطلاع‌رسانی",
+      "text": "بسته سفارش {order_no} شامل {product} رنگ {color} بسته‌بندی و تحویل واحد ارسال گردید. لطفاً در آدرس {address} در دسترس باشید.",
+      "placeholders": ["order_no", "product", "color", "address"]
+    },
+    {
+      "id": "delivery_coord_time",
+      "category": "ارسال و پیک",
+      "title": "هماهنگی بازه زمانی ارسال پیک",
+      "text": "{customer_name} گرامی، جهت ارسال سفارش {order_no} به نشانی {address}، آیا حضور شما در بازه زمانی {hours} تایید است؟",
+      "placeholders": ["customer_name", "order_no", "address", "hours"]
+    },
+    {
+      "id": "delivery_driver_call",
+      "category": "ارسال و پیک",
+      "title": "تماس سفیر پیش از تحویل",
+      "text": "سفیر فروشگاه عصر ارتباطات ۲ پیش از رسیدن به آدرس {address} با شماره {phone} تماس خواهد گرفت. از همراهی شما متشکریم.",
+      "placeholders": ["address", "phone"]
+    },
+    {
+      "id": "installment_general",
+      "category": "فروش اقساطی",
+      "title": "شرایط کلی فروش اقساطی",
+      "text": "{customer_name} عزیز، امکان خرید {product} در طرح فروش اقساطی عصر ارتباطات ۲ فراهم است. جهت بررسی مدارک در ساعات {hours} به {address} مراجعه فرمایید.",
+      "placeholders": ["customer_name", "product", "hours", "address"]
+    },
+    {
+      "id": "installment_cheque_docs",
+      "category": "فروش اقساطی",
+      "title": "مدارک لازم جهت خرید اقساطی با چک صیادی",
+      "text": "برای استفاده از طرح فروش اقساطی مدل {product}، همراه داشتن چک صیادی بنفش، کارت ملی و استعلام اعتبارسنجی در مراجعه حضوری به {address} الزامی است.",
+      "placeholders": ["product", "address"]
+    },
+    {
+      "id": "installment_price_calc",
+      "category": "فروش اقساطی",
+      "title": "محاسبه پیش‌پرداخت و اقساط حضوری",
+      "text": "{customer_name} گرامی، قیمت نقدی {product} معادل {price} است و محاسبه دقیق پیش‌پرداخت و اقساط بر اساس تعداد ماه در فروشگاه انجام می‌شود.",
+      "placeholders": ["customer_name", "product", "price"]
+    },
+    {
+      "id": "installment_consult_phone",
+      "category": "فروش اقساطی",
+      "title": "مشاوره تلفنی واحد فروش اقساطی",
+      "text": "جهت اطلاع از جزئیات طرح‌های فروش اقساطی برای {product}، می‌توانید در ساعات {hours} با واحد اقساط به شماره {phone} تماس بگیرید.",
+      "placeholders": ["product", "hours", "phone"]
+    },
+    {
+      "id": "warranty_official",
+      "category": "گارانتی و اصالت",
+      "title": "تضمین اصالت، پلمپ و گارانتی ۱۸ ماهه شرکتی",
+      "text": "{customer_name} عزیز، تمامی دستگاه‌های {product} در عصر ارتباطات ۲ به صورت پلمپ، با گارانتی معتبر شرکتی و کد فعال‌سازی رسمی همتا عرضه می‌شوند.",
+      "placeholders": ["customer_name", "product"]
+    },
+    {
+      "id": "warranty_activation",
+      "category": "گارانتی و اصالت",
+      "title": "راهنمای شروع گارانتی با فعال‌سازی همتا",
+      "text": "گارانتی دستگاه {product} مربوط به سفارش {order_no} از زمان فعال‌سازی کد رجیستری در سامانه همتا روی خط شما آغاز می‌گردد.",
+      "placeholders": ["product", "order_no"]
+    },
+    {
+      "id": "warranty_claim_guide",
+      "category": "گارانتی و اصالت",
+      "title": "راهنمایی پیگیری خدمات شرکت گارانتی‌کننده",
+      "text": "{customer_name} گرامی، جهت استفاده از خدمات گارانتی {product}، جعبه دستگاه و کارت گارانتی را همراه داشته باشید یا در ساعات {hours} با {phone} مشورت فرمایید.",
+      "placeholders": ["customer_name", "product", "hours", "phone"]
+    },
+    {
+      "id": "ask_national_code_invoice",
+      "category": "درخواست کد ملی",
+      "title": "درخواست کد ملی جهت صدور فاکتور و همتا",
+      "text": "{customer_name} عزیز، لطفاً جهت تکمیل فاکتور سفارش {order_no} و ثبت مالکیت {product}، کد ملی خود را ارسال فرمایید.",
+      "placeholders": ["customer_name", "order_no", "product"]
+    },
+    {
+      "id": "ask_national_code_match",
+      "category": "درخواست کد ملی",
+      "title": "تطابق کد ملی با صاحب کارت بانکی",
+      "text": "با تشکر از خرید شما {customer_name} گرامی؛ لطفاً کد ملی صاحب کارت واریزکننده را جهت تایید مالی سفارش {order_no} ارسال نمایید.",
+      "placeholders": ["customer_name", "order_no"]
+    },
+    {
+      "id": "ask_national_code_installment",
+      "category": "درخواست کد ملی",
+      "title": "درخواست کد ملی برای استعلام اعتبارسنجی اقساط",
+      "text": "{customer_name} عزیز، جهت بررسی اولیه شرایط فروش اقساطی برای {product}، لطفاً کد ملی و شماره همراه {phone} متعلق به صاحب چک را بفرمایید.",
+      "placeholders": ["customer_name", "product", "phone"]
+    },
+    {
+      "id": "ask_address_full",
+      "category": "درخواست آدرس و مشخصات",
+      "title": "درخواست آدرس دقیق، کد پستی و شماره تماس",
+      "text": "{customer_name} عزیز، لطفاً برای ارسال سفارش {order_no}، آدرس دقیق، پلاک، کد پستی و شماره تماس تحویل‌گیرنده را ارسال فرمایید.",
+      "placeholders": ["customer_name", "order_no"]
+    },
+    {
+      "id": "ask_address_mashhad_courier",
+      "category": "درخواست آدرس و مشخصات",
+      "title": "درخواست آدرس و لوکیشن جهت پیک مشهد",
+      "text": "جهت اعزام پیک برای سفارش {order_no} ({product})، لطفاً نشانی دقیق در مشهد و شماره تماس در دسترس را بفرمایید.",
+      "placeholders": ["order_no", "product"]
+    },
+    {
+      "id": "ask_address_confirm",
+      "category": "درخواست آدرس و مشخصات",
+      "title": "تایید نهایی آدرس و شماره تماس ثبت‌شده",
+      "text": "{customer_name} گرامی، سفارش {order_no} به نشانی «{address}» و شماره تماس {phone} ارسال خواهد شد. لطفاً صحت اطلاعات را تایید فرمایید.",
+      "placeholders": ["customer_name", "order_no", "address", "phone"]
+    },
+    {
+      "id": "wait_checking_stock",
+      "category": "لطفاً منتظر بمانید",
+      "title": "بررسی موجودی و قیمت در انبار",
+      "text": "{customer_name} عزیز، لطفاً چند لحظه منتظر بمانید تا موجودی و قیمت لحظه‌ای {product} در رنگ {color} را از انبار استعلام کنم 🙏",
+      "placeholders": ["customer_name", "product", "color"]
+    },
+    {
+      "id": "wait_high_traffic",
+      "category": "لطفاً منتظر بمانید",
+      "title": "ترافیک بالای پیام‌ها و درخواست شکیبایی",
+      "text": "همراه گرامی {customer_name}، پیام شما دریافت شد. به دلیل حجم بالای پیام‌ها لطفاً کمی صبور باشید؛ به زودی پاسخگوی شما خواهیم بود.",
+      "placeholders": ["customer_name"]
+    },
+    {
+      "id": "wait_checking_order",
+      "category": "لطفاً منتظر بمانید",
+      "title": "در حال پیگیری وضعیت سفارش از واحد مربوطه",
+      "text": "{customer_name} عزیز، در حال پیگیری وضعیت سفارش شماره {order_no} از همکاران واحد مربوطه هستم. لطفاً چند دقیقه شکیبا باشید.",
+      "placeholders": ["customer_name", "order_no"]
+    },
+    {
+      "id": "thanks_purchase",
+      "category": "تشکر و خداحافظی",
+      "title": "تشکر از خرید و آرزوی رضایت",
+      "text": "{customer_name} عزیز، از خرید شما از فروشگاه عصر ارتباطات ۲ سپاسگزاریم. امیدواریم از {product} جدیدتان به شادی استفاده کنید 🌹",
+      "placeholders": ["customer_name", "product"]
+    },
+    {
+      "id": "thanks_contact_goodbye",
+      "category": "تشکر و خداحافظی",
+      "title": "خداحافظی محترمانه در پایان گفتگو",
+      "text": "ممنون از همراهی شما {customer_name} گرامی. هر زمان سوالی داشتید در ساعات {hours} در خدمتتان هستیم. روز خوش و خدانگهدار 🌺",
+      "placeholders": ["customer_name", "hours"]
+    },
+    {
+      "id": "thanks_feedback_invite",
+      "category": "تشکر و خداحافظی",
+      "title": "قدردانی و دعوت به ثبت تجربه خرید",
+      "text": "{customer_name} عزیز، افتخار ما همراهی شما در سفارش {order_no} بود. خوشحال می‌شویم نظر خود را درباره تجربه خرید از عصر ارتباطات ۲ با ما در میان بگذارید.",
+      "placeholders": ["customer_name", "order_no"]
+    },
+    {
+      "id": "after_sale_registry",
+      "category": "خدمات پس از فروش",
+      "title": "راهنمای فعال‌سازی کد رجیستری همتا",
+      "text": "{customer_name} عزیز، برای فعال‌سازی رجیستری {product}، کد #7777* را شماره‌گیری کرده و گزینه فعال‌سازی را با کد همتای روی جعبه تکمیل فرمایید.",
+      "placeholders": ["customer_name", "product"]
+    },
+    {
+      "id": "after_sale_ownership_transfer",
+      "category": "خدمات پس از فروش",
+      "title": "پیگیری انتقال مالکیت سیم‌کارت در همتا",
+      "text": "در صورت نیاز به راهنمایی برای انتقال مالکیت یا فعال‌سازی {product} (سفارش {order_no})، تصویر کارت همتا را ارسال فرمایید تا همکاران بررسی کنند.",
+      "placeholders": ["product", "order_no"]
+    },
+    {
+      "id": "after_sale_support_visit",
+      "category": "خدمات پس از فروش",
+      "title": "پشتیبانی فنی و راه‌اندازی اولیه دستگاه",
+      "text": "{customer_name} گرامی، جهت انتقال اطلاعات یا تنظیمات اولیه {product} می‌توانید در ساعات {hours} به فروشگاه در {address} مراجعه فرمایید یا با {phone} تماس بگیرید.",
+      "placeholders": ["customer_name", "product", "hours", "address", "phone"]
+    }
+  ]
+}
