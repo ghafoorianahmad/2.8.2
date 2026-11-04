@@ -105,6 +105,9 @@ NAV_ITEMS = (
 )
 
 SIDEBAR_WIDE = 232
+#: v2.18.1: never less: a shorter button clips the dots under Persian letters
+NAV_ROW_HEIGHT = 33
+NAV_SPACING = 2
 SIDEBAR_COMPACT = 68
 #: Below this window width the sidebar shows icons only.
 COMPACT_BELOW = 1100
@@ -248,6 +251,24 @@ class MainWindow(QMainWindow):
         divider.setStyleSheet("background: rgba(255,255,255,0.14);")
         layout.addWidget(divider)
 
+        # v2.18.1: the rows keep their height and the list scrolls: squeezed by more rows than
+        # the window has room for, a button clipped the dots under the letters («پاسخ» -> «باسخ»)
+        nav_holder = QWidget()
+        nav_holder.setObjectName("NavHolder")
+        # with a selector: without one it would also reach the buttons and hide the selected row
+        nav_holder.setStyleSheet("QWidget#NavHolder { background: transparent; }")
+        nav_column = QVBoxLayout(nav_holder)
+        nav_column.setContentsMargins(0, 0, 0, 0)
+        nav_column.setSpacing(NAV_SPACING)
+        self._nav_scroll = QScrollArea()
+        self._nav_scroll.setWidgetResizable(True)
+        self._nav_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._nav_scroll.setObjectName("NavScroll")
+        self._nav_scroll.setStyleSheet("QScrollArea#NavScroll { background: transparent; border: none; }")
+        self._nav_scroll.viewport().setObjectName("NavViewport")
+        self._nav_scroll.viewport().setStyleSheet("QWidget#NavViewport { background: transparent; }")
+        self._nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
         group = QButtonGroup(self)
         group.setExclusive(True)
         for key, text, icon_name, permission in NAV_ITEMS:
@@ -262,11 +283,14 @@ class MainWindow(QMainWindow):
             button.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
             button.clicked.connect(lambda _c=False, k=key: self.navigate(k))
+            button.setMinimumHeight(NAV_ROW_HEIGHT)
             group.addButton(button)
-            layout.addWidget(button)
+            nav_column.addWidget(button)
             self._nav_buttons[key] = button
 
-        layout.addStretch(1)
+        nav_column.addStretch(1)
+        self._nav_scroll.setWidget(nav_holder)
+        layout.addWidget(self._nav_scroll, 1)
 
         self.connection_box = QWidget()
         # v2.7.0: the server address is for managers only (no technical words)

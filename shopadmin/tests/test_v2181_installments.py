@@ -72,7 +72,7 @@ def test_editing_a_check_recalculates_and_shows_the_difference(page):
     assert page.checks[0] == 29_000_000
     assert page.grand_edit.text() == "۲۴۱٬۰۰۰٬۰۰۰"
     assert page.interest_value.text() == "۴۱٬۰۰۰٬۰۰۰ ریال"
-    assert "+۱٬۰۰۰٬۰۰۰" in page.difference.text()
+    assert "۱٬۰۰۰٬۰۰۰ ریال بیشتر" in page.difference.text()
 
 
 def test_a_bad_amount_goes_back_and_says_why(page):
@@ -93,13 +93,13 @@ def test_editing_a_date(page):
 def test_editing_the_down_payment_and_the_totals(page):
     _example(page)
     page._down_edited("90,000,000")
-    assert page.down == 90_000_000 and "−۱۰٬۰۰۰٬۰۰۰" in page.difference.text()
+    assert page.down == 90_000_000 and "۱۰٬۰۰۰٬۰۰۰ ریال کمتر" in page.difference.text()
     page._recalculate()
     page._total_edited("۱۴۵٬۰۰۰٬۰۰۰")
     assert page.checks == [28_000_000] * 4 + [33_000_000]
     page._recalculate()
     page._grand_edited("250000000")
-    assert page.checks[-1] == 38_000_000 and "+۱۰٬۰۰۰٬۰۰۰" in page.difference.text()
+    assert page.checks[-1] == 38_000_000 and "۱۰٬۰۰۰٬۰۰۰ ریال بیشتر" in page.difference.text()
 
 
 def test_back_to_the_first_calculation(page):
@@ -118,7 +118,7 @@ def test_rounding_is_only_a_suggestion_until_applied(page):
     page.round_choice.setCurrentIndex(1)
     assert page.checks == before and "۴۱٬۷۰۰٬۰۰۰" in page.round_note.text()
     page.round_button.click()
-    assert page.checks == [41_700_000] * 3 and page.difference.text().count("+") == 1
+    assert page.checks == [41_700_000] * 3 and "بیشتر" in page.difference.text()
 
 
 def test_the_comparison_table_and_picking_a_row(page):
@@ -179,7 +179,7 @@ def test_a_saved_quote_comes_back_with_its_edits(page):
                      "dates": inst.schedule("1405/09/15", 5)})
     assert page.phone_name.text() == "Galaxy" and page.months.value() == 5
     assert page.checks[0] == 29_000_000 and page.dates[0] == "1405/09/15"
-    assert "+۱٬۰۰۰٬۰۰۰" in page.difference.text()
+    assert "۱٬۰۰۰٬۰۰۰ ریال بیشتر" in page.difference.text()
 
 
 def test_without_the_change_tick_nothing_is_saved_or_sent(ui_context, admin_qapp):  # noqa: F811

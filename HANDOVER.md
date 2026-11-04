@@ -1,6 +1,6 @@
 # HANDOVER — «عصر ارتباطات ۲» shop system (for the next AI agent)
 
-Written 2026-11-01 at version 2.16.0, brought up to **2.18.0** on 2026-11-03 (no admin
+Written 2026-11-01 at version 2.16.0, brought up to **2.18.1** on 2026-11-04 (no admin
 rights, nothing pushed, nothing published, nothing installed). Persian, simple version for the owner: `HANDOVER_FA.md`.
 
 Read in this order before touching anything:
@@ -167,6 +167,16 @@ ShopAdmin real-app screenshots: `scripts/live_shot.py`, `scripts/live_farsi.py`.
 * Web app data: Bale `message.web_app_data`; Telethon has no event for it, so `events.Raw(UpdateNewMessage)` + `MessageActionWebViewDataSentMe`. Telethon 1.45's button is `KeyboardButton(text, ButtonTypeSimpleWebView(url))`.
 * The mini app: `shopadmin/scripts/build_miniapp.py` builds `app/assets/miniapp/`; `publish.miniapp_files()` sends it. Its catalog stays at `assets/catalog/catalog.json`: writing one at the root would make it look for images at `../images/`.
 * Tests on this PC: run `shopapi` with `--basetemp .pytest_tmp/x`; `shoptg`'s old `.pytest_tmp` is locked: use another folder. The Store Python behind `shopapi` and `shopadmin` venvs cannot record from the microphone; `shopbots`' Python can.
+
+## 5d. 2.18.1
+
+* **Item 16 rule:** the national code and address never go towards a customer or a bot. `customer_details.merged` is server-only; `view`, `public_fields`, `public_order` are what leaves. A new endpoint or message that touches them must follow this; `SECURITY.md` §10.
+* `shopapi/app/installments.py` is copied byte for byte to `shopadmin/app/installments.py`: edit one, copy it, a test compares them. Customers only ever get `customer_view`.
+* The customers' calculator (`/installments/*`, bot `inst` and `/aghsat`, `/app/installment/`) is finished but OFF (`installment_customer_enabled`). The bot rereads the switch at most once a minute.
+* A new ready reply that speaks of the customer's address or phone must be added to `reply_templates.CUSTOMER_ADDRESS` / `CUSTOMER_PHONE`, or it would say the shop's.
+* `docs/DATA_FORMATS.md` describes every data file. Keep it current.
+* Live check of both sides: `shopapi/scripts/live_fake_accounting.py <port>` then `shopbots/scripts/live_bot_check.py <port>` (fake accounting and Bale, real HTTP). Each run needs a fresh server: its data is in memory.
+* Python heredocs through Bash: `sed` swallows backslashes and `"\\b"` can end up as a real backspace in a file. Check with `repr` after writing a regex that way.
 
 ## 6. Pending (owner or next agent)
 

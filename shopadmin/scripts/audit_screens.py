@@ -199,6 +199,7 @@ def _dialogs(context, fake, window) -> Iterator[tuple[str, object]]:
     from app.ui import widgets
     from app.ui.main_window import NotificationDialog
     from app.ui.pages import catalog_models as cm
+    from app.ui.pages import faq as faq_page
     from app.ui.pages import (
         customers,
         installments,
@@ -320,6 +321,23 @@ def _dialogs(context, fake, window) -> Iterator[tuple[str, object]]:
                       "grand_total": 240_000_000, "status": "sent"}])
         return dialog
 
+    def faq_item():
+        return faq_page.FaqItemDialog(
+            {"category": "ساعت کاری", "questions": ["ساعت کاری چنده", "کی باز هستید"],
+             "answer": "ساعت کاری ما: {hours}", "needs_staff": True, "enabled": True},
+            ["hours", "address", "phone", "instagram", "telegram", "website"], window)
+
+    def reply_templates():
+        return item_requests.TemplatePickDialog({
+            "categories": ["خوشامد", "اعلام قیمت"],
+            "templates": [{"id": "greet", "category": "خوشامد", "title": "سلام و خوشامد",
+                           "text": f"سلام {LONG_NAME} عزیز، به عصر ارتباطات ۲ خوش آمدید 🌹"},
+                          {"id": "price", "category": "اعلام قیمت", "title": "اعلام قیمت روز",
+                           "text": "قیمت امروز {product} برابر {price} است؛ موجودی محدود است."}]},
+            window)
+
+    yield "faq item", faq_item
+    yield "reply templates", reply_templates
     yield "installment pick item", installment_items
     yield "installment pick customer", installment_customers
     yield "installment history", installment_history

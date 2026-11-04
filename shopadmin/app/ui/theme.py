@@ -304,6 +304,8 @@ RADIUS_LG = 20
 #: v2.9.3: the text area of every push button (padding and edges are the same in
 #: every variant, so every button is equally tall; scripts/button_audit.py)
 BUTTON_CONTENT_HEIGHT = 25   # v2.18.0: 1 + 1 px of edges (was 1 + 2): the same height
+#: v2.18.1: a sidebar row never shorter than this plus its padding: dots under letters were clipped
+NAV_TEXT_HEIGHT = 29
 SPACE_XS = 4
 SPACE_SM = 8
 SPACE = 16
@@ -783,8 +785,8 @@ QPushButton[big="true"] {{ padding-left: 22px; padding-right: 22px; font-weight:
    see rtl.py): «left» is what puts icon + text against the RIGHT edge. */
 QPushButton#NavButton {{
     background: transparent; border: none; border-radius: {RADIUS}px;
-    padding: 10px 12px; text-align: left; font-size: 11pt; font-weight: 600;
-    color: {SIDEBAR_TEXT}; min-height: 0; max-height: 16777215px;
+    padding: 2px 12px; text-align: left; font-size: 11pt; font-weight: 600;
+    color: {SIDEBAR_TEXT}; min-height: {NAV_TEXT_HEIGHT}px; max-height: 16777215px;
 }}
 QPushButton#NavButton:hover {{ background: {SIDEBAR_HOVER}; color: #FFFFFF; }}
 QPushButton#NavButton:checked {{

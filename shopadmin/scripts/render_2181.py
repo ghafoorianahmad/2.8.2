@@ -28,7 +28,9 @@ def main() -> int:
 
     from app.ui.main_window import MainWindow
     from app.ui.pages import customers
+    from app.ui.pages.faq import FaqItemDialog
     from app.ui.pages.installments import QuoteHistoryDialog
+    from app.ui.pages.item_requests import TemplatePickDialog
 
     card = out / "installment_card.png"
     for look in (screens.DEFAULT_LOOK, ("aurora", "dark", "full")):
@@ -89,6 +91,46 @@ def main() -> int:
         rules._got_installment({"rate": "8", "customer_enabled": False})
         rules._scroll.ensureWidgetVisible(rules.installment_panel)
         shot(window, "shop_rules_installment")
+
+        # item 13
+        window.navigate("faq")
+        faq_page = window._pages["faq"]
+        faq_page._loaded({
+            "enabled": True, "placeholders": ["hours", "address", "phone"],
+            "items": [{"id": "hours", "category": "ساعت کاری", "questions": ["ساعت کاری چنده"],
+                       "answer": "ساعت کاری ما: {hours}", "needs_staff": False, "enabled": True,
+                       "source": "builtin", "edited": False},
+                      {"id": "installment_sale", "category": "فروش اقساطی",
+                       "questions": ["فروش اقساطی دارید؟"], "needs_staff": True, "enabled": True,
+                       "answer": "فروش اقساطی داریم؛ برای شرایط با همکاران ما در تماس باشید",
+                       "source": "builtin", "edited": True},
+                      {"id": "custom_1", "category": "لوازم جانبی", "questions": ["کیف چرمی دارید؟"],
+                       "answer": "بله، موجود داریم.", "needs_staff": False, "enabled": False,
+                       "source": "custom", "edited": True}],
+            "suggestions": [{"id": 3, "question": "کارت گارانتی را گم کردم چکار کنم",
+                             "answer": "با کد سریال دستگاه هم پیگیری می‌شود.",
+                             "created_by": "زهرا احمدی", "created_at": "2026-11-04T09:00:00"}],
+            "report": [{"created_at": "2026-11-04T09:00:00", "query": "ساعت کار چنده",
+                        "faq_id": "hours", "score": 95}]})
+        shot(window, "faq_page")
+        editor = FaqItemDialog(faq_page.items[1], faq_page.placeholders, window)
+        editor.show()
+        shot(editor, "faq_item")
+        editor.close()
+
+        # item 14
+        templates = TemplatePickDialog({
+            "categories": ["خوشامد", "اعلام قیمت", "ارسال و پیک"],
+            "templates": [{"title": "سلام و خوشامد", "category": "خوشامد",
+                           "text": "سلام علی رضایی عزیز، به عصر ارتباطات ۲ خوش آمدید 🌹"},
+                          {"title": "اعلام قیمت روز", "category": "اعلام قیمت",
+                           "text": "قیمت امروز Galaxy S25 برابر {price} است."},
+                          {"title": "ارسال سفارش با پیک شهری مشهد", "category": "ارسال و پیک",
+                           "text": "علی رضایی عزیز، سفارش ۱۲ (Galaxy S25) تحویل پیک شد و به مقصد "
+                                   "نشانی ثبت‌شدهٔ شما در حال ارسال است."}]}, window)
+        templates.show()
+        shot(templates, "reply_templates")
+        templates.close()
 
         # item 16: without the tick
         dialog = customers.ApproveCustomerDialog(context, {

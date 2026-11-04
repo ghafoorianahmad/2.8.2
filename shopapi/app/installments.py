@@ -394,4 +394,5 @@ def staff_text(sheet: Sheet, base: Quote | None = None) -> str:
 def difference_text(difference: int) -> str:
     if not difference:
         return "بدون اختلاف"
-    return f"{'+' if difference > 0 else '−'}{fa_money(abs(difference))} ریال"
+    # in words: a sign lands on the wrong side of a number in a right-to-left line
+    return f"{fa_money(abs(difference))} ریال {'بیشتر' if difference > 0 else 'کمتر'}"

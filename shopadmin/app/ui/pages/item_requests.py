@@ -503,13 +503,13 @@ class ItemRequestDialog(widgets.ResponsiveDialog):
         send_row = QHBoxLayout()
         self.send_info = widgets.label("", wrap=True)
         send_row.addWidget(self.send_info, 1)
+        self.send_button = widgets.button("ارسال پیام به مشتری", variant="primary",
+                                          on_click=self.send_message)
+        send_row.addWidget(self.send_button)
         # v2.18.1: filled by the server for this customer
         self.template_button = widgets.button("پاسخ آماده…", on_click=self.pick_template)
         self.template_button.setVisible(self.context.can(REPLY_TEMPLATES))
         send_row.addWidget(self.template_button)
-        self.send_button = widgets.button("ارسال پیام به مشتری", variant="primary",
-                                          on_click=self.send_message)
-        send_row.addWidget(self.send_button)
         msg_panel.body.addLayout(send_row)
         root.addWidget(msg_panel, 1)
 

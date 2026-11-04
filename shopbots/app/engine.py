@@ -2336,6 +2336,11 @@ class BotEngine:
                 # v2.18.0: the address broke a rule: say which and ask for it again
                 await self._ask_checkout_address(adapter, platform, chat_id, exc.message_fa)
                 return
+            # v2.18.1: the server's own check, whatever the bot believed: ask, then come back
+            if exc.status == 409 and "details are required" in (exc.detail or "").lower():
+                self._details_complete.discard((platform, str(chat_id)))
+                if await self._start_details(adapter, platform, chat_id, {"checkout": 1}):
+                    return
             if exc.status == 409 and "payment details" in (exc.detail or "").lower():
                 self._shop_state = None
                 await self._send_options(

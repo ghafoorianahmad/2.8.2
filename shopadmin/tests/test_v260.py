@@ -22,7 +22,7 @@ def test_app_version_matches_the_installer_and_the_server():
     server = re.search(r'^VERSION = "([^"]+)"',
                        (ROOT.parent / "shopapi" / "app" / "control.py").read_text(encoding="utf-8"),
                        re.M).group(1)
-    assert APP_VERSION == installer == server == "2.18.0"
+    assert APP_VERSION == installer == server == "2.18.1"
 
 
 def test_sidebar_shows_the_real_version(ui_context, admin_qapp):
@@ -31,7 +31,7 @@ def test_sidebar_shows_the_real_version(ui_context, admin_qapp):
     window = MainWindow(ui_context)
     from app.persian import to_persian_digits
 
-    assert window.version_label.text() == f"نسخهٔ {to_persian_digits('2.18.0')}"
+    assert window.version_label.text() == f"نسخهٔ {to_persian_digits('2.18.1')}"
 
 
 # ---- 2 + 3: order dialog ------------------------------------------------------------------------
@@ -80,7 +80,7 @@ def test_decided_customers_have_no_decision_buttons(ui_context, admin_qapp):
         holder = page._actions_for({"id": 1, "name": "x", "phone": "09121234567",
                                     "status": status, "person_code": 7001})
         buttons = holder.findChildren(type(page.refresh_button))
-        # v2.18.0: only «اطلاعات»: never «تأیید» or «رد» again
+        # v2.18.1: only «اطلاعات»: never «تأیید» or «رد» again
         assert [b.text() for b in buttons] == ["اطلاعات"], status
     holder = page._actions_for({"id": 2, "name": "y", "phone": "09121234567", "status": "pending"})
     assert len([b for b in holder.findChildren(type(page.refresh_button)) if b.isEnabled()]) == 2

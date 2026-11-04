@@ -158,3 +158,25 @@ def test_complete_details_are_asked_of_shopapi_once(env, bot_apis, shopapi, deta
         assert len(calls) == 1
 
     env(scenario)
+
+
+def test_the_servers_refusal_of_an_order_asks_for_the_details(env, bot_apis, shopapi, details):  # noqa: F811
+    """The server has the last word, also when the bot believed they were complete."""
+    from app.shopapi import ShopApiRejected
+
+    _shop(shopapi)
+    _registered(shopapi, details)
+
+    async def scenario(engine, adapters, api):
+        engine._details_complete.add(("bale", CUSTOMER_CHAT))
+
+        async def refused(*_args, **_kwargs):
+            raise ShopApiRejected("x", status=409, detail="Customer details are required")
+
+        engine.orders.checkout = refused
+        details["missing"] = ["national_code"]
+        await engine._place_order(adapters["bale"], "bale", CUSTOMER_CHAT, None, use_saved_address=True)
+        assert _texts(bot_apis)[-1].startswith(texts.ASK_NATIONAL_CODE)
+        assert ("bale", CUSTOMER_CHAT) not in engine._details_complete
+
+    env(scenario)

@@ -98,3 +98,20 @@ def test_without_the_change_tick_there_are_no_buttons(ui_context, admin_qapp):  
 
 def test_the_sidebar_tick():
     assert perms.FAQ_VIEW in perms.client_permissions({"faq.view"})
+
+
+def test_the_sidebar_rows_keep_their_height_in_a_short_window(ui_context, admin_qapp):  # noqa: F811
+    """More rows than room: the list scrolls; a squeezed row clipped the dots under the letters."""
+    from app.ui.main_window import NAV_ROW_HEIGHT, MainWindow
+
+    window = MainWindow(make_context_with_role(ui_context, ROLE_SUPER_ADMIN))
+    window.resize(1100, 620)
+    window.show()
+    for _ in range(5):
+        admin_qapp.processEvents()
+    window._nav_scroll.widget().layout().activate()
+    assert len(window._nav_buttons) >= 20
+    heights = {key: b.height() for key, b in window._nav_buttons.items()}
+    assert min(heights.values()) >= NAV_ROW_HEIGHT, heights
+    assert window._nav_scroll.verticalScrollBar().maximum() > 0
+    window.close()

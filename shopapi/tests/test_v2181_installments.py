@@ -159,8 +159,8 @@ def test_no_edit_no_difference():
     quote = inst.calculate(**EXAMPLE)
     assert inst.totals(quote, quote.down, quote.checks).difference == 0
     assert inst.difference_text(0) == "بدون اختلاف"
-    assert inst.difference_text(1000).startswith("+")
-    assert inst.difference_text(-1000).startswith("−")
+    assert inst.difference_text(1000) == "۱٬۰۰۰ ریال بیشتر"
+    assert inst.difference_text(-1000) == "۱٬۰۰۰ ریال کمتر"
 
 
 def test_a_typed_total_goes_on_the_last_check():
