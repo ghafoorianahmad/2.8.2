@@ -106,3 +106,53 @@ def test_the_comparison_is_last(ui_context, admin_qapp):
     last = page.column.itemAt(page.column.count() - 2).widget()
     assert page.compare in last.findChildren(type(page.compare))
     page.close()
+
+
+class _LedgerApi:
+    def __init__(self):
+        self.statements = []
+
+    def ledger_databases(self):
+        return [{"name": "hesab5 t", "current": True}, {"name": "hesab4", "current": False}]
+
+    def ledger_persons(self, database, query=""):
+        return {"total": 1, "items": [{"code": 7, "name": "علی", "national_code": "••••••••78",
+                                       "phone_tail": "67"}]}
+
+    def ledger_statement(self, database, code):
+        self.statements.append((database, code))
+        return {"database": database, "balance": 100, "side": "debtor", "rows": [
+            {"date": "1404/01/02", "kind": "سند", "doc_no": "9", "description": "x", "debit": 100,
+             "credit": 0, "balance": 100, "side": "debtor"}]}
+
+
+def test_the_ledger_page_prefers_a_previous_year_and_shows_a_turnover(ui_context, admin_qapp):
+    from app.ui.pages.ledger import LedgerPage
+
+    context = make_context_with_role(ui_context, ROLE_SUPER_ADMIN)
+    page = LedgerPage(context)
+    api = _LedgerApi()
+    page.database.blockSignals(True)
+    page._got_databases(api.ledger_databases())
+    page.database.blockSignals(False)
+    assert page.database.currentData() == "hesab4"
+    assert page.database.itemText(0).endswith("(سال جاری)")
+    page._got_persons(api.ledger_persons("hesab4"))
+    assert page.person_table.item(0, 2).text() == "••••••••۷۸"
+    page._shown_code = 7
+    page._got_statement({"name": "علی"}, 7, api.ledger_statement("hesab4", 7))
+    assert page.row_table.rowCount() == 1 and "بدهکار" in page.summary.text()
+    page._shown_code = 8                       # a late answer for someone else is dropped
+    page._got_statement({"name": "x"}, 7, {"rows": []})
+    assert page.row_table.rowCount() == 1
+    page.close()
+
+
+def test_the_ledger_has_its_own_tick_and_only_a_view():
+    from app import permissions as perms
+    from app.ui.main_window import NAV_ITEMS
+
+    assert "ledger.view" in perms.SECTION_PERMISSIONS and "ledger.edit" not in perms.SECTION_PERMISSIONS
+    assert "ledger.view" not in perms.SALES_SERVER_PERMISSIONS
+    assert perms.LEDGER_VIEW in perms.client_permissions({"ledger.view"})
+    assert any(item[0] == "ledger" for item in NAV_ITEMS)

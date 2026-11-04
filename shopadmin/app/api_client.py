@@ -119,6 +119,8 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
      "برای نوشتن کد ملی و نشانی مشتری، تیک «کد ملی و نشانی مشتری — تغییر» لازم است."),
     (re.compile(r"suggestion already decided", re.I), "این پیشنهاد پیش‌تر بررسی شده است."),
     (re.compile(r"quote not found", re.I), "این پیش‌فاکتور اقساط پیدا نشد."),
+    (re.compile(r"fiscal database is not readable", re.I),
+     "سرور اجازهٔ خواندن این پایگاه‌داده را ندارد (اسکریپت grant_ledger_readonly.sql)."),
     (re.compile(r"installment calculator is off", re.I), "ماشین‌حساب اقساط مشتری خاموش است."),
     (re.compile(r"customer details are required", re.I),
      "کد ملی یا نشانی مشتری هنوز ثبت نشده است."),
@@ -1018,6 +1020,18 @@ class ShopApiClient:
         return self._request("POST", f"/admin/faq/suggestions/{int(suggestion_id)}/reject") or {}
 
     # ---- v2.18.1 «محاسبهٔ اقساط» ----
+    # v2.18.2 «گردش سال‌های قبل» (read-only)
+    def ledger_databases(self) -> list:
+        return self._request("GET", "/admin/ledger/databases") or []
+
+    def ledger_persons(self, database: str, query: str = "") -> dict:
+        return self._request("GET", "/admin/ledger/persons",
+                             params={"db": database, "q": query}) or {}
+
+    def ledger_statement(self, database: str, code: int) -> dict:
+        return self._request("GET", f"/admin/ledger/persons/{int(code)}/statement",
+                             params={"db": database}) or {}
+
     def installment_settings(self) -> dict:
         return self._request("GET", "/admin/installments/settings") or {}
 

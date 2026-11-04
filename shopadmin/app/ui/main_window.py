@@ -46,6 +46,7 @@ from ..permissions import (
     STATUS_CODES_VIEW,
     FAQ_VIEW,
     INSTALLMENT_VIEW,
+    LEDGER_VIEW,
     STAFF_CHAT_VIEW,
     USERS_VIEW,
 )
@@ -69,6 +70,7 @@ from .pages.server import ServerPage
 from .pages.settings import SettingsPage
 from .pages.faq import FaqPage
 from .pages.installments import InstallmentsPage
+from .pages.ledger import LedgerPage
 from .pages.shop_rules import ShopRulesPage
 from .pages.site import SitePage
 from .pages.staff_chat import StaffChatPage
@@ -84,6 +86,8 @@ NAV_ITEMS = (
     ("staff_chat", "گفت‌وگوی همکاران", "users", STAFF_CHAT_VIEW),
     # v2.18.1
     ("installments", "محاسبهٔ اقساط", "receipt", INSTALLMENT_VIEW),
+    # v2.18.2
+    ("ledger", "گردش سال‌های قبل", "archive", LEDGER_VIEW),
     ("faq", "پاسخ‌گوی خودکار", "inbox", FAQ_VIEW),
     ("archive", "بایگانی", "archive", ARCHIVE_VIEW),
     ("products", "محصولات", "products", PRODUCTS_VIEW),
@@ -480,6 +484,7 @@ class MainWindow(QMainWindow):
             "item_requests": ItemRequestsPage,
             "staff_chat": StaffChatPage,
             "installments": InstallmentsPage,
+            "ledger": LedgerPage,
             "faq": FaqPage,
             "archive": ArchivePage,
             "activity": ActivityPage,

@@ -26,6 +26,9 @@ PRICE_COLUMNS = {1: "Gey", 2: "Geycf", 3: "gey3", 4: "gey4", 5: "gey5"}
 FORBIDDEN_PRICE_COLUMNS = ("Geya", "Geyk", "Geym")
 
 
+LEDGER_MAX_DATABASES = 40
+
+
 def person_codes_by_mobile_sql(db: str) -> str:
     """Recipe R4: person codes whose mobile (DetailTBL types 1 and 3) ends in the
     given 10 digits. TOP 2 so a caller can tell a unique match from a shared
@@ -489,14 +492,59 @@ class AccountingReader:
             out.setdefault(int(r["ordercode"]), []).append(str(r["Numfact"]).strip())
         return out
 
-    def customer_statement(self, person_code: int, max_rows: int = 2000) -> dict:
+    # ---- v2.18.2 «گردش سال‌های قبل»: only SELECTs, and only for the routers/ledger.py page ----
+    def ledger_databases(self) -> list[dict]:
+        """The fiscal-year databases this sign-in can really read: both tables visible to it.
+        Newest name first. The working database is on the list as well."""
+        conn = self.connection()
+        try:
+            names = [str(r[0]) for r in conn.execute(
+                "SELECT name FROM sys.databases WHERE database_id > 4 AND state = 0 "
+                "AND HAS_DBACCESS(name) = 1 ORDER BY name DESC").fetchall()]
+            out = []
+            for name in names[:LEDGER_MAX_DATABASES]:
+                db = quote_identifier(name)
+                row = conn.execute("SELECT OBJECT_ID(?), OBJECT_ID(?)",
+                                   f"{db}.dbo.KOL", f"{db}.dbo.name_mo").fetchone()
+                if row and row[0] is not None and row[1] is not None:
+                    out.append({"name": name})
+        finally:
+            conn.close()
+        return out
+
+    def ledger_persons(self, database: str) -> list[dict]:
+        """Every person of that database with their mobiles, for the comparison in Python (the
+        software mixes ی/ي and ک/ك, as persons_for_matching). Never logged."""
+        db = quote_identifier(database)
+        conn = self.connection()
+        try:
+            rows = self._rows(conn.execute(
+                f"SELECT Code, fname, Name, Codemelli FROM {db}.dbo.name_mo ORDER BY Code"))
+            details = self._rows(conn.execute(
+                f"SELECT IDMaster, Comment FROM {db}.dbo.DetailTBL "
+                f"WHERE Va = 0 AND TabaghehBandiID IN (1, 3)"))
+        finally:
+            conn.close()
+        phones: dict[int, list[str]] = {}
+        for row in details:
+            digits = re.sub(r"\D", "", normalize_fa(row["Comment"]))
+            if len(digits) >= 10 and row["IDMaster"] is not None:
+                phones.setdefault(int(row["IDMaster"]), []).append(digits)
+        return [{"code": int(r["Code"]),
+                 "name": " ".join(str(part or "").strip() for part in (r["fname"], r["Name"])).strip(),
+                 "national_code": str(r["Codemelli"] or "").strip(),
+                 "phones": phones.get(int(r["Code"]), [])} for r in rows]
+
+    def customer_statement(self, person_code: int, max_rows: int = 2000,
+                           database: str | None = None) -> dict:
         """A customer's ledger rows (KOL, reference §3), oldest first.
 
         Same filter as the verified balance formula. Only the newest
         ``max_rows`` rows are read; the caller's running balance then starts
         from the balance carried over from the older rows (``opening``).
+        ``database``: another fiscal year, for «گردش سال‌های قبل» (checked by its router).
         """
-        db = self._db()
+        db = quote_identifier(database) if database else self._db()
         where = (
             f"FROM {db}.dbo.KOL WHERE Noa = 'm' AND Codkol = ? "
             f"AND NOT (Va = N'غ' AND Cod_n IN (-1003, -1005))"

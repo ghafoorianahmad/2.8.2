@@ -76,9 +76,10 @@ ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("auto_quote", "پاسخ خودکار قیمت کالای غیرموجود (و گزارش آن)", True, True),
     ("product_alias", "یاد دادن نام کالا به ربات", False, True),
     ("faq", "پاسخ‌گوی خودکار ربات", True, True),
-    ("installment", "محاسبهٔ اقساط (دیدن = محاسبه و کارت، تغییر = ذخیره و ارسال به مشتری)",
+    ("installment", "محاسبهٔ اقساط (دیدن = محاسبه و کارت، تغییر = نرخ و مبلغ‌ها، ذخیره و ارسال)",
      True, True),
     ("installment_rules", "قواعد اقساط (نرخ پیش‌فرض، ماشین‌حساب مشتری)", True, True),
+    ("ledger", "گردش سال‌های قبل (فقط دیدن)", True, False),
     ("staff_chat", "گفت‌وگوی همکاران (دیدن = خواندن، تغییر = فرستادن)", True, True),
     ("app_settings", "تنظیمات برنامه (همین رایانه)", True, True),
     ("own_prefs", "اعلان‌ها و ظاهرِ خودم", False, True),
@@ -159,6 +160,7 @@ P_INSTALLMENT_VIEW = "installment.view"
 P_INSTALLMENT_EDIT = "installment.edit"
 P_INSTALLMENT_RULES_VIEW = "installment_rules.view"
 P_INSTALLMENT_RULES_EDIT = "installment_rules.edit"
+P_LEDGER_VIEW = "ledger.view"   # v2.18.2: every person, any fiscal year, read-only
 P_WORK_HOURS_VIEW = "work_hours.view"
 P_WORK_HOURS_EDIT = "work_hours.edit"
 P_STAFF_ALERTS_VIEW = "staff_alerts.view"

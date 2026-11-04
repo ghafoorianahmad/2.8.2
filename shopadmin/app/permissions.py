@@ -70,6 +70,7 @@ INSTALLMENT_VIEW = "installment.view"     # v2.18.1: «محاسبهٔ اقساط
 INSTALLMENT_EDIT = "installment.edit"     # saving a quote, sending it to a customer
 INSTALLMENT_RULES_VIEW = "installment_rules.view"
 INSTALLMENT_RULES_EDIT = "installment_rules.edit"  # the default rate, the customers' calculator
+LEDGER_VIEW = "ledger.view"               # v2.18.2: «گردش سال‌های قبل», read-only
 STAFF_CHAT_VIEW = "staff_chat.view"
 STAFF_CHAT_SEND = "staff_chat.edit"
 OWN_PREFS = "own_prefs.edit"             # own notification sound / look
@@ -136,9 +137,10 @@ ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("auto_quote", "پاسخ خودکار قیمت کالای غیرموجود (و گزارش آن)", True, True),
     ("product_alias", "یاد دادن نام کالا به ربات", False, True),
     ("faq", "پاسخ‌گوی خودکار ربات", True, True),
-    ("installment", "محاسبهٔ اقساط (دیدن = محاسبه و کارت، تغییر = ذخیره و ارسال به مشتری)",
+    ("installment", "محاسبهٔ اقساط (دیدن = محاسبه و کارت، تغییر = نرخ و مبلغ‌ها، ذخیره و ارسال)",
      True, True),
     ("installment_rules", "قواعد اقساط (نرخ پیش‌فرض، ماشین‌حساب مشتری)", True, True),
+    ("ledger", "گردش سال‌های قبل (فقط دیدن)", True, False),
     ("staff_chat", "گفت‌وگوی همکاران (دیدن = خواندن، تغییر = فرستادن)", True, True),
     ("app_settings", "تنظیمات برنامه (همین رایانه)", True, True),
     ("own_prefs", "اعلان‌ها و ظاهرِ خودم", False, True),
@@ -227,6 +229,7 @@ SERVER_TO_CLIENT: dict[str, frozenset[str]] = {
     "installment.edit": frozenset({INSTALLMENT_EDIT}),
     "installment_rules.view": frozenset({INSTALLMENT_RULES_VIEW, SHOP_RULES_VIEW}),
     "installment_rules.edit": frozenset({INSTALLMENT_RULES_EDIT}),
+    "ledger.view": frozenset({LEDGER_VIEW}),
     "staff_chat.view": frozenset({STAFF_CHAT_VIEW}),
     "staff_chat.edit": frozenset({STAFF_CHAT_SEND}),
     "app_settings.view": frozenset({SETTINGS_VIEW}),
