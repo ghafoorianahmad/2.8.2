@@ -967,6 +967,9 @@ def apply_theme(app: QApplication, mode: str | None = None, *, palette: str | No
     from .rtl import install_rtl_defaults
 
     install_rtl_defaults(app)
+    from .wheel_guard import install_wheel_guard
+
+    install_wheel_guard(app)
     # v2.9.4: an eye on every password field (typed text only)
     from . import password_eye
 
