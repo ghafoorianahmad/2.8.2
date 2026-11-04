@@ -245,7 +245,7 @@ def test_nav_buttons_are_flush_right(admin_qapp):
     from PySide6.QtCore import QSize
     from PySide6.QtGui import QColor, QIcon, QPixmap
 
-    assert "padding: 10px 12px; text-align: left;" in theme.stylesheet()
+    assert "padding: 2px 12px; text-align: left;" in theme.stylesheet()
     button = QPushButton("  سفارش‌ها")
     button.setObjectName("NavButton")
     pixmap = QPixmap(20, 20)
