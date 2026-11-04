@@ -352,14 +352,11 @@ export function parsePrefillParams(searchString = '') {
   const params = new URLSearchParams(searchString);
   const first_name = params.get('fn') ?? '';
   const last_name = params.get('ln') ?? '';
-  const national_code = params.get('nc') ?? '';
-  const address = params.get('addr') ?? '';
+  // v2.18.1: never from a link: a value in a URL stays in the logs of the host
+  const national_code = '';
+  const address = '';
 
-  const hasAny =
-    params.has('fn') ||
-    params.has('ln') ||
-    params.has('nc') ||
-    params.has('addr');
+  const hasAny = params.has('fn') || params.has('ln');
 
   return {
     first_name,

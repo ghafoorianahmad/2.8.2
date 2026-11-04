@@ -93,9 +93,11 @@ def test_the_view_carries_what_the_form_opens_with(client, reader):
     reader.person_details = lambda code: {"first_name": "علی", "last_name": "رضایی",
                                           "national_code": "0499370899", "address": "تهران"}
     view = _details(client).json()
-    assert set(view) == {"missing", "address", "asked", "known", "prefill"}
-    # v2.18.0: the owner's form opens filled in (?fn=&ln=&nc=&addr=)
-    assert view["prefill"]["first_name"] == "علی"
+    assert set(view) == {"missing", "has_address", "asked", "known", "prefill"}
+    # v2.18.1: the form opens with the name only; never the national code or the address
+    assert view["prefill"] == {"first_name": "علی", "last_name": "رضایی"}
+    assert view["has_address"] is True
+    assert "0499370899" not in str(view) and "تهران" not in str(view)
 
 
 def test_bad_answer_is_refused_and_nothing_stored(client, db):
@@ -162,6 +164,7 @@ def test_a_linked_customer_fills_the_person_at_once(client, db, writer, reader):
 def test_writes_off_keeps_it_for_later(client, db, writer, reader):
     seed_products(reader)
     register_and_approve(client)
+    reader.person_details = lambda code: {"first_name": "علی", "last_name": "رضایی", "national_code": "", "address": ""}
     writer.committed = False
     _save(client, national_code="0499370899")
     row = db.get_user_by_platform("bale", "111")
@@ -178,6 +181,7 @@ def test_a_writer_failure_never_reaches_the_customer(client, db, writer, reader)
     def boom(*_a, **_k):
         raise OSError("permission denied")
 
+    reader.person_details = lambda code: {"first_name": "علی", "last_name": "رضایی", "national_code": "", "address": ""}
     writer.fill_person_empty = boom
     assert _save(client, national_code="0499370899").status_code == 200
     assert db.get_user_by_platform("bale", "111")["details_sync"] == 1
@@ -347,27 +351,32 @@ def _order(client, chat="111", **extra):
 def test_new_customer_first_address_becomes_saved(client, reader, db, writer):
     seed_products(reader)
     _register(client, "222")
+    _save(client, "222", national_code="0499370899")
     r = _order(client, "222", ship_address="تهران، ولیعصر، پلاک 1")
-    assert r.status_code == 201 and r.json()["ship_address"] == "تهران، ولیعصر، پلاک 1"
+    assert r.status_code == 201 and r.json()["has_ship_address"] is True
+    assert r.json()["ship_address"] == ""       # v2.18.1: never back to a bot
+    assert db.get_order(r.json()["id"])["ship_address"] == "تهران، ولیعصر، پلاک 1"
     assert db.get_user_by_platform("bale", "222")["address"] == "تهران، ولیعصر، پلاک 1"
-    assert _details(client, "222").json()["address"] == "تهران، ولیعصر، پلاک 1"
+    assert _details(client, "222").json()["has_address"] is True
 
 
 def test_new_address_stays_on_its_order(client, reader, db):
     seed_products(reader)
     _register(client, "222")
+    _save(client, "222", national_code="0499370899")
     _order(client, "222", ship_address="تهران، ولیعصر، پلاک 1")
     second = _order(client, "222", ship_address="مشهد، احمدآباد، پلاک 2")
-    assert second.json()["ship_address"] == "مشهد، احمدآباد، پلاک 2"
+    assert db.get_order(second.json()["id"])["ship_address"] == "مشهد، احمدآباد، پلاک 2"
     assert db.get_user_by_platform("bale", "222")["address"] == "تهران، ولیعصر، پلاک 1"
 
 
 def test_existing_with_a_sazeh_address_is_not_overwritten(client, reader, db, writer):
     seed_products(reader)
     register_and_approve(client)
-    reader.person_details = lambda code: {"first_name": "", "last_name": "", "national_code": "",
-                                          "address": "آدرس سازه"}
-    assert _details(client).json()["address"] == "آدرس سازه"
+    reader.person_details = lambda code: {"first_name": "", "last_name": "",
+                                          "national_code": "0499370899", "address": "آدرس سازه"}
+    view = _details(client).json()
+    assert view["has_address"] is True and "آدرس سازه" not in str(view)
     _order(client, ship_address="آدرس تازهٔ این سفارش")
     assert db.get_user_by_platform("bale", "111")["address"] == ""
     assert not [c for c in writer.calls if c[0] == "fill_person_empty"]
@@ -377,7 +386,7 @@ def test_existing_without_address_first_one_goes_to_sazeh(client, reader, db, wr
     seed_products(reader)
     register_and_approve(client)
     reader.person_details = lambda code: {"first_name": "علی", "last_name": "رضایی",
-                                          "national_code": "", "address": ""}
+                                          "national_code": "0499370899", "address": ""}
     _order(client, ship_address="تهران، ولیعصر، پلاک 1")
     calls = [c for c in writer.calls if c[0] == "fill_person_empty"]
     assert calls and calls[-1][2]["address"] == "تهران، ولیعصر، پلاک 1"
@@ -415,11 +424,13 @@ def test_address_is_shown_to_staff(client, reader):
     seed_products(reader)
     register_and_approve(client)
     order_id = _order(client, ship_address="تهران، ولیعصر، پلاک 1").json()["id"]
+    # v2.18.1: the service key is the bots': «there is an address», not the address.
+    # Staff with the tick: test_v2181_private.py
     one = client.get(f"/admin/orders/{order_id}", headers=h("admin")).json()
-    assert one["ship_address"] == "تهران، ولیعصر، پلاک 1"
+    assert one["ship_address"] == "" and one["has_ship_address"] is True
     rows = client.get("/admin/orders", params={"status": "awaiting_payment"},
                       headers=h("admin")).json()
-    assert rows[0]["ship_address"] == "تهران، ولیعصر، پلاک 1"
+    assert rows[0]["ship_address"] == "" and rows[0]["has_ship_address"] is True
 
 
 def test_order_address_later_only_by_its_customer(client, reader, db):
@@ -431,7 +442,8 @@ def test_order_address_later_only_by_its_customer(client, reader, db):
     assert client.put(url, json=body, headers=h("bot")).status_code == 404
     body["chat_id"] = "111"
     r = client.put(url, json=body, headers=h("bot"))
-    assert r.status_code == 200 and r.json()["ship_address"] == "تهران، ولیعصر"
+    assert r.status_code == 200 and r.json()["has_ship_address"] is True
+    assert db.get_order(order_id)["ship_address"] == "تهران، ولیعصر"
     db.set_order_status(order_id, "cancelled")
     assert client.put(url, json=body, headers=h("bot")).status_code == 409
 

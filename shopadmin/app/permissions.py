@@ -22,6 +22,8 @@ DASHBOARD_VIEW = "dashboard.view"
 CUSTOMERS_VIEW = "customers.view"
 CUSTOMERS_APPROVE = "customers.approve"
 CUSTOMERS_REJECT = "customers.reject"
+CUSTOMER_PRIVATE_VIEW = "customer_private.view"   # v2.18.1: national code and address
+CUSTOMER_PRIVATE_EDIT = "customer_private.edit"
 ORDERS_VIEW = "orders.view"
 ORDERS_APPROVE_PAYMENT = "orders.approve_payment"
 ORDERS_REJECT_PAYMENT = "orders.reject_payment"
@@ -99,6 +101,7 @@ ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("claim", "برداشتن کار تازه («برداشت»)", False, True),
     ("requests", "درخواست کالا (پیام، یادداشت، تأیید موجودی)", True, True),
     ("customers", "مشتریان (تأیید و رد مشتری)", True, True),
+    ("customer_private", "کد ملی و نشانی مشتری", True, True),
     ("assign", "ارجاع کار به همکار", False, True),
     ("archive", "بایگانی", True, False),
     ("archive_manual", "بایگانی دستی سفارش‌ها و برگرداندن (هر کاربر)", False, True),
@@ -165,6 +168,8 @@ SERVER_TO_CLIENT: dict[str, frozenset[str]] = {
     "requests.edit": frozenset({ITEM_REQUESTS}),
     "customers.view": frozenset({CUSTOMERS_VIEW}),
     "customers.edit": frozenset({CUSTOMERS_APPROVE, CUSTOMERS_REJECT}),
+    "customer_private.view": frozenset({CUSTOMER_PRIVATE_VIEW}),
+    "customer_private.edit": frozenset({CUSTOMER_PRIVATE_EDIT}),
     "assign.edit": frozenset({ORDERS_ASSIGN}),
     "archive.view": frozenset({ARCHIVE_VIEW}),
     "archive_manual.edit": frozenset({ARCHIVE_MANUAL}),

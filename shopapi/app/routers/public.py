@@ -48,6 +48,16 @@ from ..util import now_utc, round_half_up
 router = APIRouter()
 logger = logging.getLogger("shopapi.public")
 
+
+def _user_out(user: dict) -> UserOut:
+    """v2.18.1: towards a bot: never the national code or the address."""
+    return UserOut(**{**user, **customer_details.public_fields(user)})
+
+
+def _order_out(order: dict, **extra) -> OrderOut:
+    return OrderOut(**customer_details.public_order(order), **extra)
+
+
 IDEMPOTENCY_HOURS = 24
 #: shopapi detail when an order is refused because sales are closed (bot maps it).
 #: Only orders with phones (price-list items) are refused; the detail is unchanged.
@@ -321,11 +331,11 @@ def register(
     elif existing["status"] == "pending":
         row = db.update_user_contact(existing["id"], payload.name, phone)
     else:
-        return UserOut(**existing)
+        return _user_out(existing)
     row = auto_match(db, reader, settings, row)
     if existing is None and row["status"] == "pending":
         db.add_event("customer_registered", row["id"], role)
-    return UserOut(**row)
+    return _user_out(row)
 
 
 @router.get("/users/{platform}/{chat_id}/details")
@@ -336,7 +346,7 @@ def get_customer_details(
     reader: AccountingReader = Depends(deps.get_reader),
     _: str = Depends(get_api_identity),
 ) -> dict:
-    """v2.17.0: what to ask this customer, and their saved address."""
+    """v2.17.0: what to ask this customer. v2.18.1: of the address, only that there is one."""
     user = db.get_user_by_platform(platform, chat_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
@@ -361,6 +371,8 @@ def save_customer_details(
     values, problem = customer_details.clean_values(payload.model_dump())
     if problem:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, problem)
+    # v2.18.1: what is on file stays as it is, whatever a page or a chat sends
+    values = customer_details.not_on_file(reader, user, values)
     if values:
         user = customer_details.save(db, writer, user, values)
         # never the values: personal data stays out of the log
@@ -381,7 +393,7 @@ def get_user(
     user = db.get_user_by_platform(platform, chat_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
-    return UserOut(**user)
+    return _user_out(user)
 
 
 def _merge_items(items) -> dict[tuple[int, int | None], float]:
@@ -423,7 +435,7 @@ def create_order(
 
     def _out(o: dict) -> OrderOut:
         # v2.8.2: no fixed payment details: staff send them for each order
-        return OrderOut(**o)
+        return _order_out(o)
 
     ship_address = ""
     if payload.ship_address:
@@ -431,6 +443,12 @@ def create_order(
         if problem:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, problem)
         ship_address = cleaned.get("address", "")
+    elif payload.use_saved_address:
+        ship_address = customer_details.saved_address(reader, user)
+
+    # v2.18.1: no order at all before the national code and the address are on file
+    if not check_only and customer_details.order_problem(reader, user, ship_address):
+        raise HTTPException(status.HTTP_409_CONFLICT, customer_details.DETAILS_REQUIRED)
 
     merged = _merge_items(payload.items)
     level = settings.price_level_for(role)
@@ -614,7 +632,7 @@ def set_order_address(
     order = db.set_order_address(order_id, values["address"])
     customer_details.first_address(db, reader, writer, user, values["address"])
     db.audit(role, "order_address", f"order id={order_id}")
-    return OrderOut(**order)
+    return _order_out(order)
 
 
 @router.post("/orders/{order_id}/receipt", response_model=OrderOut)
@@ -667,7 +685,7 @@ def upload_receipt(
         order = db.set_order_status(order_id, "receipt_uploaded")
     db.audit(role, "receipt_upload", f"order id={order_id}")
     db.add_event("receipt_uploaded", order_id, role)
-    return OrderOut(**order)
+    return _order_out(order)
 
 
 #: v2.6.2: the customer cancelled their own order (before any receipt).
@@ -713,7 +731,7 @@ def cancel_order(
                  f"order id={order_id} accounting_order_no={order['accounting_order_no']} "
                  f"db={order.get('accounting_db') or '-'} (not changed in accounting)")
         db.add_event(EVENT_CUSTOMER_CANCELLED_WRITTEN, order_id, actor)
-    return OrderOut(**db.get_order(order_id))
+    return _order_out(db.get_order(order_id))
 
 
 @router.get("/orders/{order_id}", response_model=OrderOut)
@@ -751,7 +769,7 @@ def get_order(
         person_name = reader.person_names([order["user_person_code"]]).get(
             int(order["user_person_code"]))
     # v2.8.2: the payment details are those staff sent for this order (payment_info)
-    return OrderOut(**order, invoice_numbers=numbers, person_name=person_name)
+    return _order_out(order, invoice_numbers=numbers, person_name=person_name)
 
 
 @router.get("/users/{platform}/{chat_id}/orders", response_model=list[OrderOut])
@@ -764,7 +782,7 @@ def list_user_orders(
     user = db.get_user_by_platform(platform, chat_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
-    return [OrderOut(**o) for o in db.list_orders_for_user(user["id"])]
+    return [_order_out(o) for o in db.list_orders_for_user(user["id"])]
 
 
 @router.get("/users/{platform}/{chat_id}/statement", response_model=StatementOut)

@@ -97,7 +97,8 @@ class OrderService:
         self.receipt_max_bytes = int(receipt_max_bytes)
 
     async def checkout(self, platform: str, chat_id: str,
-                       ship_address: str | None = None) -> CheckoutResult:
+                       ship_address: str | None = None, *,
+                       use_saved_address: bool = False) -> CheckoutResult:
         items = self.cart.items(platform, chat_id)
         if not items:
             return CheckoutResult(empty_cart=True)
@@ -107,6 +108,8 @@ class OrderService:
             return CheckoutResult(price_changes=changes)
         key = self._checkout_key(platform, chat_id, payload)
         extra = {"ship_address": ship_address} if ship_address else {}
+        if use_saved_address:
+            extra["use_saved_address"] = True
         order = await self.api.create_order(platform, chat_id, payload, idempotency_key=key,
                                             **extra)
         if order:

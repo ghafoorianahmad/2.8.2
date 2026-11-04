@@ -359,6 +359,8 @@ class BotEngine:
         # channel-independent shop logic (app/core)
         self.catalog = CatalogService(api, page_size=settings.product_page_size)
         self.cart = CartService(store)
+        #: v2.18.1: customers whose details are complete (see _details_gate)
+        self._details_complete: set[tuple[str, str]] = set()
         self.orders = OrderService(
             api, store, self.cart, receipt_max_bytes=settings.receipt_max_bytes
         )
@@ -799,6 +801,8 @@ class BotEngine:
         if state == STATE_AWAIT_DETAILS:
             await self._details_answer(adapter, platform, chat_id, text, data)
             return
+        if await self._details_gate(adapter, platform, chat_id):
+            return
         if state == STATE_AWAIT_CHECKOUT_ADDRESS:
             await self._checkout_address_text(adapter, platform, chat_id, text)
             return
@@ -998,6 +1002,10 @@ class BotEngine:
             return
         if kind == "customer":
             await self._web_app_customer(adapter, platform, chat_id, payload)
+        elif kind not in ("cart", "price", "installment"):
+            await self._send_text(adapter, chat_id, texts.WEB_APP_UNREADABLE)
+        elif await self._details_gate(adapter, platform, chat_id):
+            return      # v2.18.1: the mini app orders only after the details as well
         elif kind == "cart" and isinstance(payload.get("items"), list):
             await self._web_app_cart(adapter, platform, chat_id, payload["items"])
         elif kind == "price" and payload.get("id"):
@@ -1119,33 +1127,45 @@ class BotEngine:
 
     async def _web_app_customer(self, adapter: PlatformAdapter, platform: str, chat_id: str,
                                 payload: dict) -> None:
-        fields = {f: str(payload.get(f) or "")[:DETAIL_FIELD_MAX] for f in DETAIL_QUESTIONS}
+        fields = {f: str(payload[f])[:DETAIL_FIELD_MAX] for f in DETAIL_QUESTIONS if payload.get(f)}
         _state, current = self.store.get_conversation(platform, chat_id)
         after = (current or {}).get("after") or {}
         try:
-            await self.api.save_customer_details(platform, chat_id, **fields)
+            answer = await self.api.save_customer_details(platform, chat_id, **fields)
         except ShopApiRejected as exc:
             if exc.status != 422:
                 raise
-            await self._send_text(adapter, chat_id, exc.message_fa, self._form_keyboard(fields))
+            # what the customer typed never goes into the link: only the names they gave
+            await self._send_text(adapter, chat_id, exc.message_fa,
+                                  await self._form_keyboard_now(platform, chat_id, fields))
+            return
+        # a page may have left something out: asked for here, and only that
+        if isinstance(answer, dict) and answer.get("known") and answer.get("missing") \
+                and await self._start_details(adapter, platform, chat_id, after):
             return
         await self._send_text(adapter, chat_id, texts.DETAILS_DONE, remove_keyboard())
         await self._finish_details(adapter, platform, chat_id, after)
 
-    def _form_url(self, values: dict | None) -> str:
-        """The form at /app/form/, opened with what we already know (?fn=&ln=&nc=&addr=)."""
-        names = (("fn", "first_name"), ("ln", "last_name"), ("nc", "national_code"),
-                 ("addr", "address"))
-        query = {key: (values or {}).get(field) for key, field in names}
-        query = {key: str(value) for key, value in query.items() if value}
-        base = self.settings.miniapp_url + "form/"
-        return base + ("?" + urlencode(query) if query else "")
+    def _form_url(self, names: dict | None, missing: list | tuple | None = None) -> str:
+        """The form at /app/form/. v2.18.1: only the first and last name go into a link
+        (?fn=&ln=); of the national code and the address only that they are to be asked
+        (?need=nc,addr). A value of either in a link would stay in the logs of the host."""
+        query = {key: str((names or {}).get(field) or "")
+                 for key, field in (("fn", "first_name"), ("ln", "last_name"))}
+        query = {key: value for key, value in query.items() if value}
+        codes = {"national_code": "nc", "address": "addr"}
+        query["need"] = ",".join(codes[f] for f in codes if f in (missing or ()))
+        return self.settings.miniapp_url + "form/?" + urlencode(query)
 
-    def _form_keyboard(self, values: dict | None) -> dict:
+    def _form_keyboard(self, names: dict | None, missing: list | tuple | None = None) -> dict:
         """The form's button, or (no mini app published yet) no keyboard at all."""
         if not self.settings.miniapp_url:
             return remove_keyboard()
-        return web_app_keyboard([[(texts.BTN_DETAILS_FORM, self._form_url(values))]])
+        return web_app_keyboard([[(texts.BTN_DETAILS_FORM, self._form_url(names, missing))]])
+
+    async def _form_keyboard_now(self, platform: str, chat_id: str, names: dict | None) -> dict:
+        details = await self._details(platform, chat_id)
+        return self._form_keyboard(names, (details or {}).get("missing"))
 
     # ================= the customer's details (v2.17.0) ===================
     async def _details(self, platform: str, chat_id: str) -> dict | None:
@@ -1155,6 +1175,22 @@ class BotEngine:
         except ShopApiError:
             return None
         return answer if isinstance(answer, dict) and "missing" in answer else None
+
+    async def _details_gate(self, adapter: PlatformAdapter, platform: str, chat_id: str,
+                            after: dict | None = None) -> bool:
+        """v2.18.1: nothing else in the bot or the mini app before the missing details: True
+        = the question was asked instead. Once complete it stays complete (nothing here ever
+        empties a field), so it costs shopapi one call per customer per run."""
+        key = (platform, str(chat_id))
+        if key in self._details_complete:
+            return False
+        details = await self._details(platform, chat_id)
+        if details is None or not details.get("known"):
+            return False                    # unknown: the server still refuses the order
+        if not details.get("missing"):
+            self._details_complete.add(key)
+            return False
+        return await self._start_details(adapter, platform, chat_id, after or {})
 
     async def _start_details(self, adapter: PlatformAdapter, platform: str, chat_id: str,
                              after: dict) -> bool:
@@ -1170,7 +1206,7 @@ class BotEngine:
             return False
         intro = texts.DETAILS_INTRO_FORM if self.settings.miniapp_url else texts.DETAILS_INTRO
         await self._send_text(adapter, chat_id, intro,
-                              self._form_keyboard(details.get("prefill")))
+                              self._form_keyboard(details.get("prefill"), queue))
         await self._ask_detail(adapter, platform, chat_id, queue, after)
         return True
 
@@ -2080,11 +2116,10 @@ class BotEngine:
         if details.get("known") and details.get("missing") and await self._start_details(
                 adapter, platform, chat_id, {"checkout": 1}):
             return
-        saved = str(details.get("address") or "").strip()
-        if saved:
+        if details.get("has_address"):
             await self._send_options(
                 adapter, platform, chat_id,
-                texts.CHECKOUT_CONFIRM_ADDRESS.format(address=saved),
+                texts.CHECKOUT_CONFIRM_ADDRESS,
                 [[(texts.BTN_ADDRESS_SAME, "cok"), (texts.BTN_ADDRESS_NEW, "cnew")],
                  [(texts.BTN_CART, "cart")]],
                 state=STATE_NONE, data={},
@@ -2113,12 +2148,11 @@ class BotEngine:
     async def _checkout_same_address(self, adapter: PlatformAdapter, platform: str,
                                      chat_id: str) -> None:
         details = await self._details(platform, chat_id)
-        saved = str((details or {}).get("address") or "").strip()
-        if not saved:
+        if not (details or {}).get("has_address"):
             await self._ask_checkout_address(adapter, platform, chat_id,
                                              texts.CHECKOUT_ASK_ADDRESS)
             return
-        await self._place_order(adapter, platform, chat_id, saved)
+        await self._place_order(adapter, platform, chat_id, None, use_saved_address=True)
 
     async def _order_address_text(self, adapter: PlatformAdapter, platform: str, chat_id: str,
                                   text: str, data: dict) -> None:
@@ -2138,18 +2172,17 @@ class BotEngine:
                                      [[(texts.BTN_MENU, "menu")]])
             return
         self.store.clear_conversation(platform, chat_id)
-        address = str((order or {}).get("ship_address") or text)
-        await self._send_options(adapter, platform, chat_id,
-                                 texts.ORDER_ADDRESS_SAVED.format(address=address),
+        await self._send_options(adapter, platform, chat_id, texts.ORDER_ADDRESS_SAVED,
                                  [[(texts.BTN_MENU, "menu")]])
 
     async def _place_order(self, adapter: PlatformAdapter, platform: str, chat_id: str,
-                           ship_address: str | None) -> None:
+                           ship_address: str | None, *, use_saved_address: bool = False) -> None:
         state = await self._checkout_blocked(adapter, platform, chat_id)
         if state is None:
             return
         try:
-            result = await self.orders.checkout(platform, chat_id, ship_address)
+            result = await self.orders.checkout(platform, chat_id, ship_address,
+                                                use_saved_address=use_saved_address)
         except ShopApiRejected as exc:
             if exc.status == 422 and ship_address:
                 # v2.18.0: the address broke a rule: say which and ask for it again
@@ -2759,11 +2792,10 @@ class BotEngine:
             # v2.8.2: staff send the payment details next (their own message)
             parts.append(texts.WAIT_PAYMENT_INFO)
         # v2.17.0: where it goes: the saved address (with «آدرس جدید») or a question
-        address = str(order.get("ship_address") or "").strip()
         rows = [[(texts.BTN_CANCEL_ORDER, f"ocx:{order_id}")], [(texts.BTN_MENU, "menu")]]
         waiting = {}
-        if address:
-            parts.append(texts.ORDER_SHIP_TO.format(address=address))
+        if order.get("has_ship_address"):
+            parts.append(texts.ORDER_SHIP_TO)
             rows.insert(0, [(texts.BTN_ADDRESS_NEW, f"oadr:{order_id}")])
         elif not order.get("payment_info"):
             parts.append(texts.CHECKOUT_ASK_ADDRESS)
@@ -3043,6 +3075,10 @@ class BotEngine:
             return
         if status == STATUS_REJECTED:
             await self._answer_callback(adapter, callback_id, texts.REJECTED_USER)
+            return
+        # v2.18.1: nothing is ordered before the details that are still missing
+        if await self._details_gate(adapter, platform, chat_id):
+            await self._answer_callback(adapter, callback_id)
             return
         # customers awaiting approval may browse and order (within shopapi's
         # limits); only the statement needs an approved, linked account

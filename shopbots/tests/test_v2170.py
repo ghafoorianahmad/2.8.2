@@ -30,7 +30,8 @@ def details(shopapi):
             return httpx.Response(status, json=payload, request=request)
 
         def view():
-            out = {k: state[k] for k in ("missing", "address", "asked", "known")}
+            out = {k: state[k] for k in ("missing", "asked", "known")}
+            out["has_address"] = bool(state["address"])
             if state.get("prefill"):
                 out["prefill"] = state["prefill"]
             return out
@@ -50,6 +51,8 @@ def details(shopapi):
             return reply(200, view())
         if method == "POST" and path == "/orders" and body and "ship_address" in body:
             state["orders"].append(body["ship_address"])
+        if method == "POST" and path == "/orders" and body and body.get("use_saved_address"):
+            state["orders"].append("saved")
         if method == "PUT" and path.endswith("/address"):
             state["orders"].append(body["address"])
             return reply(200, {"ship_address": body["address"]})
@@ -205,10 +208,11 @@ def test_saved_address_is_offered(env, bot_apis, shopapi, details):
     async def scenario(engine, adapters, api):
         await _cart(engine)
         await push_callback(engine, "bale", 12, CUSTOMER_CHAT, "checkout")
-        assert "آدرس ثبت‌شده" in _texts(bot_apis)[-1]
+        # v2.18.1: «the address on file», never the address itself
+        assert _texts(bot_apis)[-1].startswith(texts.CHECKOUT_CONFIRM_ADDRESS)
         assert not shopapi.orders
         await push_callback(engine, "bale", 13, CUSTOMER_CHAT, "cok")
-        assert details["orders"] == ["آدرس ثبت‌شده"]
+        assert details["orders"] == ["saved"]
 
     env(scenario)
 
@@ -243,15 +247,14 @@ def test_leaving_the_address_question_never_places_an_order(env, bot_apis, shopa
     env(scenario)
 
 
-def test_leaving_the_questions_keeps_a_later_text_out_of_the_answers(env, bot_apis, shopapi,
-                                                                     details):
+def test_the_menu_waits_for_the_missing_details(env, bot_apis, shopapi, details):
+    """v2.18.1: there is no leaving the questions: a button asks the same question again."""
     async def scenario(engine, adapters, api):
         await push_message(engine, "bale", 1, CUSTOMER_CHAT, text="/start")
         await _contact(engine, 2, CUSTOMER_CHAT)
         await push_callback(engine, "bale", 3, CUSTOMER_CHAT, "menu")
-        await push_message(engine, "bale", 4, CUSTOMER_CHAT, text="آیفون")
-        assert details["saved"] == []
-        assert details["asked"] is False            # asked again next time
+        assert _texts(bot_apis)[-1].startswith(texts.ASK_FIRST_NAME)
+        assert details["asked"] is False
 
     env(scenario)
 

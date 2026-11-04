@@ -50,8 +50,7 @@ def test_without_a_published_page_there_is_no_button(env, bot_apis, shopapi, det
 
 def test_the_form_opens_prefilled(env, bot_apis, shopapi, details):  # noqa: F811
     details["missing"] = ["national_code", "address"]
-    details["prefill"] = {"first_name": "علی", "last_name": "رضایی", "national_code": "",
-                          "address": ""}
+    details["prefill"] = {"first_name": "علی", "last_name": "رضایی"}
 
     async def scenario(engine, adapters, api):
         engine.settings = _with_url(engine.settings)
@@ -65,7 +64,7 @@ def test_the_form_opens_prefilled(env, bot_apis, shopapi, details):  # noqa: F81
         assert button["text"] == texts.BTN_DETAILS_FORM
         link = urlparse(button["web_app"]["url"])
         assert link.path == "/app/form/"
-        assert parse_qs(link.query) == {"fn": ["علی"], "ln": ["رضایی"]}
+        assert parse_qs(link.query) == {"fn": ["علی"], "ln": ["رضایی"], "need": ["nc,addr"]}
 
     env(scenario)
 

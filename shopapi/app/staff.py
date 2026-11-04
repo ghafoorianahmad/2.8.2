@@ -48,6 +48,7 @@ ALL_SECTIONS: tuple[tuple[str, str, bool, bool], ...] = (
     ("claim", "برداشتن کار تازه («برداشت»)", False, True),
     ("requests", "درخواست کالا (پیام، یادداشت، تأیید موجودی)", True, True),
     ("customers", "مشتریان (تأیید و رد مشتری)", True, True),
+    ("customer_private", "کد ملی و نشانی مشتری", True, True),
     ("assign", "ارجاع کار به همکار", False, True),
     ("archive", "بایگانی", True, False),
     ("archive_manual", "بایگانی دستی سفارش‌ها و برگرداندن (هر کاربر)", False, True),
@@ -110,6 +111,8 @@ P_REQUESTS_EDIT = "requests.edit"
 P_REQUESTS = P_REQUESTS_EDIT
 P_CUSTOMERS_VIEW = "customers.view"
 P_CUSTOMERS_DECIDE = "customers.edit"
+P_CUSTOMER_PRIVATE_VIEW = "customer_private.view"   # v2.18.1: the rest see a masked code
+P_CUSTOMER_PRIVATE_EDIT = "customer_private.edit"
 P_ORDERS_ASSIGN = "assign.edit"          # hand an order / request to a colleague
 P_ARCHIVE = "archive.view"
 P_ARCHIVE_MANUAL = "archive_manual.edit"  # v2.18.0: archive / restore at once, any user's order

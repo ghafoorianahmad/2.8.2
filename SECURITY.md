@@ -134,3 +134,11 @@ These are summarized here; the full procedure is in `README_FA.txt` §10.
   - Bale delivery of security alerts;
   - restore on real hardware.
 - The installers are not code-signed (SmartScreen warning).
+
+## 10. The customer's national code and address (v2.18.1)
+
+* **Never in a URL, link, log or bot message.** A link carries only the first and last name (`?fn=&ln=`) and which of the two fields to ask (`?need=nc,addr`, never a value). The form ignores `nc` and `addr` in a link. The audit log holds field names only.
+* **Towards a bot or customer the server sends no value:** `view()` gives `missing`, `has_address` and the name; `UserOut` and `OrderOut` towards a bot or the service key have them empty, with `national_code_on_file`, `address_on_file`, `has_ship_address`. «همان آدرس» is `use_saved_address`: only the server looks it up.
+* **A customer cannot change what is on file** (ours or that of «سازه حساب»): `customer_details.not_on_file` drops it silently. When «سازه حساب» cannot be read nothing is taken.
+* **Missing = no ordering.** The bot asks only for what is missing before anything else (text, buttons, mini app); `POST /orders` refuses with 409 `Customer details are required` whatever the bot does. An address typed for one order counts and stays on that order; it does not replace a saved one.
+* **Staff:** tick `customer_private` (view / edit), not a default. Without it: a masked code (`••••••••99`) and no address; sending either is 403. The address of an order is also shown with `ship.edit`, because the parcel cannot go without it.

@@ -7,6 +7,11 @@ existing person only ever gets its EMPTY fields filled (the writer's WHERE claus
 it), nothing is overwritten. What could not reach «سازه حساب» yet (writes off, accounting
 down, the grants of sql/upgrade_2_17_0.sql not run) stays in our own database and is
 tried again later. A number the person does not have yet is added to their phones.
+
+v2.18.1, who may see what: the national code and the address never leave the server towards a
+customer or a bot, in no answer, link, log or message. A customer never sees or changes one
+that is on file (ours or that of «سازه حساب»): the bot only hears which fields are missing. Among
+staff, only the tick ``customer_private`` shows them; everyone else gets a masked code.
 """
 from __future__ import annotations
 
@@ -20,11 +25,53 @@ from .text import mobile_key
 logger = logging.getLogger("shopapi.customer_details")
 
 FIELDS = ("first_name", "last_name", "national_code", "address")
+#: v2.18.1: never towards a customer or a bot; among staff only with the tick
+PRIVATE_FIELDS = ("national_code", "address")
 
 #: refused by POST /admin/orders/{id}/write-accounting; ShopAdmin shows it in Persian
 DETAILS_INCOMPLETE = "Customer details are incomplete"
 #: «سازه حساب» says this national code is somebody else's
 NATIONAL_CODE_TAKEN = "این کد ملی در حسابداری برای شخص دیگری ثبت شده است."
+#: v2.18.1: refused by POST /orders; the bot asks for what is missing and comes back
+DETAILS_REQUIRED = "Customer details are required"
+
+
+def mask_national_code(code: object) -> str:
+    """v2.18.1: all but the last two digits hidden, whatever the length."""
+    text = "".join(str(code or "").split())
+    if len(text) <= 2:
+        return "•" * len(text)
+    return "•" * (len(text) - 2) + text[-2:]
+
+
+def staff_fields(user: dict, can_view: bool) -> dict:
+    """v2.18.1: the customer's private fields as this staff member may see them."""
+    code, address = str(user.get("national_code") or ""), str(user.get("address") or "")
+    on_file = {"national_code_on_file": bool(code.strip()), "address_on_file": bool(address.strip())}
+    if can_view:
+        return {**on_file, "private_hidden": False}
+    return {**on_file, "private_hidden": True, "national_code": mask_national_code(code),
+            "address": ""}
+
+
+def public_fields(user: dict) -> dict:
+    """v2.18.1: towards the bots: that a value is there, never the value."""
+    return {"national_code": "", "address": "",
+            "national_code_on_file": bool(str(user.get("national_code") or "").strip()),
+            "address_on_file": bool(str(user.get("address") or "").strip())}
+
+
+def public_order(order: dict) -> dict:
+    """v2.18.1: an order towards the bots: «this order has an address», not the address."""
+    return {**order, "ship_address": "",
+            "has_ship_address": bool(str(order.get("ship_address") or "").strip())}
+
+
+def staff_order(order: dict, can_view: bool) -> dict:
+    """v2.18.1: the order's address for staff who may see it (who ships it must)."""
+    shown = str(order.get("ship_address") or "")
+    return {**order, "ship_address": shown if can_view else "",
+            "has_ship_address": bool(shown.strip())}
 
 
 def national_code_ok(code: str) -> bool:
@@ -58,17 +105,50 @@ def _person(reader, user: dict) -> dict | None:
         return None
 
 
-def view(db: OwnDB, reader, user: dict) -> dict:
-    """For the bot: which fields are missing, the saved address and (v2.18.0) what the form
-    opens with. ``known`` false = «سازه حساب» could not be read: nothing is asked (it may well
-    know them), and :func:`write_problem` refuses to write until it can be read."""
+def merged(reader, user: dict) -> tuple[dict, bool]:
+    """Server only: each field from us or from «سازه حساب», and whether that could be read."""
     person = _person(reader, user)
-    merged = {field: str(user.get(field) or "").strip()
-              or str((person or {}).get(field) or "").strip() for field in FIELDS}
-    known = person is not None
-    return {"missing": [f for f in FIELDS if known and not merged[f]],
-            "address": merged["address"], "asked": bool(user.get("details_asked_at")),
-            "known": known, "prefill": merged}
+    return ({field: str(user.get(field) or "").strip()
+             or str((person or {}).get(field) or "").strip() for field in FIELDS},
+            person is not None)
+
+
+def view(db: OwnDB, reader, user: dict) -> dict:
+    """For the bot: which fields are missing and what the form opens with (v2.18.1: only the
+    name; of the national code and the address only whether they are there). ``known`` false =
+    «سازه حساب» could not be read: nothing is asked (it may well know them), and
+    :func:`write_problem` refuses to write until it can be read."""
+    values, known = merged(reader, user)
+    return {"missing": [f for f in FIELDS if known and not values[f]],
+            "has_address": bool(values["address"]), "asked": bool(user.get("details_asked_at")),
+            "known": known,
+            "prefill": {"first_name": values["first_name"], "last_name": values["last_name"]}}
+
+
+def not_on_file(reader, user: dict, values: dict) -> dict:
+    """v2.18.1: a customer's answer without what is already on file: they cannot change a
+    national code or an address they could not even see. Unknown = nothing is taken: it may
+    well be on file in «سازه حساب»."""
+    if not any(field in values for field in PRIVATE_FIELDS):
+        return values
+    current, known = merged(reader, user)
+    return {field: value for field, value in values.items()
+            if field not in PRIVATE_FIELDS or (known and not current[field])}
+
+
+def order_problem(reader, user: dict, ship_address: str = "") -> list[str]:
+    """v2.18.1: what stops this customer from ordering at all. An address typed for this order
+    counts as the address. «سازه حساب» unreadable: unproven, the write is stopped later."""
+    current, known = merged(reader, user)
+    if not known:
+        return []
+    return [field for field in PRIVATE_FIELDS
+            if not current[field] and not (field == "address" and ship_address)]
+
+
+def saved_address(reader, user: dict) -> str:
+    """v2.18.1: «همان آدرس»: only the server looks it up, the bot never hears it."""
+    return merged(reader, user)[0]["address"]
 
 
 def write_problem(db: OwnDB, reader, user_id: int) -> list[str]:
@@ -77,10 +157,8 @@ def write_problem(db: OwnDB, reader, user_id: int) -> list[str]:
     user = db.get_user_by_id(int(user_id))
     if user is None:
         return list(FIELDS)
-    details = view(db, reader, user)
-    if not details["known"]:
-        return [f for f in FIELDS if not details["prefill"][f]]
-    return details["missing"]
+    values, _known = merged(reader, user)
+    return [f for f in FIELDS if not values[f]]
 
 
 def sync(db: OwnDB, writer, user: dict) -> bool:
@@ -175,7 +253,7 @@ def save(db: OwnDB, writer, user: dict, values: dict) -> dict:
 def first_address(db: OwnDB, reader, writer, user: dict, address: str) -> None:
     """Item 10: the first address a customer gives becomes their saved one (ours, and
     «سازه حساب» only if that field is empty). A later «آدرس جدید» stays on its order."""
-    if not address or view(db, reader, user)["address"]:
+    if not address or saved_address(reader, user):
         return
     save(db, writer, user, {"address": address})
 

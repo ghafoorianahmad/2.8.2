@@ -343,16 +343,29 @@ class CustomerFields(QWidget):
                  "national_code": str(customer.get("national_code") or ""),
                  "address": str(customer.get("address") or "")}
         self.inputs: dict[str, QLineEdit] = {}
+        # v2.18.1: without the tick the server sends a masked code and no address, and refuses
+        # both if sent: they stay out of this form and out of its checks
+        hidden = bool(customer.get("private_hidden"))
+        self.locked = ("national_code", "address") if hidden else ()
+        on_file = {"national_code": customer.get("national_code_on_file"),
+                   "address": customer.get("address_on_file")}
         for field, caption in self.FIELDS:
             box = QLineEdit(known[field])
             if field == "national_code":
                 box.setText(to_persian_digits(known[field]))
+            if field in self.locked:
+                box.setEnabled(False)
+                box.setText(to_persian_digits(known[field]) if on_file[field]
+                            and known[field] else "ثبت شده (بدون دسترسی دیدن)"
+                            if on_file[field] else "مشتری باید در ربات بنویسد")
             self.inputs[field] = box
             form.addRow(widgets.label(caption), box)
 
     def problem(self, *, required: bool) -> tuple[str, QWidget | None]:
         """The first broken rule (the form's own words) and its box."""
         for field, box in self.inputs.items():
+            if field in self.locked:
+                continue
             text = box.text()
             if not required and not text.strip():
                 continue
@@ -365,6 +378,8 @@ class CustomerFields(QWidget):
         """{field: clean value} of the filled ones."""
         out = {}
         for field, box in self.inputs.items():
+            if field in self.locked:
+                continue
             check = validators.VALIDATORS[field](box.text())
             if box.text().strip() and check.valid:
                 out[field] = check.normalized

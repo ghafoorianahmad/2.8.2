@@ -130,6 +130,9 @@ def test_pending_customer_orders_within_limit(client, reader, settings):
     seed_products(reader)
     settings.pending_max_order_items = 3
     register(client)
+    # v2.18.1: no order before the national code and the address
+    client.post("/users/bale/111/details", headers=h("bot"),
+                json={"national_code": "0499370899", "address": "تهران، ولیعصر، پلاک ۱"})
     r = order(client, items=[{"kala_code": 101, "qty": 2}])
     assert r.status_code == 201
     assert r.json()["customer_pending"] is True
@@ -143,6 +146,9 @@ def test_pending_customer_has_no_amount_limit(client, reader, settings):
     settings.pending_max_order_items = 3
     reader.products[101]["unit_price"] = 2_000_000_000.0  # Rial; far above the old cap
     register(client)
+    # v2.18.1: no order before the national code and the address
+    client.post("/users/bale/111/details", headers=h("bot"),
+                json={"national_code": "0499370899", "address": "تهران، ولیعصر، پلاک ۱"})
     assert order(client, items=[{"kala_code": 101, "qty": 3}]).status_code == 201
     assert order(client, items=[{"kala_code": 104, "qty": 1}]).status_code == 422
 
@@ -157,6 +163,9 @@ def test_rejected_customer_cannot_order(client, reader):
 def test_payment_of_pending_customer_waits_for_approval(client, reader, writer):
     seed_products(reader)
     user_id = register(client).json()["id"]
+    # v2.18.1: no order before the national code and the address
+    client.post("/users/bale/111/details", headers=h("bot"),
+                json={"national_code": "0499370899", "address": "تهران، ولیعصر، پلاک ۱"})
     order_id = order(client).json()["id"]
     client.post(f"/orders/{order_id}/receipt", params={"platform": "bale", "chat_id": "111"},
                 json={"receipt_ref": "f1"}, headers=h("bot"))

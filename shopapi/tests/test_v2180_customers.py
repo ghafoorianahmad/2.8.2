@@ -132,9 +132,9 @@ def test_names_are_persian_letters_only_when_approving(client, writer):
 def _waiting_order(client, reader, details: dict):
     seed_products(reader)
     register_and_approve(client)
-    reader.person_detail_map = {7001: details}
     order = client.post("/orders", headers=h("bot"), json={
         "platform": "bale", "chat_id": "111", "items": [{"kala_code": 101, "qty": 1}]}).json()
+    reader.person_detail_map = {7001: details}
     client.post(f"/orders/{order['id']}/receipt", headers=h("bot"), json={
         "platform": "bale", "chat_id": "111", "file_ref": "x", "note": ""})
     return order

@@ -471,7 +471,10 @@ class OrderDetailDialog(widgets.ResponsiveDialog):
             left.add_widget("موبایل مشتری", phone_holder)
         left.add("مسئول", owner_label(order))
         # v2.17.0: for staff and the courier
-        left.add("آدرس ارسال", str(order.get("ship_address") or "—"))
+        # v2.18.1: the server sends it only with the tick (or to who ships the order)
+        hidden = order.get("has_ship_address") and not order.get("ship_address")
+        left.add("آدرس ارسال", "ثبت شده (بدون دسترسی دیدن)" if hidden
+                 else str(order.get("ship_address") or "—"))
         code = order.get("user_person_code")
         left.add("شخص در «سازه حساب»",
                  customer_label(order) if code is not None else "هنوز وصل نشده")

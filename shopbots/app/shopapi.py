@@ -225,10 +225,13 @@ class ShopApiClient:
     async def create_order(
         self, platform: str, chat_id: str | int, items: list[dict],
         idempotency_key: str | None = None, ship_address: str | None = None,
+        use_saved_address: bool = False,
     ) -> dict | None:
         body = {"platform": platform, "chat_id": str(chat_id), "items": items}
         if ship_address:
             body["ship_address"] = ship_address
+        if use_saved_address:
+            body["use_saved_address"] = True
         return await self._request(
             "POST",
             "/orders",
@@ -251,7 +254,7 @@ class ShopApiClient:
                                               "row_key": row_key, "query": query})
 
     async def customer_details(self, platform: str, chat_id: str | int) -> dict | None:
-        """v2.17.0: what to ask this customer, and their saved address."""
+        """v2.17.0: what to ask this customer. v2.18.1: of the address, only that there is one."""
         return await self._request("GET", f"/users/{platform}/{chat_id}/details",
                                    key=self._settings.bot_api_key)
 

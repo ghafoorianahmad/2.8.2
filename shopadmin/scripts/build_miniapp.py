@@ -33,13 +33,25 @@ FORM_SCRIPT = """
     <script type="module">
       import { validateCustomerForm, parsePrefillParams } from './validators.js';
 
-      const FIELDS = ['first_name', 'last_name', 'national_code', 'address'];
+      const ALL_FIELDS = ['first_name', 'last_name', 'national_code', 'address'];
+      // v2.18.1: the bot says which of the two private fields are still missing (?need=nc,addr),
+      // never their values. What is on file is not shown here; the server ignores it if sent.
+      const query = new URLSearchParams(window.location.search);
+      const needed = (query.get('need') ?? 'nc,addr').split(',');
+      const FIELDS = ALL_FIELDS.filter((f) => (f === 'national_code' ? needed.includes('nc')
+        : f === 'address' ? needed.includes('addr') : true));
       const form = document.getElementById('customer_form');
       const button = document.getElementById('submit_btn');
       const hint = document.getElementById('submit_status_hint');
       const progress = document.getElementById('validation_progress');
       const shown = document.getElementById('national_code_normalized');
       const inputs = Object.fromEntries(FIELDS.map((f) => [f, document.getElementById(f)]));
+      for (const field of ALL_FIELDS.filter((f) => !FIELDS.includes(f))) {
+        const box = document.getElementById(field);
+        box.required = false;
+        box.closest('.field-group').hidden = true;
+        box.closest('.field-group').style.display = 'none';
+      }
       const touched = {};
       const digits = (n) => String(n).replace(/[0-9]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[d]);
 
@@ -54,6 +66,11 @@ FORM_SCRIPT = """
       function check() {
         const values = Object.fromEntries(FIELDS.map((f) => [f, inputs[f].value]));
         const result = validateCustomerForm(values);
+        result.valid = FIELDS.every((f) => result.results[f].valid);
+        result.payload = result.valid
+          ? { v: 1, type: 'customer',
+              ...Object.fromEntries(FIELDS.map((f) => [f, result.results[f].normalized])) }
+          : null;
         let good = 0;
         for (const field of FIELDS) {
           const res = result.results[field];
@@ -65,11 +82,11 @@ FORM_SCRIPT = """
           document.getElementById(`${field}_valid`).textContent = visible && res.valid ? 'درست است' : '';
         }
         shown.textContent = '';
-        progress.textContent = `${digits(good)} از ۴ مورد کامل شده`;
+        progress.textContent = `${digits(good)} از ${digits(FIELDS.length)} مورد کامل شده`;
         button.disabled = !result.valid;
         hint.textContent = result.valid
           ? 'همه‌چیز درست است؛ دکمه را بزنید.'
-          : 'برای فعال شدن دکمه، هر ۴ مورد بالا را درست پر کنید.';
+          : 'برای فعال شدن دکمه، همهٔ موردهای بالا را درست پر کنید.';
         return result;
       }
 
@@ -145,7 +162,7 @@ def build_form(source: Path) -> None:
       <section class="hero-intro">
         <div>
           <h1 class="hero-title">ثبت اطلاعات خریدار — عصر ارتباطات ۲</h1>
-          <p class="hero-subtitle">برای ثبت خرید شما در حسابداری فروشگاه این چهار مورد لازم است.</p>
+          <p class="hero-subtitle">برای ثبت خرید شما در حسابداری فروشگاه این موردها لازم است؛ فقط همان‌هایی را می‌بینید که هنوز نداریم.</p>
         </div>
       </section>
       <div class="workspace-grid">

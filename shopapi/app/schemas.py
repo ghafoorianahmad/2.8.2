@@ -77,6 +77,10 @@ class UserOut(BaseModel):
     #: Not in «سازه حساب» yet (writes off, accounting down, the grants not run)
     details_sync: bool = False
     payer_name: str = ""
+    #: v2.18.1: towards a bot both values are empty; staff without the tick get a masked code
+    national_code_on_file: bool = False
+    address_on_file: bool = False
+    private_hidden: bool = False
 
 
 class CustomerDetailsIn(BaseModel):
@@ -121,6 +125,8 @@ class OrderCreate(BaseModel):
     items: list[OrderItemIn] = Field(min_length=1, max_length=100)
     #: v2.17.0: where it goes (text only)
     ship_address: Optional[str] = Field(None, max_length=1000)
+    #: v2.18.1: «همان آدرس»: the server fills it in; the bot never hears the address
+    use_saved_address: bool = False
 
 
 class OrderItemOut(BaseModel):
@@ -174,6 +180,8 @@ class OrderOut(BaseModel):
     accounting_pending: bool = False
     #: v2.17.0: where it goes; this customer's first «تأیید رسید»; the name on the receipt
     ship_address: str = ""
+    #: v2.18.1: an address is there, even when this reader may not see it
+    has_ship_address: bool = False
     first_receipt: bool = False
     payer_name: str = ""
     #: v2.17.0 (staff): the stage read from KalaOrder / facto (tracking.STAGE_*) and its Status

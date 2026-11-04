@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from .. import deps, ownership, purchase
+from .. import customer_details, deps, ownership, purchase
 from .. import groups as group_config
 from ..accounting_reader import AccountingReader
 from ..config import Settings
@@ -285,7 +285,8 @@ def purchase_offer_answer(
         raise HTTPException(status.HTTP_409_CONFLICT, purchase.OFFER_GONE_DETAIL)
     request, order = purchase.answer_offer(db, settings, who, row, payload.accept)
     return {"request": request_out(db, who, request),
-            "order": OrderOut(**{**order, **ownership.owner_fields(db, who, order)}).model_dump()
+            "order": OrderOut(**customer_details.public_order(
+                {**order, **ownership.owner_fields(db, who, order)})).model_dump()
             if order else None}
 
 

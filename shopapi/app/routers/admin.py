@@ -49,6 +49,8 @@ from ..staff import (
     P_ACTIVITY,
     P_ARCHIVE,
     P_ARCHIVE_MANUAL,
+    P_CUSTOMER_PRIVATE_EDIT,
+    P_CUSTOMER_PRIVATE_VIEW,
     P_CUSTOMERS_DECIDE,
     P_CUSTOMERS_VIEW,
     P_DASHBOARD,
@@ -136,7 +138,7 @@ def list_users(
     v2.18.0: with the linked person's name in «سازه حساب»."""
     users = ownership.filter_customers(db, who, db.list_users(status_filter))
     names = _names_of(reader, [u.get("person_code") for u in users])
-    return [UserOut(**u, person_name=names.get(u.get("person_code"))) for u in users]
+    return [_user_out(who, u, person_name=names.get(u.get("person_code"))) for u in users]
 
 
 @router.get("/persons/match", response_model=PersonMatch)
@@ -162,7 +164,7 @@ def get_user(
     if not ownership.customer_visible(db, who, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     names = _names_of(reader, [user.get("person_code")])
-    return UserOut(**user, person_name=names.get(user.get("person_code")))
+    return _user_out(who, user, person_name=names.get(user.get("person_code")))
 
 
 @router.get("/users/{user_id}/person-candidates")
@@ -202,12 +204,13 @@ def put_user_details(
     values, problem = customer_details.clean_values(payload.model_dump())
     if problem:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, problem)
+    _private_edit_allowed(who, values)
     if values:
         user = customer_details.save(db, writer, user, values)
         # never the values: personal data stays out of the log
         db.audit(who.actor, "customer_details", f"user id={user_id} fields={sorted(values)}")
     names = _names_of(reader, [user.get("person_code")])
-    return UserOut(**user, person_name=names.get(user.get("person_code")))
+    return _user_out(who, user, person_name=names.get(user.get("person_code")))
 
 
 def _create_person(writer: AccountingWriter, user: dict, payload: ApproveUserIn) -> int:
@@ -270,6 +273,8 @@ def approve_user(
     created = False
     typed, problem = customer_details.clean_values(payload.model_dump(
         include={"first_name", "last_name", "national_code", "address"}))
+    if not problem:
+        _private_edit_allowed(who, typed)
     if problem:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, problem)
     if payload.person_code is None:
@@ -320,7 +325,7 @@ def approve_user(
     db.log_activity(staff_id=ownership.staff_id(who), actor=who.actor,
                     action=ownership.A_CUSTOMER_APPROVE, target_type="customer",
                     target_id=user_id, customer_id=user_id)
-    return UserOut(**user)
+    return _user_out(who, user)
 
 
 @router.post("/users/{user_id}/reject", response_model=UserOut)
@@ -340,7 +345,7 @@ def reject_user(
     db.log_activity(staff_id=ownership.staff_id(who), actor=who.actor,
                     action=ownership.A_CUSTOMER_REJECT, target_type="customer",
                     target_id=user_id, customer_id=user_id)
-    return UserOut(**user)
+    return _user_out(who, user)
 
 
 def _stages(reader: AccountingReader, settings: Settings, orders: list[dict]) -> dict[int, dict]:
@@ -367,9 +372,25 @@ def _stages(reader: AccountingReader, settings: Settings, orders: list[dict]) ->
 
 
 def order_out(db: OwnDB, who: Identity, order: dict, **extra) -> OrderOut:
-    """An order for ShopAdmin with the ownership fields for this viewer (v2.8.0)."""
-    fields = {**order, **ownership.owner_fields(db, who, order), **extra}
+    """An order for ShopAdmin with the ownership fields for this viewer (v2.8.0). v2.18.1: the
+    address only with the tick, or for who ships it: a parcel cannot go without one."""
+    can_view = who.kind == "staff" and (who.can(P_CUSTOMER_PRIVATE_VIEW) or who.can(P_ORDERS_SHIP))
+    fields = {**customer_details.staff_order(order, can_view),
+              **ownership.owner_fields(db, who, order), **extra}
     return OrderOut(**fields)
+
+
+def _user_out(who: Identity, user: dict, **extra) -> UserOut:
+    """v2.18.1: a customer as this staff member may see them."""
+    can_view = who.kind == "staff" and who.can(P_CUSTOMER_PRIVATE_VIEW)
+    fields = {**user, **customer_details.staff_fields(user, can_view), **extra}
+    return UserOut(**fields)
+
+
+def _private_edit_allowed(who: Identity, values: dict) -> None:
+    if who.kind == "staff" and not who.can(P_CUSTOMER_PRIVATE_EDIT) \
+            and any(field in values for field in customer_details.PRIVATE_FIELDS):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden: customer_private.edit")
 
 
 def _names_of(reader: AccountingReader, codes) -> dict:
