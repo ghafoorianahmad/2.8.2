@@ -31,7 +31,7 @@ def test_sidebar_shows_the_real_version(ui_context, admin_qapp):
     window = MainWindow(ui_context)
     from app.persian import to_persian_digits
 
-    assert window.version_label.text() == f"نسخهٔ {to_persian_digits('2.18.1')}"
+    assert window.version_label.text() == f"نسخهٔ {to_persian_digits('2.18.2')}"
 
 
 # ---- 2 + 3: order dialog ------------------------------------------------------------------------
