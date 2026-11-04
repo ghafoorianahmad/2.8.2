@@ -114,6 +114,14 @@ _DETAIL_MAP: tuple[tuple[re.Pattern[str], str], ...] = (
      "موجودی کافی نیست (کد کالا: {0})."),
     (re.compile(r"no active price list", re.I), "هنوز لیست قیمت فعالی نیست."),
     (re.compile(r"note not found", re.I), "این پیام کانال پیدا نشد."),
+    # v2.18.1
+    (re.compile(r"customer_private\.edit", re.I),
+     "برای نوشتن کد ملی و نشانی مشتری، تیک «کد ملی و نشانی مشتری — تغییر» لازم است."),
+    (re.compile(r"suggestion already decided", re.I), "این پیشنهاد پیش‌تر بررسی شده است."),
+    (re.compile(r"quote not found", re.I), "این پیش‌فاکتور اقساط پیدا نشد."),
+    (re.compile(r"installment calculator is off", re.I), "ماشین‌حساب اقساط مشتری خاموش است."),
+    (re.compile(r"customer details are required", re.I),
+     "کد ملی یا نشانی مشتری هنوز ثبت نشده است."),
     (re.compile(r"customer details are incomplete", re.I),
      "اطلاعات مشتری کامل نیست: نام، نام خانوادگی، کد ملی و نشانی همه لازم است. در صفحهٔ «مشتریان» "
      "با دکمهٔ «اطلاعات» کامل کنید."),
