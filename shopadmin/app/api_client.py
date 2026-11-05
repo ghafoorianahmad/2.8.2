@@ -1032,6 +1032,11 @@ class ShopApiClient:
         return self._request("GET", f"/admin/ledger/persons/{int(code)}/statement",
                              params={"db": database}) or {}
 
+    def ledger_invoice_lines(self, database: str, code: int, numfact: int) -> dict:
+        return self._request("GET",
+                             f"/admin/ledger/persons/{int(code)}/invoice/{int(numfact)}/lines",
+                             params={"db": database}) or {}
+
     def installment_settings(self) -> dict:
         return self._request("GET", "/admin/installments/settings") or {}
 

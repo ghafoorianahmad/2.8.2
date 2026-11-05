@@ -111,6 +111,7 @@ def test_the_comparison_is_last(ui_context, admin_qapp):
 class _LedgerApi:
     def __init__(self):
         self.statements = []
+        self.lines_requests = []
 
     def ledger_databases(self):
         return [{"name": "hesab5 t", "current": True}, {"name": "hesab4", "current": False}]
@@ -121,9 +122,19 @@ class _LedgerApi:
 
     def ledger_statement(self, database, code):
         self.statements.append((database, code))
-        return {"database": database, "balance": 100, "side": "debtor", "rows": [
-            {"date": "1404/01/02", "kind": "سند", "doc_no": "9", "description": "x", "debit": 100,
-             "credit": 0, "balance": 100, "side": "debtor"}]}
+        return {"database": database, "balance": 100, "side": "debtor", "truncated": False,
+                "rows": [{"date": "1404/01/02", "kind": "f", "doc_no": "9",
+                          "description": "x", "debit": 100, "credit": 0, "balance": 100, "side": "debtor"}]}
+
+    def ledger_invoice_lines(self, database, code, numfact):
+        self.lines_requests.append((database, code, numfact))
+        return {"numfact": numfact, "person_code": code, "date": "1404/01/02", "description": "",
+                "paid": 0,
+                "lines": [{"radif": 1, "code": 5, "name": "کالا نمونٔ", "qty": 2, "unit_price": 1000,
+                           "discount": 0, "line_total": 2000},
+                          {"radif": 2, "code": 6, "name": "سایر", "qty": 1, "unit_price": 500,
+                           "discount": 0, "line_total": 500}],
+                "total": 2500}
 
 
 def test_the_ledger_page_prefers_a_previous_year_and_shows_a_turnover(ui_context, admin_qapp):
@@ -145,6 +156,58 @@ def test_the_ledger_page_prefers_a_previous_year_and_shows_a_turnover(ui_context
     page._shown_code = 8                       # a late answer for someone else is dropped
     page._got_statement({"name": "x"}, 7, {"rows": []})
     assert page.row_table.rowCount() == 1
+    page.close()
+
+
+def test_ledger_detail_switch_is_summary_by_default(ui_context, admin_qapp):
+    from app.ui.pages.ledger import LedgerPage
+
+    context = make_context_with_role(ui_context, ROLE_SUPER_ADMIN)
+    page = LedgerPage(context)
+    assert not page.detail_switch.isChecked()
+    assert page.detail_switch.text() == "خلاصه"
+    page.detail_switch.click()
+    assert page.detail_switch.isChecked()
+    assert page.detail_switch.text() == "تفصیلی"
+    page.detail_switch.click()
+    assert not page.detail_switch.isChecked()
+    assert page.detail_switch.text() == "خلاصه"
+    page.close()
+
+
+def test_ledger_detailed_shows_invoice_lines_and_collapses_them(ui_context, admin_qapp, monkeypatch):
+    from PySide6.QtWidgets import QTableWidget
+
+    from app.ui.pages import ledger
+
+    context = make_context_with_role(ui_context, ROLE_SUPER_ADMIN)
+    api = _LedgerApi()
+    monkeypatch.setattr(context, "api", api, raising=False)
+    monkeypatch.setattr(ledger, "run_async",
+                        lambda call, on_success, on_error=None: on_success(call()))
+    page = ledger.LedgerPage(context)
+    page.load()
+    assert page.person_table.rowCount() == 1
+    page.person_table.select_row(0)
+    assert page.row_table.rowCount() == 1            # خلاصه: only the statement rows
+    assert api.statements == [("hesab4", 7)]
+
+    page.detail_switch.click()                       # تفصیلی
+    assert page.detail_switch.isChecked()
+    assert page.row_table.rowCount() == 2            # statement row + hidden detail row
+    assert page.row_table.isRowHidden(1)
+    assert api.lines_requests == [("hesab4", 7, 9)]
+
+    page._on_row_pressed(page.row_table.model().index(0, 0))
+    assert not page.row_table.isRowHidden(1)         # expanded
+    inner = page.row_table.cellWidget(1, 0).findChild(QTableWidget)
+    assert inner is not None and inner.rowCount() == 3  # 2 lines + the total row
+    assert inner.item(0, 1).text() == "کالا نمونٔ"
+    assert inner.item(1, 5).text()
+    assert "مجموع فاکتور:" in inner.item(2, 4).text()
+
+    page._on_row_pressed(page.row_table.model().index(0, 0))
+    assert page.row_table.isRowHidden(1)             # collapsible: closed again
     page.close()
 
 

@@ -119,6 +119,14 @@ class FakeReader:
         nums = getattr(self, "invoice_nums", {})
         return {c: list(nums[c]) for c in codlps if c in nums}
 
+    #: v2.18.3: {numfact: invoice detail dict} for the ledger detail endpoint
+    invoice_detail_map: dict = {}
+    invoice_detail_db: str | None = None
+
+    def invoice_detail(self, numfact, database=None):
+        self.invoice_detail_db = database
+        return dict(self.invoice_detail_map.get(int(numfact), {}))
+
     def customer_statement(self, person_code, max_rows=2000):
         rows = list(self.ledger.get(person_code, []))
         return {

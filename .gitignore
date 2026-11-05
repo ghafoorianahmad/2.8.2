@@ -80,3 +80,7 @@ shoptg/vendor/
 
 # v2.6.2: fallback pytest temp of build_all.bat
 .buildtmp/
+
+# Local Claude worktrees and sample/customer files
+.claude/
+samples/

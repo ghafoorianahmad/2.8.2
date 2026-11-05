@@ -582,6 +582,84 @@ class AccountingReader:
             "total_credit": float(totals[1] or 0) if totals else 0.0,
         }
 
+    def invoice_detail(self, numfact: int, database: str | None = None) -> dict:
+        """One accounting invoice: header plus its lines (Fact / Facto), read only.
+
+        ``database``: another fiscal year, for «گردش سال‌های قبل» (checked by
+        its router). When omitted, the working database of the server settings
+        is used - exactly like ``customer_statement``. Returns ``{}`` when the
+        invoice does not exist. Only the columns needed for the detail view are
+        selected: header ``Numfact, Codename, Date1, Sharh`` and lines
+        ``Radif, Codekala, Meg, Gey, Mab`` plus the product name from ``Kala``.
+        SQL Server 2008 R2 compatible.
+        """
+        db = quote_identifier(database) if database else self._db()
+        conn = self.connection()
+        try:
+            header = self._rows(
+                conn.execute(
+                    f"SELECT TOP 1 f.Numfact AS numfact, f.Codename AS person_code, "
+                    f"f.Date1 AS date, f.Sharh AS description, f.Par AS paid "
+                    f"FROM {db}.dbo.Fact f WHERE f.Numfact = ?",
+                    int(numfact),
+                )
+            )
+            if not header:
+                return {}
+            lines = self._rows(
+                conn.execute(
+                    f"SELECT l.Radif AS radif, l.Codekala AS code, l.Meg AS qty, "
+                    f"l.Gey AS unit_price, ISNULL(l.Mab, l.Meg * l.Gey) AS line_total "
+                    f"FROM {db}.dbo.Facto l WHERE l.Numfact = ? ORDER BY l.Radif",
+                    int(numfact),
+                )
+            )
+            codes = [int(l["code"]) for l in lines if l.get("code") not in (None, 0)]
+            names: dict[int, str] = {}
+            if codes:
+                names = {
+                    int(r["Code"]): str(r["Name"] or "").strip()
+                    for r in self._rows(
+                        conn.execute(
+                            f"SELECT Code, Name FROM {db}.dbo.Kala "
+                            f"WHERE Code IN ({self._in_placeholders(codes)})",
+                            codes,
+                        )
+                    )
+                }
+        finally:
+            conn.close()
+        h = header[0]
+        out_lines = []
+        for l in lines:
+            qty = float(l["qty"] or 0)
+            unit_price = float(l["unit_price"] or 0)
+            line_total = float(l["line_total"] or 0)
+            gross = qty * unit_price
+            discount = gross - line_total
+            if discount < 0:
+                discount = 0.0
+            out_lines.append(
+                {
+                    "radif": int(l["radif"] or 0),
+                    "code": int(l["code"]) if l.get("code") is not None else 0,
+                    "name": names.get(int(l["code"]) if l.get("code") is not None else 0, ""),
+                    "qty": qty,
+                    "unit_price": unit_price,
+                    "discount": discount,
+                    "line_total": line_total,
+                }
+            )
+        return {
+            "numfact": int(h["numfact"]),
+            "person_code": int(h["person_code"] or 0),
+            "date": str(h["date"] or "").strip(),
+            "description": str(h["description"] or "").strip(),
+            "paid": float(h["paid"] or 0),
+            "lines": out_lines,
+            "total": sum(l["line_total"] for l in out_lines),
+        }
+
     # ---- internals ----
     def _stock(self, conn, codes: list[int]) -> dict[int, float]:
         db = self._db()

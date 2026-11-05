@@ -99,3 +99,22 @@ def ledger_statement(
     data = reader.customer_statement(code, settings.statement_max_rows, database=database)
     return {"person_code": code, "database": database,
             **build_full_statement(data, settings.statement_max_rows)}
+
+
+@router.get("/admin/ledger/persons/{code}/invoice/{numfact}/lines")
+def ledger_invoice_lines(
+    code: int,
+    numfact: int,
+    db: str = Query(..., max_length=64),
+    _who: Identity = CAN_VIEW,
+    reader: AccountingReader = Depends(deps.get_reader),
+) -> dict:
+    """One invoice's header and lines (Fact / Facto). READ-ONLY: same database
+    selection as the ledger (any fiscal year this sign-in may read); no new
+    permission tick - anyone who can see the ledger can see the detail.
+    """
+    database = _checked(reader, db)
+    detail = reader.invoice_detail(numfact, database=database)
+    if not detail:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fiscal invoice is not readable")
+    return {"person_code": code, "database": database, **detail}
